@@ -129,6 +129,7 @@ export interface SeedField {
 	unique?: boolean;
 	searchable?: boolean;
 	indexed?: boolean;
+	translatable?: boolean;
 	defaultValue?: unknown;
 	validation?: Record<string, unknown>;
 	widget?: string;

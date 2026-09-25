@@ -365,6 +365,7 @@ async function exportCollections(db: Kysely<Database>): Promise<SeedCollection[]
 					unique: field.unique || undefined,
 					searchable: field.searchable || undefined,
 					indexed: field.indexed || undefined,
+					translatable: field.translatable === false ? false : undefined,
 					defaultValue: field.defaultValue,
 					validation: field.validation ? { ...field.validation } : undefined,
 					widget: field.widget || undefined,

@@ -243,6 +243,10 @@ export function validateSeed(data: unknown): ValidationResult {
 							errors.push(`${fieldPrefix}.indexed: must be a boolean`);
 						}
 
+						if (field.translatable !== undefined && typeof field.translatable !== "boolean") {
+							errors.push(`${fieldPrefix}.translatable: must be a boolean`);
+						}
+
 						if (!field.type) {
 							errors.push(`${fieldPrefix}: type is required`);
 						} else if (!(FIELD_TYPES as readonly string[]).includes(field.type)) {
