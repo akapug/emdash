@@ -1354,6 +1354,25 @@ ${map}
 		expect(result[3]).toMatchObject({ html: `\n\n${map}\n\n` });
 	});
 
+	it("embeds a paragraph holding only a provider URL in classic HTML between blocks", () => {
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+<p class="lead">Older <span style="color:red">classic</span> text.</p>
+<p class="video">${YOUTUBE_URL}</p>
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "htmlBlock", "embed", "block"]);
+		expect(result[1]).toMatchObject({
+			html: `\n<p class="lead">Older <span style="color:red">classic</span> text.</p>\n`,
+		});
+		expect(result[2]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+	});
+
 	it.each([
 		["a blockquote", `<blockquote>\n${YOUTUBE_URL}\n</blockquote>`],
 		["a div", `<div class="video-wrap">\n${YOUTUBE_URL}\n</div>`],
