@@ -3,12 +3,19 @@ import * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 
-import type { MediaItem, SiteSettings, SiteSettingsUpdate } from "../../../src/lib/api";
+import type { PickedContentEntry } from "../../../src/components/ContentPickerModal";
+import type {
+	ContentItem,
+	MediaItem,
+	SiteSettings,
+	SiteSettingsUpdate,
+} from "../../../src/lib/api";
 import { render } from "../../utils/render";
 
 const mockFetchSettings = vi.fn<() => Promise<Partial<SiteSettings>>>();
 const mockUpdateSettings =
 	vi.fn<(settings: SiteSettingsUpdate) => Promise<Partial<SiteSettings>>>();
+const mockFetchContent = vi.fn<(collection: string, id: string) => Promise<ContentItem>>();
 
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual("@tanstack/react-router");
@@ -28,8 +35,41 @@ vi.mock("../../../src/lib/api", async () => {
 		...actual,
 		fetchSettings: () => mockFetchSettings(),
 		updateSettings: (settings: SiteSettingsUpdate) => mockUpdateSettings(settings),
+		fetchContent: (collection: string, id: string) => mockFetchContent(collection, id),
+		fetchManifest: async () => ({ collections: {} }),
 	};
 });
+
+vi.mock("../../../src/components/ContentPickerModal", () => ({
+	ContentPickerModal: ({
+		open,
+		title,
+		onConfirm,
+		onOpenChange,
+	}: {
+		open: boolean;
+		title?: string;
+		onConfirm: (entries: PickedContentEntry[]) => void;
+		onOpenChange: (open: boolean) => void;
+	}) => {
+		if (!open) return null;
+		return (
+			<div role="dialog" aria-label={title}>
+				<button
+					type="button"
+					onClick={() => {
+						onConfirm([
+							{ collection: "pages", id: "page_about", slug: "about", title: "About us" },
+						]);
+						onOpenChange(false);
+					}}
+				>
+					Choose About us
+				</button>
+			</div>
+		);
+	},
+}));
 
 vi.mock("../../../src/components/MediaPickerModal", () => ({
 	MediaPickerModal: ({
@@ -241,5 +281,59 @@ describe("GeneralSettings", () => {
 				expect.objectContaining({ logo: null, favicon: null }),
 			);
 		});
+	});
+
+	it("saves a chosen page as the homepage", async () => {
+		const screen = await renderGeneralSettings();
+		await expect.element(screen.getByRole("radio", { name: "Latest posts" })).toBeChecked();
+
+		await screen.getByText("A page", { exact: true }).click();
+		await screen.getByRole("button", { name: "Choose About us" }).click();
+
+		await expect.element(screen.getByRole("radio", { name: "A page" })).toBeChecked();
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+		await screen.getByRole("button", { name: "Save", exact: true }).first().click();
+		await vi.waitFor(() => {
+			expect(mockUpdateSettings).toHaveBeenCalledWith(
+				expect.objectContaining({ homepage: { collection: "pages", id: "page_about" } }),
+			);
+		});
+	});
+
+	it("shows the saved homepage and switches back to the latest posts", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: { collection: "pages", id: "page_about" },
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+		expect(mockFetchContent).toHaveBeenCalledWith("pages", "page_about");
+
+		await screen.getByText("Latest posts", { exact: true }).click();
+		await expect.element(screen.getByText("About us")).not.toBeInTheDocument();
+		await screen.getByRole("button", { name: "Save", exact: true }).first().click();
+		await vi.waitFor(() => {
+			expect(mockUpdateSettings).toHaveBeenCalledWith(expect.objectContaining({ homepage: null }));
+		});
+	});
+
+	it("says when the saved homepage entry no longer exists", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: { collection: "pages", id: "page_gone" },
+		});
+		mockFetchContent.mockRejectedValue(new Error("Content item not found"));
+		const screen = await renderGeneralSettings();
+
+		await expect
+			.element(screen.getByText(/The chosen page is no longer available/))
+			.toBeInTheDocument();
+		await expect.element(screen.getByRole("button", { name: "Change page" })).toBeInTheDocument();
 	});
 });

@@ -18,6 +18,7 @@ export interface SiteSettings {
 	url?: string;
 
 	// Display
+	homepage?: { collection: string; id: string };
 	postsPerPage: number;
 	dateFormat: string;
 	timezone: string;
@@ -43,10 +44,11 @@ export interface SiteSettings {
 }
 export interface SiteSettingsUpdate extends Omit<
 	Partial<SiteSettings>,
-	"logo" | "favicon" | "seo"
+	"logo" | "favicon" | "homepage" | "seo"
 > {
 	logo?: SiteSettings["logo"] | null;
 	favicon?: SiteSettings["favicon"] | null;
+	homepage?: SiteSettings["homepage"] | null;
 	seo?: Omit<NonNullable<SiteSettings["seo"]>, "defaultOgImage"> & {
 		defaultOgImage?: NonNullable<SiteSettings["seo"]>["defaultOgImage"] | null;
 	};

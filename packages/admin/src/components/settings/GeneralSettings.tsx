@@ -2,22 +2,26 @@
  * General Settings sub-page
  *
  * Site Identity (title, tagline, URL, logo, favicon) and Reading settings
- * (posts per page, date format, timezone).
+ * (homepage, posts per page, date format, timezone).
  */
 
-import { Banner, Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Input, Loader, Radio, useKumoToastManager } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { WarningCircle, Upload, X } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import {
+	fetchContent,
+	fetchManifest,
 	fetchSettings,
 	updateSettings,
 	type MediaItem,
 	type SiteSettings,
 	type SiteSettingsUpdate,
 } from "../../lib/api";
+import { getEntryTitle } from "../../lib/entryTitle.js";
+import { ContentPickerModal, type PickedContentEntry } from "../ContentPickerModal.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { SaveButton } from "../SaveButton.js";
 import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
@@ -29,6 +33,7 @@ function generalSettingsSnapshot(settings: SiteSettingsUpdate) {
 		url: settings.url ?? "",
 		logo: settings.logo ?? null,
 		favicon: settings.favicon ?? null,
+		homepage: settings.homepage ?? null,
 		postsPerPage: settings.postsPerPage ?? 10,
 		dateFormat: settings.dateFormat ?? "MMMM d, yyyy",
 		timezone: settings.timezone ?? "UTC",
@@ -54,6 +59,30 @@ export function GeneralSettings() {
 	const [savedFormData, setSavedFormData] = React.useState<SiteSettingsUpdate>({});
 	const [logoPickerOpen, setLogoPickerOpen] = React.useState(false);
 	const [faviconPickerOpen, setFaviconPickerOpen] = React.useState(false);
+	const [homepagePickerOpen, setHomepagePickerOpen] = React.useState(false);
+	const [pickedHomepage, setPickedHomepage] = React.useState<PickedContentEntry | null>(null);
+
+	const homepage = formData.homepage;
+	const homepageIsPicked =
+		!!homepage &&
+		pickedHomepage?.collection === homepage.collection &&
+		pickedHomepage.id === homepage.id;
+	const { data: manifest } = useQuery({
+		queryKey: ["manifest"],
+		queryFn: fetchManifest,
+		enabled: !!homepage && !homepageIsPicked,
+	});
+	const { data: homepageEntry, error: homepageError } = useQuery({
+		queryKey: ["content", homepage?.collection, homepage?.id],
+		queryFn: () => fetchContent(homepage!.collection, homepage!.id),
+		enabled: !!homepage && !homepageIsPicked,
+		retry: false,
+	});
+	const homepageTitle = homepageIsPicked
+		? pickedHomepage.title
+		: homepageEntry && homepage
+			? getEntryTitle(homepageEntry, manifest?.collections[homepage.collection]?.titleField)
+			: null;
 
 	React.useEffect(() => {
 		if (settings) {
@@ -120,6 +149,20 @@ export function GeneralSettings() {
 
 	const handleFaviconRemove = () => {
 		setFormData((prev) => ({ ...prev, favicon: null }));
+	};
+
+	const handleHomepageSelect = ([entry]: PickedContentEntry[]) => {
+		if (!entry) return;
+		setPickedHomepage(entry);
+		setFormData((prev) => ({
+			...prev,
+			homepage: { collection: entry.collection, id: entry.id },
+		}));
+	};
+
+	const handleHomepageModeChange = (mode: string) => {
+		if (mode === "page") setHomepagePickerOpen(true);
+		else setFormData((prev) => ({ ...prev, homepage: null }));
 	};
 
 	const title = t`General Settings`;
@@ -316,6 +359,45 @@ export function GeneralSettings() {
 
 				<SettingsSection title={t`Reading`}>
 					<SettingRow>
+						<div className="grid gap-3">
+							<Radio.Group
+								legend={t`Homepage displays`}
+								value={homepage ? "page" : "posts"}
+								onValueChange={handleHomepageModeChange}
+							>
+								<Radio.Item value="posts" label={t`Latest posts`} />
+								<Radio.Item value="page" label={t`A page`} />
+							</Radio.Group>
+							{homepage && (
+								<div className="flex flex-wrap items-center justify-between gap-3">
+									{homepageTitle ? (
+										<span className="min-w-0 truncate font-medium">{homepageTitle}</span>
+									) : homepageError ? (
+										<div
+											className="flex items-start gap-2 rounded border border-dashed border-kumo-line bg-kumo-tint px-3 py-2 text-sm leading-5 text-kumo-subtle"
+											role="status"
+										>
+											<span className="flex h-5 shrink-0 items-center" aria-hidden="true">
+												<WarningCircle className="h-4 w-4" />
+											</span>
+											<span>{t`The chosen page is no longer available, so the site shows its latest posts. Choose another page.`}</span>
+										</div>
+									) : (
+										<Loader size="sm" />
+									)}
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() => setHomepagePickerOpen(true)}
+									>
+										{t`Change page`}
+									</Button>
+								</div>
+							)}
+						</div>
+					</SettingRow>
+					<SettingRow>
 						<Input
 							label={t`Posts Per Page`}
 							type="number"
@@ -361,6 +443,12 @@ export function GeneralSettings() {
 				mimeTypeFilter="image/"
 				localOnly
 				title={t`Select logo`}
+			/>
+			<ContentPickerModal
+				open={homepagePickerOpen}
+				onOpenChange={setHomepagePickerOpen}
+				onConfirm={handleHomepageSelect}
+				title={t`Select homepage`}
 			/>
 			<MediaPickerModal
 				open={faviconPickerOpen}
