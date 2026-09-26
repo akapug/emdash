@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 
+import { findAutoembeds } from "../src/autoembed.js";
 import { gutenbergToPortableText, htmlToPortableText, parseGutenbergBlocks } from "../src/index.js";
 import type {
 	PortableTextBlock,
@@ -1467,6 +1468,38 @@ ${html}
 
 		expect(result.map((b) => b._type)).toEqual(["code"]);
 		expect((result[0] as PortableTextCodeBlock).code).toContain(YOUTUBE_URL);
+	});
+
+	it.each([
+		["a carriage return", "\r"],
+		["a line separator", " "],
+	])("does not treat %s as the start of a line", (_, separator) => {
+		const content = `Watch this${separator}${YOUTUBE_URL}`;
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block"]);
+		expect(textOf(result[0])).toContain(YOUTUBE_URL);
+	});
+
+	it.each([
+		["a comment", `<!--\n<p>Old intro</p>\n${YOUTUBE_URL}\n-->`],
+		["a tag that runs to the next >", `Price < 10\n${YOUTUBE_URL}\n<p>Outro</p>`],
+	])("does not embed a URL line that WordPress reads as inside %s", (_, content) => {
+		const result = gutenbergToPortableText(content);
+
+		expect(result.some((b) => b._type === "embed")).toBe(false);
+	});
+
+	it.each([
+		["carriage returns", "\r".repeat(100_000)],
+		["line separators", " ".repeat(100_000)],
+		["[embed openings", "[embed ".repeat(50_000)],
+		["<p openings", "<p ".repeat(50_000)],
+	])("finds autoembeds in linear time through a long run of %s", (_, run) => {
+		const start = performance.now();
+		findAutoembeds(`${run}x`);
+
+		expect(performance.now() - start).toBeLessThan(1000);
 	});
 });
 

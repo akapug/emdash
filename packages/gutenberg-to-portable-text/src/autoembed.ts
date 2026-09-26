@@ -14,14 +14,17 @@ import { detectProvider } from "./transformers/embed.js";
 import type { PortableTextBlock } from "./types.js";
 import { sanitizeHref } from "./url.js";
 
-// A URL alone on its line, or alone in a paragraph (where an [embed] shortcode may stand in for it)
-const URL_LINE_PATTERN = /^([^\S\n]*)(https?:\/\/[^\s<>"]+)[^\S\n]*$/gim;
+// A URL alone on its line, or alone in a paragraph (where an [embed] shortcode may stand in for it).
+// Only "\n" ends a line, as in WordPress, and no run of attributes reaches past the next
+// bracket, so a match never rescans the text after a failed start.
+const URL_LINE_PATTERN = /(?<![^\n])([^\S\n]*)(https?:\/\/[^\s<>"]+)[^\S\n]*(?![^\n])/gi;
 const URL_PARAGRAPH_PATTERN =
-	/<p(?: [^>]*)?>\s*(https?:\/\/[^\s<>"]+|\[embed(?:\s[^\]]*)?\][^[]*\[\/embed\])\s*<\/p>/gi;
-const EMBED_SHORTCODE_PATTERN = /(?<!\[)\[embed(?:\s[^\]]*)?\][^[]*\[\/embed\](?!\])/gi;
+	/<p(?: [^<>]*)?>\s*(https?:\/\/[^\s<>"]+|\[embed(?:\s[^[\]]*)?\][^[]*\[\/embed\])\s*<\/p>/gi;
+const EMBED_SHORTCODE_PATTERN = /(?<!\[)\[embed(?:\s[^[\]]*)?\][^[]*\[\/embed\](?!\])/gi;
 const EMBED_SHORTCODE_URL_PATTERN =
-	/^\[embed(?:\s[^\]]*)?\]\s*(https?:\/\/[^\s<>"]+)\s*\[\/embed\]$/i;
-const HTML_TAG_PATTERN = /<[^<>]+>/g;
+	/^\[embed(?:\s[^[\]]*)?\]\s*(https?:\/\/[^\s<>"]+)\s*\[\/embed\]$/i;
+// A comment or a tag, split as wp_html_split() does: each runs to its end or to the end of the HTML
+const HTML_TAG_PATTERN = /<!(?=--)(?:-(?!->)[^-]*)*(?:-->)?|<[^>]*>?/g;
 
 // The default embed handlers, from wp_maybe_load_embeds() in wp-includes/embed.php
 const YOUTUBE_EMBED_URL_PATTERN = /^https?:\/\/(www\.)?youtube\.com\/(?:v|embed)\/([^/]+)/i;
@@ -107,7 +110,7 @@ export interface Autoembed {
  */
 export function findAutoembeds(html: string): Autoembed[] {
 	// A newline inside a tag does not end a line, and a shortcode inside a tag is not run
-	const text = html.replace(HTML_TAG_PATTERN, (tag) => `<${" ".repeat(tag.length - 2)}>`);
+	const text = html.replace(HTML_TAG_PATTERN, (tag) => "<".repeat(tag.length));
 	const found: Autoembed[] = [];
 
 	for (const match of text.matchAll(URL_LINE_PATTERN)) {
