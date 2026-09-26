@@ -111,6 +111,8 @@ describe("media usage coverage aggregation", () => {
 		["all missing", [scope(null), { ...scope(null), collectionSlug: "pages" }], "never"],
 		["complete and missing", [scope("complete"), scope(null)], "partial"],
 		["old complete", [scope("complete", CONTENT_SOURCE_SCHEMA_VERSION - 1)], "stale"],
+		// Version 2 did not read images inside columns and cover blocks.
+		["complete before columns were read", [scope("complete", 2)], "stale"],
 		["unknown stored status", [scope("surprise")], "unknown"],
 		["unknown before running", [scope("running"), scope("surprise")], "unknown"],
 		["homogeneous running", [scope("running"), scope("running")], "running"],

@@ -444,6 +444,77 @@ describe("extractMediaUsageOccurrences", () => {
 		]);
 	});
 
+	it("extracts the images and galleries inside columns and cover blocks", () => {
+		const occurrences = extractMediaUsageOccurrences({
+			fields: [field("body", "portableText")],
+			data: {
+				body: [
+					{
+						_type: "columns",
+						_key: "c1",
+						columns: [
+							{
+								_type: "column",
+								_key: "left",
+								content: [{ _type: "block", _key: "p1", children: [] }],
+							},
+							{
+								_type: "column",
+								_key: "right",
+								content: [
+									{ _type: "image", _key: "i1", asset: { _ref: "in-a-column" } },
+									{
+										_type: "gallery",
+										_key: "g1",
+										images: [{ _key: "a", asset: { _ref: "in-a-column-gallery" } }],
+									},
+									{
+										_type: "columns",
+										_key: "c2",
+										columns: [
+											{
+												_type: "column",
+												_key: "inner",
+												content: [
+													{
+														_type: "image",
+														_key: "i2",
+														asset: { id: "cf-nested", provider: "cloudflare-images" },
+													},
+												],
+											},
+										],
+									},
+								],
+							},
+							"not-a-column",
+							{ _type: "column", _key: "empty" },
+						],
+					},
+					{
+						_type: "cover",
+						_key: "k1",
+						backgroundImage: "/_emdash/api/media/file/bg.jpg",
+						content: [{ _type: "image", _key: "i3", asset: { _ref: "in-a-cover" } }],
+					},
+					{ _type: "columns", _key: "c3", columns: "malformed" },
+					{ _type: "cover", _key: "k2", content: "malformed" },
+				],
+			},
+		});
+
+		expect(
+			occurrences.map((occurrence) => [occurrence.fieldPath, occurrence.providerAssetId]),
+		).toEqual([
+			["body[0].columns[1].content[0].asset._ref", "in-a-column"],
+			["body[0].columns[1].content[1].images[0].asset._ref", "in-a-column-gallery"],
+			["body[0].columns[1].content[2].columns[0].content[0].asset.id", "cf-nested"],
+			["body[1].content[0].asset._ref", "in-a-cover"],
+		]);
+		expect(occurrences.every((o) => o.referenceType === "portable_text_image")).toBe(true);
+		expect(occurrences.every((o) => o.fieldSlug === "body")).toBe(true);
+	});
+
 	it("skips URL-only and malformed media values", () => {
 		const occurrences = extractMediaUsageOccurrences({
 			fields: [

@@ -1,7 +1,8 @@
 import type { BlockType } from "../../schema/block-types.js";
 import type { FieldType } from "../../schema/types.js";
 
-export const CONTENT_SOURCE_SCHEMA_VERSION = 2;
+// 3: images and galleries inside columns and cover blocks are uses.
+export const CONTENT_SOURCE_SCHEMA_VERSION = 3;
 
 export type MediaKind =
 	| "image"
