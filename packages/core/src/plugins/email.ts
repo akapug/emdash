@@ -25,6 +25,15 @@ const EMAIL_DELIVER_HOOK = "email:deliver";
 const SYSTEM_SOURCE = "system";
 
 /**
+ * The domain of a recipient, which a log line names in place of the address:
+ * runtime logs (Workers Logs among them) keep what is logged, and a recipient
+ * is whoever a form, a comment or a sign-in named.
+ */
+function recipientDomain(address: string): string {
+	return address.slice(address.lastIndexOf("@") + 1);
+}
+
+/**
  * Error thrown when ctx.email.send() is called but no provider is configured.
  */
 export class EmailNotConfiguredError extends Error {
@@ -169,7 +178,9 @@ export class EmailPipeline {
 				const cancellingResult = beforeResult.results.find((r) => r.value === false);
 				const cancelledBy = cancellingResult?.pluginId ?? "unknown";
 
-				console.info(`[email] Email to "${message.to}" cancelled by plugin "${cancelledBy}"`);
+				console.info(
+					`[email] Email to an address at ${recipientDomain(message.to)} cancelled by plugin "${cancelledBy}"`,
+				);
 				return;
 			}
 
@@ -189,7 +200,7 @@ export class EmailPipeline {
 			// leaking whether an email address exists. Log here so the failure and
 			// the responsible provider are always visible in runtime logs.
 			console.error(
-				`[email:deliver] Provider "${deliverResult.pluginId}" failed to send email to "${finalMessage.to}":`,
+				`[email:deliver] Provider "${deliverResult.pluginId}" failed to send email to an address at ${recipientDomain(finalMessage.to)}:`,
 				deliverResult.error,
 			);
 			throw deliverResult.error;

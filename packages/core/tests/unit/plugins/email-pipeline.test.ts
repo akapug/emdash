@@ -558,10 +558,12 @@ describe("EmailPipeline", () => {
 			expect.stringContaining('[email:deliver] Provider "cloudflare-email" failed'),
 			expect.objectContaining({ message: "binding.send rejected: sender domain not verified" }),
 		);
+		// The log names the recipient's domain, never the address.
 		expect(errorSpy).toHaveBeenCalledWith(
-			expect.stringContaining("admin@example.com"),
+			expect.stringContaining("an address at example.com"),
 			expect.anything(),
 		);
+		expect(errorSpy.mock.calls.flat().map(String).join("\n")).not.toContain("admin@example.com");
 
 		errorSpy.mockRestore();
 	});
@@ -1377,7 +1379,9 @@ describe("EmailPipeline — cancellation audit", () => {
 		await emailPipeline.send(createTestMessage({ to: "user@example.com" }), "some-plugin");
 
 		expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("filter-plugin"));
-		expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("user@example.com"));
+		// The log names the recipient's domain, never the address.
+		expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("an address at example.com"));
+		expect(infoSpy.mock.calls.flat().map(String).join("\n")).not.toContain("user@example.com");
 
 		infoSpy.mockRestore();
 	});
