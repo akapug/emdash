@@ -684,15 +684,26 @@ describe("wp-shell route", () => {
 /**
  * The reader and the writer agree. These are Embark's builder output for its
  * Twenty Twenty fixture, as written, for the same page with a hostile header
- * and stylesheet, and for its Franz Josef fixture with a breadcrumb trail and
- * the front page's own layout (packages/control-plane/test/wp-shell.test.ts,
- * dumped with WPSHELL_DUMP=1). A tripwire that refused them would put every
- * migrated site back in the template's own design.
+ * and stylesheet, for its Twenty Twenty and Bootstrap toggles (links to a
+ * menu's id, a details summary), and for its Franz Josef fixtures with a
+ * breadcrumb trail, the front page's own layout and its listing of the latest
+ * posts (packages/control-plane/test/wp-shell.test.ts, dumped with
+ * WPSHELL_DUMP=1). A tripwire that refused them would put every migrated site
+ * back in the template's own design.
  */
 
 describe("the tripwire reads the writer's form", () => {
 	it("accepts what Embark's writer produces, hostile source included", () => {
 		for (const r of writerRecords) expect(wpShellProblem(r)).toBeNull();
+		// the toggles, the listing and its thumbnail are among them
+		const all = JSON.stringify(writerRecords);
+		for (const shape of [
+			'<details class=\\"wp-shell-toggle',
+			'href=\\"#wp-shell-menu-0\\"',
+			'"listings"',
+			'"thumb"',
+		])
+			expect(all).toContain(shape);
 	});
 
 	/** The sample record with one more html part, or with a menu's leaf template replaced. */

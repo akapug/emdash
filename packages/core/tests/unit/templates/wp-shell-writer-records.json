@@ -1,7 +1,7 @@
 [
 	{
 		"version": 1,
-		"id": "c3f5ed4f814d3f08f54d632e",
+		"id": "f7afdf308582ac7aa79abf1e",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -14,11 +14,11 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/1e9523cb1c1c93066fa37db4d628f6b8.css"
+			"/_emdash/api/media/file/wp-shell/9a3144439d911e6d875eb92800d0954d.css"
 		],
 		"parts": [
 			{
-				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<span class=\"toggle search-toggle\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></span>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
 			},
 			{
 				"slot": "logo",
@@ -166,7 +166,7 @@
 	},
 	{
 		"version": 1,
-		"id": "a320ffbf9d028a5b6fa13816",
+		"id": "007e795a546b4bf0b1881fc8",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -179,11 +179,11 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/2e9e60d3b96879d3ce81e0350731994c.css"
+			"/_emdash/api/media/file/wp-shell/eccb5c7c692580c07407601e5ef98683.css"
 		],
 		"parts": [
 			{
-				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<div class=\"hostile\">\n<img class=\"x1\">\n<img class=\"x2\">\n<div class=\"x3\" style=\"color:red;\"></div>\n<div class=\"x4\"></div>\n<video class=\"x5\"></video>\n<img class=\"x6\">\n<a class=\"x7\">j</a>\n<a class=\"x8\">tab</a>\n<a class=\"x9\" title=\"&quot;&gt;&lt;img src=x onerror=alert(3)&gt;\" href=\"/ok\">t</a>\n<div class=\"x10\">clobber</div>\n\n\n\n\n<p>a<img>--&gt;</p>\n</div>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<span class=\"toggle search-toggle\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></span>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<div class=\"hostile\">\n<img class=\"x1\">\n<img class=\"x2\">\n<div class=\"x3\" style=\"color:red;\"></div>\n<div class=\"x4\"></div>\n<video class=\"x5\"></video>\n<img class=\"x6\">\n<a class=\"x7\">j</a>\n<a class=\"x8\">tab</a>\n<a class=\"x9\" title=\"&quot;&gt;&lt;img src=x onerror=alert(3)&gt;\" href=\"/ok\">t</a>\n<div class=\"x10\">clobber</div>\n\n\n\n\n<p>a<img>--&gt;</p>\n</div>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
 			},
 			{
 				"slot": "logo",
@@ -331,7 +331,286 @@
 	},
 	{
 		"version": 1,
-		"id": "0c975539f84538645bc482fd",
+		"id": "63814892cd75bdde7201587c",
+		"source": {
+			"url": "https://www.example.org/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "js"
+		},
+		"body": {
+			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/2afcbb05a768b8ba972eff209247dc91.css"
+		],
+		"parts": [
+			{
+				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<a id=\"wp-shell-menu-toggle-0\" href=\"#wp-shell-menu-0\" class=\"toggle nav-toggle mobile-nav-toggle wp-shell-control\"><span class=\"toggle-inner\"><span class=\"toggle-text\">Menu</span></span></a><div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+			},
+			{
+				"slot": "logo",
+				"src": "/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png",
+				"alt": "Example logo",
+				"class": "custom-logo",
+				"width": 120,
+				"height": 40
+			},
+			{
+				"html": "</a></div>\n\t\t\t\t<div class=\"site-title faux-heading\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></div>\n\t\t\t\t<div class=\"site-description\">"
+			},
+			{
+				"slot": "tagline",
+				"fallback": "Just another example"
+			},
+			{
+				"html": "</div>\n\t\t\t</div>\n\t\t</div>\n\t\t<div class=\"header-navigation-wrapper\">\n\t\t\t<nav class=\"primary-menu-wrapper\" role=\"navigation\">\n\t\t\t\t<ul class=\"primary-menu reset-list-style\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul>\n\t\t\t</nav>\n\t\t</div>\n\t</div>\n\t<div class=\"search-modal cover-modal\">\n\t\t\n\t</div>\n</header>\n<div id=\"wp-shell-menu-0\" class=\"menu-modal cover-modal\"><a href=\"#wp-shell-menu-toggle-0\" class=\"toggle close-nav-toggle wp-shell-control\"><span class=\"toggle-text\">Close Menu</span></a>\n\t<nav class=\"mobile-menu\">\n\t\t<ul class=\"modal-menu reset-list-style\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 1
+			},
+			{
+				"html": "</ul>\n\t</nav>\n</div>\n<main id=\"site-content\" role=\"main\">\n\t<article class=\"page type-page status-publish hentry\">\n\t\t<header class=\"entry-header has-text-align-center header-footer-group\">\n\t\t\t<div class=\"entry-header-inner section-inner medium\">\n\t\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "\n\t\t\t</div>\n\t\t</header>\n\t\t\n\t\t<div class=\"post-inner thin\">\n\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "entry-content"
+			},
+			{
+				"html": "\n\t\t</div>\n\t\t<div class=\"section-inner\"></div>\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p>\n\t\t<p class=\"powered-by-wordpress\"><a href=\"https://wordpress.org/\">Powered by WordPress</a></p>\n\t\t<a class=\"to-the-top\" href=\"#site-header\">To the top <span class=\"arrow\">↑</span></a>\n\t\t<a>bad</a>\n\t</div>\n</footer>\n\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n\t\t\t\t\t</li> "
+				],
+				"fallback": "\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-home\"><a href=\"/\">Home</a></li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-has-children\"><a href=\"/history/\">History</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">\n\t\t\t\t\t\t\t<li class=\"menu-item\"><a href=\"/history/pioneer/\">Pioneers</a></li>\n\t\t\t\t\t\t</ul>\n\t\t\t\t\t</li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type\"><a href=\"/contact/\">Contact <b>Us</b></a></li>\n\t\t\t\t",
+				"current": "current-menu-item current_page_item"
+			},
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><div class=\"ancestor-wrapper\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></div></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><div class=\"ancestor-wrapper\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n\t\t\t</li> "
+				],
+				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t",
+				"current": "current-menu-item"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"id": "c7528055992e81feac3d092a",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": ""
+		},
+		"body": {
+			"class": "wp-singular page-template-default page singular two-column right-sidebar"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/03e8e52d23f339a1fa10cc7ad5b90f6c.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle collapsed wp-shell-control\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></summary></details>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></h2></div>\n\t<div id=\"header-menu-wrapper\" class=\"collapse navbar-collapse\"><ul id=\"menu-main-menu\" class=\"nav navbar-nav flip\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul></div></div></div>\n<div class=\"breadcrumbs-wrapper\"><div class=\"container breadcrumbs\"><span><a href=\"/\" class=\"home\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></span> &gt; <span>"
+			},
+			{
+				"slot": "titleText"
+			},
+			{
+				"html": "</span></div></div>\n<div class=\"container main\"><div class=\"row\">\n\t<div class=\"main col-md-9\">\n\t\t<div class=\"page type-page status-publish hentry\">\n\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "\n\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "entry-content clearfix"
+			},
+			{
+				"html": "\n\t\t</div>\n\t</div>\n\t<div class=\"sidebar col-md-3\"><div class=\"widget\"><h4 class=\"item-title\">Sidebar words</h4></div></div>\n</div></div>\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p></div>\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"dropdown-toggle\">",
+					{
+						"s": "label"
+					},
+					" <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-home menu-item-has-children\"><a href=\"/\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">About Us <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">\n\t<li class=\"menu-item\"><a href=\"/team/\">Our Team</a></li>\n</ul>\n</li>\n<li class=\"menu-item\"><a href=\"/updates/\">Updates</a></li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"id": "98a7dbe07f1644d79a608ef8",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -442,6 +721,37 @@
 				"current": "current-menu-item current_page_item active"
 			}
 		],
+		"listings": [
+			{
+				"count": 3,
+				"item": [
+					"<div class=\"",
+					{
+						"s": "cls"
+					},
+					"\"><div class=\"item post type-post status-publish hentry\"><h3 class=\"item-title\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "title"
+					},
+					"</a></h3><div class=\"excerpt\"><p>",
+					{
+						"s": "excerpt"
+					},
+					"</p></div></div></div>"
+				],
+				"classes": [
+					"item-wrap col-md-3"
+				],
+				"excerpt": {
+					"words": 55,
+					"more": " […]"
+				}
+			}
+		],
 		"home": {
 			"body": {
 				"class": "wp-singular home page-template page-template-template-single-column page-template-template-single-column-php page singular front-page one-column"
@@ -477,7 +787,242 @@
 					"tag": "div"
 				},
 				{
-					"html": "</div></div>\n\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+					"html": "</div></div>\n<div class=\"posts-list highlights full-width\" id=\"posts-stack\"><div class=\"container\"><h2 class=\"highlight-title\">Latest Articles</h2><div class=\"row items-container\">"
+				},
+				{
+					"slot": "listing",
+					"listing": 0
+				},
+				{
+					"html": "</div></div></div>\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+				},
+				{
+					"slot": "siteTitle",
+					"fallback": "Example Site"
+				},
+				{
+					"html": "</a></p></div>\n"
+				}
+			]
+		}
+	},
+	{
+		"version": 1,
+		"id": "ed482345ff245174b7b02be2",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": ""
+		},
+		"body": {
+			"class": "wp-singular page-template-default page singular two-column right-sidebar"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></h2></div>\n\t<div id=\"header-menu-wrapper\" class=\"collapse navbar-collapse\"><ul id=\"menu-main-menu\" class=\"nav navbar-nav flip\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul></div></div></div>\n<div class=\"breadcrumbs-wrapper\"><div class=\"container breadcrumbs\"><span><a href=\"/\" class=\"home\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></span> &gt; <span>"
+			},
+			{
+				"slot": "titleText"
+			},
+			{
+				"html": "</span></div></div>\n<div class=\"container main\"><div class=\"row\">\n\t<div class=\"main col-md-9\">\n\t\t<div class=\"page type-page status-publish hentry\">\n\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "\n\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "entry-content clearfix"
+			},
+			{
+				"html": "\n\t\t</div>\n\t</div>\n\t<div class=\"sidebar col-md-3\"><div class=\"widget\"><h4 class=\"item-title\">Sidebar words</h4></div></div>\n</div></div>\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p></div>\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"dropdown-toggle\">",
+					{
+						"s": "label"
+					},
+					" <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-home menu-item-has-children\"><a href=\"/\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">About Us <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">\n\t<li class=\"menu-item\"><a href=\"/team/\">Our Team</a></li>\n</ul>\n</li>\n<li class=\"menu-item\"><a href=\"/updates/\">Updates</a></li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"listings": [
+			{
+				"count": 4,
+				"item": [
+					"<div class=\"",
+					{
+						"s": "cls"
+					},
+					"\"><div class=\"item clearfix post type-post status-publish format-standard hentry\">\n\t",
+					{
+						"s": "thumb"
+					},
+					"\n\t<h3 class=\"item-title\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "title"
+					},
+					"</a></h3>\n\t<div class=\"excerpt\"><p>",
+					{
+						"s": "excerpt"
+					},
+					"</p></div>\n\t<div class=\"item-meta clearfix\"><p class=\"date\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "date"
+					},
+					"</a></p>\n\t<p class=\"comments-count\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"#respond\"><i class=\"fa fa-comment\"></i> Leave a reply</a></p></div>\n</div></div>"
+				],
+				"thumb": [
+					"<a href=\"",
+					{
+						"s": "href"
+					},
+					"\"><img alt=\"\" src=\"",
+					{
+						"s": "src"
+					},
+					"\" class=\"attachment-medium size-medium wp-post-image\"></a>"
+				],
+				"classes": [
+					"item-wrap col-md-12",
+					"item-wrap col-md-3 col-sm-6"
+				],
+				"date": "F j, Y",
+				"utcOffset": -480,
+				"excerpt": {
+					"words": 8,
+					"more": " […]"
+				}
+			}
+		],
+		"home": {
+			"body": {
+				"class": "wp-singular home page-template page-template-template-single-column page-template-template-single-column-php page singular front-page one-column"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+			],
+			"parts": [
+				{
+					"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+				},
+				{
+					"slot": "siteTitle",
+					"fallback": "Example Site"
+				},
+				{
+					"html": "</a></h2></div>\n\t<div id=\"header-menu-wrapper\" class=\"collapse navbar-collapse\"><ul id=\"menu-main-menu\" class=\"nav navbar-nav flip\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "</ul></div></div></div>\n<div class=\"highlights static-front-page\"><div class=\"container\">"
+				},
+				{
+					"slot": "title",
+					"tag": "h2",
+					"class": "highlight-title"
+				},
+				{
+					"slot": "content",
+					"tag": "div"
+				},
+				{
+					"html": "</div></div>\n<div class=\"posts-list highlights full-width\" id=\"posts-stack\"><div class=\"container\"><h2 class=\"highlight-title\">Latest Articles</h2><div class=\"row items-container\" data-disable-masonry=\"0\">"
+				},
+				{
+					"slot": "listing",
+					"listing": 0
+				},
+				{
+					"html": "</div></div></div>\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
 				},
 				{
 					"slot": "siteTitle",
