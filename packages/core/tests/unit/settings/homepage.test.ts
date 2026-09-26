@@ -18,7 +18,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleContentCreate, handleContentDelete } from "../../../src/api/handlers/content.js";
-import { handleSettingsUpdate } from "../../../src/api/handlers/settings.js";
+import { handleSettingsGet, handleSettingsUpdate } from "../../../src/api/handlers/settings.js";
 import { siteSettingsTag } from "../../../src/cache/chrome-tags.js";
 import type { Database } from "../../../src/database/types.js";
 import { setI18nConfig } from "../../../src/i18n/config.js";
@@ -86,6 +86,12 @@ describe("getHomepage", () => {
 	async function chooseHomepage(id: string) {
 		const result = await handleSettingsUpdate(db, null, { homepage: { collection: "page", id } });
 		if (!result.success) throw new Error(`Homepage setup failed: ${result.error.message}`);
+	}
+
+	async function reported() {
+		const result = await handleSettingsGet(db, null);
+		if (!result.success) throw new Error(`Settings read failed: ${result.error.message}`);
+		return result.data.homepage?.entry;
 	}
 
 	function resolve(context: { editMode?: boolean; locale?: string } = {}) {
@@ -180,6 +186,32 @@ describe("getHomepage", () => {
 			expect(english.fallbackLocale).toBeUndefined();
 			expect(spanish.entry?.data.id).toBe(translation.id);
 			expect(spanish.fallbackLocale).toBeUndefined();
+		});
+
+		it("is the translation the settings API reports", async () => {
+			setI18nConfig({ defaultLocale: "en", locales: ["en", "sr-Latn", "sr-cyrl"] });
+			const page = await createPage("Welcome", { status: "draft" });
+			await createPage("Dobrodosli", { locale: "sr-Latn", translationOf: page.id });
+			await createPage("Dobrodoshli", { locale: "sr-cyrl", translationOf: page.id });
+			await chooseHomepage(page.id);
+
+			const root = await resolve();
+
+			// Neither published translation is on the default chain, so the locale
+			// order decides, and it must be the database's order, not JavaScript's.
+			expect((await reported())?.id).toBe(root.entry?.data.id);
+		});
+
+		it("is the translation the settings API reports whatever locale the request carries", async () => {
+			const page = await createPage("Welcome");
+			await createPage("Bienvenidos", { locale: "es", translationOf: page.id });
+			await chooseHomepage(page.id);
+			setI18nConfig({ defaultLocale: "es", locales: ["es"] });
+
+			const root = await resolve();
+			const entry = await runWithContext({ editMode: false, db, locale: "es" }, reported);
+
+			expect(entry?.id).toBe(root.entry?.data.id);
 		});
 
 		it("falls back to the default locale while the translation is a draft", async () => {

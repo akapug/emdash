@@ -6,7 +6,7 @@ import type { Kysely } from "kysely";
 
 import { ContentRepository } from "../../database/repositories/content.js";
 import type { Database } from "../../database/types.js";
-import { resolveLocaleChain } from "../../i18n/resolve.js";
+import { getFallbackChain, getI18nConfig, isI18nEnabled } from "../../i18n/config.js";
 import { SchemaRegistry } from "../../schema/registry.js";
 import {
 	getSiteSettingWithDb,
@@ -41,31 +41,21 @@ export async function handleSettingsGet(
 }
 
 /**
- * The translation an editor sees for the stored homepage: the one "/" renders.
- * `getHomepage()` loads the group's PUBLISHED rows and takes the first by the
- * default locale's fallback chain, then by locale (loader.ts,
- * loadEntriesByGroups), so this ranks the same way. With nothing published it
- * reports the first row by that order, whose status tells the editor why "/"
- * shows no page.
+ * The translation a visitor sees at "/" for the stored homepage: the published
+ * row `getHomepage()` picks, ranked by the database the same way. With nothing
+ * published it is the first row by that order, whose status tells the editor
+ * why "/" shows no page.
  */
 async function resolveHomepageEntry(
 	db: Kysely<Database>,
 	{ collection, id }: HomepageReference,
 ): Promise<HomepageEntry | null> {
 	if (!(await new SchemaRegistry(db).getCollection(collection))) return null;
-	const rows = await new ContentRepository(db).findTranslationStatuses(collection, id);
-	const chain = resolveLocaleChain();
-	const position = (row: HomepageEntry) => {
-		const at = row.locale === null ? -1 : chain.indexOf(row.locale);
-		return at === -1 ? chain.length : at;
-	};
-	const [entry] = rows.toSorted(
-		(a, b) =>
-			Number(a.status !== "published") - Number(b.status !== "published") ||
-			position(a) - position(b) ||
-			(a.locale ?? "").localeCompare(b.locale ?? "") ||
-			a.id.localeCompare(b.id),
-	);
+	// A visitor's request carries no locale, so "/" follows the default locale's
+	// chain. An editor's request can carry one, and it must not change the answer.
+	const i18n = getI18nConfig();
+	const chain = i18n && isI18nEnabled() ? getFallbackChain(i18n.defaultLocale) : [];
+	const [entry] = await new ContentRepository(db).findTranslationStatuses(collection, id, chain);
 	return entry ?? null;
 }
 

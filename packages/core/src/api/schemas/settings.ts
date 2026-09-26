@@ -79,9 +79,10 @@ const mediaReferenceResponse = z.object({
 
 const homepageResponse = homepageReference.extend({
 	/**
-	 * The translation of the homepage the site resolves: the original when it
-	 * is published, else a published translation, else the first left. `null`
-	 * when no translation is left. Resolved on read; never stored.
+	 * The translation of the homepage a visitor sees at the root: the published
+	 * one that comes first in the default locale's fallback chain, then by
+	 * locale code. With none published, the first by that order. `null` when no
+	 * translation is left. Resolved on read; never stored.
 	 */
 	entry: z
 		.object({ id: z.string(), locale: z.string().nullable(), status: z.string() })

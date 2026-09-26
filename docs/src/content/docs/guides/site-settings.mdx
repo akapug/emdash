@@ -186,7 +186,7 @@ On a site that prefixes URLs with the locale, the root serves the default locale
 
 API and MCP clients set the homepage by sending `homepage: { collection, id }` with the ID of the entry or of any of its translations, and remove it by sending `homepage: null`. A request that names an entry that does not exist is refused with a `VALIDATION_ERROR`.
 
-The settings API and the MCP settings tools also return `homepage.entry`, the translation of the chosen entry that the site shows, as `{ id, locale, status }`. It is the original translation when that is published, else a published translation, else the first translation that is left. It is `null` when no translation is left. The API resolves it on each read and does not store it, so a request that sends it back does not change it.
+The settings API and the MCP settings tools also return `homepage.entry`, the translation of the chosen entry that the site shows, as `{ id, locale, status }`. It is the published translation that `getHomepage()` renders at the root: the first in the default locale's fallback chain, then by locale code. With no published translation, it is the first translation by that order, and its status tells you why the root shows no page. It is `null` when no translation is left. The API resolves it on each read and does not store it, so a request that sends it back does not change it.
 
 ## Render social profiles
 

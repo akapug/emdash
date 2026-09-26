@@ -157,6 +157,17 @@ export function buildStatusCondition(
 }
 
 /**
+ * ORDER BY terms that rank a translation group's rows by `localeChain`, then by
+ * locale code in the database's own collation. `loadEntriesByGroups()` and the
+ * settings API's homepage entry both rank with these, so they pick one row.
+ */
+export function localeChainOrder(localeChain: readonly string[]): RawBuilder<unknown> {
+	if (localeChain.length === 0) return sql`locale ASC`;
+	const positions = localeChain.map((locale, index) => sql`WHEN ${locale} THEN ${sql.lit(index)}`);
+	return sql`CASE locale ${sql.join(positions, sql` `)} ELSE ${sql.lit(localeChain.length)} END, locale ASC`;
+}
+
+/**
  * Check if a table exists in the database.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any Kysely instance

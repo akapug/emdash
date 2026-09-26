@@ -69,8 +69,8 @@ export interface HomepageReference {
 }
 
 /**
- * One live translation of a homepage reference: the original translation
- * when it is published, else a published one, else the first left.
+ * One live translation of a homepage reference: the published one a visitor
+ * sees at the root, else the first by the same order.
  */
 export interface HomepageEntry {
 	id: string;
