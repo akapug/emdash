@@ -1,9 +1,11 @@
 import cloudflare from "@astrojs/cloudflare";
 import react from "@astrojs/react";
 import { d1, r2 } from "@emdash-cms/cloudflare";
-import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { defineConfig, fontProviders } from "astro/config";
 import emdash from "emdash/astro";
+
+// The config `emdash migrate` evaluates: the site's own config without its
+// plugins. Plugin storage lives in core tables, so migrating needs no plugin.
 
 export default defineConfig({
 	output: "server",
@@ -17,7 +19,6 @@ export default defineConfig({
 		emdash({
 			database: d1({ binding: "DB", session: "auto" }),
 			storage: r2({ binding: "MEDIA" }),
-			plugins: [formsPlugin()],
 		}),
 	],
 	fonts: [
