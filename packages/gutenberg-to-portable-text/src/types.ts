@@ -247,6 +247,12 @@ export interface ConvertOptions {
 	generateKeys?: boolean;
 	/** Custom key generator */
 	keyGenerator?: () => string;
+	/**
+	 * Store the text as WordPress showed it: its curly quotes, apostrophes,
+	 * dashes and ellipses (texturize.ts, wptexturize). Default true; false keeps
+	 * the stored text, for a site that turned wptexturize off.
+	 */
+	texturize?: boolean;
 }
 
 /**
