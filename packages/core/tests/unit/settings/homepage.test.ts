@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleContentCreate, handleContentDelete } from "../../../src/api/handlers/content.js";
 import { handleSettingsUpdate } from "../../../src/api/handlers/settings.js";
+import { siteSettingsTag } from "../../../src/cache/chrome-tags.js";
 import type { Database } from "../../../src/database/types.js";
 import { setI18nConfig } from "../../../src/i18n/config.js";
 import { emdashLoader } from "../../../src/loader.js";
@@ -101,6 +102,7 @@ describe("getHomepage", () => {
 
 		expect(result.entry).toBeNull();
 		expect(result.collection).toBeNull();
+		expect(result.cacheHint.tags).toEqual([siteSettingsTag()]);
 		expect(counter.count).toBe(1);
 		expect(getLiveEntry).not.toHaveBeenCalled();
 	});
@@ -115,6 +117,8 @@ describe("getHomepage", () => {
 		expect(result.entry?.data.id).toBe(page.id);
 		expect(result.entry?.data.title).toBe("Welcome");
 		expect(result.cacheHint.tags).toContain(page.id);
+		// The route depends on the setting and on the collection as well as on the entry.
+		expect(result.cacheHint.tags).toEqual(expect.arrayContaining(["page", siteSettingsTag()]));
 	});
 
 	it("returns no entry while the homepage is a draft, and tags the collection", async () => {
@@ -125,7 +129,7 @@ describe("getHomepage", () => {
 
 		expect(result.entry).toBeNull();
 		expect(result.collection).toBe("page");
-		expect(result.cacheHint.tags).toEqual(["page"]);
+		expect(result.cacheHint.tags).toEqual(["page", siteSettingsTag()]);
 	});
 
 	it("shows a draft homepage in edit mode", async () => {

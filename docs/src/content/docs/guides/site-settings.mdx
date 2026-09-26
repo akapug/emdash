@@ -128,7 +128,7 @@ The `dateFormat` setting is a pattern string such as `MMMM d, yyyy`. `Intl.DateT
 
 **Homepage displays**, under **Reading** in the **General** settings, chooses what the site shows at its root URL: **Latest posts** or **A page**. **A page** opens a picker for an entry in any collection.
 
-The setting takes effect in templates that read it. Call `getHomepage()` in the index route. It returns the chosen entry in the request's locale, falling back through the configured locales the same way `getEmDashEntry()` does. It returns `entry: null` when no homepage is chosen, and also when the chosen entry is deleted or has no published version, so the route can render its default content instead. In visual editing, an editor sees the draft of the chosen entry.
+The setting takes effect in templates that read it. Call `getHomepage()` in the index route. It returns the chosen entry in the request's locale, falling back through the configured locale chain and then to any published translation, so the root URL keeps its homepage in a locale that has no copy of it. `fallbackLocale` names the locale that was served. It returns `entry: null` when no homepage is chosen, and also when the chosen entry is deleted or has no published version, so the route can render its default content instead. In visual editing, an editor sees the draft of the chosen entry.
 
 The following index route renders the chosen page, or the latest posts when there is none. The type argument describes the entry's fields, here those of the `pages` collection:
 
@@ -166,7 +166,7 @@ if (Astro.cache?.enabled) {
 </Base>
 ```
 
-Pass the returned `cacheHint` to `Astro.cache.set()` even when no entry is returned. It carries the chosen entry's collection, so publishing the entry refreshes a cached root page.
+Pass the returned `cacheHint` to `Astro.cache.set()` even when no entry is returned. It carries the site settings tag and the chosen entry's collection, so choosing another homepage, or publishing the entry or a missing translation of it, refreshes a cached root page.
 
 The chosen page is still served at its own URL. To keep search engines from indexing both copies, set that URL's canonical link to the site root. `getSiteSettings()` returns the choice as `homepage: { collection, id }`, where `id` is the entry's translation group, the value every translation of it carries as `data.translationGroup`. Compare against that rather than the entry's own ID, so each translation recognises itself as the homepage.
 

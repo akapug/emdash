@@ -2,6 +2,7 @@
  * The site's chosen homepage entry, resolved for the current request.
  */
 
+import { siteSettingsTag } from "../cache/chrome-tags.js";
 import { resolveLocale, resolveLocaleChain } from "../i18n/resolve.js";
 import { loadEntriesByGroups } from "../loader.js";
 import { cachedQuery, contentCacheNamespaces } from "../object-cache/index.js";
@@ -48,16 +49,23 @@ export function getHomepage<D = Record<string, unknown>>(
 
 async function resolveHomepage<D>(options: { locale?: string }): Promise<HomepageResult<D>> {
 	const { homepage } = await getSiteSettings();
-	if (!homepage) return { entry: null, collection: null, isPreview: false, cacheHint: {} };
+	// Every result depends on the setting, so every hint carries its tag:
+	// choosing a homepage has to invalidate the route that rendered without one.
+	const settingsTag = siteSettingsTag();
+	if (!homepage) {
+		return { entry: null, collection: null, isPreview: false, cacheHint: { tags: [settingsTag] } };
+	}
 
 	const { collection } = homepage;
-	// An unresolved homepage still depends on its collection: publishing the
-	// entry has to invalidate the route that fell back while it was a draft.
+	// A homepage also depends on its collection, resolved or not: publishing a
+	// translation that is missing, or the entry while it is a draft, has to
+	// invalidate the route that fell back.
+	const tags = [collection, settingsTag];
 	const unresolved: HomepageResult<D> = {
 		entry: null,
 		collection,
 		isPreview: false,
-		cacheHint: { tags: [collection] },
+		cacheHint: { tags },
 	};
 
 	const ctx = getRequestContext();
@@ -93,5 +101,6 @@ async function resolveHomepage<D>(options: { locale?: string }): Promise<Homepag
 		variant.locale && requestedLocale && variant.locale !== requestedLocale
 			? variant.locale
 			: result.fallbackLocale;
-	return { ...result, collection, fallbackLocale };
+	const cacheHint = { ...result.cacheHint, tags: [...new Set([...(result.cacheHint.tags ?? []), ...tags])] };
+	return { ...result, collection, fallbackLocale, cacheHint };
 }
