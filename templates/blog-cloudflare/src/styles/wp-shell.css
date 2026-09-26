@@ -1,0 +1,7 @@
+/*
+ * The only CSS this template adds to a page in a migrated WordPress design
+ * (layouts/WpShell.astro): the forms plugin's own styles, so an embedded form
+ * works. The design itself is the site's captured stylesheets. This template's
+ * tokens and resets are deliberately absent: they would sit under the theme.
+ */
+@import "@emdash-cms/plugin-forms/styles";

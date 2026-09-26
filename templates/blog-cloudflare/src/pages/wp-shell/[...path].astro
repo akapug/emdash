@@ -1,0 +1,107 @@
+---
+/**
+ * The pages of a site migrated from WordPress, in its own design.
+ *
+ * Reached ONLY through Astro.rewrite() from `/`, `/pages/[slug]` and
+ * `/posts/[slug]` when the site has a shell record: the visitor's URL stays
+ * the one they asked for. A request for /wp-shell/... itself is a 404, so the
+ * same page is never served at two addresses.
+ *
+ * This route exists so that the page is built from a module graph that does
+ * not contain Base.astro: Astro bundles a route's CSS from every component the
+ * route imports, rendered or not, and Base's global resets and design tokens
+ * would otherwise sit under the WordPress theme's stylesheets.
+ */
+import {
+	decodeSlug,
+	getEmDashEntry,
+	getHomepage,
+	getSeoMeta,
+	getSiteSettings,
+	type InferCollectionData,
+} from "emdash";
+import { Comments, CommentForm } from "emdash/ui/comments";
+import WpShell from "../../layouts/WpShell.astro";
+import { featuredImageUrl } from "../../utils/og-image";
+import { resolveBlogSiteIdentity } from "../../utils/site-identity";
+import { wpShellRoute } from "../../utils/wp-shell";
+import { loadWpShell } from "../../utils/wp-shell-loader";
+
+const origin = Astro.originPathname;
+const route = wpShellRoute(Astro.params.path);
+if (!route || origin.startsWith("/wp-shell")) {
+	return new Response(null, { status: 404 });
+}
+
+const [{ shell, cacheHint: shellHint }, settings] = await Promise.all([
+	loadWpShell(),
+	getSiteSettings(),
+]);
+// The record went away between the page route's read and this one (its TTL
+// ran out): the page route draws the page in this template's own design.
+if (!shell) return Astro.rewrite(origin);
+if (Astro.cache?.enabled) Astro.cache.set(shellHint);
+
+const { siteTitle } = resolveBlogSiteIdentity(settings);
+
+async function load(r: NonNullable<typeof route>) {
+	if (r.kind === "home") {
+		const homepage = await getHomepage<InferCollectionData<"pages">>();
+		return {
+			entry: homepage.entry,
+			collection: homepage.collection ?? "pages",
+			cacheHint: homepage.cacheHint,
+		};
+	}
+	const collection = r.kind === "page" ? "pages" : "posts";
+	const slug = decodeSlug(r.slug);
+	if (!slug) return { entry: null, collection, cacheHint: undefined };
+	const result = await getEmDashEntry(collection, slug);
+	return { entry: result.entry, collection, cacheHint: result.cacheHint };
+}
+const { entry, collection, cacheHint } = await load(route);
+if (!entry) return Astro.rewrite(origin);
+if (Astro.cache?.enabled && cacheHint) Astro.cache.set(cacheHint);
+
+const isPost = route.kind === "post";
+const path = route.kind === "home" ? "/" : origin.replace(/\/$/, "");
+const data = entry.data;
+// The homepage renders its page at "/" too, so that copy is the canonical one.
+const isHomepage =
+	route.kind === "home" ||
+	(settings.homepage?.collection === collection && settings.homepage.id === data.translationGroup);
+const seo = getSeoMeta(entry, {
+	siteTitle,
+	siteUrl: Astro.url.origin,
+	path: isHomepage ? "/" : path,
+	...(isPost && "featured_image" in data
+		? { defaultOgImage: featuredImageUrl(data.featured_image, Astro.url.origin) }
+		: {}),
+});
+---
+
+<WpShell
+	shell={shell}
+	kind={route.kind}
+	path={route.kind === "home" ? "/" : origin}
+	title={seo.title}
+	pageTitle={seo.ogTitle}
+	description={seo.description}
+	image={seo.ogImage}
+	canonical={seo.canonical}
+	robots={seo.robots}
+	type={isPost ? "article" : "website"}
+	publishedTime={isPost ? (data.publishedAt?.toISOString() ?? null) : null}
+	modifiedTime={isPost ? data.updatedAt.toISOString() : null}
+	content={{ collection, id: data.id, slug: entry.id }}
+	entry={{ title: data.title, body: data.content, edit: entry.edit }}
+>
+	{
+		isPost && (
+			<div class="comments-wrapper section-inner">
+				<Comments collection="posts" contentId={data.id} threaded />
+				<CommentForm collection="posts" contentId={data.id} />
+			</div>
+		)
+	}
+</WpShell>

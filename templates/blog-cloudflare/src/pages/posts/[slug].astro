@@ -11,8 +11,10 @@ import { Image, PortableText, WidgetArea } from "emdash/ui";
 import { Comments, CommentForm } from "emdash/ui/comments";
 import Base from "../../layouts/Base.astro";
 import PostCard from "../../components/PostCard.astro";
+import { featuredImageUrl as getFeaturedImageUrl } from "../../utils/og-image";
 import { getReadingTime } from "../../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
+import { loadWpShell } from "../../utils/wp-shell-loader";
 
 const slug = decodeSlug(Astro.params.slug);
 
@@ -28,28 +30,13 @@ if (!post) {
 
 if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
 
-// Get featured image URL for OG fallback
-// The image may have src (external) or meta.storageKey (local)
-function getImageUrl(img: unknown): string | undefined {
-	if (!img || typeof img !== "object") return undefined;
-	const image = img as Record<string, unknown>;
-	// Check for direct src
-	if (typeof image.src === "string" && image.src) {
-		return image.src.startsWith("http")
-			? image.src
-			: `${Astro.url.origin}${image.src}`;
-	}
-	// Build from storageKey for local images
-	const meta = image.meta as Record<string, unknown> | undefined;
-	const storageKey =
-		(typeof meta?.storageKey === "string" ? meta.storageKey : undefined) ||
-		(typeof image.id === "string" ? image.id : undefined);
-	if (storageKey) {
-		return `${Astro.url.origin}/_emdash/api/media/file/${storageKey}`;
-	}
-	return undefined;
+// A site migrated from WordPress keeps its own design (layouts/WpShell.astro).
+if ((await loadWpShell()).shell) {
+	return Astro.rewrite(`/wp-shell/posts/${encodeURIComponent(slug)}`);
 }
-const featuredImageUrl = getImageUrl(post.data.featured_image);
+
+// Get featured image URL for OG fallback
+const featuredImageUrl = getFeaturedImageUrl(post.data.featured_image, Astro.url.origin);
 const { siteTitle } = resolveBlogSiteIdentity(await getSiteSettings());
 
 // Generate SEO meta from content

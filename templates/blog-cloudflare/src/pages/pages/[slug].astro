@@ -8,6 +8,7 @@ import {
 import Base from "../../layouts/Base.astro";
 import PageArticle from "../../components/PageArticle.astro";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
+import { loadWpShell } from "../../utils/wp-shell-loader";
 
 const slug = decodeSlug(Astro.params.slug);
 
@@ -22,6 +23,12 @@ if (!page) {
 }
 
 if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
+
+// A site migrated from WordPress keeps its own design (layouts/WpShell.astro).
+if ((await loadWpShell()).shell) {
+	return Astro.rewrite(`/wp-shell/pages/${encodeURIComponent(slug)}`);
+}
+
 const settings = await getSiteSettings();
 const { siteTitle } = resolveBlogSiteIdentity(settings);
 // The homepage renders this page at "/" too, so that copy is the canonical one.

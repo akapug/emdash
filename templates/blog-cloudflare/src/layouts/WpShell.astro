@@ -1,0 +1,158 @@
+---
+/**
+ * The layout of a site migrated from WordPress: the site's own captured
+ * header, footer and stylesheets (a shell record, see ../utils/wp-shell.ts),
+ * with EmDash's content drawn inside WordPress's own content wrapper.
+ *
+ * Used only through the /wp-shell/ route, which the page routes rewrite to
+ * when the site has a record. That route imports this layout and not
+ * Base.astro, so none of Base's global CSS reaches the page: Astro bundles a
+ * route's CSS from everything the route imports, rendered or not.
+ *
+ * What is drawn from EmDash, so an admin edit shows: the title and content
+ * (with visual-editing markers), the menus (through each menu's own markup in
+ * the theme), the site title, tagline and logo. Everything else in the header
+ * and footer is the captured markup, sanitized when it was captured.
+ */
+import type { HTMLTag } from "astro/types";
+import {
+	getMenuWithCacheHint,
+	getSiteSettingsWithCacheHint,
+	type EditProxy,
+	type PortableTextBlock,
+} from "emdash";
+import { EmDashHead, EmDashBodyStart, EmDashBodyEnd, PortableText } from "emdash/ui";
+import { createPublicPageContext } from "emdash/page";
+import "../styles/wp-shell.css";
+import {
+	bodyClassFor,
+	composeWpShell,
+	type WpShell,
+	type WpShellKind,
+	type WpShellMenuItem,
+} from "../utils/wp-shell";
+
+interface Props {
+	shell: WpShell;
+	kind: WpShellKind;
+	/** The path the visitor asked for (before the rewrite). */
+	path: string;
+	title: string;
+	pageTitle?: string | null;
+	description?: string | null;
+	image?: string | null;
+	canonical?: string | null;
+	robots?: string | null;
+	type?: "website" | "article";
+	publishedTime?: string | null;
+	modifiedTime?: string | null;
+	author?: string | null;
+	content?: { collection: string; id: string; slug?: string | null };
+	entry: { title: string; body?: PortableTextBlock[]; edit: EditProxy };
+}
+
+const {
+	shell,
+	kind,
+	path,
+	title,
+	pageTitle,
+	description,
+	image,
+	canonical,
+	robots,
+	type = "website",
+	publishedTime,
+	modifiedTime,
+	author,
+	content,
+	entry,
+} = Astro.props;
+
+const locations = [...new Set(shell.menus.map((m) => m.location))];
+const [settingsResult, ...menuResults] = await Promise.all([
+	getSiteSettingsWithCacheHint(),
+	...locations.map((location) => getMenuWithCacheHint(location)),
+]);
+if (Astro.cache?.enabled) {
+	Astro.cache.set(settingsResult.cacheHint);
+	for (const m of menuResults) Astro.cache.set(m.cacheHint);
+}
+const settings = settingsResult.data;
+const menus = new Map<string, readonly WpShellMenuItem[] | null>(
+	locations.map((location, i) => [location, menuResults[i]?.data?.items ?? null]),
+);
+
+const siteTitle = settings.title ?? shell.parts.flatMap((p) => ("slot" in p && p.slot === "siteTitle" ? [p.fallback] : []))[0] ?? "";
+const titleIncludesSiteName =
+	!siteTitle ||
+	title === siteTitle ||
+	title.endsWith(` | ${siteTitle}`) ||
+	title.endsWith(` — ${siteTitle}`);
+const fullTitle = titleIncludesSiteName ? title : `${title} — ${siteTitle}`;
+
+const pieces = composeWpShell(shell, {
+	siteTitle: settings.title,
+	tagline: settings.tagline,
+	logoUrl: settings.logo?.url,
+	menuItems: (location) => menus.get(location),
+	currentPath: path,
+});
+
+const pageCtx = createPublicPageContext({
+	url: new URL(path + Astro.url.search, Astro.url.origin),
+	locale: Astro.currentLocale,
+	kind: content ? "content" : "custom",
+	pageType: type,
+	title: fullTitle,
+	pageTitle: pageTitle ?? title,
+	description,
+	canonical,
+	image,
+	content,
+	seo: { ogImage: image, robots },
+	articleMeta: { publishedTime, modifiedTime, author },
+	siteName: siteTitle,
+});
+---
+
+<!doctype html>
+<html
+	lang={shell.html.lang ?? "en"}
+	class={shell.html.class || undefined}
+	data-wp-shell={shell.id}
+>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>{fullTitle}</title>
+		{shell.styles.map((href) => <link rel="stylesheet" href={href} />)}
+		<EmDashHead page={pageCtx} />
+	</head>
+	<body class={bodyClassFor(shell, kind)}>
+		<EmDashBodyStart page={pageCtx} />
+		{
+			pieces.map((piece) => {
+				if ("html" in piece) return <Fragment set:html={piece.html} />;
+				if ("title" in piece) {
+					const Title = piece.title.tag as HTMLTag;
+					return (
+						<Title class={piece.title.class} id={piece.title.id} {...entry.edit.title}>
+							{entry.title}
+						</Title>
+					);
+				}
+				const Content = piece.content.tag as HTMLTag;
+				return (
+					<Fragment>
+						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
+							<PortableText value={entry.body} />
+						</Content>
+						<slot />
+					</Fragment>
+				);
+			})
+		}
+		<EmDashBodyEnd page={pageCtx} />
+	</body>
+</html>

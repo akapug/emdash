@@ -13,6 +13,7 @@ import PageArticle from "../components/PageArticle.astro";
 import PostCard from "../components/PostCard.astro";
 import { getReadingTime } from "../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../utils/site-identity";
+import { loadWpShell } from "../utils/wp-shell-loader";
 
 // Limit to what we render (1 featured + 6 grid). The DB does the slicing
 // instead of fetching every post and discarding the tail in JS.
@@ -24,6 +25,12 @@ const [homepage, settings] = await Promise.all([
 ]);
 const { siteTitle, siteTagline } = resolveBlogSiteIdentity(settings);
 const page = homepage.entry;
+
+// A site migrated from WordPress keeps its own design (layouts/WpShell.astro)
+// for its homepage. The latest-posts listing keeps this template's.
+if (page && (await loadWpShell()).shell) {
+	return Astro.rewrite("/wp-shell/home");
+}
 
 const postsResult = page
 	? null
