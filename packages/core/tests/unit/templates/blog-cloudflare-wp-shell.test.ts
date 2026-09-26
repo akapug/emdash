@@ -3,16 +3,23 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	bodyClassFor,
 	composeWpShell,
+	formatWpDate,
 	isCurrent,
 	layoutFor,
+	listingExcerpt,
+	ownImagePath,
 	parseWpShell,
 	parseWpShellCached,
+	plainText,
+	renderListing,
 	renderMenu,
 	safeHref,
 	wpShellProblem,
 	wpShellRoute,
 	type WpShell,
+	type WpShellListing,
 	type WpShellMenu,
+	type WpShellPost,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
 import writerRecords from "./wp-shell-writer-records.json";
 
@@ -398,6 +405,209 @@ describe("wp-shell: the chrome that prints the title, and the front page's own l
 			'<li class="menu-item current-menu-item current_page_item active"><a href="/">Home</a></li>',
 		);
 	});
+});
+
+/** Franz Josef's highlights: one item's markup as Embark's writer cuts it. */
+function listingOf(): WpShellListing {
+	return {
+		count: 3,
+		item: [
+			'<div class="',
+			{ s: "cls" },
+			'"><div class="item clearfix post hentry">',
+			{ s: "thumb" },
+			'<h3 class="item-title"><a href="',
+			{ s: "href" },
+			'">',
+			{ s: "title" },
+			'</a></h3><div class="excerpt"><p>',
+			{ s: "excerpt" },
+			'</p></div><p class="date"><a href="',
+			{ s: "href" },
+			'">',
+			{ s: "date" },
+			'</a></p><p class="comments-count"><a href="',
+			{ s: "href" },
+			'#respond">Leave a reply</a></p></div></div>',
+		],
+		thumb: [
+			'<a href="',
+			{ s: "href" },
+			'"><img alt="" src="',
+			{ s: "src" },
+			'" class="attachment-medium wp-post-image"></a>',
+		],
+		classes: ["item-wrap col-md-12", "item-wrap col-md-3 col-sm-6"],
+		date: "F j, Y",
+		utcOffset: -480,
+		excerpt: { words: 5, more: " [\u2026]" },
+	};
+}
+
+/** The sample's front page, with the latest posts listed below its content. */
+function withListing(listing: WpShellListing = listingOf()): WpShell {
+	const s = sample();
+	const home = homeOf();
+	return {
+		...s,
+		listings: [listing],
+		home: {
+			...home,
+			parts: [
+				...home.parts.slice(0, -1),
+				{ html: '<div class="row items-container">' },
+				{ slot: "listing", listing: 0 },
+				{ html: "</div><footer></footer>" },
+			],
+		},
+	};
+}
+
+const POSTS: WpShellPost[] = [
+	{
+		title: "Tom & Jerry's <b>news</b>",
+		url: "/posts/news",
+		excerpt: "",
+		text: "One two three four five six seven",
+		// 05:00 UTC on 12 July is 21:00 on 11 July in UTC-8
+		date: new Date("2023-07-12T05:00:00Z"),
+		image: "/_emdash/api/media/file/01ABC.png",
+	},
+	{
+		title: "Second",
+		url: "/posts/second",
+		excerpt: "Its own <excerpt>.",
+		date: new Date("2022-12-18T20:00:00Z"),
+		image: "https://elsewhere.example/p.png",
+	},
+	{ title: "Third", url: "/posts/third", text: "Short.", date: null },
+	{ title: "Fourth, past the count", url: "/posts/fourth" },
+];
+
+describe("wp-shell: the front page's listing of the latest posts", () => {
+	it("draws each post in the theme's markup for one item, its text escaped", () => {
+		const html = renderListing(listingOf(), POSTS);
+		const item = (cls: string, body: string) =>
+			`<div class="${cls}"><div class="item clearfix post hentry">${body}</div></div>`;
+		const text = (href: string, title: string, excerpt: string, date: string) =>
+			`<h3 class="item-title"><a href="${href}">${title}</a></h3><div class="excerpt"><p>${excerpt}</p></div>` +
+			`<p class="date"><a href="${href}">${date}</a></p><p class="comments-count"><a href="${href}#respond">Leave a reply</a></p>`;
+		expect(html).toBe(
+			[
+				// the first item's own class; the day WordPress printed, in the site's zone; an excerpt
+				// made from the content, cut as WordPress cuts one; the site's own image
+				item(
+					"item-wrap col-md-12",
+					'<a href="/posts/news"><img alt="" src="/_emdash/api/media/file/01ABC.png" class="attachment-medium wp-post-image"></a>' +
+						text(
+							"/posts/news",
+							"Tom &amp; Jerry's &lt;b&gt;news&lt;/b&gt;",
+							"One two three four five [\u2026]",
+							"July 11, 2023",
+						),
+				),
+				// its own excerpt, escaped; an image from elsewhere is not drawn, nor its link
+				item(
+					"item-wrap col-md-3 col-sm-6",
+					text("/posts/second", "Second", "Its own &lt;excerpt&gt;.", "December 18, 2022"),
+				),
+				// no date: none printed
+				item("item-wrap col-md-3 col-sm-6", text("/posts/third", "Third", "Short.", "")),
+				// and only as many as WordPress listed
+			].join(""),
+		);
+	});
+
+	it("draws the listing where the front page's layout has it, from the posts it is given", () => {
+		const shell = withListing();
+		expect(wpShellProblem(shell)).toBeNull();
+		const pieces = composeWpShell(shell, {
+			menuItems: () => null,
+			currentPath: "/",
+			kind: "home",
+			posts: POSTS,
+		});
+		const html = pieces.flatMap((p) => ("html" in p ? [p.html] : [])).join("");
+		expect(html).toContain('<div class="row items-container"><div class="item-wrap col-md-12">');
+		expect(html.match(/class="item-title"/g)).toHaveLength(3);
+		// no posts, no items
+		const none = composeWpShell(shell, { menuItems: () => null, currentPath: "/", kind: "home" });
+		expect(none.flatMap((p) => ("html" in p ? [p.html] : [])).join("")).toContain(
+			'<div class="row items-container"></div>',
+		);
+	});
+
+	it("prints a date with WordPress's date letters, in the site's zone", () => {
+		const d = new Date("2024-03-01T06:30:00Z");
+		expect(formatWpDate(d, "F j, Y")).toBe("March 1, 2024");
+		expect(formatWpDate(d, "M jS, Y")).toBe("Mar 1st, 2024");
+		expect(formatWpDate(d, "Y-m-d", { utcOffset: -480 })).toBe("2024-02-29");
+		expect(formatWpDate(d, "d/m/Y", { timeZone: "America/Los_Angeles" })).toBe("29/02/2024");
+		expect(formatWpDate(d, "j F Y", { timeZone: "Not/AZone" })).toBe("1 March 2024");
+	});
+
+	it("reads a post's text, excerpt and image as the listing draws them", () => {
+		expect(
+			plainText([
+				{ _type: "block", children: [{ text: "One " }, { text: "two" }] },
+				{ _type: "image" },
+				{ _type: "block", children: [{ text: "three" }] },
+			]),
+		).toBe("One two three");
+		expect(
+			listingExcerpt({ title: "", url: "", text: "a b c" }, { words: 2, more: "\u2026" }),
+		).toBe("a b\u2026");
+		expect(listingExcerpt({ title: "", url: "", text: "a b" }, { words: 2, more: "\u2026" })).toBe(
+			"a b",
+		);
+		expect(ownImagePath("/_emdash/api/media/file/a.png")).toBe("/_emdash/api/media/file/a.png");
+		expect(ownImagePath({ provider: "local", id: "x", src: "/_emdash/api/media/file/b.jpg" })).toBe(
+			"/_emdash/api/media/file/b.jpg",
+		);
+		expect(ownImagePath({ id: "x", meta: { storageKey: "c.webp" } })).toBe(
+			"/_emdash/api/media/file/c.webp",
+		);
+		for (const bad of [
+			{ provider: "external", src: "https://example.org/p.png" },
+			"/_emdash/api/media/file/../../x.png",
+			'/_emdash/api/media/file/a.png" onerror="x',
+			null,
+		])
+			expect(ownImagePath(bad)).toBeNull();
+	});
+
+	/** The listing with one field replaced. */
+	const listingWith = (patch: Record<string, unknown>) =>
+		withListing({ ...listingOf(), ...patch } as WpShellListing);
+	const refused: Array<[string, WpShell]> = [
+		["a listing slot that names no listing", { ...withListing(), listings: [] }],
+		["a count past fifty", listingWith({ count: 51 })],
+		["an unknown hole", listingWith({ item: ["<div>", { s: "label" }, "</div>"] })],
+		[
+			"a title hole inside an attribute",
+			listingWith({ item: ['<a title="', { s: "title" }, '">x</a>'] }),
+		],
+		["an href hole outside an href", listingWith({ item: ["<p>", { s: "href" }, "</p>"] })],
+		["a src hole in the item itself", listingWith({ item: ['<img src="', { s: "src" }, '">'] })],
+		["a class that is not tokens", listingWith({ classes: ['a" onclick="x'] })],
+		["no classes", listingWith({ classes: [] })],
+		["a date format with other letters", listingWith({ date: "<b>F</b>" })],
+		["a time zone that is not one", listingWith({ timeZone: "../etc" })],
+		["an offset past a day", listingWith({ utcOffset: 900 })],
+		[
+			"a thumbnail that loads from elsewhere",
+			listingWith({ thumb: ['<img src="https://tracker.example/p.gif">'] }),
+		],
+		[
+			"executable markup in the item",
+			listingWith({ item: ['<div onclick="x">', { s: "title" }, "</div>"] }),
+		],
+	];
+	for (const [what, record] of refused) {
+		it(`refuses ${what}`, () => {
+			expect(wpShellProblem(record)).not.toBeNull();
+		});
+	}
 });
 
 describe("wp-shell route", () => {

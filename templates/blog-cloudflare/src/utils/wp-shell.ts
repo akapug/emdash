@@ -73,7 +73,9 @@ export type WpShellPart =
 	| { slot: "logo"; src: string; alt?: string; class?: string; width?: number; height?: number }
 	| { slot: "menu"; menu: number }
 	/** The entry's title as text, where the chrome prints it: a breadcrumb trail's last crumb. */
-	| { slot: "titleText" };
+	| { slot: "titleText" }
+	/** The site's latest posts, where the front page lists them: the record's `listings[listing]`. */
+	| { slot: "listing"; listing: number };
 
 /** A piece of a menu item template: captured markup, or a hole this file fills. */
 export type WpShellTemplatePart = string | { s: "cls" | "href" | "label" | "children" };
@@ -93,6 +95,33 @@ export interface WpShellMenu {
 	current?: string;
 }
 
+/** A hole in a listing item's markup, filled for each post here. */
+export type WpShellListingHole = "cls" | "href" | "title" | "excerpt" | "date" | "thumb" | "src";
+export type WpShellListingPart = string | { s: WpShellListingHole };
+
+/**
+ * The site's latest posts, drawn where the front page listed them, in the
+ * theme's own markup for one item. The title, excerpt and date are text, and
+ * escaped here; the link is the post's, and a thumbnail is drawn only for a
+ * post whose featured image is one of the site's own files.
+ */
+export interface WpShellListing {
+	/** How many posts WordPress showed. */
+	count: number;
+	item: WpShellListingPart[];
+	/** The thumbnail, drawn at the item's `thumb` hole, with a `src` hole. */
+	thumb?: WpShellListingPart[];
+	/** The item's class at each position; the last holds for the rest. */
+	classes: string[];
+	/** How an item prints its date, in PHP date() letters (`F j, Y`). */
+	date?: string;
+	/** The site's time zone: an IANA name, or a fixed offset from UTC in minutes. */
+	timeZone?: string;
+	utcOffset?: number;
+	/** An excerpt made from a post's content: its words, and what ends one that was cut. */
+	excerpt: { words: number; more: string };
+}
+
 /** One layout of the site: the body classes, stylesheets and parts a page is drawn with. */
 export interface WpShellLayout {
 	body: { class: string };
@@ -108,6 +137,8 @@ export interface WpShell extends WpShellLayout {
 	source: { url: string; capturedAt: string };
 	html: { lang?: string; class: string };
 	menus: WpShellMenu[];
+	/** The listings the layouts' `listing` slots draw. */
+	listings?: WpShellListing[];
 	/**
 	 * The front page's own layout, when it wears one (a theme's full-width
 	 * front page): the home is drawn from it instead of the record's own body,
@@ -305,6 +336,27 @@ const HOLE_FILL: Record<string, string> = {
 /** Every layout a record draws pages with. */
 const layoutsOf = (s: WpShell): WpShellLayout[] => (s.home ? [s, s.home] : [s]);
 
+/**
+ * A listing's holes filled for the check: its links and image with values the
+ * tripwire reads as the site's, its text holes with markup that only fits
+ * between tags, and its thumbnail with the thumbnail's own markup.
+ */
+const LISTING_FILL: Record<WpShellListingHole, string> = {
+	cls: "",
+	href: "#",
+	src: "/_emdash/api/media/file/a.png",
+	title: "<b></b>",
+	excerpt: "<b></b>",
+	date: "<b></b>",
+	thumb: "<b></b>",
+};
+
+function fillForCheck(t: WpShellListingPart[], thumb: string): string {
+	return t
+		.map((x) => (typeof x === "string" ? x : x.s === "thumb" ? thumb : LISTING_FILL[x.s]))
+		.join("");
+}
+
 /** Every markup string the layout draws, each as the tripwire must read it. */
 function drawnMarkup(s: WpShell): string[] {
 	const out: string[] = [];
@@ -313,6 +365,10 @@ function drawnMarkup(s: WpShell): string[] {
 		out.push(m.fallback);
 		for (const t of [m.leaf, m.parent])
 			out.push(t.map((x) => (typeof x === "string" ? x : HOLE_FILL[x.s])).join(""));
+	}
+	for (const l of s.listings ?? []) {
+		const thumb = l.thumb ? fillForCheck(l.thumb, "") : "";
+		out.push(fillForCheck(l.item, thumb), fillForCheck(l.item, ""));
 	}
 	return out;
 }
@@ -334,7 +390,7 @@ function checkElement(p: Record<string, unknown>): boolean {
 const isIndex = (v: unknown, below: number): boolean =>
 	typeof v === "number" && Number.isInteger(v) && v >= 0 && v < below;
 
-function checkPart(p: unknown, menus: number): string | null {
+function checkPart(p: unknown, menus: number, listings: number): string | null {
 	if (!isObject(p)) return "a part is not an object";
 	if ("html" in p) return typeof p.html === "string" ? null : "an html part is not a string";
 	switch (p.slot) {
@@ -357,6 +413,8 @@ function checkPart(p: unknown, menus: number): string | null {
 			return isIndex(p.menu, menus) ? null : "a menu slot names no menu";
 		case "titleText":
 			return null;
+		case "listing":
+			return isIndex(p.listing, listings) ? null : "a listing slot names no listing";
 		default:
 			return `unknown slot ${JSON.stringify(p.slot)}`;
 	}
@@ -400,6 +458,69 @@ function checkMenu(m: unknown): string | null {
 	return null;
 }
 
+const ITEM_HOLES = new Set(["cls", "href", "title", "excerpt", "date", "thumb"]);
+const THUMB_HOLES = new Set(["href", "src"]);
+/** What each attribute hole is filled inside, and only there. */
+const IN_ATTRIBUTE: Record<string, string> = { cls: 'class="', href: 'href="', src: 'src="' };
+const DATE_FORMAT = /^[FMjdmnYS ,./-]{1,20}$/;
+const TIME_ZONE = /^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+){1,2}$/;
+const MAX_LISTED = 50;
+
+/** A listing template: markup and holes of `allowed` kinds, each attribute hole inside its attribute. */
+function checkListingTemplate(t: unknown, allowed: ReadonlySet<string>): boolean {
+	return (
+		Array.isArray(t) &&
+		t.every((x, i) => {
+			if (typeof x === "string") return true;
+			if (!isObject(x) || typeof x.s !== "string" || !allowed.has(x.s)) return false;
+			const attribute = IN_ATTRIBUTE[x.s];
+			const before = t[i - 1];
+			return attribute === undefined || (typeof before === "string" && before.endsWith(attribute));
+		})
+	);
+}
+
+function checkListing(l: unknown): string | null {
+	if (!isObject(l)) return "a listing is not an object";
+	if (
+		typeof l.count !== "number" ||
+		!Number.isInteger(l.count) ||
+		l.count < 1 ||
+		l.count > MAX_LISTED
+	)
+		return "a listing's count is not a count";
+	if (!checkListingTemplate(l.item, ITEM_HOLES)) return "a listing's item template is malformed";
+	if (l.thumb !== undefined && !checkListingTemplate(l.thumb, THUMB_HOLES))
+		return "a listing's thumbnail template is malformed";
+	const { classes, date, timeZone, utcOffset, excerpt } = l;
+	if (
+		!Array.isArray(classes) ||
+		classes.length === 0 ||
+		!classes.every((c) => typeof c === "string" && TOKENS.test(c))
+	)
+		return "a listing's classes are not tokens";
+	if (date !== undefined && (typeof date !== "string" || !DATE_FORMAT.test(date)))
+		return "a listing's date format is not one";
+	if (timeZone !== undefined && (typeof timeZone !== "string" || !TIME_ZONE.test(timeZone)))
+		return "a listing's time zone is not one";
+	if (
+		utcOffset !== undefined &&
+		(typeof utcOffset !== "number" || !Number.isInteger(utcOffset) || Math.abs(utcOffset) > 840)
+	)
+		return "a listing's offset from UTC is not one";
+	if (
+		!isObject(excerpt) ||
+		typeof excerpt.words !== "number" ||
+		!Number.isInteger(excerpt.words) ||
+		excerpt.words < 1 ||
+		excerpt.words > 1000 ||
+		typeof excerpt.more !== "string" ||
+		excerpt.more.length > 20
+	)
+		return "a listing's excerpt rule is not one";
+	return null;
+}
+
 /** Every markup string a record carries. */
 function markupOf(s: WpShell): string[] {
 	const out: string[] = [];
@@ -408,6 +529,8 @@ function markupOf(s: WpShell): string[] {
 		out.push(m.fallback);
 		for (const x of [...m.leaf, ...m.parent]) if (typeof x === "string") out.push(x);
 	}
+	for (const l of s.listings ?? [])
+		for (const x of [...l.item, ...(l.thumb ?? [])]) if (typeof x === "string") out.push(x);
 	return out;
 }
 
@@ -415,7 +538,7 @@ const countSlot = (parts: unknown[], slot: string) =>
 	parts.filter((p) => isObject(p) && p.slot === slot).length;
 
 /** Why a layout's body, stylesheets or parts are not ones this template draws, or null. */
-function checkLayout(l: Record<string, unknown>, menus: number): string | null {
+function checkLayout(l: Record<string, unknown>, menus: number, listings: number): string | null {
 	const { body, styles, parts } = l;
 	if (!isObject(body) || typeof body.class !== "string" || !TOKENS.test(body.class)) {
 		return "body class is not tokens";
@@ -425,7 +548,7 @@ function checkLayout(l: Record<string, unknown>, menus: number): string | null {
 	}
 	if (!Array.isArray(parts)) return "no parts";
 	for (const p of parts) {
-		const why = checkPart(p, menus);
+		const why = checkPart(p, menus, listings);
 		if (why) return why;
 	}
 	if (countSlot(parts, "title") !== 1 || countSlot(parts, "content") !== 1) {
@@ -453,10 +576,18 @@ export function wpShellProblem(value: unknown): string | null {
 		const why = checkMenu(m);
 		if (why) return why;
 	}
-	const layout = checkLayout({ body, styles, parts }, menus.length);
+	const { listings = [] } = value;
+	if (!Array.isArray(listings)) return "the listings are not a list";
+	for (const l of listings) {
+		const why = checkListing(l);
+		if (why) return why;
+	}
+	const layout = checkLayout({ body, styles, parts }, menus.length, listings.length);
 	if (layout) return layout;
 	if (value.home !== undefined) {
-		const why = isObject(value.home) ? checkLayout(value.home, menus.length) : "not an object";
+		const why = isObject(value.home)
+			? checkLayout(value.home, menus.length, listings.length)
+			: "not an object";
 		if (why) return `the home layout: ${why}`;
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
@@ -595,6 +726,163 @@ export function renderMenu(
 	return draw(items);
 }
 
+// --- a listing ----------------------------------------------------------------
+
+/** One post a listing draws, as layouts/WpShell.astro reads it from EmDash. */
+export interface WpShellPost {
+	title: string;
+	/** The post's path on the site. */
+	url: string;
+	/** The post's own excerpt; with none, one is made from `text`. */
+	excerpt?: string | null;
+	/** The post's content as plain text. */
+	text?: string | null;
+	date?: Date | null;
+	/** The featured image's path, when it is one of the site's own files. */
+	image?: string | null;
+}
+
+const WORDS = /\s+/;
+
+/** The post's excerpt as WordPress prints one: its own, or its first words and the more marker. */
+export function listingExcerpt(post: WpShellPost, rule: WpShellListing["excerpt"]): string {
+	const own = (post.excerpt ?? "").trim();
+	if (own) return own;
+	const words = (post.text ?? "").split(WORDS).filter(Boolean);
+	return words.length > rule.words
+		? `${words.slice(0, rule.words).join(" ")}${rule.more}`
+		: words.join(" ");
+}
+
+const MONTH_NAMES = [
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December",
+];
+
+const ordinal = (d: number) =>
+	d % 10 === 1 && d !== 11
+		? "st"
+		: d % 10 === 2 && d !== 12
+			? "nd"
+			: d % 10 === 3 && d !== 13
+				? "rd"
+				: "th";
+
+/** The calendar day `date` falls on in the site's time zone (UTC when it has none, or an unknown one). */
+function dayIn(
+	date: Date,
+	zone: { timeZone?: string; utcOffset?: number },
+): { y: number; m: number; d: number } {
+	if (zone.timeZone) {
+		try {
+			const parts = new Intl.DateTimeFormat("en-US", {
+				timeZone: zone.timeZone,
+				year: "numeric",
+				month: "numeric",
+				day: "numeric",
+			}).formatToParts(date);
+			const part = (type: string) => Number(parts.find((x) => x.type === type)?.value);
+			return { y: part("year"), m: part("month"), d: part("day") };
+		} catch {
+			// An unknown zone: UTC, below.
+		}
+	}
+	const t = new Date(date.getTime() + (zone.utcOffset ?? 0) * 60_000);
+	return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
+}
+
+/** A date as PHP's date() prints it with `format`'s letters (F M j d m n Y S); anything else is literal. */
+export function formatWpDate(
+	date: Date,
+	format: string,
+	zone: { timeZone?: string; utcOffset?: number } = {},
+): string {
+	const { y, m, d } = dayIn(date, zone);
+	const letters: Record<string, string> = {
+		F: MONTH_NAMES[m - 1] ?? "",
+		M: (MONTH_NAMES[m - 1] ?? "").slice(0, 3),
+		j: String(d),
+		d: String(d).padStart(2, "0"),
+		n: String(m),
+		m: String(m).padStart(2, "0"),
+		Y: String(y),
+		S: ordinal(d),
+	};
+	return Array.from(format, (ch) => letters[ch] ?? ch).join("");
+}
+
+function fillListing(
+	t: readonly WpShellListingPart[],
+	listing: WpShellListing,
+	post: WpShellPost,
+	at: number,
+): string {
+	let out = "";
+	for (const x of t) {
+		if (typeof x === "string") {
+			out += x;
+			continue;
+		}
+		if (x.s === "cls")
+			out += escapeAttr(listing.classes[Math.min(at, listing.classes.length - 1)] ?? "");
+		else if (x.s === "href") out += escapeAttr(safeHref(post.url));
+		else if (x.s === "title") out += escapeHtml(post.title);
+		else if (x.s === "excerpt") out += escapeHtml(listingExcerpt(post, listing.excerpt));
+		else if (x.s === "date")
+			out +=
+				post.date && listing.date ? escapeHtml(formatWpDate(post.date, listing.date, listing)) : "";
+		else if (x.s === "src") out += escapeAttr(post.image ?? "");
+		// The thumbnail only for an image that is one of the site's own files.
+		else if (listing.thumb && post.image && ownFile(post.image) && MEDIA_SRC.test(post.image))
+			out += fillListing(listing.thumb, listing, post, at);
+	}
+	return out;
+}
+
+/** A listing's items: as many of `posts` as WordPress listed, each in the theme's markup. */
+export function renderListing(listing: WpShellListing, posts: readonly WpShellPost[]): string {
+	return posts
+		.slice(0, listing.count)
+		.map((post, i) => fillListing(listing.item, listing, post, i))
+		.join("");
+}
+
+const isText = (v: unknown): v is string => typeof v === "string";
+
+/** Portable Text as plain text: each text block's spans, a space between blocks. */
+export function plainText(blocks: unknown): string {
+	if (!Array.isArray(blocks)) return "";
+	return blocks
+		.flatMap((b) =>
+			isObject(b) && b._type === "block" && Array.isArray(b.children)
+				? [b.children.map((c) => (isObject(c) && isText(c.text) ? c.text : "")).join("")]
+				: [],
+		)
+		.join(" ");
+}
+
+/** A featured image's path, when it is one of the site's own files: a bare path, or a media value's. */
+export function ownImagePath(image: unknown): string | null {
+	const path = isText(image)
+		? image
+		: isObject(image) && isText(image.src)
+			? image.src
+			: isObject(image) && isObject(image.meta) && isText(image.meta.storageKey)
+				? `${MEDIA_PATH}${image.meta.storageKey}`
+				: null;
+	return path && ownFile(path) && MEDIA_SRC.test(path) ? path : null;
+}
+
 /** What the layout draws: markup, or the element that holds the title or the content. */
 export type WpShellPiece =
 	| { html: string }
@@ -616,6 +904,8 @@ export interface WpShellFill {
 	kind?: WpShellKind;
 	/** The entry's title, for the chrome that prints it as text (titleText). */
 	title?: string;
+	/** The site's latest posts, newest first, for a listing slot. */
+	posts?: readonly WpShellPost[] | null;
 }
 
 /** The layout a kind of page is drawn with. */
@@ -663,7 +953,10 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		else if (p.slot === "siteTitle") push(escapeHtml(fill.siteTitle ?? p.fallback));
 		else if (p.slot === "tagline") push(escapeHtml(fill.tagline ?? p.fallback));
 		else if (p.slot === "logo") push(logoHtml(p, fill.logoUrl));
-		else {
+		else if (p.slot === "listing") {
+			const listing = shell.listings?.[p.listing];
+			if (listing) push(renderListing(listing, fill.posts ?? []));
+		} else {
 			const menu = shell.menus[p.menu];
 			push(renderMenu(menu, fill.menuItems(menu.location), fill.currentPath));
 		}
