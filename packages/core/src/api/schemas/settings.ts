@@ -25,6 +25,11 @@ const socialSettings = z.object({
 	youtube: z.string().optional(),
 });
 
+const homepageReference = z.object({
+	collection: z.string().min(1),
+	id: z.string().min(1),
+});
+
 const seoSettingsInput = z.object({
 	titleSeparator: z.string().max(10).optional(),
 	defaultOgImage: mediaReferenceInput.nullable().optional(),
@@ -40,6 +45,7 @@ export const settingsUpdateBody = z
 		logo: mediaReferenceInput.nullable().optional(),
 		favicon: mediaReferenceInput.nullable().optional(),
 		url: z.union([httpUrl, z.literal("")]).optional(),
+		homepage: homepageReference.nullable().optional(),
 		postsPerPage: z.number().int().min(1).max(100).optional(),
 		dateFormat: z.string().optional(),
 		timezone: z.string().optional(),
@@ -86,6 +92,7 @@ export const siteSettingsSchema = z
 		logo: mediaReferenceResponse.optional(),
 		favicon: mediaReferenceResponse.optional(),
 		url: z.string().optional(),
+		homepage: homepageReference.optional(),
 		postsPerPage: z.number().int().optional(),
 		dateFormat: z.string().optional(),
 		timezone: z.string().optional(),

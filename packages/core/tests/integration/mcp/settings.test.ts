@@ -13,7 +13,9 @@ import type { Kysely } from "kysely";
 import { ulid } from "ulidx";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { handleContentCreate } from "../../../src/api/handlers/content.js";
 import type { Database } from "../../../src/database/types.js";
+import { SchemaRegistry } from "../../../src/schema/registry.js";
 import {
 	connectMcpHarness,
 	extractJson,
@@ -32,6 +34,7 @@ interface SiteSettingsResponse {
 	logo?: { mediaId: string; alt?: string; url?: string };
 	favicon?: { mediaId: string; alt?: string; url?: string };
 	url?: string;
+	homepage?: { collection: string; id: string };
 	postsPerPage?: number;
 	dateFormat?: string;
 	timezone?: string;
@@ -292,6 +295,40 @@ describe("settings_update", () => {
 			arguments: { postsPerPage: 9999 },
 		});
 		expect(result.isError).toBe(true);
+	});
+
+	it("sets the homepage to an existing entry and clears it with null", async () => {
+		await new SchemaRegistry(db).createCollection({
+			slug: "pages",
+			label: "Pages",
+			labelSingular: "Page",
+		});
+		const page = await handleContentCreate(db, "pages", { data: {}, slug: "welcome" });
+		if (!page.success) throw new Error("Page setup failed");
+		harness = await connectMcpHarness({ db, userId: ADMIN_ID, userRole: Role.ADMIN });
+
+		const set = await harness.client.callTool({
+			name: "settings_update",
+			arguments: { homepage: { collection: "pages", id: page.data.item.id } },
+		});
+		expect(set.isError, extractText(set)).toBeFalsy();
+		expect(extractJson<SiteSettingsResponse>(set).homepage).toEqual({
+			collection: "pages",
+			id: page.data.item.id,
+		});
+
+		const missing = await harness.client.callTool({
+			name: "settings_update",
+			arguments: { homepage: { collection: "pages", id: "01MISSINGENTRY" } },
+		});
+		expect(missing.isError).toBe(true);
+
+		const cleared = await harness.client.callTool({
+			name: "settings_update",
+			arguments: { homepage: null },
+		});
+		expect(cleared.isError, extractText(cleared)).toBeFalsy();
+		expect(extractJson<SiteSettingsResponse>(cleared).homepage).toBeUndefined();
 	});
 
 	it("accepts nested seo and social objects", async () => {

@@ -4,9 +4,15 @@
 
 import type { Kysely } from "kysely";
 
+import { ContentRepository } from "../../database/repositories/content.js";
 import type { Database } from "../../database/types.js";
-import { getSiteSettingsWithDb, setSiteSettings } from "../../settings/index.js";
-import type { SiteSettings, SiteSettingsUpdate } from "../../settings/types.js";
+import { SchemaRegistry } from "../../schema/registry.js";
+import {
+	getSiteSettingWithDb,
+	getSiteSettingsWithDb,
+	setSiteSettings,
+} from "../../settings/index.js";
+import type { HomepageReference, SiteSettings, SiteSettingsUpdate } from "../../settings/types.js";
 import type { Storage } from "../../storage/types.js";
 import type { ApiResult } from "../types.js";
 
@@ -29,6 +35,28 @@ export async function handleSettingsGet(
 }
 
 /**
+ * Resolve a homepage reference to the translation group of a live entry, so
+ * the stored reference names the entry in every locale. `id` may be the id of
+ * any translation or the group itself; `null` means no such entry exists.
+ *
+ * The stored reference passes unchanged: a client that saves the settings it
+ * read must not be refused because the homepage entry was deleted since.
+ */
+async function resolveHomepageReference(
+	db: Kysely<Database>,
+	{ collection, id }: HomepageReference,
+): Promise<HomepageReference | null> {
+	const stored = await getSiteSettingWithDb("homepage", db);
+	if (stored?.collection === collection && stored.id === id) return stored;
+	if (!(await new SchemaRegistry(db).getCollection(collection))) return null;
+	const content = new ContentRepository(db);
+	const entry = await content.findById(collection, id);
+	if (entry) return { collection, id: entry.translationGroup ?? entry.id };
+	const translations = await content.findTranslationIds(collection, id);
+	return translations.length > 0 ? { collection, id } : null;
+}
+
+/**
  * Update site settings
  */
 export async function handleSettingsUpdate(
@@ -37,7 +65,21 @@ export async function handleSettingsUpdate(
 	input: SiteSettingsUpdate,
 ): Promise<ApiResult<Partial<SiteSettings>>> {
 	try {
-		await setSiteSettings(input, db);
+		let update = input;
+		if (input.homepage) {
+			const homepage = await resolveHomepageReference(db, input.homepage);
+			if (!homepage) {
+				return {
+					success: false,
+					error: {
+						code: "VALIDATION_ERROR",
+						message: `Homepage entry not found: ${input.homepage.collection}/${input.homepage.id}`,
+					},
+				};
+			}
+			update = { ...input, homepage };
+		}
+		await setSiteSettings(update, db);
 		const updatedSettings = await getSiteSettingsWithDb(db, storage);
 		return { success: true, data: updatedSettings };
 	} catch {
