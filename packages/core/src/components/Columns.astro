@@ -4,9 +4,7 @@
  *
  * Renders multi-column layouts from WordPress imports.
  */
-import { PortableText } from "astro-portabletext";
-
-import { emdashMarkComponents } from "./marks.js";
+import { nestedRenderOf } from "./portable-text-nested.js";
 
 export interface Props {
 	node: {
@@ -27,6 +25,13 @@ const columns = node?.columns ?? [];
 if (!columns.length) {
 	return null;
 }
+
+// Each column is drawn with EmDash's own PortableText and the components the
+// page drew this block with (portable-text-nested.ts), so an image, a gallery,
+// an embed or a nested columns block in a column renders. Imported when drawn:
+// PortableText.astro imports index.ts, which imports this component.
+const { default: PortableText } = await import("./PortableText.astro");
+const nested = nestedRenderOf(node);
 ---
 
 <div class="emdash-columns" style={`--column-count: ${columns.length}`}>
@@ -36,7 +41,7 @@ if (!columns.length) {
 				class="emdash-column"
 				style={column.width ? `flex-basis: ${column.width}` : undefined}
 			>
-				<PortableText value={column.content} components={{ mark: emdashMarkComponents }} />
+				<PortableText value={column.content} {...nested} />
 			</div>
 		))
 	}

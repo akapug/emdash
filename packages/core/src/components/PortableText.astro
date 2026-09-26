@@ -27,6 +27,7 @@ import { pluginBlockComponents } from "virtual:emdash/block-components";
 import { emdashComponents } from "./index.js";
 import InlineEditor from "./InlineEditor.astro";
 import { groupBlockquoteRuns } from "./portable-text-blockquote-group.js";
+import { recordNestedRender } from "./portable-text-nested.js";
 
 export interface Props extends Omit<PortableTextProps, "value"> {
 	value: PortableTextProps["value"];
@@ -62,6 +63,10 @@ if (!editMeta) {
 		grouped as Array<Record<string, unknown>>,
 		listNestingMode,
 	) as typeof value;
+	// A column's content, and a cover's, is drawn with these same components
+	// (portable-text-nested.ts): an image, an embed or a nested columns block
+	// inside it renders, and an override given here reaches it.
+	recordNestedRender(renderValue, { components: userComponents, listNestingMode });
 }
 ---
 
