@@ -55,6 +55,10 @@ describe("the WpShell layout's content components", () => {
 		expect(html).toMatch(/<p class="has-text-align-center"[^>]*>Centred<\/p>/);
 		expect(html).toMatch(/<p(?![^>]*class=)[^>]*>Plain<\/p>/);
 		expect(html).toMatch(/<h3 class="has-text-align-left"[^>]*>Heading<\/h3>/);
+		// a stored value that is not an alignment puts no class of its own on the page
+		const odd = await render([block("e", "evil-class", "Odd"), block("f", "toString", "Proto")]);
+		expect(odd).toMatch(/<p(?![^>]*class=)[^>]*>Odd<\/p>/);
+		expect(odd).toMatch(/<p(?![^>]*class=)[^>]*>Proto<\/p>/);
 		// EmDash's own renderer draws no class for its default
 		expect(await render([block("a", "left", "Left")], false)).not.toContain("has-text-align-left");
 	});
@@ -71,6 +75,7 @@ describe("the WpShell layout's content components", () => {
 			image("k", { alignment: "left", link: "https://example.org/" }),
 			image("p", { alignment: "left", caption: "Pictured" }),
 			image("j", { alignment: "left", asset: { _ref: "x", url: "javascript:alert(1)" } }),
+			image("s", { alignment: "left", asset: { _ref: "y", url: "//elsewhere.example/a.png" } }),
 		]) {
 			const html = await render([other]);
 			expect(html).toContain('<figure class="emdash-image');
