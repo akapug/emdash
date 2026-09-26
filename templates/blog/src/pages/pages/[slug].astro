@@ -25,9 +25,10 @@ if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
 const settings = await getSiteSettings();
 const { siteTitle } = resolveBlogSiteIdentity(settings);
 // The homepage renders this page at "/" too, so that copy is the canonical one.
+// The setting stores the translation group, which names every translation of it.
 const isHomepage =
 	settings.homepage?.collection === "pages" &&
-	settings.homepage.id === page.data.id;
+	settings.homepage.id === page.data.translationGroup;
 const seo = getSeoMeta(page, {
 	siteTitle,
 	siteUrl: Astro.url.origin,

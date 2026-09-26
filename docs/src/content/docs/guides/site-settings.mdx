@@ -168,19 +168,21 @@ if (Astro.cache?.enabled) {
 
 Pass the returned `cacheHint` to `Astro.cache.set()` even when no entry is returned. It carries the chosen entry's collection, so publishing the entry refreshes a cached root page.
 
-The chosen page is still served at its own URL. To keep search engines from indexing both copies, set that URL's canonical link to the site root. `getSiteSettings()` returns the choice as `homepage: { collection, id }`, where `id` is the ID of the entry's original translation. On a single-language site, that is the entry's ID.
+The chosen page is still served at its own URL. To keep search engines from indexing both copies, set that URL's canonical link to the site root. `getSiteSettings()` returns the choice as `homepage: { collection, id }`, where `id` is the entry's translation group, the value every translation of it carries as `data.translationGroup`. Compare against that rather than the entry's own ID, so each translation recognises itself as the homepage.
 
 The following lines in a page route, after it loads `page`, point the canonical link at the root when the page is the homepage:
 
 ```ts title="src/pages/pages/[slug].astro"
 const settings = await getSiteSettings();
 const isHomepage =
-  settings.homepage?.collection === "pages" && settings.homepage.id === page.data.id;
+  settings.homepage?.collection === "pages" && settings.homepage.id === page.data.translationGroup;
 const seo = getSeoMeta(page, {
   siteUrl: Astro.url.origin,
   path: isHomepage ? "/" : Astro.url.pathname,
 });
 ```
+
+On a site that prefixes URLs with the locale, the root serves the default locale only, so point a translation's canonical link at its own locale's root (for example `/es/`) instead of `/`.
 
 API and MCP clients set the homepage by sending `homepage: { collection, id }` with the ID of the entry or of any of its translations, and remove it by sending `homepage: null`. A request that names an entry that does not exist is refused with a `VALIDATION_ERROR`.
 
