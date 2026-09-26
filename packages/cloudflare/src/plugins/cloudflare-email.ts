@@ -27,12 +27,13 @@
  *   "admin" for the test email, a plugin by its id) has its own budget per
  *   hour and per day, so one flooded form cannot spend the budget the
  *   owner's login email needs; every source together has a daily total, so
- *   the site cannot spend more of a shared account's sending than that; and
- *   "system" mail (magic links, invites) reaches any one address only so
- *   often a day, so requests from rotating IPs can neither flood one inbox
- *   nor spend the day. A message over any of them is refused, and a message
- *   the binding refuses gives its places back: only a send Cloudflare
- *   accepts is counted.
+ *   the site cannot spend more of a shared account's sending than that, and
+ *   a part of it is kept for "system" mail, so forms and comments together
+ *   cannot spend the day the owner's login email needs; and "system" mail
+ *   (magic links, invites) reaches any one address only so often a day, so
+ *   requests from rotating IPs can neither flood one inbox nor spend the
+ *   day. A message over any of them is refused, and a message the binding
+ *   refuses gives its places back: only a send Cloudflare accepts is counted.
  * - A log names a recipient's domain, never the address, and an error the
  *   binding throws has the address replaced by its domain.
  *
@@ -102,9 +103,10 @@ export interface CloudflareEmailConfig {
 	/**
 	 * How many recipients the site may reach: one sending source per hour
 	 * (`perHour`) and per day (`perDay`), every source together per day
-	 * (`perDayTotal`), and "system" mail to any one address per day
+	 * (`perDayTotal`), of which every source but "system" may take all but
+	 * `systemReserve`, and "system" mail to any one address per day
 	 * (`systemPerRecipient`).
-	 * @default { perHour: 50, perDay: 200, perDayTotal: 300, systemPerRecipient: 10 }
+	 * @default { perHour: 50, perDay: 200, perDayTotal: 300, systemReserve: 50, systemPerRecipient: 10 }
 	 */
 	limits?: Partial<SendingLimits>;
 
@@ -121,6 +123,8 @@ export interface SendingLimits {
 	perHour: number;
 	perDay: number;
 	perDayTotal: number;
+	/** The part of `perDayTotal` only "system" mail (magic links, invites) may take. */
+	systemReserve: number;
 	systemPerRecipient: number;
 }
 
@@ -173,9 +177,16 @@ export function mailbox(value: unknown): string | null {
 	return v.length <= 254 && pattern.test(v) ? v : null;
 }
 
-/** How many recipients the site may reach: the config's, over 50 an hour and 200 a day per source, 300 a day in all, and 10 a day of "system" mail to one address. */
+/** How many recipients the site may reach: the config's, over 50 an hour and 200 a day per source, 300 a day in all with 50 of them kept for "system" mail, and 10 a day of "system" mail to one address. */
 export function limitsOf(config: CloudflareEmailConfig): SendingLimits {
-	return { perHour: 50, perDay: 200, perDayTotal: 300, systemPerRecipient: 10, ...config.limits };
+	return {
+		perHour: 50,
+		perDay: 200,
+		perDayTotal: 300,
+		systemReserve: 50,
+		systemPerRecipient: 10,
+		...config.limits,
+	};
 }
 
 /** The domain of one plain address, which a log names in place of the address. */
@@ -245,7 +256,8 @@ async function recipientKey(address: string): Promise<string> {
 /**
  * Take a message's places for the hour and the day `now` falls in, or say why
  * not: `recipients` from `source`'s hour and day, from every source's day
- * total, and, for "system" mail, one from each recipient's own day. Every
+ * total (all of it for "system" mail, all but its reserve for any other
+ * source), and, for "system" mail, one from each recipient's own day. Every
  * count is one row in plugin KV (the site's database) moved with
  * compare-and-set. A refusal gives back what it took before it, so a refused
  * message spends nothing; the caller gives the rest back
@@ -275,12 +287,19 @@ export async function takeBudget(
 	windows.push(
 		{ key: `budget:h:${hour}:${source}`, n, limit: limits.perHour, what: `"${source}" this hour` },
 		{ key: `budget:d:${day}:${source}`, n, limit: limits.perDay, what: `"${source}" this day` },
-		{
-			key: `budget:t:${day}`,
-			n,
-			limit: limits.perDayTotal,
-			what: "every source together this day",
-		},
+		source === "system" || limits.systemReserve <= 0
+			? {
+					key: `budget:t:${day}`,
+					n,
+					limit: limits.perDayTotal,
+					what: "every source together this day",
+				}
+			: {
+					key: `budget:t:${day}`,
+					n,
+					limit: Math.max(0, limits.perDayTotal - limits.systemReserve),
+					what: `every source together this day, less the ${limits.systemReserve} kept for "system" mail,`,
+				},
 	);
 	const taken: Taken[] = [];
 	for (const w of windows) {

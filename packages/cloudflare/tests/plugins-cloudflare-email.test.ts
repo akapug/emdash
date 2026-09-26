@@ -10,6 +10,7 @@ import {
 	displayName,
 	domainOf,
 	headerText,
+	limitsOf,
 	mailbox,
 	withoutAddresses,
 	type CloudflareEmailConfig,
@@ -566,7 +567,7 @@ describe("the site's totals", () => {
 	it("every source together has a daily total, whatever each source has left", async () => {
 		const { env, send } = fakeEnv();
 		const kv = memoryKv();
-		const deliver = deliverWith({ perHour: 10, perDay: 10, perDayTotal: 3 }, env);
+		const deliver = deliverWith({ perHour: 10, perDay: 10, perDayTotal: 3, systemReserve: 0 }, env);
 
 		for (const source of ["emdash-forms", "emdash-comments", "admin"])
 			await deliver({ message, source }, fakeCtx({ kv }));
@@ -578,11 +579,49 @@ describe("the site's totals", () => {
 		expect(kv.rows.get("budget:t:2026-01-01")?.value).toBe(3);
 		// The next day is a new total.
 		await createCloudflareEmailDeliver(
-			{ from: "notify@mail.example.org", limits: { perDayTotal: 3 } },
+			{ from: "notify@mail.example.org", limits: { perDayTotal: 3, systemReserve: 0 } },
 			async () => env,
 			at("2026-01-02T00:01:00Z"),
 		)({ message, source: "another-plugin" }, fakeCtx({ kv }));
 		expect(send).toHaveBeenCalledTimes(4);
+	});
+
+	it('a part of the daily total is kept for "system" mail: forms and comments together cannot spend the day the login email needs', async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const deliver = deliverWith({ perHour: 10, perDay: 10, perDayTotal: 4, systemReserve: 2 }, env);
+
+		await deliver({ message, source: "emdash-forms" }, fakeCtx({ kv }));
+		await deliver({ message, source: "emdash-comments" }, fakeCtx({ kv }));
+		await expect(deliver({ message, source: "emdash-forms" }, fakeCtx({ kv }))).rejects.toThrow(
+			/every source together this day, less the 2 kept for "system" mail, has reached 2 recipient\(s\), and 1 more would pass its limit of 2/,
+		);
+		// The login email still goes, up to the whole total.
+		await deliver(event, fakeCtx({ kv }));
+		await deliver(
+			{ message: { ...message, to: "editor@example.com" }, source: "system" },
+			fakeCtx({ kv }),
+		);
+		await expect(deliver(event, fakeCtx({ kv }))).rejects.toThrow(
+			/every source together this day has reached 4/,
+		);
+		expect(send).toHaveBeenCalledTimes(4);
+		expect(kv.rows.get("budget:t:2026-01-01")?.value).toBe(4);
+	});
+
+	it("the reserve is 50 of the 300 a day by default, and never more than the total", async () => {
+		expect(limitsOf({ from: "notify@mail.example.org" })).toMatchObject({
+			perDayTotal: 300,
+			systemReserve: 50,
+		});
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const deliver = deliverWith({ perDayTotal: 1, systemReserve: 5 }, env);
+		await expect(deliver({ message, source: "emdash-forms" }, fakeCtx({ kv }))).rejects.toThrow(
+			/its limit of 0/,
+		);
+		await deliver(event, fakeCtx({ kv }));
+		expect(send).toHaveBeenCalledOnce();
 	});
 
 	it('"system" mail reaches one address only so often a day; other addresses, and other sources, still get theirs', async () => {
@@ -704,7 +743,13 @@ describe("createCloudflareEmailStatus()", () => {
 			senderName: "site title",
 			binding: { name: "EMAIL", present: true },
 			replyTo: "site",
-			limits: { perHour: 50, perDay: 200, perDayTotal: 300, systemPerRecipient: 10 },
+			limits: {
+				perHour: 50,
+				perDay: 200,
+				perDayTotal: 300,
+				systemReserve: 50,
+				systemPerRecipient: 10,
+			},
 		});
 	});
 
