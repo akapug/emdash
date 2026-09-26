@@ -7,6 +7,8 @@
  * wp-includes/class-wp-embed.php.
  */
 
+import { parseFragment } from "parse5";
+
 import { decodeUrlEntities } from "./inline.js";
 import { detectProvider } from "./transformers/embed.js";
 import type { PortableTextBlock } from "./types.js";
@@ -127,6 +129,33 @@ export function findAutoembeds(html: string): Autoembed[] {
 		}
 	}
 	return autoembeds;
+}
+
+/**
+ * The autoembeds in `html` that no element holds, other than a paragraph that is
+ * the autoembed itself. The HTML around them can be cut away intact.
+ */
+export function findTopLevelAutoembeds(html: string): Autoembed[] {
+	const autoembeds = findAutoembeds(html);
+	if (autoembeds.length === 0) return autoembeds;
+
+	const nodes = parseFragment(html, { sourceCodeLocationInfo: true }).childNodes;
+	return autoembeds.filter((autoembed) => {
+		const holders = nodes.filter(
+			(node) =>
+				node.nodeName !== "#text" &&
+				(node.sourceCodeLocation?.startOffset ?? 0) < autoembed.end &&
+				autoembed.start < (node.sourceCodeLocation?.endOffset ?? html.length),
+		);
+		const [holder] = holders;
+		return (
+			!holder ||
+			(holders.length === 1 &&
+				holder.nodeName === "p" &&
+				holder.sourceCodeLocation?.startOffset === autoembed.start &&
+				holder.sourceCodeLocation.endOffset === autoembed.end)
+		);
+	});
 }
 
 /**

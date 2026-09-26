@@ -1313,13 +1313,64 @@ https://vimeo.com/58376079
 
 		const result = gutenbergToPortableText(content);
 
-		expect(result.map((b) => b._type)).toEqual(["block", "block", "embed", "block"]);
-		expect(textOf(result[1])).toBe("Older classic text.");
+		expect(result.map((b) => b._type)).toEqual(["block", "htmlBlock", "embed", "block"]);
+		expect(result[1]).toMatchObject({ _type: "htmlBlock", html: "\n\nOlder classic text.\n\n" });
 		expect(result[2]).toMatchObject({
 			_type: "embed",
 			url: "https://vimeo.com/58376079",
 			provider: "vimeo",
 		});
+	});
+
+	it("keeps the rest of the classic HTML between blocks as it was", () => {
+		const table = `<table class="specs"><tbody><tr><td>Weight</td><td>5 kg</td></tr></tbody></table>`;
+		const map = `<iframe src="https://www.google.com/maps/embed?pb=abc" width="600"></iframe>`;
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+
+${table}
+
+${YOUTUBE_URL}
+
+${map}
+
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual([
+			"block",
+			"htmlBlock",
+			"embed",
+			"htmlBlock",
+			"block",
+		]);
+		expect(result[1]).toMatchObject({ html: `\n\n${table}\n\n` });
+		expect(result[2]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+		expect(result[3]).toMatchObject({ html: `\n\n${map}\n\n` });
+	});
+
+	it.each([
+		["a blockquote", `<blockquote>\n${YOUTUBE_URL}\n</blockquote>`],
+		["a div", `<div class="video-wrap">\n${YOUTUBE_URL}\n</div>`],
+		["a table", `<table>\n${YOUTUBE_URL}\n<tr><td>Price</td></tr></table>`],
+	])("keeps classic HTML between blocks whole when its URL line is inside %s", (_, html) => {
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+<p class="lead">Styled</p>
+${html}
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "htmlBlock", "block"]);
+		expect(result[1]).toMatchObject({ html: `\n<p class="lead">Styled</p>\n${html}\n` });
 	});
 
 	it("embeds an [embed] shortcode", () => {

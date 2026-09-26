@@ -8,7 +8,7 @@
 
 import { parse } from "@wordpress/block-serialization-default-parser";
 
-import { autoembedBlock, findAutoembeds } from "./autoembed.js";
+import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
 import { parseInlineContent } from "./inline.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
@@ -438,13 +438,29 @@ function transformBlock(
 	options: ConvertOptions,
 	context: TransformContext,
 ): PortableTextBlock[] {
-	// Freeform HTML between blocks is classic content, and WordPress autoembeds URLs in it too
-	if (block.blockName === null && findAutoembeds(block.innerHTML).length > 0) {
-		return htmlToPortableText(block.innerHTML, { ...options, keyGenerator: context.generateKey });
+	const transformer = getTransformer(block.blockName, options.customTransformers);
+	if (block.blockName !== null) {
+		return transformer(block, options, context);
 	}
 
-	const transformer = getTransformer(block.blockName, options.customTransformers);
-	return transformer(block, options, context);
+	// Freeform HTML between blocks is classic content, and WordPress autoembeds URLs in it too.
+	// Lift those embeds out and keep the HTML around them as it was.
+	const html = block.innerHTML;
+	const blocks: PortableTextBlock[] = [];
+	let cursor = 0;
+	for (const autoembed of findTopLevelAutoembeds(html)) {
+		blocks.push(
+			...transformer(
+				{ ...block, innerHTML: html.slice(cursor, autoembed.start) },
+				options,
+				context,
+			),
+			autoembedBlock(autoembed, context.generateKey),
+		);
+		cursor = autoembed.end;
+	}
+	blocks.push(...transformer({ ...block, innerHTML: html.slice(cursor) }, options, context));
+	return blocks;
 }
 
 /**
