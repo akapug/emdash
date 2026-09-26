@@ -10,7 +10,7 @@
 import { parseFragment } from "parse5";
 
 import { decodeUrlEntities } from "./inline.js";
-import { detectProvider } from "./transformers/embed.js";
+import { detectProvider } from "./provider.js";
 import type { PortableTextBlock } from "./types.js";
 import { sanitizeHref } from "./url.js";
 
