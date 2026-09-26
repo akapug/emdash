@@ -9,7 +9,7 @@ import type { RouteContext, StorageCollection } from "emdash";
 import { after, PluginRouteError } from "emdash";
 import { ulid } from "ulidx";
 
-import { formatSubmissionText, formatWebhookPayload } from "../format.js";
+import { formatSubmissionText, formatWebhookPayload, sendFailure } from "../format.js";
 import type { SubmitInput } from "../schemas.js";
 import { verifyTurnstile } from "../turnstile.js";
 import type { FormDefinition, Submission, SubmissionFile } from "../types.js";
@@ -292,10 +292,7 @@ export async function submitHandler(
 					...(replyTo ? { replyTo } : {}),
 				})
 				.catch((err: unknown) => {
-					ctx.log.error("Failed to send notification email", {
-						error: String(err),
-						to: email,
-					});
+					ctx.log.error("Failed to send notification email", sendFailure(err, email));
 				});
 		}
 	}

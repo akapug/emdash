@@ -6,6 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { handleDigest } from "../src/handlers/cron.js";
 import { submitHandler } from "../src/handlers/submit.js";
 import type { FormDefinition } from "../src/types.js";
 
@@ -178,5 +179,64 @@ describe("a form's mail limits", () => {
 		expect(
 			count.mock.calls.filter(([w]) => (w as { createdAt?: unknown } | undefined)?.createdAt),
 		).toHaveLength(0);
+	});
+});
+
+describe("a mail that fails to send", () => {
+	const refused = () => {
+		throw new Error("E_RECIPIENT_NOT_ALLOWED: office@example.org is not allowed");
+	};
+
+	it("is logged with the recipient's domain, never the address, and the submission is kept", async () => {
+		const { ctx, send, put, log } = context(form([EMAIL]), { email: "visitor@example.net" });
+		send.mockImplementation(async () => refused());
+
+		const result = await submitHandler(ctx as never);
+
+		expect(result).toMatchObject({ success: true });
+		expect(put).toHaveBeenCalledOnce();
+		expect(log.error).toHaveBeenCalledWith("Failed to send notification email", {
+			error: "Error: E_RECIPIENT_NOT_ALLOWED: <an address at example.org> is not allowed",
+			toDomain: "example.org",
+		});
+		expect(JSON.stringify(log.error.mock.calls)).not.toContain("office@");
+	});
+
+	it("is logged the same way from the daily digest", async () => {
+		const f = form([EMAIL], { digestEnabled: true });
+		const send = vi.fn(async () => refused());
+		const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+		const ctx = {
+			storage: {
+				forms: { get: async () => f },
+				submissions: {
+					// A stored submission: its row's data is the Submission, whose own data is what the visitor sent.
+					query: async () => ({
+						items: [
+							{
+								id: "S1",
+								data: {
+									formId: "contact",
+									data: { email: "visitor@example.net" },
+									createdAt: "2026-01-01T00:00:00.000Z",
+								},
+							},
+						],
+					}),
+				},
+			},
+			log,
+			email: { send },
+			site: { url: "https://example.org", name: "Example", locale: "en" },
+		};
+
+		await handleDigest("contact", ctx as never);
+
+		expect(send).toHaveBeenCalledOnce();
+		expect(log.error).toHaveBeenCalledWith("Failed to send digest email", {
+			error: "Error: E_RECIPIENT_NOT_ALLOWED: <an address at example.org> is not allowed",
+			toDomain: "example.org",
+		});
+		expect(JSON.stringify(log.error.mock.calls)).not.toContain("office@");
 	});
 });

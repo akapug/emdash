@@ -159,3 +159,13 @@ function formatBytes(bytes: number): string {
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * What a failed send's log carries: the recipient's domain and the error, with
+ * the address replaced by its domain there too. Workers Logs keep what a
+ * plugin logs, and a notification's recipient is whoever the form notifies.
+ */
+export function sendFailure(err: unknown, to: string): { error: string; toDomain: string } {
+	const domain = to.slice(to.lastIndexOf("@") + 1);
+	return { error: String(err).split(to).join(`<an address at ${domain}>`), toDomain: domain };
+}
