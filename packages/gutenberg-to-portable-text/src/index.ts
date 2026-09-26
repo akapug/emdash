@@ -6,6 +6,7 @@
  * HTML+JSON format that WordPress uses.
  */
 
+import { autop } from "@wordpress/autop";
 import { parse } from "@wordpress/block-serialization-default-parser";
 
 import { textAlignOfTag } from "./align.js";
@@ -136,8 +137,8 @@ export function gutenbergToPortableText(
 	const hasBlocks = content.includes("<!-- wp:");
 
 	if (!hasBlocks) {
-		// Classic editor content - treat as HTML
-		return htmlToPortableText(content, options);
+		// Classic editor content - treat as HTML, as WordPress draws it
+		return htmlToPortableText(classicParagraphs(content), options);
 	}
 
 	// Parse Gutenberg blocks
@@ -153,8 +154,62 @@ export function gutenbergToPortableText(
 	return blocks.flatMap((block) => transformBlock(block, options, context));
 }
 
+/** Where an autoembed stands while wpautop runs: a block of its own, which autop never wraps. */
+const EMBED_MARK = "data-g2pt-autoembed";
+const EMBED_PLACE = /<div data-g2pt-autoembed="(\d+)"><\/div>/g;
+
+/**
+ * Classic editor content as WordPress draws it. The classic editor saves
+ * plain text between its tags, and WordPress's `the_content` filter runs it
+ * through wpautop: a blank line ends a paragraph, and any other newline is a
+ * line break. Converted as saved, a newline is a hard break and a blank line
+ * two, all in one paragraph: a migrated services page was one block of
+ * run-together lines where WordPress drew a paragraph per service.
+ * WordPress's own port of wpautop (@wordpress/autop) makes the paragraphs.
+ * Content with blocks is not run through it: WordPress does not either.
+ *
+ * WordPress embeds first (WP_Embed runs at priority 8, wpautop at 10), so an
+ * autoembed or an [embed] shortcode found in the content as saved stays a
+ * paragraph of its own, where htmlToPortableText finds it again.
+ */
+function classicParagraphs(html: string): string {
+	const embeds = html.includes(EMBED_MARK) ? [] : findAutoembeds(html);
+	let marked = "";
+	let cursor = 0;
+	for (const [i, e] of embeds.entries()) {
+		marked += `${html.slice(cursor, e.start)}\n\n<div ${EMBED_MARK}="${i}"></div>\n\n`;
+		cursor = e.end;
+	}
+	marked += html.slice(cursor);
+	return autop(marked).replace(EMBED_PLACE, (_, i: string) => {
+		const e = embeds[Number(i)]!;
+		return html.slice(e.start, e.end);
+	});
+}
+
+const IMG_CLASS_ATTR = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+const CLASS_SEPARATOR = /\s+/;
+const IMG_ALIGNMENTS: ReadonlyMap<string, "left" | "right" | "center"> = new Map([
+	["alignleft", "left"],
+	["alignright", "right"],
+	["aligncenter", "center"],
+]);
+
+/**
+ * The `alignment` field for an image block from its `<img>` tag's WordPress
+ * alignment class (`alignleft`, `alignright`, `aligncenter`), or nothing.
+ */
+function imageAligned(img: string): { alignment?: "left" | "right" | "center" } {
+	const m = IMG_CLASS_ATTR.exec(img);
+	for (const c of (m?.[1] ?? m?.[2] ?? "").toLowerCase().split(CLASS_SEPARATOR)) {
+		const alignment = IMG_ALIGNMENTS.get(c);
+		if (alignment) return { alignment };
+	}
+	return {};
+}
+
 /** The `textAlign` field for a text block from the element `html` opens with, or nothing. */
-function aligned(html: string): { textAlign?: "center" | "right" | "justify" } {
+function aligned(html: string): { textAlign?: "left" | "center" | "right" | "justify" } {
 	const textAlign = textAlignOfTag(html);
 	return textAlign ? { textAlign } : {};
 }
@@ -232,6 +287,7 @@ export function htmlToPortableText(
 						url: imgUrl,
 					},
 					alt: altMatch?.[1],
+					...imageAligned(fullMatch),
 				});
 			}
 			continue;
@@ -265,6 +321,7 @@ export function htmlToPortableText(
 							},
 							alt: altMatch?.[1],
 							link: linkUrl,
+							...imageAligned(imgAttrs),
 						});
 					}
 					linkedImgPositions.push({
@@ -295,6 +352,7 @@ export function htmlToPortableText(
 								url: imgUrl,
 							},
 							alt: altMatch?.[1],
+							...imageAligned(imgMatch[0]),
 						});
 					}
 				}

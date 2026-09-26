@@ -47,8 +47,8 @@ describe("text alignment: the classic editor", () => {
 	it("reads it the way a browser does: inline style over class, the last declaration last", () => {
 		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: right">`)).toBe("right");
 		expect(textAlignOfTag(`<p style="text-align: center; text-align: right;">`)).toBe("right");
-		// an explicit left is the default, and wins over the class it overrides
-		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: left">`)).toBeUndefined();
+		// an explicit left wins over the class it overrides
+		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: left">`)).toBe("left");
 		expect(textAlignOfTag(`<p style="text-align: center !important;">`)).toBe("center");
 	});
 
@@ -59,6 +59,14 @@ describe("text alignment: the classic editor", () => {
 		expect(textAlignOfTag(`<p title="text-align: center">`)).toBeUndefined();
 		expect(textAlignOfTag(`<p class="has-text-align-toString">`)).toBeUndefined();
 		expect(textAlignOfTag("plain text")).toBeUndefined();
+	});
+
+	it("stores a left WordPress wrote: the theme may align the region otherwise", () => {
+		// Franz Josef centres its front page's highlights; the classic editor's
+		// inline left is what keeps these paragraphs left there
+		const blocks = htmlToPortableText(`<p style="text-align: left;">Left words.</p><p>Words.</p><p class="has-text-align-left">Saved left.</p>`);
+		expect(aligns(blocks)).toEqual(["left", "-", "left"]);
+		expect(Object.hasOwn(blocks[1]!, "textAlign")).toBe(false);
 	});
 
 	it("keeps the alignment of the paragraph's text when an image is lifted out of it", () => {
@@ -106,7 +114,7 @@ describe("text alignment: the block editor", () => {
 		expect(textAlignOfAttrs({ style: { typography: { textAlign: "right" } } })).toBe("right");
 		// a heading's `align` is its block width in newer releases, not its text
 		expect(textAlignOfAttrs({ align: "wide" })).toBeUndefined();
-		expect(textAlignOfAttrs({ align: "left" })).toBeUndefined();
+		expect(textAlignOfAttrs({ align: "left" })).toBe("left");
 		expect(textAlignOfAttrs({ align: 3, style: "center" })).toBeUndefined();
 	});
 

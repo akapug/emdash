@@ -46,8 +46,8 @@ export interface PortableTextTextBlock {
 	style?: "normal" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote";
 	listItem?: "bullet" | "number";
 	level?: number;
-	/** WordPress's text alignment, as EmDash stores it (left is the default and never stored). */
-	textAlign?: "center" | "right" | "justify";
+	/** WordPress's text alignment, as EmDash stores it (src/align.ts): only when WordPress set one, left included. */
+	textAlign?: "left" | "center" | "right" | "justify";
 	children: PortableTextSpan[];
 	markDefs?: PortableTextMarkDef[];
 }
