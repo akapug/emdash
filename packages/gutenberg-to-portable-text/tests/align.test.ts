@@ -88,6 +88,18 @@ describe("text alignment: the block editor", () => {
 		expect(block).toMatchObject({ _type: "block", style: "h3", textAlign: "right" });
 	});
 
+	it("reads a block's attributes when its saved markup does not say", () => {
+		// hand-written or older saved markup: the alignment is only in the block comment
+		const content = `<!-- wp:paragraph {"align":"center"} -->
+<p>Centred by attribute</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading {"level":2,"style":{"typography":{"textAlign":"right"}}} -->
+<h2 class="wp-block-heading">Right by attribute</h2>
+<!-- /wp:heading -->`;
+		expect(aligns(gutenbergToPortableText(content))).toEqual(["center", "right"]);
+	});
+
 	it("falls back to the attributes, in every spelling WordPress used", () => {
 		expect(textAlignOfAttrs({ align: "center" })).toBe("center");
 		expect(textAlignOfAttrs({ textAlign: "justify" })).toBe("justify");
