@@ -14,6 +14,8 @@ export interface Page {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
+  locale?: string | null;
+  translationGroup?: string | null;
   byline?: BylineSummary | null;
   bylines?: ContentBylineCredit[];
   terms?: Record<string, TaxonomyTerm[]>;
@@ -30,6 +32,8 @@ export interface Post {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
+  locale?: string | null;
+  translationGroup?: string | null;
   byline?: BylineSummary | null;
   bylines?: ContentBylineCredit[];
   terms?: Record<string, TaxonomyTerm[]>;

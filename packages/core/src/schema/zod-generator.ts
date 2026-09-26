@@ -368,6 +368,10 @@ export function generateTypeScript(
 	lines.push(`  createdAt: Date;`);
 	lines.push(`  updatedAt: Date;`);
 	lines.push(`  publishedAt: Date | null;`);
+	// Every entry's data carries its locale and translation group (loader.ts
+	// INCLUDE_IN_DATA); the homepage setting names an entry by its group.
+	lines.push(`  locale?: string | null;`);
+	lines.push(`  translationGroup?: string | null;`);
 	// Bylines are eagerly loaded by getEmDashCollection/getEmDashEntry
 	lines.push(`  byline?: BylineSummary | null;`);
 	lines.push(`  bylines?: ContentBylineCredit[];`);
