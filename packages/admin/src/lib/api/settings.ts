@@ -18,7 +18,15 @@ export interface SiteSettings {
 	url?: string;
 
 	// Display
-	homepage?: { collection: string; id: string };
+	/**
+	 * `id` is the entry's translation group. `entry` is the translation the API
+	 * reports for it on read (`null` when none is left) and is ignored on write.
+	 */
+	homepage?: {
+		collection: string;
+		id: string;
+		entry?: { id: string; locale: string | null; status: string } | null;
+	};
 	postsPerPage: number;
 	dateFormat: string;
 	timezone: string;

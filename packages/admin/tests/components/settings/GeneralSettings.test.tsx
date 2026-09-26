@@ -303,7 +303,11 @@ describe("GeneralSettings", () => {
 	it("shows the saved homepage and switches back to the latest posts", async () => {
 		mockFetchSettings.mockResolvedValue({
 			...defaultSettings,
-			homepage: { collection: "pages", id: "page_about" },
+			homepage: {
+				collection: "pages",
+				id: "page_about",
+				entry: { id: "page_about", locale: "en", status: "published" },
+			},
 		});
 		mockFetchContent.mockResolvedValue({
 			id: "page_about",
@@ -326,14 +330,57 @@ describe("GeneralSettings", () => {
 	it("says when the saved homepage entry no longer exists", async () => {
 		mockFetchSettings.mockResolvedValue({
 			...defaultSettings,
-			homepage: { collection: "pages", id: "page_gone" },
+			homepage: { collection: "pages", id: "page_gone", entry: null },
 		});
-		mockFetchContent.mockRejectedValue(new Error("Content item not found"));
 		const screen = await renderGeneralSettings();
 
 		await expect
 			.element(screen.getByText(/The chosen page is no longer available/))
 			.toBeInTheDocument();
 		await expect.element(screen.getByRole("button", { name: "Change page" })).toBeInTheDocument();
+		expect(mockFetchContent).not.toHaveBeenCalled();
+	});
+
+	it("shows the translation the site renders once the original is gone", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "group_about",
+				entry: { id: "page_about_es", locale: "es", status: "published" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about_es",
+			slug: "sobre",
+			data: { title: "Sobre nosotros" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await expect.element(screen.getByText("Sobre nosotros")).toBeInTheDocument();
+		expect(mockFetchContent).toHaveBeenCalledWith("pages", "page_about_es");
+		await expect
+			.element(screen.getByText(/The chosen page is no longer available/))
+			.not.toBeInTheDocument();
+	});
+
+	it("marks a homepage that is not published", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "page_about",
+				entry: { id: "page_about", locale: "en", status: "draft" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
 	});
 });

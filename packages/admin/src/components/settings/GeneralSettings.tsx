@@ -22,6 +22,7 @@ import {
 } from "../../lib/api";
 import { getEntryTitle } from "../../lib/entryTitle.js";
 import { ContentPickerModal, type PickedContentEntry } from "../ContentPickerModal.js";
+import { ContentStatusLabel, isContentStatusState } from "../ContentStatusBadge.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { SaveButton } from "../SaveButton.js";
 import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
@@ -72,12 +73,21 @@ export function GeneralSettings() {
 		queryFn: fetchManifest,
 		enabled: !!homepage && !homepageIsPicked,
 	});
+	// The stored id is a translation group, and the row that shares its id can be
+	// gone while a translation still renders at "/". The settings API reports
+	// which translation to show, and whether any is left.
+	const shownEntry = homepageIsPicked ? undefined : homepage?.entry;
 	const { data: homepageEntry, error: homepageError } = useQuery({
-		queryKey: ["content", homepage?.collection, homepage?.id],
-		queryFn: () => fetchContent(homepage!.collection, homepage!.id),
-		enabled: !!homepage && !homepageIsPicked,
+		queryKey: ["content", homepage?.collection, shownEntry?.id],
+		queryFn: () => fetchContent(homepage!.collection, shownEntry!.id),
+		enabled: !!homepage && !!shownEntry,
 		retry: false,
 	});
+	const homepageGone = !!homepage && !homepageIsPicked && (!shownEntry || !!homepageError);
+	const homepageUnpublished =
+		shownEntry && shownEntry.status !== "published" && isContentStatusState(shownEntry.status)
+			? shownEntry.status
+			: null;
 	const homepageTitle = homepageIsPicked
 		? pickedHomepage.title
 		: homepageEntry && homepage
@@ -368,11 +378,17 @@ export function GeneralSettings() {
 								<Radio.Item value="posts" label={t`Latest posts`} />
 								<Radio.Item value="page" label={t`A page`} />
 							</Radio.Group>
+							<p className="text-sm text-kumo-subtle">
+								{t`Your site's template decides what its root URL shows. A template that supports this setting renders the chosen page there.`}
+							</p>
 							{homepage && (
 								<div className="flex flex-wrap items-center justify-between gap-3">
-									{homepageTitle ? (
-										<span className="min-w-0 truncate font-medium">{homepageTitle}</span>
-									) : homepageError ? (
+									{homepageTitle && !homepageGone ? (
+										<span className="flex min-w-0 items-center gap-3">
+											<span className="min-w-0 truncate font-medium">{homepageTitle}</span>
+											{homepageUnpublished && <ContentStatusLabel state={homepageUnpublished} />}
+										</span>
+									) : homepageGone ? (
 										<div
 											className="flex items-start gap-2 rounded border border-dashed border-kumo-line bg-kumo-tint px-3 py-2 text-sm leading-5 text-kumo-subtle"
 											role="status"
