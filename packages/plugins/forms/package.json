@@ -40,7 +40,7 @@
 		"ulidx": "^2.4.1"
 	},
 	"scripts": {
-		"test": "vitest run",
+		"test": "vitest run && vitest run --config vitest.render.config.ts",
 		"typecheck": "tsgo --noEmit"
 	},
 	"repository": {
