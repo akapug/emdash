@@ -1,14 +1,14 @@
 [
 	{
 		"version": 1,
-		"id": "2e68df5cb11c2fbda7962342",
+		"id": "d6c007342dcf3d4d2d37c3be",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
 		},
 		"html": {
 			"lang": "en-US",
-			"class": "no-js"
+			"class": "js"
 		},
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
@@ -18,7 +18,7 @@
 		],
 		"parts": [
 			{
-				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<span class=\"toggle search-toggle\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></span>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
 			},
 			{
 				"slot": "logo",
@@ -152,26 +152,26 @@
 					{
 						"s": "label"
 					},
-					"</a></div>\n\t\t\t\t<ul class=\"sub-menu\">",
+					"</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\">",
 					{
 						"s": "children"
 					},
 					"</ul>\n\t\t\t</li>"
 				],
-				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t"
+				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t"
 			}
 		]
 	},
 	{
 		"version": 1,
-		"id": "f170091a0c5d752afe0e6513",
+		"id": "1d9f671d380ef1161adf135d",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
 		},
 		"html": {
 			"lang": "en-US",
-			"class": "no-js"
+			"class": "js"
 		},
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
@@ -181,7 +181,7 @@
 		],
 		"parts": [
 			{
-				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<div class=\"hostile\">\n<img class=\"x1\">\n<img class=\"x2\">\n<div class=\"x3\" style=\"color:red;\"></div>\n<div class=\"x4\"></div>\n<video class=\"x5\"></video>\n<img class=\"x6\">\n<a class=\"x7\">j</a>\n<a class=\"x8\">tab</a>\n<a class=\"x9\" title=\"&quot;&gt;&lt;img src=x onerror=alert(3)&gt;\" href=\"/ok\">t</a>\n<div class=\"x10\">clobber</div>\n\n\n\n\n<p>a<img>--&gt;</p>\n</div>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<div class=\"hostile\">\n<img class=\"x1\">\n<img class=\"x2\">\n<div class=\"x3\" style=\"color:red;\"></div>\n<div class=\"x4\"></div>\n<video class=\"x5\"></video>\n<img class=\"x6\">\n<a class=\"x7\">j</a>\n<a class=\"x8\">tab</a>\n<a class=\"x9\" title=\"&quot;&gt;&lt;img src=x onerror=alert(3)&gt;\" href=\"/ok\">t</a>\n<div class=\"x10\">clobber</div>\n\n\n\n\n<p>a<img>--&gt;</p>\n</div>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<span class=\"toggle search-toggle\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></span>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
 			},
 			{
 				"slot": "logo",
@@ -315,13 +315,13 @@
 					{
 						"s": "label"
 					},
-					"</a></div>\n\t\t\t\t<ul class=\"sub-menu\">",
+					"</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\">",
 					{
 						"s": "children"
 					},
 					"</ul>\n\t\t\t</li>"
 				],
-				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t"
+				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t"
 			}
 		]
 	}
