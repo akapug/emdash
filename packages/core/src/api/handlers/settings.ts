@@ -12,7 +12,12 @@ import {
 	getSiteSettingsWithDb,
 	setSiteSettings,
 } from "../../settings/index.js";
-import type { HomepageReference, SiteSettings, SiteSettingsUpdate } from "../../settings/types.js";
+import type {
+	HomepageEntry,
+	HomepageReference,
+	SiteSettings,
+	SiteSettingsUpdate,
+} from "../../settings/types.js";
 import type { Storage } from "../../storage/types.js";
 import type { ApiResult } from "../types.js";
 
@@ -25,13 +30,41 @@ export async function handleSettingsGet(
 ): Promise<ApiResult<Partial<SiteSettings>>> {
 	try {
 		const settings = await getSiteSettingsWithDb(db, storage);
-		return { success: true, data: settings };
+		return { success: true, data: await withHomepageEntry(db, settings) };
 	} catch {
 		return {
 			success: false,
 			error: { code: "SETTINGS_READ_ERROR", message: "Failed to get settings" },
 		};
 	}
+}
+
+/**
+ * The translation an editor sees for the stored homepage. The reference names
+ * a translation group, and the group's original row can be deleted while a
+ * translation of it still renders at "/", so the lookup is by group: the
+ * original translation when it is published, else a published one, else the
+ * first left, whose status then tells the editor why "/" shows no page.
+ */
+async function resolveHomepageEntry(
+	db: Kysely<Database>,
+	{ collection, id }: HomepageReference,
+): Promise<HomepageEntry | null> {
+	if (!(await new SchemaRegistry(db).getCollection(collection))) return null;
+	const rows = await new ContentRepository(db).findTranslationStatuses(collection, id);
+	const rank = (row: HomepageEntry) =>
+		(row.status === "published" ? 0 : 2) + (row.id === id ? 0 : 1);
+	const [entry] = rows.toSorted((a, b) => rank(a) - rank(b));
+	return entry ?? null;
+}
+
+async function withHomepageEntry(
+	db: Kysely<Database>,
+	settings: Partial<SiteSettings>,
+): Promise<Partial<SiteSettings>> {
+	if (!settings.homepage) return settings;
+	const entry = await resolveHomepageEntry(db, settings.homepage);
+	return { ...settings, homepage: { ...settings.homepage, entry } };
 }
 
 /**
@@ -81,7 +114,7 @@ export async function handleSettingsUpdate(
 		}
 		await setSiteSettings(update, db);
 		const updatedSettings = await getSiteSettingsWithDb(db, storage);
-		return { success: true, data: updatedSettings };
+		return { success: true, data: await withHomepageEntry(db, updatedSettings) };
 	} catch {
 		return {
 			success: false,

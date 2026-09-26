@@ -60,6 +60,22 @@ export interface SeoSettings {
 export interface HomepageReference {
 	collection: string;
 	id: string;
+	/**
+	 * The translation an editor should see for this reference. Populated by
+	 * the settings API on read; absent on raw stored values and ignored on
+	 * write. `null` when the group has no live translation left.
+	 */
+	entry?: HomepageEntry | null;
+}
+
+/**
+ * One live translation of a homepage reference: the original translation
+ * when it is published, else a published one, else the first left.
+ */
+export interface HomepageEntry {
+	id: string;
+	locale: string | null;
+	status: string;
 }
 
 /** Site settings schema */

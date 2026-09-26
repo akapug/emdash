@@ -47,6 +47,11 @@ describe("settings route homepage", () => {
 		return { status: response.status, body: await response.json() };
 	}
 
+	/** The entry a GET reports for a published, default-locale page. */
+	function live(id: string) {
+		return { id, locale: expect.any(String), status: "published" };
+	}
+
 	async function get() {
 		const response = await GET(context(new Request("http://localhost/_emdash/api/settings")));
 		return response.json();
@@ -54,7 +59,7 @@ describe("settings route homepage", () => {
 
 	async function createPage(
 		title: string,
-		options: { locale?: string; translationOf?: string } = {},
+		options: { locale?: string; translationOf?: string; status?: string } = {},
 	) {
 		const result = await handleContentCreate(db, "page", {
 			data: { title },
@@ -71,9 +76,10 @@ describe("settings route homepage", () => {
 
 		const saved = await post({ homepage: { collection: "page", id: page.id } });
 
+		const homepage = { collection: "page", id: page.id, entry: live(page.id) };
 		expect(saved.status).toBe(200);
-		expect(saved.body.data.homepage).toEqual({ collection: "page", id: page.id });
-		expect((await get()).data.homepage).toEqual({ collection: "page", id: page.id });
+		expect(saved.body.data.homepage).toEqual(homepage);
+		expect((await get()).data.homepage).toEqual(homepage);
 	});
 
 	it("stores a translation's homepage as the entry it translates", async () => {
@@ -83,13 +89,17 @@ describe("settings route homepage", () => {
 		const saved = await post({ homepage: { collection: "page", id: translation.id } });
 
 		expect(saved.status).toBe(200);
-		expect(saved.body.data.homepage).toEqual({ collection: "page", id: page.translationGroup });
+		expect(saved.body.data.homepage).toEqual({
+			collection: "page",
+			id: page.translationGroup,
+			entry: live(page.id),
+		});
 	});
 
 	it("clears the homepage when the request sends null", async () => {
 		const page = await createPage("Welcome");
 		const saved = await post({ homepage: { collection: "page", id: page.id } });
-		expect(saved.body.data.homepage).toEqual({ collection: "page", id: page.id });
+		expect(saved.body.data.homepage).toMatchObject({ collection: "page", id: page.id });
 
 		const cleared = await post({ homepage: null });
 
@@ -109,7 +119,11 @@ describe("settings route homepage", () => {
 			expect(refused.status).toBe(400);
 			expect(refused.body.error.code).toBe("VALIDATION_ERROR");
 		}
-		expect((await get()).data.homepage).toEqual({ collection: "page", id: page.id });
+		expect((await get()).data.homepage).toEqual({
+			collection: "page",
+			id: page.id,
+			entry: live(page.id),
+		});
 	});
 
 	it("saves other settings alongside a homepage whose entry was deleted since", async () => {
@@ -122,6 +136,50 @@ describe("settings route homepage", () => {
 
 		expect(saved.status).toBe(200);
 		expect(saved.body.data.title).toBe("Renamed");
-		expect(saved.body.data.homepage).toEqual({ collection: "page", id: page.id });
+		expect(saved.body.data.homepage).toEqual({ collection: "page", id: page.id, entry: null });
+	});
+
+	it("reports the surviving translation once the original is deleted", async () => {
+		const page = await createPage("Welcome");
+		const translation = await createPage("Bienvenidos", { locale: "es", translationOf: page.id });
+		await post({ homepage: { collection: "page", id: page.id } });
+		await handleContentDelete(db, "page", page.id);
+
+		const { homepage } = (await get()).data;
+
+		expect(homepage).toEqual({
+			collection: "page",
+			id: page.translationGroup,
+			entry: { id: translation.id, locale: "es", status: "published" },
+		});
+	});
+
+	it("prefers a published translation, and reports a draft homepage as a draft", async () => {
+		const page = await createPage("Welcome", { status: "draft" });
+		await post({ homepage: { collection: "page", id: page.id } });
+
+		expect((await get()).data.homepage.entry).toMatchObject({ id: page.id, status: "draft" });
+
+		const translation = await createPage("Bienvenidos", { locale: "es", translationOf: page.id });
+
+		expect((await get()).data.homepage.entry).toMatchObject({
+			id: translation.id,
+			status: "published",
+		});
+	});
+
+	it("never stores the reported entry", async () => {
+		const page = await createPage("Welcome");
+		const other = await createPage("Other");
+		await post({ homepage: { collection: "page", id: page.id } });
+
+		await post({ homepage: { collection: "page", id: page.id, entry: live(other.id) } });
+
+		const stored = await db
+			.selectFrom("options")
+			.select("value")
+			.where("name", "=", "site:homepage")
+			.executeTakeFirstOrThrow();
+		expect(JSON.parse(stored.value)).toEqual({ collection: "page", id: page.id });
 	});
 });

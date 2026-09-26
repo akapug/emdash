@@ -589,6 +589,7 @@ export type {
 	SiteSettings,
 	SiteSettingsUpdate,
 	SiteSettingKey,
+	HomepageEntry,
 	HomepageReference,
 	MediaReference,
 	SeoSettings,

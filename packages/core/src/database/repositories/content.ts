@@ -2173,6 +2173,24 @@ export class ContentRepository {
 		return result.rows.map((row) => row.id);
 	}
 
+	/**
+	 * The live rows of a translation group with their locale and status. A row
+	 * saved before translation groups existed has none and is its own group.
+	 */
+	async findTranslationStatuses(
+		type: string,
+		translationGroup: string,
+	): Promise<Array<{ id: string; locale: string | null; status: string }>> {
+		const tableName = getTableName(type);
+		const result = await sql<{ id: string; locale: string | null; status: string }>`
+			SELECT id, locale, status FROM ${sql.ref(tableName)}
+			WHERE (translation_group = ${translationGroup}
+				OR (translation_group IS NULL AND id = ${translationGroup}))
+			AND deleted_at IS NULL
+		`.execute(this.db);
+		return result.rows;
+	}
+
 	async findTranslationIdsForGroups(
 		type: string,
 		translationGroups: string[],
