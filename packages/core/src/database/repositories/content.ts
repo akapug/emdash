@@ -2174,8 +2174,11 @@ export class ContentRepository {
 	}
 
 	/**
-	 * The live rows of a translation group with their locale and status. A row
-	 * saved before translation groups existed has none and is its own group.
+	 * The live rows of a translation group with their locale and status. Only
+	 * rows that carry the group: `getHomepage()` loads by `translation_group`,
+	 * so a row without one (migration 019 backfilled every existing row; only a
+	 * direct insert or an old package can still produce one) is never what "/"
+	 * renders, and must not be reported as if it were.
 	 */
 	async findTranslationStatuses(
 		type: string,
@@ -2184,8 +2187,7 @@ export class ContentRepository {
 		const tableName = getTableName(type);
 		const result = await sql<{ id: string; locale: string | null; status: string }>`
 			SELECT id, locale, status FROM ${sql.ref(tableName)}
-			WHERE (translation_group = ${translationGroup}
-				OR (translation_group IS NULL AND id = ${translationGroup}))
+			WHERE translation_group = ${translationGroup}
 			AND deleted_at IS NULL
 		`.execute(this.db);
 		return result.rows;

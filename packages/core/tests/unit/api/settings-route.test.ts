@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { handleContentCreate, handleContentDelete } from "../../../src/api/handlers/content.js";
 import { GET, POST } from "../../../src/astro/routes/api/settings.js";
 import type { Database } from "../../../src/database/types.js";
+import { setI18nConfig } from "../../../src/i18n/config.js";
 import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../../utils/test-db.js";
 
 const ADMIN = { id: "user_admin", role: Role.ADMIN };
@@ -24,6 +25,7 @@ describe("settings route homepage", () => {
 	});
 
 	afterEach(async () => {
+		setI18nConfig(null);
 		await teardownTestDatabase(db);
 	});
 
@@ -166,6 +168,17 @@ describe("settings route homepage", () => {
 			id: translation.id,
 			status: "published",
 		});
+	});
+
+	it("reports the translation "/" renders: the default locale's, not the original", async () => {
+		// Default "es", original in "en": neither the original nor alphabetical
+		// order picks the row "/" renders; only the locale chain does.
+		setI18nConfig({ defaultLocale: "es", locales: ["es", "en"] });
+		const original = await createPage("Welcome", { locale: "en" });
+		const spanish = await createPage("Bienvenidos", { locale: "es", translationOf: original.id });
+		await post({ homepage: { collection: "page", id: original.id } });
+
+		expect((await get()).data.homepage.entry).toEqual({ id: spanish.id, locale: "es", status: "published" });
 	});
 
 	it("never stores the reported entry", async () => {

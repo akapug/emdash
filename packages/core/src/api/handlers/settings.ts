@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 
 import { ContentRepository } from "../../database/repositories/content.js";
 import type { Database } from "../../database/types.js";
+import { resolveLocaleChain } from "../../i18n/resolve.js";
 import { SchemaRegistry } from "../../schema/registry.js";
 import {
 	getSiteSettingWithDb,
@@ -40,11 +41,12 @@ export async function handleSettingsGet(
 }
 
 /**
- * The translation an editor sees for the stored homepage. The reference names
- * a translation group, and the group's original row can be deleted while a
- * translation of it still renders at "/", so the lookup is by group: the
- * original translation when it is published, else a published one, else the
- * first left, whose status then tells the editor why "/" shows no page.
+ * The translation an editor sees for the stored homepage: the one "/" renders.
+ * `getHomepage()` loads the group's PUBLISHED rows and takes the first by the
+ * default locale's fallback chain, then by locale (loader.ts,
+ * loadEntriesByGroups), so this ranks the same way. With nothing published it
+ * reports the first row by that order, whose status tells the editor why "/"
+ * shows no page.
  */
 async function resolveHomepageEntry(
 	db: Kysely<Database>,
@@ -52,9 +54,18 @@ async function resolveHomepageEntry(
 ): Promise<HomepageEntry | null> {
 	if (!(await new SchemaRegistry(db).getCollection(collection))) return null;
 	const rows = await new ContentRepository(db).findTranslationStatuses(collection, id);
-	const rank = (row: HomepageEntry) =>
-		(row.status === "published" ? 0 : 2) + (row.id === id ? 0 : 1);
-	const [entry] = rows.toSorted((a, b) => rank(a) - rank(b));
+	const chain = resolveLocaleChain();
+	const position = (row: HomepageEntry) => {
+		const at = row.locale === null ? -1 : chain.indexOf(row.locale);
+		return at === -1 ? chain.length : at;
+	};
+	const [entry] = rows.toSorted(
+		(a, b) =>
+			Number(a.status !== "published") - Number(b.status !== "published") ||
+			position(a) - position(b) ||
+			(a.locale ?? "").localeCompare(b.locale ?? "") ||
+			a.id.localeCompare(b.id),
+	);
 	return entry ?? null;
 }
 
