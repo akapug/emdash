@@ -327,6 +327,13 @@ export interface EmDashHandlers {
 			authorId?: string;
 			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
 			locale?: string;
+			seo?: {
+				title?: string | null;
+				description?: string | null;
+				image?: string | null;
+				canonical?: string | null;
+				noIndex?: boolean;
+			};
 			translationOf?: string;
 			taxonomies?: Record<string, string[]>;
 			references?: Record<string, string[]>;

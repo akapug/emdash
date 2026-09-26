@@ -23,6 +23,8 @@ import type { MediaProvider } from "#media/types.js";
 import { markContentMediaUsageCollectionStaleSafely } from "#media/usage/content-refresh.js";
 import type { EmDashHandlers } from "#types";
 
+import { invalidateCollectionCache } from "../../../../../object-cache/index.js";
+
 import {
 	buildBaseUrlMap,
 	extractMediaUrl,
@@ -39,6 +41,8 @@ export interface RewriteUrlsResult {
 	byCollection: Record<string, number>;
 	/** URLs that were rewritten */
 	urlsRewritten: number;
+	/** SEO images (`seo_image`) pointed at the imported media; not counted in `updated` */
+	seoImagesRewritten: number;
 	/** Any errors encountered */
 	errors: Array<{ collection: string; id: string; error: string }>;
 }
@@ -65,6 +69,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 				updated: 0,
 				byCollection: {},
 				urlsRewritten: 0,
+				seoImagesRewritten: 0,
 				errors: [],
 			});
 		}
@@ -92,6 +97,7 @@ export async function rewriteUrls(
 		updated: 0,
 		byCollection: {},
 		urlsRewritten: 0,
+		seoImagesRewritten: 0,
 		errors: [],
 	};
 	const staleMarkedCollections = new Set<string>();
@@ -242,6 +248,14 @@ export async function rewriteUrls(
 				});
 			}
 		}
+
+		await rewriteSeoImages(
+			db,
+			targetCollections.filter((c) => c.hasSeo).map((c) => c.slug),
+			urlMap,
+			baseMap,
+			result,
+		);
 	} finally {
 		for (const collectionSlug of staleMarkFailedCollections) {
 			if (staleMarkedCollections.has(collectionSlug)) continue;
@@ -251,4 +265,55 @@ export async function rewriteUrls(
 	}
 
 	return result;
+}
+
+/**
+ * Point SEO images at the imported media. They live in `_emdash_seo`, not in
+ * the content row, so the row's own `updated` count and version are untouched.
+ */
+async function rewriteSeoImages(
+	db: NonNullable<EmDashHandlers["db"]>,
+	collections: string[],
+	urlMap: Record<string, string>,
+	baseMap: Map<string, string>,
+	result: RewriteUrlsResult,
+): Promise<void> {
+	if (collections.length === 0) return;
+	const touched = new Set<string>();
+	try {
+		const rows = await db
+			.selectFrom("_emdash_seo")
+			.select(["collection", "content_id", "seo_image"])
+			.where("collection", "in", collections)
+			.where("seo_image", "is not", null)
+			.execute();
+		for (const row of rows) {
+			const newUrl = row.seo_image ? findMatchingUrl(row.seo_image, urlMap, baseMap) : null;
+			if (!newUrl || newUrl === row.seo_image) continue;
+			try {
+				await db
+					.updateTable("_emdash_seo")
+					.set({ seo_image: newUrl })
+					.where("collection", "=", row.collection)
+					.where("content_id", "=", row.content_id)
+					.execute();
+				result.seoImagesRewritten++;
+				touched.add(row.collection);
+			} catch (updateError) {
+				result.errors.push({
+					collection: row.collection,
+					id: row.content_id,
+					error: updateError instanceof Error ? updateError.message : "SEO image update failed",
+				});
+			}
+		}
+	} catch (queryError) {
+		result.errors.push({
+			collection: "_emdash_seo",
+			id: "*",
+			error: queryError instanceof Error ? queryError.message : "Query failed for SEO images",
+		});
+	} finally {
+		for (const collection of touched) invalidateCollectionCache(collection);
+	}
 }
