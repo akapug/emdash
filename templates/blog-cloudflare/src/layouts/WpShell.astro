@@ -24,6 +24,7 @@ import {
 import { EmDashHead, EmDashBodyStart, EmDashBodyEnd, PortableText } from "emdash/ui";
 import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
+import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
 	bodyClassFor,
 	composeWpShell,
@@ -128,6 +129,8 @@ const pageCtx = createPublicPageContext({
 		<title>{fullTitle}</title>
 		{shell.styles.map((href) => <link rel="stylesheet" href={href} />)}
 		<EmDashHead page={pageCtx} />
+		{/* The captured chrome carries no script by design: the site's analytics come from its setting. */}
+		<SiteAnalytics settings={settings} />
 	</head>
 	<body class={bodyClassFor(shell, kind)}>
 		<EmDashBodyStart page={pageCtx} />
