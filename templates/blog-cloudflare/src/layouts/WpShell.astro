@@ -40,6 +40,7 @@ import {
 	type WpShellKind,
 	type WpShellMenuItem,
 	type WpShellPost,
+	wpShellDocumentTitle,
 } from "../utils/wp-shell";
 
 interface Props {
@@ -48,6 +49,8 @@ interface Props {
 	/** The path the visitor asked for (before the rewrite). */
 	path: string;
 	title: string;
+	/** The entry's own SEO title, carried from WordPress: the document title, as written. */
+	seoTitle?: string | null;
 	pageTitle?: string | null;
 	description?: string | null;
 	image?: string | null;
@@ -66,6 +69,7 @@ const {
 	kind,
 	path,
 	title,
+	seoTitle,
 	pageTitle,
 	description,
 	image,
@@ -94,12 +98,7 @@ const menus = new Map<string, readonly WpShellMenuItem[] | null>(
 );
 
 const siteTitle = settings.title ?? shell.parts.flatMap((p) => ("slot" in p && p.slot === "siteTitle" ? [p.fallback] : []))[0] ?? "";
-const titleIncludesSiteName =
-	!siteTitle ||
-	title === siteTitle ||
-	title.endsWith(` | ${siteTitle}`) ||
-	title.endsWith(` — ${siteTitle}`);
-const fullTitle = titleIncludesSiteName ? title : `${title} — ${siteTitle}`;
+const fullTitle = wpShellDocumentTitle(title, siteTitle, seoTitle);
 
 const layout = layoutFor(shell, kind);
 

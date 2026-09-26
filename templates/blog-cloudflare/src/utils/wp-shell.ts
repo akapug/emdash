@@ -984,6 +984,27 @@ export function bodyClassFor(shell: WpShell, kind: WpShellKind): string {
 	return [...KIND_CLASSES[kind], ...kept].join(" ");
 }
 
+/**
+ * The document title of a page drawn in the migrated design. A carried SEO
+ * title (the entry's own SEO title, imported from WordPress's SEO plugin) is
+ * printed exactly as written, as WordPress printed it; EmDash's getSeoMeta
+ * would add " | Site" to it. With none, EmDash's title, with the site's name
+ * after it unless it ends with it already.
+ */
+export function wpShellDocumentTitle(
+	title: string,
+	siteTitle: string,
+	carried?: string | null,
+): string {
+	if (carried && carried.trim() !== "") return carried;
+	const named =
+		!siteTitle ||
+		title === siteTitle ||
+		title.endsWith(` | ${siteTitle}`) ||
+		title.endsWith(` \u2014 ${siteTitle}`);
+	return named ? title : `${title} \u2014 ${siteTitle}`;
+}
+
 /** Which page a rewritten `/wp-shell/...` path draws, or null for any other path. */
 export function wpShellRoute(
 	path: string | undefined,

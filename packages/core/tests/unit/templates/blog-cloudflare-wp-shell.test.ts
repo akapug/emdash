@@ -14,6 +14,7 @@ import {
 	renderListing,
 	renderMenu,
 	safeHref,
+	wpShellDocumentTitle,
 	wpShellProblem,
 	wpShellRoute,
 	type WpShell,
@@ -608,6 +609,20 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 			expect(wpShellProblem(record)).not.toBeNull();
 		});
 	}
+});
+
+describe("wp-shell: the document title", () => {
+	it("prints a carried SEO title exactly as written, and EmDash's title otherwise", () => {
+		expect(
+			wpShellDocumentTitle("Our Team | Example & Co", "Example & Co", "Our Team - Example"),
+		).toBe("Our Team - Example");
+		// no carried title: EmDash's, which getSeoMeta already ended with the site's name
+		expect(wpShellDocumentTitle("Our Team | Example & Co", "Example & Co", null)).toBe(
+			"Our Team | Example & Co",
+		);
+		expect(wpShellDocumentTitle("Our Team", "Example & Co")).toBe("Our Team \u2014 Example & Co");
+		expect(wpShellDocumentTitle("Example & Co", "Example & Co", "  ")).toBe("Example & Co");
+	});
 });
 
 describe("wp-shell route", () => {
