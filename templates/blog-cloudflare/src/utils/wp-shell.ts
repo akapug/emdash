@@ -126,18 +126,129 @@ const RECORD_ID = /^[a-f0-9]{8,64}$/;
 const MAX_MARKUP = 1_000_000;
 
 /**
- * Executable markup, in any string the record would put on a page. The writer
- * removed all of it; seeing any here means the record did not come from that
- * writer, and none of it is served.
+ * THE TRIPWIRE. The writer's markup comes out of one serializer (linkedom,
+ * behind Embark's sanitizer) in one form: every tag complete, every attribute
+ * value double-quoted with `"`, `<` and `>` escaped, no comments, and no
+ * entity but the five it writes. A string in any other form did not come from
+ * that writer. A pattern over a string in an unknown form guesses where a
+ * browser sees a tag, and loses (`<a title=">" onclick=…>`, `&#106;avascript:`,
+ * `java&#x09;script:`, a tag cut in two by a slot), so the FORM is checked, and
+ * inside it every tag and attribute is read the way a browser reads it.
+ *
+ * Each piece is checked on its own, so every slot boundary sits between tags;
+ * a menu template is checked with its holes filled, the label and children
+ * holes with markup that only fits between tags.
  */
-const TRIPWIRE: readonly RegExp[] = [
-	/<\s*\/?\s*(script|iframe|object|embed|frame|frameset|base|meta|link|style|form|svg|math|template)\b/i,
-	// An attribute follows whitespace, a `/`, or straight after a quoted value.
-	/<[^>]*[\s/"']on[a-z]+\s*=/i,
-	/<[^>]*=\s*["']?\s*(javascript|vbscript)\s*:/i,
-];
+// eslint-disable-next-line no-control-regex -- an attribute name holds no control character
+const CANONICAL_TAG = /<(\/?)([a-z][a-z0-9-]*)((?:\s+[^\s"'<>/=\u0000-\u001F]+(?:="[^"<>]*")?)*)\s*\/?>/y;
+// eslint-disable-next-line no-control-regex -- an attribute name holds no control character
+const ATTRIBUTE = /\s+([^\s"'<>/=\u0000-\u001F]+)(?:="([^"<>]*)")?/g;
 
-const hasExecutableMarkup = (html: string) => TRIPWIRE.some((re) => re.test(html));
+/** Elements the writer never emits: they run, fetch, submit, or change how what follows them is parsed. */
+const NEVER_TAGS = new Set([
+	"script", "iframe", "object", "embed", "frame", "frameset", "base", "meta", "link", "style", "form",
+	"svg", "math", "template", "noscript", "noembed", "noframes", "xmp", "plaintext", "textarea", "title",
+	"select", "option", "input", "button", "portal", "applet", "isindex", "param", "dialog",
+]);
+/** Attributes the writer never emits. */
+const NEVER_ATTRS = new Set(["action", "formaction", "background", "ping", "srcdoc", "data", "codebase", "dynsrc", "lowsrc"]);
+
+const ENTITY = /&(?:(amp|lt|gt|quot|#39);)?/g;
+const ENTITY_VALUE: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
+
+/** An attribute value as a browser reads it, or null when it holds an entity the writer never writes. */
+function decodeValue(v: string): string | null {
+	let ok = true;
+	const out = v.replace(ENTITY, (_, name: string | undefined) => {
+		if (!name) ok = false;
+		return name ? (ENTITY_VALUE[name] ?? "") : "&";
+	});
+	return ok ? out : null;
+}
+
+/** A stand-in page on the site, to resolve a reference the way the page will. */
+const SITE = "https://site.invalid";
+const PAGE = `${SITE}/a/page`;
+const MEDIA_PATH = "/_emdash/api/media/file/";
+const IMG_DATA = /^data:image\/(png|jpe?g|gif|webp|avif|bmp|x-icon);base64,/i;
+const STYLE_DATA = /^data:(image|font|application)\//i;
+
+/** Whether a page on the site would load `url` from the site's own files. */
+function ownFile(url: string): boolean {
+	const u = URL.parse(url, PAGE);
+	return u !== null && u.origin === SITE && u.pathname.startsWith(MEDIA_PATH);
+}
+
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const URL_NOISE = /[\u0000-\u0020\u007F]/g;
+const RUNNING_SCHEME = /^(javascript|vbscript|data):/i;
+/** An id the visual-editing toolbar looks itself up by (`getElementById("emdash-toolbar")`). */
+const EMDASH_ID = /^\s*emdash/i;
+const CSS_ESCAPE = /\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\([^\n])/g;
+const CSS_RUNS = /expression\s*\(|javascript:|vbscript:|behavior\s*:|-moz-binding|@import/i;
+const CSS_URL = /url\(\s*(["']?)([^"')]*)/gi;
+const CSS_STRING_URL = /image-set\s*\(|(?:^|[^a-z0-9_-])(?:image|src)\s*\(/i;
+
+function styleProblem(css: string): string | null {
+	const v = css.replace(CSS_ESCAPE, (_, hex: string | undefined, ch: string | undefined) =>
+		hex ? String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff) || 0xfffd) : (ch ?? ""),
+	);
+	if (CSS_RUNS.test(v)) return "a style attribute runs script";
+	for (const m of v.matchAll(CSS_URL)) {
+		const url = (m[2] ?? "").trim();
+		if (!STYLE_DATA.test(url) && !ownFile(url)) return "a style attribute loads from outside the site";
+	}
+	return CSS_STRING_URL.test(v) ? "a style attribute names a URL outside url()" : null;
+}
+
+function attributeProblem(tag: string, name: string, value: string): string | null {
+	if (name.startsWith("on") || NEVER_ATTRS.has(name) || (name.includes(":") && !name.startsWith("data-"))) {
+		return `the markup carries a ${name} attribute`;
+	}
+	if (name.startsWith("data-emdash") || (name === "id" && EMDASH_ID.test(value))) {
+		return "the markup claims to be EmDash's own";
+	}
+	if (name === "href") return RUNNING_SCHEME.test(value.replace(URL_NOISE, "")) ? "a link runs script" : null;
+	if (name === "src" || name === "poster") {
+		return ((tag === "img" || tag === "source") && IMG_DATA.test(value.trim())) || ownFile(value)
+			? null
+			: `a ${name} loads from outside the site`;
+	}
+	if (name === "srcset") return "the markup carries a srcset";
+	return name === "style" ? styleProblem(value) : null;
+}
+
+/** Why `html` is not markup the writer produced, or null. */
+function markupProblem(html: string): string | null {
+	for (let i = html.indexOf("<"); i !== -1; i = html.indexOf("<", CANONICAL_TAG.lastIndex)) {
+		CANONICAL_TAG.lastIndex = i;
+		const m = CANONICAL_TAG.exec(html);
+		if (!m) return "the markup is not in the writer's form";
+		const tag = m[2] ?? "";
+		if (NEVER_TAGS.has(tag)) return `the markup carries a <${tag}>`;
+		for (const a of (m[3] ?? "").matchAll(ATTRIBUTE)) {
+			const value = a[2] === undefined ? "" : decodeValue(a[2]);
+			if (value === null) return "an attribute value is not in the writer's form";
+			const why = attributeProblem(tag, (a[1] ?? "").toLowerCase(), value);
+			if (why) return why;
+		}
+	}
+	return null;
+}
+
+/** Holes filled for the check: a label or children hole takes markup, which only fits between tags. */
+const HOLE_FILL: Record<string, string> = { cls: "", href: "#", label: "<b></b>", children: "<b></b>" };
+
+/** Every markup string the layout draws, each as the tripwire must read it. */
+function drawnMarkup(s: WpShell): string[] {
+	const out: string[] = [];
+	for (const p of s.parts) if ("html" in p) out.push(p.html);
+	for (const m of s.menus) {
+		out.push(m.fallback);
+		for (const t of [m.leaf, m.parent]) out.push(t.map((x) => (typeof x === "string" ? x : HOLE_FILL[x.s])).join(""));
+	}
+	return out;
+}
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
@@ -259,9 +370,12 @@ export function wpShellProblem(value: unknown): string | null {
 		return "the record needs exactly one title and one content slot";
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
-	const markup = markupOf(value as unknown as WpShell);
-	if (markup.reduce((n, h) => n + h.length, 0) > MAX_MARKUP) return "the markup is larger than a shell";
-	if (markup.some(hasExecutableMarkup)) return "the markup carries something executable";
+	const shell = value as unknown as WpShell;
+	if (markupOf(shell).reduce((n, h) => n + h.length, 0) > MAX_MARKUP) return "the markup is larger than a shell";
+	for (const piece of drawnMarkup(shell)) {
+		const why = markupProblem(piece);
+		if (why) return why;
+	}
 	return null;
 }
 

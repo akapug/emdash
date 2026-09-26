@@ -14,6 +14,8 @@ import {
 	type WpShellMenu,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
 
+import writerRecords from "./wp-shell-writer-records.json";
+
 /** A Twenty Twenty shaped record, as Embark's writer produces it. */
 function sample(): WpShell {
 	const menu: WpShellMenu = {
@@ -212,4 +214,61 @@ describe("wp-shell route", () => {
 		expect(wpShellRoute("tag/x")).toBeNull();
 		expect(wpShellRoute("pages/a/b")).toBeNull();
 	});
+});
+
+/**
+ * The reader and the writer agree. These are Embark's builder output for its
+ * Twenty Twenty fixture, as written, and for the same page with a hostile
+ * header and stylesheet (packages/control-plane/test/wp-shell.test.ts, dumped
+ * with WPSHELL_DUMP=1). A tripwire that refused them would put every migrated
+ * site back in the template's own design.
+ */
+
+describe("the tripwire reads the writer's form", () => {
+	it("accepts what Embark's writer produces, hostile source included", () => {
+		for (const r of writerRecords) expect(wpShellProblem(r)).toBeNull();
+	});
+
+	/** The sample record with one more html part, or with a menu's leaf template replaced. */
+	const withHtml = (...html: string[]) => {
+		const s = sample();
+		return { ...s, parts: [...s.parts, ...html.map((h) => ({ html: h }))] };
+	};
+
+	// Each of these is executable, or loads from somewhere else, in a browser;
+	// the previous tripwire (three patterns over the raw string) let every one through.
+	const forged: Array<[string, unknown]> = [
+		["an entity-encoded javascript: link", withHtml('<a href="&#106;avascript:alert(1)">x</a>')],
+		["a named-entity colon", withHtml('<a href="javascript&colon;alert(1)">x</a>')],
+		["a tab inside the scheme", withHtml('<a href="java&#x09;script:alert(1)">x</a>')],
+		["a raw tab inside the scheme", withHtml('<a href="java\tscript:alert(1)">x</a>')],
+		["a > inside a quoted value before a handler", withHtml('<a title=">" onclick="alert(1)">x</a>')],
+		["a quote inside an attribute name", withHtml('<a x"y=1 onclick=alert(1)>x</a>')],
+		["a tag cut in two by a slot", (() => {
+			const s = sample();
+			return { ...s, parts: [...s.parts, { html: '<img src="/_emdash/api/media/file/a.png" ' }, { slot: "tagline", fallback: "" }, { html: ' onerror="alert(1)">' }] };
+		})()],
+		["a label hole inside an attribute", (() => {
+			const s = sample();
+			const leaf = ['<li class="menu-item', { s: "cls" }, '"><a title="', { s: "label" }, '" href="', { s: "href" }, '">x</a></li>'];
+			return { ...s, menus: s.menus.map((m) => ({ ...m, leaf })) };
+		})()],
+		["a formaction on a button", withHtml('<button form="c" formaction="&#106;avascript:alert(1)">x</button>')],
+		["a noscript that hides a tag from a parser with scripting off", withHtml('<noscript><p title="</noscript><img src=x onerror=alert(1)>"></p></noscript>')],
+		["a data-emdash-ref the editor toolbar would take for the page's own", withHtml('<div data-emdash-ref="{&quot;collection&quot;:&quot;posts&quot;,&quot;id&quot;:&quot;p1&quot;,&quot;status&quot;:&quot;draft&quot;}">x</div>')],
+		["an emdash id", withHtml('<div id="emdash-toolbar">x</div>')],
+		["an image from another server", withHtml('<img src="https://tracker.example/p.gif">')],
+		["a protocol-relative image", withHtml('<img src="//tracker.example/p.gif">')],
+		["a style url to another server", withHtml('<div style="background:url(\'https://tracker.example/b.png\')">x</div>')],
+		["a CSS-escaped url()", withHtml('<div style="background:u\\72 l(https://tracker.example/b.png)">x</div>')],
+		["an image-set string", withHtml('<div style="background-image:image-set(\'https://tracker.example/b.png\' 1x)">x</div>')],
+		["a srcset", withHtml('<img src="/_emdash/api/media/file/a.png" srcset="https://tracker.example/b.png 2x">')],
+		["an unquoted attribute", withHtml("<img src=/_emdash/api/media/file/a.png>")],
+		["a comment", withHtml("<!--><img src=x onerror=alert(1)>-->")],
+	];
+	for (const [what, record] of forged) {
+		it(`refuses ${what}`, () => {
+			expect(wpShellProblem(record)).not.toBeNull();
+		});
+	}
 });
