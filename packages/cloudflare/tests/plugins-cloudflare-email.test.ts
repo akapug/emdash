@@ -8,8 +8,10 @@ import {
 	createCloudflareEmailStatus,
 	createPlugin,
 	displayName,
+	domainOf,
 	headerText,
 	mailbox,
+	withoutAddresses,
 	type CloudflareEmailConfig,
 } from "../src/plugins/cloudflare-email.js";
 
@@ -189,10 +191,10 @@ describe("createCloudflareEmailDeliver()", () => {
 		expect(send).toHaveBeenCalledWith(expect.objectContaining({ html: "<p>Click here</p>" }));
 	});
 
-	it("passes cc through and prefers the message's replyTo over the configured one", async () => {
+	it("passes cc through when the config allows it, and prefers the message's replyTo over the configured one", async () => {
 		const { env, send } = fakeEnv();
 		const deliver = createCloudflareEmailDeliver(
-			{ from: "cms@mails.example.com", replyTo: "hello@example.com" },
+			{ from: "cms@mails.example.com", replyTo: "hello@example.com", allowCc: true },
 			async () => env,
 		);
 
@@ -228,6 +230,29 @@ describe("createCloudflareEmailDeliver()", () => {
 		);
 
 		await expect(deliver(event, fakeCtx())).rejects.toThrow(/binding "EMAIL" not found/);
+	});
+
+	it("refuses a cc unless the config allows it, before the budget or the binding", async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "cms@mails.example.com" },
+			async () => env,
+		);
+
+		await expect(
+			deliver(
+				{ message: { ...message, cc: ["team@example.com"] }, source: "forms" },
+				fakeCtx({ kv }),
+			),
+		).rejects.toThrow(/a cc is not sent unless the config allows it \(allowCc\)/);
+
+		expect(send).not.toHaveBeenCalled();
+		expect([...kv.rows.keys()]).toEqual([]);
+		// An empty cc is no cc.
+		await deliver({ message: { ...message, cc: [] }, source: "forms" }, fakeCtx({ kv }));
+		expect(send).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0]![0]).not.toHaveProperty("cc");
 	});
 
 	it("propagates provider errors so the pipeline can surface them", async () => {
@@ -447,7 +472,7 @@ describe("the sending budget", () => {
 	it("counts every recipient, cc included", async () => {
 		const { env, send } = fakeEnv();
 		const deliver = createCloudflareEmailDeliver(
-			{ from: "notify@mail.example.org", limits: { perHour: 2, perDay: 10 } },
+			{ from: "notify@mail.example.org", limits: { perHour: 2, perDay: 10 }, allowCc: true },
 			async () => env,
 			at("2026-01-01T10:15:00Z"),
 		);
@@ -491,6 +516,24 @@ describe("the sending budget", () => {
 		]);
 	});
 
+	it("a message the day refuses spends nothing of the hour", async () => {
+		const { env } = fakeEnv();
+		const kv = memoryKv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits: { perHour: 5, perDay: 1 } },
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		);
+
+		await deliver({ message, source: "x" }, fakeCtx({ kv }));
+		await expect(deliver({ message, source: "x" }, fakeCtx({ kv }))).rejects.toThrow(
+			/"x" this day/,
+		);
+
+		expect(kv.rows.get("budget:h:2026-01-01T10:x")?.value).toBe(1);
+		expect(kv.rows.get("budget:t:2026-01-01")?.value).toBe(1);
+	});
+
 	it("never lets two sends at once take the last place", async () => {
 		const { env, send } = fakeEnv();
 		const kv = memoryKv();
@@ -511,6 +554,140 @@ describe("the sending budget", () => {
 	});
 });
 
+describe("the site's totals", () => {
+	const at = (iso: string) => () => new Date(iso);
+	const deliverWith = (limits: CloudflareEmailConfig["limits"], env: Record<string, unknown>) =>
+		createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits },
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		);
+
+	it("every source together has a daily total, whatever each source has left", async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const deliver = deliverWith({ perHour: 10, perDay: 10, perDayTotal: 3 }, env);
+
+		for (const source of ["emdash-forms", "emdash-comments", "admin"])
+			await deliver({ message, source }, fakeCtx({ kv }));
+		await expect(deliver({ message, source: "another-plugin" }, fakeCtx({ kv }))).rejects.toThrow(
+			/every source together this day has reached 3 recipient\(s\), and 1 more would pass its limit of 3/,
+		);
+
+		expect(send).toHaveBeenCalledTimes(3);
+		expect(kv.rows.get("budget:t:2026-01-01")?.value).toBe(3);
+		// The next day is a new total.
+		await createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits: { perDayTotal: 3 } },
+			async () => env,
+			at("2026-01-02T00:01:00Z"),
+		)({ message, source: "another-plugin" }, fakeCtx({ kv }));
+		expect(send).toHaveBeenCalledTimes(4);
+	});
+
+	it('"system" mail reaches one address only so often a day; other addresses, and other sources, still get theirs', async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const ctx = fakeCtx({ kv });
+		const deliver = deliverWith({ perHour: 100, perDay: 100, systemPerRecipient: 2 }, env);
+
+		await deliver(event, ctx);
+		await deliver({ message: { ...message, to: "USER@example.com" }, source: "system" }, ctx);
+		const refused = deliver(event, ctx);
+		await expect(refused).rejects.toThrow(
+			/"system" mail to an address at example\.com today has reached 2 recipient\(s\), and 1 more would pass its limit of 2/,
+		);
+		await refused.catch((e: Error) => expect(e.message).not.toContain("user@"));
+
+		await deliver({ message: { ...message, to: "other@example.com" }, source: "system" }, ctx);
+		await deliver({ message, source: "emdash-forms" }, ctx);
+		expect(send).toHaveBeenCalledTimes(4);
+		// The count per address is kept under a hash: the site's database holds no address for it.
+		const perAddress = [...kv.rows.keys()].filter((k) => k.startsWith("budget:r:"));
+		expect(perAddress).toHaveLength(2);
+		expect(perAddress.join(" ")).not.toContain("@");
+		// And the refused one took nothing of the hour.
+		expect(kv.rows.get("budget:h:2026-01-01T10:system")?.value).toBe(3);
+	});
+
+	it("a message the binding refuses gives its places back: only a send Cloudflare accepts is counted", async () => {
+		const kv = memoryKv();
+		let refuse = true;
+		const { env, send } = fakeEnv(async () => {
+			if (refuse) throw new Error("E_RECIPIENT_NOT_ALLOWED");
+			return { messageId: "msg-9" };
+		});
+		const deliver = deliverWith(
+			{ perHour: 1, perDay: 1, perDayTotal: 1, systemPerRecipient: 1 },
+			env,
+		);
+
+		await expect(deliver(event, fakeCtx({ kv }))).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
+		expect(
+			[...kv.rows.entries()].filter(([k]) => k.startsWith("budget:")).map(([, r]) => r.value),
+		).toEqual([0, 0, 0, 0]);
+
+		refuse = false;
+		await deliver(event, fakeCtx({ kv }));
+		expect(send).toHaveBeenCalledTimes(2);
+		await expect(deliver(event, fakeCtx({ kv }))).rejects.toThrow(/would pass its limit of 1/);
+	});
+});
+
+describe("what a log carries", () => {
+	it("the delivered log names the recipient's domain, never the address", async () => {
+		const { env } = fakeEnv();
+		const ctx = fakeCtx();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "cms@mails.example.com" },
+			async () => env,
+		);
+
+		await deliver({ message, source: "emdash-forms" }, ctx);
+
+		expect(ctx.log.info).toHaveBeenCalledWith("email delivered via Cloudflare Email Sending", {
+			toDomain: "example.com",
+			subject: "Your magic link",
+			source: "emdash-forms",
+			messageId: "msg-1",
+		});
+		expect(JSON.stringify(vi.mocked(ctx.log.info).mock.calls)).not.toContain("user@");
+	});
+
+	it("an error the binding throws names the recipient's domain in place of the address", async () => {
+		const { env } = fakeEnv(async () => {
+			throw Object.assign(
+				new Error("E_RECIPIENT_NOT_ALLOWED: User@Example.com is not allowed (user@example.com)"),
+				{ code: "E_RECIPIENT_NOT_ALLOWED" },
+			);
+		});
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "cms@mails.example.com" },
+			async () => env,
+		);
+
+		await expect(deliver(event, fakeCtx())).rejects.toMatchObject({
+			message:
+				"E_RECIPIENT_NOT_ALLOWED: <an address at example.com> is not allowed (<an address at example.com>)",
+			code: "E_RECIPIENT_NOT_ALLOWED",
+		});
+	});
+
+	it("domainOf and withoutAddresses keep the domain and nothing of the local part", () => {
+		expect(domainOf("o'brien+forms@sub.example.org")).toBe("sub.example.org");
+		expect(
+			withoutAddresses("to A@x.example.org and a@x.example.org, not b@x.example.org", [
+				"a@x.example.org",
+			]),
+		).toBe(
+			"to <an address at x.example.org> and <an address at x.example.org>, not b@x.example.org",
+		);
+		expect(withoutAddresses("İstanbul a@x.example.org", ["a@x.example.org"])).toBe(
+			"İstanbul <an address at x.example.org>",
+		);
+	});
+});
+
 describe("createCloudflareEmailStatus()", () => {
 	it("says the sender, whether the binding is there, and where replies go", async () => {
 		const { env } = fakeEnv();
@@ -527,7 +704,7 @@ describe("createCloudflareEmailStatus()", () => {
 			senderName: "site title",
 			binding: { name: "EMAIL", present: true },
 			replyTo: "site",
-			limits: { perHour: 50, perDay: 200 },
+			limits: { perHour: 50, perDay: 200, perDayTotal: 300, systemPerRecipient: 10 },
 		});
 	});
 

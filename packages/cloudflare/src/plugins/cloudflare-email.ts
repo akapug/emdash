@@ -17,12 +17,24 @@
  *   that is not is refused; a `replyTo` that is not is dropped, and the
  *   message goes without it. A visitor's form input reaches `replyTo`, so it
  *   never reaches a header unchecked.
+ * - A `cc` is refused unless the config allows it (`allowCc`): a binding
+ *   restricted to some recipients (`allowed_destination_addresses`) is only
+ *   known to check `to` against them.
  * - The subject and the sender's name lose every control character (CR and
  *   LF among them) and are cut to a header's length.
- * - Each sending source ("system" for auth mail, "admin" for the test email,
- *   a plugin by its id) has its own budget of recipients per hour and per
- *   day, counted in the site's database, so one flooded form cannot spend the
- *   budget the owner's login email needs. A message over it is refused.
+ * - Recipients are counted in the site's database, each count one row moved
+ *   with compare-and-set: each sending source ("system" for auth mail,
+ *   "admin" for the test email, a plugin by its id) has its own budget per
+ *   hour and per day, so one flooded form cannot spend the budget the
+ *   owner's login email needs; every source together has a daily total, so
+ *   the site cannot spend more of a shared account's sending than that; and
+ *   "system" mail (magic links, invites) reaches any one address only so
+ *   often a day, so requests from rotating IPs can neither flood one inbox
+ *   nor spend the day. A message over any of them is refused, and a message
+ *   the binding refuses gives its places back: only a send Cloudflare
+ *   accepts is counted.
+ * - A log names a recipient's domain, never the address, and an error the
+ *   binding throws has the address replaced by its domain.
  *
  * The sender's name is `from.name` when the config gives one, otherwise the
  * site's title.
@@ -88,10 +100,28 @@ export interface CloudflareEmailConfig {
 	replyTo?: string;
 
 	/**
-	 * Recipients one sending source may reach, per hour and per day.
-	 * @default { perHour: 50, perDay: 200 }
+	 * How many recipients the site may reach: one sending source per hour
+	 * (`perHour`) and per day (`perDay`), every source together per day
+	 * (`perDayTotal`), and "system" mail to any one address per day
+	 * (`systemPerRecipient`).
+	 * @default { perHour: 50, perDay: 200, perDayTotal: 300, systemPerRecipient: 10 }
 	 */
-	limits?: { perHour?: number; perDay?: number };
+	limits?: Partial<SendingLimits>;
+
+	/**
+	 * Send a message's `cc`. Off by default: a `send_email` binding restricted
+	 * to some recipients is only known to check `to` against them.
+	 * @default false
+	 */
+	allowCc?: boolean;
+}
+
+/** How many recipients the site may reach (see {@link CloudflareEmailConfig.limits}). */
+export interface SendingLimits {
+	perHour: number;
+	perDay: number;
+	perDayTotal: number;
+	systemPerRecipient: number;
 }
 
 /** Minimal shape of the Email Sending binding (`send_email` in wrangler). */
@@ -116,6 +146,8 @@ const MAX_NAME = 78;
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 const WHITESPACE_RUN = /\s+/g;
+/** ASCII capitals, folded to find an address in an error's text whatever its case. */
+const ASCII_UPPER = /[A-Z]/g;
 /** A display name keeps no quote, angle bracket or backslash, so it cannot read as an address. */
 const NAME_SPECIALS = /["<>\\]/g;
 /**
@@ -141,9 +173,14 @@ export function mailbox(value: unknown): string | null {
 	return v.length <= 254 && pattern.test(v) ? v : null;
 }
 
-/** The recipients one source may reach per hour and per day: the config's, over 50 and 200. */
-export function limitsOf(config: CloudflareEmailConfig): { perHour: number; perDay: number } {
-	return { perHour: 50, perDay: 200, ...config.limits };
+/** How many recipients the site may reach: the config's, over 50 an hour and 200 a day per source, 300 a day in all, and 10 a day of "system" mail to one address. */
+export function limitsOf(config: CloudflareEmailConfig): SendingLimits {
+	return { perHour: 50, perDay: 200, perDayTotal: 300, systemPerRecipient: 10, ...config.limits };
+}
+
+/** The domain of one plain address, which a log names in place of the address. */
+export function domainOf(address: string): string {
+	return address.slice(address.lastIndexOf("@") + 1);
 }
 
 /**
@@ -167,48 +204,126 @@ export function displayName(value: unknown): string | undefined {
 	);
 }
 
+/** One count the budget moved: the row, and by how much. */
+export interface Taken {
+	key: string;
+	n: number;
+}
+
+/** A key's own counter never passes `limit`: one compare-and-set per try, so two sends at once cannot both take the last place. */
+async function takeOne(
+	kv: PluginContext["kv"],
+	key: string,
+	n: number,
+	limit: number,
+	iso: string,
+): Promise<"taken" | { count: number } | "contended"> {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const current = await kv.getVersioned<number>(key);
+		const count = typeof current?.value === "number" ? current.value : 0;
+		if (count + n > limit) return { count };
+		if (!current) await dropOldBudgets(kv, iso);
+		if ((await kv.compareAndSet(key, current?.revision ?? null, count + n)).applied) return "taken";
+	}
+	return "contended";
+}
+
 /**
- * Take `n` recipients from `source`'s budget for the hour and the day `now`
- * falls in, or say why not. Each count is one plugin KV key moved with
- * compare-and-set, so two sends at once cannot both take the last place. The
- * hour is taken first: a message the hour refuses spends nothing of the day.
- * Returns null when taken.
+ * The hash a recipient's own count is kept under: the site's database holds a
+ * count per address without holding the address.
+ */
+async function recipientKey(address: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(address.toLowerCase()),
+	);
+	return Array.from(new Uint8Array(digest).slice(0, 16), (b) =>
+		b.toString(16).padStart(2, "0"),
+	).join("");
+}
+
+/**
+ * Take a message's places for the hour and the day `now` falls in, or say why
+ * not: `recipients` from `source`'s hour and day, from every source's day
+ * total, and, for "system" mail, one from each recipient's own day. Every
+ * count is one row in plugin KV (the site's database) moved with
+ * compare-and-set. A refusal gives back what it took before it, so a refused
+ * message spends nothing; the caller gives the rest back
+ * ({@link refundBudget}) when the binding refuses the message.
  */
 export async function takeBudget(
 	kv: PluginContext["kv"],
 	source: string,
-	n: number,
-	limits: { perHour: number; perDay: number },
+	recipients: readonly string[],
+	limits: SendingLimits,
 	now: Date,
-): Promise<string | null> {
+): Promise<{ refused: string } | { taken: Taken[] }> {
 	const iso = now.toISOString();
-	const windows = [
-		{ key: `budget:h:${iso.slice(0, 13)}:${source}`, limit: limits.perHour, what: "hour" },
-		{ key: `budget:d:${iso.slice(0, 10)}:${source}`, limit: limits.perDay, what: "day" },
-	];
-	for (const w of windows) {
-		let taken = false;
-		for (let attempt = 0; attempt < 5 && !taken; attempt++) {
-			const current = await kv.getVersioned<number>(w.key);
-			const count = typeof current?.value === "number" ? current.value : 0;
-			if (count + n > w.limit) {
-				return `"${source}" has sent to ${count} recipient(s) this ${w.what}, and ${n} more would pass its limit of ${w.limit}`;
-			}
-			if (!current) await dropOldBudgets(kv, iso);
-			taken = (await kv.compareAndSet(w.key, current?.revision ?? null, count + n)).applied;
+	const [day, hour] = [iso.slice(0, 10), iso.slice(0, 13)];
+	const n = recipients.length;
+	const windows: Array<{ key: string; n: number; limit: number; what: string }> = [];
+	if (source === "system") {
+		for (const address of new Set(recipients.map((a) => a.toLowerCase()))) {
+			windows.push({
+				key: `budget:r:${day}:${await recipientKey(address)}`,
+				n: 1,
+				limit: limits.systemPerRecipient,
+				what: `"system" mail to an address at ${domainOf(address)} today`,
+			});
 		}
-		if (!taken)
-			return `the ${w.what}'s budget for "${source}" kept changing under concurrent sends`;
 	}
-	return null;
+	windows.push(
+		{ key: `budget:h:${hour}:${source}`, n, limit: limits.perHour, what: `"${source}" this hour` },
+		{ key: `budget:d:${day}:${source}`, n, limit: limits.perDay, what: `"${source}" this day` },
+		{
+			key: `budget:t:${day}`,
+			n,
+			limit: limits.perDayTotal,
+			what: "every source together this day",
+		},
+	);
+	const taken: Taken[] = [];
+	for (const w of windows) {
+		const r = await takeOne(kv, w.key, w.n, w.limit, iso);
+		if (r === "taken") {
+			taken.push({ key: w.key, n: w.n });
+			continue;
+		}
+		await refundBudget(kv, taken);
+		return {
+			refused:
+				r === "contended"
+					? `the budget for ${w.what} kept changing under concurrent sends`
+					: `${w.what} has reached ${r.count} recipient(s), and ${w.n} more would pass its limit of ${w.limit}`,
+		};
+	}
+	return { taken };
+}
+
+/** Give back what {@link takeBudget} took, each row with compare-and-set. Best effort: a count left high refuses sooner, never later. */
+export async function refundBudget(
+	kv: PluginContext["kv"],
+	taken: readonly Taken[],
+): Promise<void> {
+	for (const t of taken) {
+		for (let attempt = 0; attempt < 5; attempt++) {
+			const current = await kv.getVersioned<number>(t.key);
+			if (!current || typeof current.value !== "number") break;
+			if (
+				(await kv.compareAndSet(t.key, current.revision, Math.max(0, current.value - t.n))).applied
+			)
+				break;
+		}
+	}
 }
 
 /** Delete the counts of hours and days before `iso`'s: a new window's first send clears the old ones. Best effort. */
 async function dropOldBudgets(kv: PluginContext["kv"], iso: string): Promise<void> {
 	try {
 		for (const { key } of await kv.list("budget:")) {
-			const [, kind, window] = key.split(":");
-			if (window !== (kind === "d" ? iso.slice(0, 10) : iso.slice(0, 13))) await kv.delete(key);
+			// budget:<kind>:<window>[:<who>], the window a day (10 characters) or an hour (13).
+			const window = key.split(":")[2] ?? "";
+			if (window !== iso.slice(0, window.length === 10 ? 10 : 13)) await kv.delete(key);
 		}
 	} catch {
 		// A count left behind is a row, not a wrong answer: its window never comes back.
@@ -273,10 +388,16 @@ export function createCloudflareEmailDeliver(
 	return async (event, ctx) => {
 		const { message, source } = event;
 		const to = mailbox(message.to);
-		const cc = (message.cc ?? []).map(mailbox);
-		if (!to || cc.includes(null)) {
+		const checked = (message.cc ?? []).map(mailbox);
+		if (!to || checked.includes(null)) {
 			throw new Error(
 				"[cloudflare-email] refusing to send: every recipient must be one plain address",
+			);
+		}
+		const cc = checked.filter((a): a is string => a !== null);
+		if (cc.length && config.allowCc !== true) {
+			throw new Error(
+				"[cloudflare-email] refusing to send: a cc is not sent unless the config allows it (allowCc), because a send_email binding restricted to some recipients is only known to check `to` against them",
 			);
 		}
 		const subject = headerText(message.subject, MAX_SUBJECT);
@@ -300,30 +421,58 @@ export function createCloudflareEmailDeliver(
 		}
 		const replyTo = mailbox(message.replyTo) ?? (await siteReplyTo(ctx)) ?? mailbox(config.replyTo);
 
-		const refused = await takeBudget(ctx.kv, source, 1 + cc.length, limits, now());
-		if (refused) {
-			ctx.log.warn("email refused: sending budget spent", { source, why: refused });
-			throw new Error(`[cloudflare-email] refusing to send: ${refused}`);
+		const budget = await takeBudget(ctx.kv, source, [to, ...cc], limits, now());
+		if ("refused" in budget) {
+			ctx.log.warn("email refused: sending budget spent", { source, why: budget.refused });
+			throw new Error(`[cloudflare-email] refusing to send: ${budget.refused}`);
 		}
 
 		const name = displayName(from.name ?? ctx.site?.name);
-		const result = await binding.send({
-			from: name ? { email: from.email, name } : { email: from.email },
-			to,
-			subject,
-			text: message.text,
-			...(message.html ? { html: message.html } : {}),
-			...(cc.length ? { cc: cc.filter((a) => a !== null) } : {}),
-			...(replyTo ? { replyTo } : {}),
-		});
+		let result: { messageId?: string } | undefined;
+		try {
+			result = await binding.send({
+				from: name ? { email: from.email, name } : { email: from.email },
+				to,
+				subject,
+				text: message.text,
+				...(message.html ? { html: message.html } : {}),
+				...(cc.length ? { cc } : {}),
+				...(replyTo ? { replyTo } : {}),
+			});
+		} catch (error) {
+			// Only a send Cloudflare accepts spends the budget.
+			await refundBudget(ctx.kv, budget.taken);
+			if (error instanceof Error) error.message = withoutAddresses(error.message, [to, ...cc]);
+			throw error;
+		}
 
 		ctx.log.info("email delivered via Cloudflare Email Sending", {
-			to,
+			toDomain: domainOf(to),
+			...(cc.length ? { cc: cc.length } : {}),
 			subject,
 			source,
 			messageId: result?.messageId,
 		});
 	};
+}
+
+/** `text` with each of `addresses` (in any case) replaced by its domain: an error the binding throws may name its recipient, and it is logged. */
+export function withoutAddresses(text: string, addresses: readonly string[]): string {
+	// ASCII case only, so an index into the folded text is an index into the text.
+	const fold = (t: string) => t.replace(ASCII_UPPER, (c) => c.toLowerCase());
+	let out = text;
+	for (const address of addresses) {
+		const needle = fold(address);
+		const stand = `<an address at ${domainOf(address)}>`;
+		for (
+			let at = fold(out).indexOf(needle);
+			at !== -1;
+			at = fold(out).indexOf(needle, at + stand.length)
+		) {
+			out = out.slice(0, at) + stand + out.slice(at + address.length);
+		}
+	}
+	return out;
 }
 
 /**
