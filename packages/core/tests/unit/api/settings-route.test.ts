@@ -6,7 +6,7 @@
  */
 
 import { Role } from "@emdash-cms/auth";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { handleContentCreate, handleContentDelete } from "../../../src/api/handlers/content.js";
@@ -170,7 +170,7 @@ describe("settings route homepage", () => {
 		});
 	});
 
-	it("reports the translation "/" renders: the default locale's, not the original", async () => {
+	it("reports the translation the root renders: the default locale's, not the original", async () => {
 		// Default "es", original in "en": neither the original nor alphabetical
 		// order picks the row "/" renders; only the locale chain does.
 		setI18nConfig({ defaultLocale: "es", locales: ["es", "en"] });
@@ -178,7 +178,19 @@ describe("settings route homepage", () => {
 		const spanish = await createPage("Bienvenidos", { locale: "es", translationOf: original.id });
 		await post({ homepage: { collection: "page", id: original.id } });
 
-		expect((await get()).data.homepage.entry).toEqual({ id: spanish.id, locale: "es", status: "published" });
+		expect((await get()).data.homepage.entry).toEqual({
+			id: spanish.id,
+			locale: "es",
+			status: "published",
+		});
+	});
+
+	it("reports no entry for a row without a translation group, which the root never renders", async () => {
+		const page = await createPage("Welcome");
+		await sql`UPDATE ec_page SET translation_group = NULL WHERE id = ${page.id}`.execute(db);
+		await post({ homepage: { collection: "page", id: page.id } });
+
+		expect((await get()).data.homepage).toEqual({ collection: "page", id: page.id, entry: null });
 	});
 
 	it("never stores the reported entry", async () => {
