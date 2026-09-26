@@ -663,9 +663,13 @@ const isLoggedIn = !!Astro.locals.user;
 				gap: var(--spacing-1);
 			}
 
+			/* 24px is the smallest target a finger can hit reliably (WCAG 2.5.8). */
 			.submenu-toggle {
 				display: inline-flex;
 				align-items: center;
+				justify-content: center;
+				min-width: 24px;
+				min-height: 24px;
 				padding: 2px;
 				border: none;
 				background: none;
@@ -682,11 +686,16 @@ const isLoggedIn = !!Astro.locals.user;
 				transform: rotate(180deg);
 			}
 
+			/*
+			 * The links sit at the end of the header, so the list opens toward
+			 * the start: opened toward the end, an item near the edge pushes it
+			 * past the viewport. It hangs below a gap that ::before bridges.
+			 */
 			.submenu {
 				display: none;
 				position: absolute;
-				top: 100%;
-				inset-inline-start: calc(-1 * var(--spacing-3));
+				top: calc(100% + var(--spacing-2));
+				inset-inline-end: calc(-1 * var(--spacing-3));
 				z-index: 10;
 				min-width: 12rem;
 				margin: 0;
@@ -707,7 +716,14 @@ const isLoggedIn = !!Astro.locals.user;
 				height: var(--spacing-2);
 			}
 
-			.has-submenu:hover .submenu,
+			/* Only where hover is real: a touch screen keeps :hover after a tap,
+			   so the button could not close the list again. */
+			@media (hover: hover) {
+				.has-submenu:hover .submenu {
+					display: block;
+				}
+			}
+
 			.has-submenu.open .submenu {
 				display: block;
 			}
@@ -1066,6 +1082,23 @@ const isLoggedIn = !!Astro.locals.user;
 					row-gap: var(--spacing-1);
 					flex-wrap: wrap;
 					justify-content: flex-start;
+					position: relative;
+				}
+
+				/* The links wrap here, so a list hung from its item could open
+				   off either edge: it spans the links' full width instead. */
+				.nav-item {
+					position: static;
+				}
+
+				.submenu {
+					inset-inline: 0;
+					top: calc(100% + var(--spacing-2));
+					min-width: 0;
+				}
+
+				.submenu a {
+					white-space: normal;
 				}
 
 				.nav-admin {
