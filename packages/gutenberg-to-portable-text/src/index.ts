@@ -8,6 +8,7 @@
 
 import { parse } from "@wordpress/block-serialization-default-parser";
 
+import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
 import { parseInlineContent } from "./inline.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
@@ -160,6 +161,33 @@ export function htmlToPortableText(
 ): PortableTextBlock[] {
 	const generateKey = options.keyGenerator || createKeyGenerator();
 	const blocks: PortableTextBlock[] = [];
+	const autoembeds = findAutoembeds(html);
+
+	const pushParagraph = (text: string) => {
+		if (!text) return;
+		const { children, markDefs } = parseInlineContent(text, generateKey);
+		if (children.some((c) => c.text.trim())) {
+			blocks.push({
+				_type: "block",
+				_key: generateKey(),
+				style: "normal",
+				children,
+				markDefs: markDefs.length > 0 ? markDefs : undefined,
+			});
+		}
+	};
+
+	// Text outside block elements, split around the URLs WordPress autoembeds
+	const pushText = (from: number, to: number) => {
+		let cursor = from;
+		for (const autoembed of autoembeds) {
+			if (autoembed.start < from || autoembed.end > to) continue;
+			pushParagraph(html.slice(cursor, autoembed.start).trim());
+			blocks.push(autoembedBlock(autoembed, generateKey));
+			cursor = autoembed.end;
+		}
+		pushParagraph(html.slice(cursor, to).trim());
+	};
 
 	// Split on block-level elements (including standalone img tags)
 	let lastIndex = 0;
@@ -169,22 +197,18 @@ export function htmlToPortableText(
 		const fullMatch = match[0];
 		const tag = (match[1] || match[3] || "").toLowerCase();
 		const content = match[2] || "";
+		const start = match.index;
 
 		// Handle text between matches
-		const between = html.slice(lastIndex, match.index).trim();
-		if (between) {
-			const { children, markDefs } = parseInlineContent(between, generateKey);
-			if (children.some((c) => c.text.trim())) {
-				blocks.push({
-					_type: "block",
-					_key: generateKey(),
-					style: "normal",
-					children,
-					markDefs: markDefs.length > 0 ? markDefs : undefined,
-				});
-			}
+		pushText(lastIndex, start);
+		lastIndex = start + fullMatch.length;
+
+		// A paragraph holding nothing but a URL WordPress autoembeds
+		const autoembed = autoembeds.find((e) => e.start === start && e.end === lastIndex);
+		if (autoembed) {
+			blocks.push(autoembedBlock(autoembed, generateKey));
+			continue;
 		}
-		lastIndex = match.index + match[0].length;
 
 		// Check for standalone <img> tag (not wrapped in figure/p)
 		if (fullMatch.toLowerCase().startsWith("<img")) {
@@ -385,19 +409,7 @@ export function htmlToPortableText(
 	}
 
 	// Handle remaining text
-	const remaining = html.slice(lastIndex).trim();
-	if (remaining) {
-		const { children, markDefs } = parseInlineContent(remaining, generateKey);
-		if (children.some((c) => c.text.trim())) {
-			blocks.push({
-				_type: "block",
-				_key: generateKey(),
-				style: "normal",
-				children,
-				markDefs: markDefs.length > 0 ? markDefs : undefined,
-			});
-		}
-	}
+	pushText(lastIndex, html.length);
 
 	return blocks;
 }
@@ -427,7 +439,28 @@ function transformBlock(
 	context: TransformContext,
 ): PortableTextBlock[] {
 	const transformer = getTransformer(block.blockName, options.customTransformers);
-	return transformer(block, options, context);
+	if (block.blockName !== null) {
+		return transformer(block, options, context);
+	}
+
+	// Freeform HTML between blocks is classic content, and WordPress autoembeds URLs in it too.
+	// Lift those embeds out and keep the HTML around them as it was.
+	const html = block.innerHTML;
+	const blocks: PortableTextBlock[] = [];
+	let cursor = 0;
+	for (const autoembed of findTopLevelAutoembeds(html)) {
+		blocks.push(
+			...transformer(
+				{ ...block, innerHTML: html.slice(cursor, autoembed.start) },
+				options,
+				context,
+			),
+			autoembedBlock(autoembed, context.generateKey),
+		);
+		cursor = autoembed.end;
+	}
+	blocks.push(...transformer({ ...block, innerHTML: html.slice(cursor) }, options, context));
+	return blocks;
 }
 
 /**

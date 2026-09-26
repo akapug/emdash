@@ -2,6 +2,7 @@
  * Transformers for WordPress core/* blocks
  */
 
+import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
 import { extractAlt, extractCaption, extractSrc, extractText } from "../inline.js";
 import type {
 	GutenbergBlock,
@@ -42,6 +43,12 @@ const NBSP_ENTITY_PATTERN = /&nbsp;/g;
  * core/paragraph → block with style "normal"
  */
 export const paragraph: BlockTransformer = (block, _options, context) => {
+	// WordPress autoembeds a URL that is the whole paragraph
+	const autoembed = findSoleAutoembed(block.innerHTML);
+	if (autoembed) {
+		return [autoembedBlock(autoembed, context.generateKey)];
+	}
+
 	const { children, markDefs } = context.parseInlineContent(block.innerHTML);
 
 	// Skip empty paragraphs

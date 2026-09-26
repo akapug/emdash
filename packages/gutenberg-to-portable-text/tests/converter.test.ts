@@ -4,8 +4,11 @@
 
 import { describe, it, expect } from "vitest";
 
+import { findAutoembeds } from "../src/autoembed.js";
 import { gutenbergToPortableText, htmlToPortableText, parseGutenbergBlocks } from "../src/index.js";
 import type {
+	PortableTextBlock,
+	PortableTextCodeBlock,
 	PortableTextTextBlock,
 	PortableTextImageBlock,
 	PortableTextGalleryBlock,
@@ -1236,6 +1239,286 @@ describe("WordPress.com classic editor content", () => {
 		expect(img._type).toBe("image");
 		expect(img.asset.url).toBe("https://example.com/photo.jpg?w=200&h=300");
 		expect(img.caption).toBe("Caption");
+	});
+});
+
+describe("WordPress autoembed", () => {
+	const YOUTUBE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+
+	function textOf(block: PortableTextBlock | undefined): string {
+		return (block as PortableTextTextBlock).children.map((c) => c.text).join("");
+	}
+
+	it("embeds a YouTube URL alone on its line in classic content", () => {
+		const result = gutenbergToPortableText(`Check this out:\n\n${YOUTUBE_URL}\n\nPretty good.`);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "embed", "block"]);
+		expect(textOf(result[0])).toBe("Check this out:");
+		expect(result[1]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+		expect(textOf(result[2])).toBe("Pretty good.");
+	});
+
+	it("embeds a Vimeo URL alone on its line in classic content", () => {
+		const result = gutenbergToPortableText(
+			"<h2>Welcome</h2>\nhttp://vimeo.com/58376079\n<p>We are a small team.</p>",
+		);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "embed", "block"]);
+		expect(result[1]).toMatchObject({
+			_type: "embed",
+			url: "http://vimeo.com/58376079",
+			provider: "vimeo",
+		});
+	});
+
+	it("embeds a URL alone in a classic paragraph", () => {
+		const result = gutenbergToPortableText(
+			"<p>Intro</p>\n<p>https://youtu.be/dQw4w9WgXcQ</p>\n<p>Outro</p>",
+		);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "embed", "block"]);
+		expect(result[1]).toMatchObject({
+			_type: "embed",
+			url: "https://youtu.be/dQw4w9WgXcQ",
+			provider: "youtube",
+		});
+	});
+
+	it("embeds a paragraph block whose whole content is a provider URL", () => {
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>${YOUTUBE_URL}</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "embed"]);
+		expect(result[1]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+	});
+
+	it("embeds a provider URL alone on its line in classic HTML between blocks", () => {
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+
+Older classic text.
+
+https://vimeo.com/58376079
+
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "htmlBlock", "embed", "block"]);
+		expect(result[1]).toMatchObject({ _type: "htmlBlock", html: "\n\nOlder classic text.\n\n" });
+		expect(result[2]).toMatchObject({
+			_type: "embed",
+			url: "https://vimeo.com/58376079",
+			provider: "vimeo",
+		});
+	});
+
+	it("keeps the rest of the classic HTML between blocks as it was", () => {
+		const table = `<table class="specs"><tbody><tr><td>Weight</td><td>5 kg</td></tr></tbody></table>`;
+		const map = `<iframe src="https://www.google.com/maps/embed?pb=abc" width="600"></iframe>`;
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+
+${table}
+
+${YOUTUBE_URL}
+
+${map}
+
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual([
+			"block",
+			"htmlBlock",
+			"embed",
+			"htmlBlock",
+			"block",
+		]);
+		expect(result[1]).toMatchObject({ html: `\n\n${table}\n\n` });
+		expect(result[2]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+		expect(result[3]).toMatchObject({ html: `\n\n${map}\n\n` });
+	});
+
+	it("embeds a paragraph holding only a provider URL in classic HTML between blocks", () => {
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+<p class="lead">Older <span style="color:red">classic</span> text.</p>
+<p class="video">${YOUTUBE_URL}</p>
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "htmlBlock", "embed", "block"]);
+		expect(result[1]).toMatchObject({
+			html: `\n<p class="lead">Older <span style="color:red">classic</span> text.</p>\n`,
+		});
+		expect(result[2]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+	});
+
+	it.each([
+		["a blockquote", `<blockquote>\n${YOUTUBE_URL}\n</blockquote>`],
+		["a div", `<div class="video-wrap">\n${YOUTUBE_URL}\n</div>`],
+		["a table", `<table>\n${YOUTUBE_URL}\n<tr><td>Price</td></tr></table>`],
+	])("keeps classic HTML between blocks whole when its URL line is inside %s", (_, html) => {
+		const content = `<!-- wp:paragraph -->
+<p>Intro</p>
+<!-- /wp:paragraph -->
+<p class="lead">Styled</p>
+${html}
+<!-- wp:paragraph -->
+<p>Outro</p>
+<!-- /wp:paragraph -->`;
+
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "htmlBlock", "block"]);
+		expect(result[1]).toMatchObject({ html: `\n<p class="lead">Styled</p>\n${html}\n` });
+	});
+
+	it("embeds an [embed] shortcode", () => {
+		const result = gutenbergToPortableText(`Intro\n[embed]${YOUTUBE_URL}[/embed]\nOutro`);
+
+		expect(result.map((b) => b._type)).toEqual(["block", "embed", "block"]);
+		expect(result[1]).toMatchObject({ _type: "embed", url: YOUTUBE_URL, provider: "youtube" });
+	});
+
+	it("embeds an [embed] shortcode with attributes alone in a paragraph", () => {
+		const result = gutenbergToPortableText(
+			`<p>[embed width="640" height="360"]https://vimeo.com/58376079[/embed]</p>`,
+		);
+
+		expect(result).toEqual([
+			expect.objectContaining({
+				_type: "embed",
+				url: "https://vimeo.com/58376079",
+				provider: "vimeo",
+			}),
+		]);
+	});
+
+	it("links an [embed] URL that WordPress cannot embed", () => {
+		const result = gutenbergToPortableText("[embed]https://example.com/talks/keynote[/embed]");
+
+		expect(result).toHaveLength(1);
+		const block = result[0] as PortableTextTextBlock;
+		expect(block._type).toBe("block");
+		expect(textOf(block)).toBe("https://example.com/talks/keynote");
+		expect(block.markDefs).toEqual([
+			expect.objectContaining({ _type: "link", href: "https://example.com/talks/keynote" }),
+		]);
+		expect(block.children[0]?.marks).toEqual([block.markDefs?.[0]?._key]);
+	});
+
+	it("leaves a provider URL inside a sentence as text", () => {
+		const content = `Watch ${YOUTUBE_URL} before the show.`;
+		const result = gutenbergToPortableText(content);
+
+		expect(result).toHaveLength(1);
+		expect(result[0]?._type).toBe("block");
+		expect(textOf(result[0])).toBe(content);
+	});
+
+	it("keeps a linked provider URL as a link", () => {
+		const result = gutenbergToPortableText(
+			`<p><a href="https://youtu.be/dQw4w9WgXcQ">https://youtu.be/dQw4w9WgXcQ</a></p>`,
+		);
+
+		expect(result).toHaveLength(1);
+		const block = result[0] as PortableTextTextBlock;
+		expect(block._type).toBe("block");
+		expect(block.markDefs).toEqual([
+			expect.objectContaining({ _type: "link", href: "https://youtu.be/dQw4w9WgXcQ" }),
+		]);
+	});
+
+	it("leaves a URL WordPress does not embed as unlinked text", () => {
+		const result = gutenbergToPortableText("Read more:\nhttps://example.com/some/page\n");
+
+		expect(result).toHaveLength(1);
+		const block = result[0] as PortableTextTextBlock;
+		expect(block._type).toBe("block");
+		expect(textOf(block)).toContain("https://example.com/some/page");
+		expect(block.markDefs).toBeUndefined();
+	});
+
+	it.each(["&amp;", "&#038;", "&#38;", "&#x26;"])("decodes %s in an autoembedded URL", (entity) => {
+		const result = gutenbergToPortableText(
+			`https://www.youtube.com/watch?v=dQw4w9WgXcQ${entity}t=42s`,
+		);
+
+		expect(result).toEqual([
+			expect.objectContaining({
+				_type: "embed",
+				url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s",
+				provider: "youtube",
+			}),
+		]);
+	});
+
+	it.each([
+		["https://example.com/media/episode-1.mp3", "audio"],
+		["https://example.com/media/trailer.mp4", "video"],
+	])("embeds the media file %s as %s", (url, provider) => {
+		const result = gutenbergToPortableText(`${url}\n`);
+
+		expect(result).toEqual([expect.objectContaining({ _type: "embed", url, provider })]);
+	});
+
+	it("does not embed a URL on its own line inside preformatted text", () => {
+		const result = gutenbergToPortableText(`<pre>Links:\n${YOUTUBE_URL}\n</pre>`);
+
+		expect(result.map((b) => b._type)).toEqual(["code"]);
+		expect((result[0] as PortableTextCodeBlock).code).toContain(YOUTUBE_URL);
+	});
+
+	it.each([
+		["a carriage return", "\r"],
+		["a line separator", " "],
+	])("does not treat %s as the start of a line", (_, separator) => {
+		const content = `Watch this${separator}${YOUTUBE_URL}`;
+		const result = gutenbergToPortableText(content);
+
+		expect(result.map((b) => b._type)).toEqual(["block"]);
+		expect(textOf(result[0])).toContain(YOUTUBE_URL);
+	});
+
+	it.each([
+		["a comment", `<!--\n<p>Old intro</p>\n${YOUTUBE_URL}\n-->`],
+		["a tag that runs to the next >", `Price < 10\n${YOUTUBE_URL}\n<p>Outro</p>`],
+	])("does not embed a URL line that WordPress reads as inside %s", (_, content) => {
+		const result = gutenbergToPortableText(content);
+
+		expect(result.some((b) => b._type === "embed")).toBe(false);
+	});
+
+	it.each([
+		["carriage returns", "\r".repeat(100_000)],
+		["line separators", " ".repeat(100_000)],
+		["[embed openings", "[embed ".repeat(50_000)],
+		["<p openings", "<p ".repeat(50_000)],
+	])("finds autoembeds in linear time through a long run of %s", (_, run) => {
+		const start = performance.now();
+		findAutoembeds(`${run}x`);
+
+		expect(performance.now() - start).toBeLessThan(1000);
 	});
 });
 
