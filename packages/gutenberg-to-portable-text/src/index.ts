@@ -154,6 +154,14 @@ export function gutenbergToPortableText(
 	return blocks.flatMap((block) => transformBlock(block, options, context));
 }
 
+/**
+ * A paragraph that holds one shortcode and nothing else: its tag, attributes,
+ * and (for an enclosing one) the content up to its own closer, never past
+ * the paragraph's end. The unrolled content loop starts every repeat at a
+ * `[`, so a failed match never rescans what it already read.
+ */
+const SHORTCODE_PARAGRAPH =
+	/<p>\s*(\[([a-z][\w-]*)(?:\s[^[\]\n]*)?\](?:(?:[^[<]|<(?!\/p>))*(?:\[(?!\/\2\])(?:[^[<]|<(?!\/p>))*)*\[\/\2\])?)\s*<\/p>/gi;
 /** Where an autoembed stands while wpautop runs: a block of its own, which autop never wraps. */
 const EMBED_MARK = "data-g2pt-autoembed";
 const EMBED_PLACE = /<div data-g2pt-autoembed="(\d+)"><\/div>/g;
@@ -170,7 +178,11 @@ const EMBED_PLACE = /<div data-g2pt-autoembed="(\d+)"><\/div>/g;
  *
  * WordPress embeds first (WP_Embed runs at priority 8, wpautop at 10), so an
  * autoembed or an [embed] shortcode found in the content as saved stays a
- * paragraph of its own, where htmlToPortableText finds it again.
+ * paragraph of its own, where htmlToPortableText finds it again. And after
+ * wpautop, WordPress's shortcode_unautop takes the paragraph off a shortcode
+ * that stands alone in one, so the shortcode, not a paragraph, is what is
+ * there: `[caption]`'s opener, image and caption land where they did before,
+ * which is the shape the importer's caption handling reads.
  */
 function classicParagraphs(html: string): string {
 	const embeds = html.includes(EMBED_MARK) ? [] : findAutoembeds(html);
@@ -181,10 +193,12 @@ function classicParagraphs(html: string): string {
 		cursor = e.end;
 	}
 	marked += html.slice(cursor);
-	return autop(marked).replace(EMBED_PLACE, (_, i: string) => {
-		const e = embeds[Number(i)]!;
-		return html.slice(e.start, e.end);
-	});
+	return autop(marked)
+		.replace(SHORTCODE_PARAGRAPH, "$1")
+		.replace(EMBED_PLACE, (_, i: string) => {
+			const e = embeds[Number(i)]!;
+			return html.slice(e.start, e.end);
+		});
 }
 
 const IMG_CLASS_ATTR = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)')/i;

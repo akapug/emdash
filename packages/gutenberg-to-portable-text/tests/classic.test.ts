@@ -64,6 +64,26 @@ Treasurer, Example Co`;
 		expect(blocks[1]).toMatchObject({ _type: "code", code: "a\n\nb" });
 	});
 
+	it("takes the paragraph off a shortcode that stands alone in one, as shortcode_unautop does", () => {
+		// the importer's caption handling reads the opener, then the image, then
+		// the caption and the closer: the shape the content has before wpautop
+		const content = `Before the picture.
+
+[caption id="attachment_1" align="alignleft" width="300"]<img class="size-medium wp-image-1" src="https://example.org/a.png" alt="" width="300" height="200" /> A caption[/caption]
+
+After the picture.
+
+[gravityform id="2" title="false"]`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"Before the picture.",
+			'[caption id="attachment_1" align="alignleft" width="300"]',
+			"[image -]",
+			"A caption[/caption]",
+			"After the picture.",
+			'[gravityform id="2" title="false"]',
+		]);
+	});
+
 	it("does not run block content through it: WordPress does not either", () => {
 		const content = `<!-- wp:paragraph -->
 <p>One
