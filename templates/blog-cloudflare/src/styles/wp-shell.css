@@ -1,7 +1,23 @@
 /*
  * The only CSS this template adds to a page in a migrated WordPress design
  * (layouts/WpShell.astro): the forms plugin's own styles, so an embedded form
- * works. The design itself is the site's captured stylesheets. This template's
- * tokens and resets are deliberately absent: they would sit under the theme.
+ * works, and the rules for the alignments the content carries
+ * (../components/WpShellBlock.astro), as WordPress's block library writes
+ * them. The design itself is the site's captured stylesheets. This
+ * template's tokens and resets are deliberately absent: they would sit under
+ * the theme.
  */
 @import "@emdash-cms/plugin-forms/styles";
+
+:root .has-text-align-left {
+	text-align: left;
+}
+:root .has-text-align-center {
+	text-align: center;
+}
+:root .has-text-align-right {
+	text-align: right;
+}
+:root .has-text-align-justify {
+	text-align: justify;
+}

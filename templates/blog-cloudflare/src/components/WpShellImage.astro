@@ -1,0 +1,38 @@
+---
+/**
+ * An image in a migrated WordPress design (layouts/WpShell.astro).
+ *
+ * WordPress floats an aligned image with the theme's own rule (`.alignleft`:
+ * Franz Josef's `float: left; margin: 0 1em 1em 0`, at every width), and the
+ * text after it wraps it. EmDash's own image is a figure that floats with its
+ * own margins and stops floating under 640px, so the text wraps at another
+ * width than the theme's and every line after the image moves. Here an
+ * image aligned left or right, with no link and no caption, is the element
+ * WordPress draws: an `<img>` with the theme's alignment class, from its own
+ * URL. Every other image is EmDash's own.
+ */
+import type { ComponentProps } from "astro/types";
+import { PTImage } from "emdash/ui";
+
+type Props = ComponentProps<typeof PTImage>;
+
+const HTTP_URL = /^https?:\/\//i;
+
+const { node } = Astro.props;
+const align = node?.alignment === "left" || node?.alignment === "right" ? node.alignment : null;
+const url: unknown = node?.asset?.url;
+// A URL the page can load as it is: this site's own path, or an http(s) one.
+const src =
+	typeof url === "string" && ((url.startsWith("/") && !url.startsWith("//")) || HTTP_URL.test(url))
+		? url
+		: null;
+const wordpress = align !== null && src !== null && !node?.link && !node?.caption;
+---
+
+{
+	wordpress ? (
+		<img class={`align${align}`} src={src} alt={node.alt ?? ""} loading="lazy" decoding="async" />
+	) : (
+		<PTImage {...Astro.props} />
+	)
+}

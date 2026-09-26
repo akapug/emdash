@@ -26,6 +26,8 @@ import {
 import { EmDashHead, EmDashBodyStart, EmDashBodyEnd, PortableText } from "emdash/ui";
 import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
+import WpShellBlock from "../components/WpShellBlock.astro";
+import WpShellImage from "../components/WpShellImage.astro";
 import {
 	bodyClassFor,
 	composeWpShell,
@@ -105,6 +107,9 @@ const pieces = composeWpShell(shell, {
 	title: entry.title,
 });
 
+// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image.
+const components = { block: WpShellBlock, type: { image: WpShellImage } };
+
 const pageCtx = createPublicPageContext({
 	url: new URL(path + Astro.url.search, Astro.url.origin),
 	locale: Astro.currentLocale,
@@ -152,7 +157,7 @@ const pageCtx = createPublicPageContext({
 				return (
 					<Fragment>
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
-							<PortableText value={entry.body} />
+							<PortableText value={entry.body} components={components} />
 						</Content>
 						<slot />
 					</Fragment>
