@@ -383,4 +383,55 @@ describe("GeneralSettings", () => {
 		await expect.element(screen.getByText("About us")).toBeInTheDocument();
 		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
 	});
+
+	it("marks a picked homepage that is not published once it is saved", async () => {
+		const draft = { id: "page_about", locale: "en", status: "draft" };
+		mockUpdateSettings.mockImplementation(async () => {
+			const saved = {
+				...defaultSettings,
+				homepage: { collection: "pages", id: "page_about", entry: draft },
+			};
+			mockFetchSettings.mockResolvedValue(saved);
+			return saved;
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await screen.getByText("A page", { exact: true }).click();
+		await screen.getByRole("button", { name: "Choose About us" }).click();
+		await screen.getByRole("button", { name: "Save", exact: true }).first().click();
+
+		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+	});
+
+	it("stays saved when the chosen homepage is picked again", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "page_about",
+				entry: { id: "page_about", locale: "en", status: "draft" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+
+		await screen.getByRole("button", { name: "Change page" }).click();
+		await screen.getByRole("button", { name: "Choose About us" }).click();
+
+		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
+		const savedButtons = screen.getByRole("button", { name: "Saved", exact: true }).all();
+		expect(savedButtons).toHaveLength(2);
+		for (const button of savedButtons) await expect.element(button).toBeDisabled();
+	});
 });

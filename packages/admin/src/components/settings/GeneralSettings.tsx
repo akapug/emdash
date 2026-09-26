@@ -64,8 +64,11 @@ export function GeneralSettings() {
 	const [pickedHomepage, setPickedHomepage] = React.useState<PickedContentEntry | null>(null);
 
 	const homepage = formData.homepage;
+	// A picked page shows its picker title until the settings API reports it,
+	// after a save, with the entry and status the site resolves.
 	const homepageIsPicked =
 		!!homepage &&
+		homepage.entry === undefined &&
 		pickedHomepage?.collection === homepage.collection &&
 		pickedHomepage.id === homepage.id;
 	const { data: manifest } = useQuery({
@@ -166,7 +169,11 @@ export function GeneralSettings() {
 		setPickedHomepage(entry);
 		setFormData((prev) => ({
 			...prev,
-			homepage: { collection: entry.collection, id: entry.id },
+			// Picking the page already chosen keeps the entry the API reported for it.
+			homepage:
+				prev.homepage?.collection === entry.collection && prev.homepage.id === entry.id
+					? prev.homepage
+					: { collection: entry.collection, id: entry.id },
 		}));
 	};
 
