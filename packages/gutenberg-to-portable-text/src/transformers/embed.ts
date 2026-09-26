@@ -102,7 +102,7 @@ export const audio: BlockTransformer = (block, _options, context) => {
 /**
  * Detect embed provider from URL
  */
-function detectProvider(url: string): string | undefined {
+export function detectProvider(url: string): string | undefined {
 	if (!url) return undefined;
 
 	const urlLower = url.toLowerCase();
