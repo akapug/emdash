@@ -47,7 +47,57 @@ function sameTarget(a: string, b: string): boolean {
 	}
 }
 
-export async function submitHandler(ctx: RouteContext<SubmitInput>) {
+/** How many submissions of one form may send mail, per hour and per day. */
+export interface NotificationLimits {
+	perHour: number;
+	perDay: number;
+}
+
+export const DEFAULT_NOTIFICATION_LIMITS: NotificationLimits = { perHour: 10, perDay: 50 };
+
+/**
+ * Why this submission sends no mail, or null when it may.
+ *
+ * The submissions the form already stored are the count: this one is stored
+ * before the check, so it is among them, and a flood stops being mailed at the
+ * limit while every submission is still kept. Counted per form, so one form's
+ * flood leaves the others' mail alone.
+ */
+async function mailRefusal(
+	ctx: RouteContext<SubmitInput>,
+	formId: string,
+	limits: NotificationLimits,
+	now: Date,
+): Promise<string | null> {
+	const windows = [
+		{ what: "hour", ms: 3_600_000, limit: limits.perHour },
+		{ what: "day", ms: 86_400_000, limit: limits.perDay },
+	];
+	for (const w of windows) {
+		const since = new Date(now.getTime() - w.ms).toISOString();
+		const n = await submissions(ctx).count({ formId, createdAt: { gte: since } });
+		if (n > w.limit)
+			return `the form has taken ${n} submissions in the last ${w.what}, past its limit of ${w.limit}`;
+	}
+	return null;
+}
+
+/** The visitor's own address: the first email field they filled in. Replies to a notification go to them. */
+function visitorAddress(
+	fields: ReturnType<typeof getFormFields>,
+	data: Record<string, unknown>,
+): string | null {
+	for (const f of fields) {
+		const v = f.type === "email" ? data[f.name] : undefined;
+		if (typeof v === "string" && v.trim()) return v.trim();
+	}
+	return null;
+}
+
+export async function submitHandler(
+	ctx: RouteContext<SubmitInput>,
+	limits: NotificationLimits = DEFAULT_NOTIFICATION_LIMITS,
+) {
 	const input = ctx.input;
 
 	// 1. Load form definition (by ID first, then by slug)
@@ -220,15 +270,26 @@ export async function submitHandler(ctx: RouteContext<SubmitInput>) {
 		lastSubmissionAt: new Date().toISOString(),
 	});
 
-	// 7. Immediate email notifications (not digest)
-	if (settings.notifyEmails.length > 0 && !settings.digestEnabled && ctx.email) {
+	// 7. Immediate email notifications (not digest), within the form's mail limits.
+	//
+	// Reply-To is the visitor when the form asked for their address, so the owner answers them
+	// with one click; the email provider checks it is one plain address before it becomes a header.
+	const notifies = settings.notifyEmails.length > 0 && !settings.digestEnabled;
+	const mails = Boolean(ctx.email) && (notifies || Boolean(settings.autoresponder));
+	const refused = mails ? await mailRefusal(ctx, formId, limits, new Date()) : null;
+	if (refused) {
+		ctx.log.warn("Submission stored; no email sent for it", { formId, why: refused });
+	}
+	if (!refused && notifies && ctx.email) {
 		const text = formatSubmissionText(form, result.data, files);
+		const replyTo = visitorAddress(allFields, result.data);
 		for (const email of settings.notifyEmails) {
 			await ctx.email
 				.send({
 					to: email,
 					subject: `New submission: ${form.name}`,
 					text,
+					...(replyTo ? { replyTo } : {}),
 				})
 				.catch((err: unknown) => {
 					ctx.log.error("Failed to send notification email", {
@@ -240,7 +301,7 @@ export async function submitHandler(ctx: RouteContext<SubmitInput>) {
 	}
 
 	// 8. Autoresponder
-	if (settings.autoresponder && ctx.email) {
+	if (!refused && settings.autoresponder && ctx.email) {
 		const emailField = allFields.find((f) => f.type === "email");
 		const submitterEmail = emailField ? result.data[emailField.name] : null;
 		if (typeof submitterEmail === "string" && submitterEmail) {
