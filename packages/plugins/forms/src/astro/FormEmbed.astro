@@ -38,6 +38,16 @@ const hasFiles = form.pages.some((p: FormPage) =>
 function fieldId(name: string): string {
 	return `${formId}-${name}`;
 }
+
+/**
+ * Whether one of a select's options is its default. When none is, its
+ * placeholder is the line the list opens on: an empty, disabled, selected first
+ * option, so the list shows the prompt, submits nothing for it, and a required
+ * list is not answered until the visitor picks a choice.
+ */
+function selectsDefault(field: FormField): boolean {
+	return (field.options || []).some((o) => o.value === field.defaultValue);
+}
 ---
 
 <form
@@ -135,6 +145,15 @@ function fieldId(name: string): string {
 								name={field.name}
 								required={field.required}
 							>
+								{field.placeholder && (
+									<option
+										value=""
+										disabled
+										selected={!selectsDefault(field)}
+									>
+										{field.placeholder}
+									</option>
+								)}
 								{(field.options || []).map((o) => (
 									<option
 										value={o.value}
