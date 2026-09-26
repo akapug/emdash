@@ -71,7 +71,9 @@ export type WpShellPart =
 	| { slot: "siteTitle"; fallback: string }
 	| { slot: "tagline"; fallback: string }
 	| { slot: "logo"; src: string; alt?: string; class?: string; width?: number; height?: number }
-	| { slot: "menu"; menu: number };
+	| { slot: "menu"; menu: number }
+	/** The entry's title as text, where the chrome prints it: a breadcrumb trail's last crumb. */
+	| { slot: "titleText" };
 
 /** A piece of a menu item template: captured markup, or a hole this file fills. */
 export type WpShellTemplatePart = string | { s: "cls" | "href" | "label" | "children" };
@@ -87,19 +89,31 @@ export interface WpShellMenu {
 	leaf: WpShellTemplatePart[];
 	parent: WpShellTemplatePart[];
 	fallback: string;
+	/** The classes the theme gives the item for the page being shown (a Bootstrap walker's `active`); `current-menu-item` when unset. */
+	current?: string;
 }
 
-export interface WpShell {
+/** One layout of the site: the body classes, stylesheets and parts a page is drawn with. */
+export interface WpShellLayout {
+	body: { class: string };
+	/** The site's stylesheets, in cascade order. */
+	styles: string[];
+	parts: WpShellPart[];
+}
+
+export interface WpShell extends WpShellLayout {
 	version: typeof WP_SHELL_VERSION;
 	/** Content hash of the record, stamped on `<html data-wp-shell>` so a writer can see it served. */
 	id: string;
 	source: { url: string; capturedAt: string };
 	html: { lang?: string; class: string };
-	body: { class: string };
-	/** The site's stylesheets, in cascade order. */
-	styles: string[];
-	parts: WpShellPart[];
 	menus: WpShellMenu[];
+	/**
+	 * The front page's own layout, when it wears one (a theme's full-width
+	 * front page): the home is drawn from it instead of the record's own body,
+	 * stylesheets and parts. The menus are the record's.
+	 */
+	home?: WpShellLayout;
 }
 
 /** What a page is, for the body classes WordPress would have given it. */
@@ -239,10 +253,13 @@ function markupProblem(html: string): string | null {
 /** Holes filled for the check: a label or children hole takes markup, which only fits between tags. */
 const HOLE_FILL: Record<string, string> = { cls: "", href: "#", label: "<b></b>", children: "<b></b>" };
 
+/** Every layout a record draws pages with. */
+const layoutsOf = (s: WpShell): WpShellLayout[] => (s.home ? [s, s.home] : [s]);
+
 /** Every markup string the layout draws, each as the tripwire must read it. */
 function drawnMarkup(s: WpShell): string[] {
 	const out: string[] = [];
-	for (const p of s.parts) if ("html" in p) out.push(p.html);
+	for (const l of layoutsOf(s)) for (const p of l.parts) if ("html" in p) out.push(p.html);
 	for (const m of s.menus) {
 		out.push(m.fallback);
 		for (const t of [m.leaf, m.parent]) out.push(t.map((x) => (typeof x === "string" ? x : HOLE_FILL[x.s])).join(""));
@@ -288,6 +305,8 @@ function checkPart(p: unknown, menus: number): string | null {
 				: "the logo is not one of the site's own files";
 		case "menu":
 			return isIndex(p.menu, menus) ? null : "a menu slot names no menu";
+		case "titleText":
+			return null;
 		default:
 			return `unknown slot ${JSON.stringify(p.slot)}`;
 	}
@@ -320,6 +339,7 @@ function checkMenu(m: unknown): string | null {
 	const { leaf, parent } = m;
 	if (!checkTemplate(leaf) || !checkTemplate(parent)) return "a menu template is malformed";
 	if (typeof m.fallback !== "string") return "a menu has no fallback";
+	if (!optionalToken(m.current)) return "a menu's current classes are not tokens";
 	if (!hrefInAttribute(leaf) || !hrefInAttribute(parent)) return "a menu link is not inside an href attribute";
 	return null;
 }
@@ -327,7 +347,7 @@ function checkMenu(m: unknown): string | null {
 /** Every markup string a record carries. */
 function markupOf(s: WpShell): string[] {
 	const out: string[] = [];
-	for (const p of s.parts) if ("html" in p) out.push(p.html);
+	for (const l of layoutsOf(s)) for (const p of l.parts) if ("html" in p) out.push(p.html);
 	for (const m of s.menus) {
 		out.push(m.fallback);
 		for (const x of [...m.leaf, ...m.parent]) if (typeof x === "string") out.push(x);
@@ -336,6 +356,26 @@ function markupOf(s: WpShell): string[] {
 }
 
 const countSlot = (parts: unknown[], slot: string) => parts.filter((p) => isObject(p) && p.slot === slot).length;
+
+/** Why a layout's body, stylesheets or parts are not ones this template draws, or null. */
+function checkLayout(l: Record<string, unknown>, menus: number): string | null {
+	const { body, styles, parts } = l;
+	if (!isObject(body) || typeof body.class !== "string" || !TOKENS.test(body.class)) {
+		return "body class is not tokens";
+	}
+	if (!Array.isArray(styles) || !styles.every((h) => typeof h === "string" && STYLE_HREF.test(h))) {
+		return "a stylesheet is not one of the site's own files";
+	}
+	if (!Array.isArray(parts)) return "no parts";
+	for (const p of parts) {
+		const why = checkPart(p, menus);
+		if (why) return why;
+	}
+	if (countSlot(parts, "title") !== 1 || countSlot(parts, "content") !== 1) {
+		return "the record needs exactly one title and one content slot";
+	}
+	return null;
+}
 
 /** Why `value` is not a shell record this layout can draw, or null when it is one. */
 export function wpShellProblem(value: unknown): string | null {
@@ -350,24 +390,16 @@ export function wpShellProblem(value: unknown): string | null {
 	if (html.lang !== undefined && (typeof html.lang !== "string" || !LANG.test(html.lang))) {
 		return "html lang is not a language tag";
 	}
-	if (!isObject(body) || typeof body.class !== "string" || !TOKENS.test(body.class)) {
-		return "body class is not tokens";
-	}
-	if (!Array.isArray(styles) || !styles.every((h) => typeof h === "string" && STYLE_HREF.test(h))) {
-		return "a stylesheet is not one of the site's own files";
-	}
 	if (!Array.isArray(menus)) return "no menus";
 	for (const m of menus) {
 		const why = checkMenu(m);
 		if (why) return why;
 	}
-	if (!Array.isArray(parts)) return "no parts";
-	for (const p of parts) {
-		const why = checkPart(p, menus.length);
-		if (why) return why;
-	}
-	if (countSlot(parts, "title") !== 1 || countSlot(parts, "content") !== 1) {
-		return "the record needs exactly one title and one content slot";
+	const layout = checkLayout({ body, styles, parts }, menus.length);
+	if (layout) return layout;
+	if (value.home !== undefined) {
+		const why = isObject(value.home) ? checkLayout(value.home, menus.length) : "not an object";
+		if (why) return `the home layout: ${why}`;
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
 	const shell = value as unknown as WpShell;
@@ -458,6 +490,7 @@ function fillTemplate(
 	item: WpShellMenuItem,
 	current: string,
 	children: string,
+	currentClass: string,
 ): string {
 	let out = "";
 	for (const x of t) {
@@ -467,7 +500,7 @@ function fillTemplate(
 		}
 		if (x.s === "label") out += escapeHtml(item.label);
 		else if (x.s === "children") out += children;
-		else if (x.s === "cls") out += isCurrent(item.url, current) ? " current-menu-item" : "";
+		else if (x.s === "cls") out += isCurrent(item.url, current) ? ` ${currentClass}` : "";
 		else {
 			out += escapeAttr(safeHref(item.url));
 			// The template put this hole inside `href="…"`, so the attribute is
@@ -488,12 +521,13 @@ export function renderMenu(
 	currentPath: string,
 ): string {
 	if (!items) return menu.fallback;
+	const currentClass = menu.current ?? "current-menu-item";
 	const draw = (list: readonly WpShellMenuItem[]): string =>
 		list
 			.map((item) =>
 				item.children.length > 0
-					? fillTemplate(menu.parent, item, currentPath, draw(item.children))
-					: fillTemplate(menu.leaf, item, currentPath, ""),
+					? fillTemplate(menu.parent, item, currentPath, draw(item.children), currentClass)
+					: fillTemplate(menu.leaf, item, currentPath, "", currentClass),
 			)
 			.join("");
 	return draw(items);
@@ -513,6 +547,15 @@ export interface WpShellFill {
 	menuItems: (location: string) => readonly WpShellMenuItem[] | null | undefined;
 	/** The path of the page being drawn, for the current menu item. */
 	currentPath: string;
+	/** What kind of page is drawn: the home draws the record's home layout when it has one. */
+	kind?: WpShellKind;
+	/** The entry's title, for the chrome that prints it as text (titleText). */
+	title?: string;
+}
+
+/** The layout a kind of page is drawn with. */
+export function layoutFor(shell: WpShell, kind: WpShellKind): WpShellLayout {
+	return kind === "home" && shell.home ? shell.home : shell;
 }
 
 const element = (p: WpShellElement): WpShellElement => ({
@@ -544,8 +587,9 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		if (last && "html" in last) last.html += html;
 		else out.push({ html });
 	};
-	for (const p of shell.parts) {
+	for (const p of layoutFor(shell, fill.kind ?? "page").parts) {
 		if ("html" in p) push(p.html);
+		else if (p.slot === "titleText") push(escapeHtml(fill.title ?? ""));
 		else if (p.slot === "title") out.push({ title: element(p) });
 		else if (p.slot === "content") out.push({ content: element(p) });
 		else if (p.slot === "siteTitle") push(escapeHtml(fill.siteTitle ?? p.fallback));
@@ -573,6 +617,8 @@ const ANY_KIND = new Set(Object.values(KIND_CLASSES).flat());
 const WHITESPACE = /\s+/;
 
 export function bodyClassFor(shell: WpShell, kind: WpShellKind): string {
+	// The home layout was cut from the front page: its classes are the front page's own.
+	if (kind === "home" && shell.home) return shell.home.body.class;
 	const kept = shell.body.class.split(WHITESPACE).filter((c) => c !== "" && !ANY_KIND.has(c));
 	return [...KIND_CLASSES[kind], ...kept].join(" ");
 }

@@ -11,8 +11,10 @@
  *
  * What is drawn from EmDash, so an admin edit shows: the title and content
  * (with visual-editing markers), the menus (through each menu's own markup in
- * the theme), the site title, tagline and logo. Everything else in the header
- * and footer is the captured markup, sanitized when it was captured.
+ * the theme), the site title, tagline and logo, and the title again where the
+ * chrome prints it as text (a breadcrumb). Everything else in the header and
+ * footer is the captured markup, sanitized when it was captured. The home is
+ * drawn from the record's home layout when it has one (the front page's own).
  */
 import type { HTMLTag } from "astro/types";
 import {
@@ -27,6 +29,7 @@ import "../styles/wp-shell.css";
 import {
 	bodyClassFor,
 	composeWpShell,
+	layoutFor,
 	type WpShell,
 	type WpShellKind,
 	type WpShellMenuItem,
@@ -91,12 +94,15 @@ const titleIncludesSiteName =
 	title.endsWith(` — ${siteTitle}`);
 const fullTitle = titleIncludesSiteName ? title : `${title} — ${siteTitle}`;
 
+const layout = layoutFor(shell, kind);
 const pieces = composeWpShell(shell, {
 	siteTitle: settings.title,
 	tagline: settings.tagline,
 	logoUrl: settings.logo?.url,
 	menuItems: (location) => menus.get(location),
 	currentPath: path,
+	kind,
+	title: entry.title,
 });
 
 const pageCtx = createPublicPageContext({
@@ -126,7 +132,7 @@ const pageCtx = createPublicPageContext({
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>{fullTitle}</title>
-		{shell.styles.map((href) => <link rel="stylesheet" href={href} />)}
+		{layout.styles.map((href) => <link rel="stylesheet" href={href} />)}
 		<EmDashHead page={pageCtx} />
 	</head>
 	<body class={bodyClassFor(shell, kind)}>

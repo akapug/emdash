@@ -4,6 +4,7 @@ import {
 	bodyClassFor,
 	composeWpShell,
 	isCurrent,
+	layoutFor,
 	parseWpShell,
 	parseWpShellCached,
 	renderMenu,
@@ -15,6 +16,22 @@ import {
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
 
 import writerRecords from "./wp-shell-writer-records.json";
+
+/** A front page's own layout: its highlights, around the title and content, and the record's menu. */
+function homeOf(): NonNullable<WpShell["home"]> {
+	return {
+		body: { class: "home page-template-template-single-column front-page one-column" },
+		styles: ["/_emdash/api/media/file/wp-shell/front1.css"],
+		parts: [
+			{ html: '<header id="site-header"><nav><ul class="primary-menu">' },
+			{ slot: "menu", menu: 0 },
+			{ html: '</ul></nav></header><div class="highlights static-front-page"><div class="container">' },
+			{ slot: "title", tag: "h2", class: "highlight-title" },
+			{ slot: "content", tag: "div" },
+			{ html: "</div></div><footer></footer>" },
+		],
+	};
+}
 
 /** A Twenty Twenty shaped record, as Embark's writer produces it. */
 function sample(): WpShell {
@@ -91,6 +108,14 @@ describe("wp-shell record", () => {
 		["executable markup in a menu template", (s) => void s.menus[0]!.leaf.unshift('<a onmouseover="x">')],
 		["executable markup in a menu fallback", (s) => void (s.menus[0]!.fallback = "<script>x</script>")],
 		["a logo from another host", (s) => void s.parts.push({ slot: "logo", src: "https://old-host.example/logo.png" })],
+		["a menu's current classes that leave their attribute", (s) => void (s.menus[0]!.current = 'x" onclick="y')],
+		// the front page's layout is checked as the record's own is
+		["a home layout that is not an object", (s) => void ((s as { home: unknown }).home = "home")],
+		["a script in the home layout", (s) => void (s.home = { ...homeOf(), parts: [{ html: "<script>alert(1)</script>" }, ...homeOf().parts] })],
+		["a home layout with no content slot", (s) => void (s.home = { ...homeOf(), parts: homeOf().parts.filter((p) => !("slot" in p) || p.slot !== "content") })],
+		["a home stylesheet on another host", (s) => void (s.home = { ...homeOf(), styles: ["https://old-host.example/style.css"] })],
+		["a home body class that leaves its attribute", (s) => void (s.home = { ...homeOf(), body: { class: 'x" onload="y' } })],
+		["a home menu slot naming no menu", (s) => void (s.home = { ...homeOf(), parts: [...homeOf().parts, { slot: "menu", menu: 5 }] })],
 	];
 	for (const [what, spoil] of refused) {
 		it(`is refused whole for ${what}`, () => {
@@ -205,6 +230,41 @@ describe("wp-shell layout pieces", () => {
 	});
 });
 
+describe("wp-shell: the chrome that prints the title, and the front page's own layout", () => {
+	it("draws the entry title, escaped, where the chrome prints it as text", () => {
+		const s = sample();
+		s.parts.unshift({ html: '<div class="breadcrumbs"><a href="/" class="home">' }, { slot: "siteTitle", fallback: "Example" }, { html: "</a> &gt; <span>" }, { slot: "titleText" }, { html: "</span></div>" });
+		expect(wpShellProblem(s)).toBeNull();
+		const first = (composeWpShell(s, { menuItems: () => null, currentPath: "/pages/team", title: "Our <Team> & Co" })[0] as { html: string }).html;
+		expect(first).toMatch(/^<div class="breadcrumbs"><a href="\/" class="home">Example<\/a> &gt; <span>Our &lt;Team&gt; &amp; Co<\/span><\/div>/);
+	});
+
+	it("draws the home from the front page's layout, and every other page from the record's", () => {
+		const s = sample();
+		s.home = homeOf();
+		expect(wpShellProblem(s)).toBeNull();
+		const kinds = (kind: "home" | "page") => composeWpShell(s, { menuItems: () => null, currentPath: "/", kind }).map((p) => ("html" in p ? "html" : Object.keys(p)[0]));
+		const home = composeWpShell(s, { menuItems: () => null, currentPath: "/", kind: "home" });
+		expect(home[1]).toEqual({ title: { tag: "h2", class: "highlight-title" } });
+		expect(home[2]).toEqual({ content: { tag: "div" } });
+		expect((home[0] as { html: string }).html).toContain('<div class="highlights static-front-page">');
+		expect(kinds("page")).toEqual(["html", "title", "html", "content", "html"]);
+		expect(layoutFor(s, "home").styles).toEqual(["/_emdash/api/media/file/wp-shell/front1.css"]);
+		expect(layoutFor(s, "page").styles).toEqual(s.styles);
+		expect(bodyClassFor(s, "home")).toBe("home page-template-template-single-column front-page one-column");
+		expect(bodyClassFor(s, "page")).toBe("page page-template-default wp-singular wp-theme-twentytwenty singular enable-search-modal");
+		// no home layout: the home is the record's own
+		expect(layoutFor(sample(), "home").parts).toEqual(sample().parts);
+	});
+
+	it("marks the current menu item with the classes the theme gives it", () => {
+		const menu = { ...sample().menus[0]!, current: "current-menu-item current_page_item active" };
+		expect(renderMenu(menu, [{ label: "Home", url: "/", children: [] }], "/")).toBe(
+			'<li class="menu-item current-menu-item current_page_item active"><a href="/">Home</a></li>',
+		);
+	});
+});
+
 describe("wp-shell route", () => {
 	it("draws only the three rewritten shapes", () => {
 		expect(wpShellRoute("home")).toEqual({ kind: "home" });
@@ -218,10 +278,11 @@ describe("wp-shell route", () => {
 
 /**
  * The reader and the writer agree. These are Embark's builder output for its
- * Twenty Twenty fixture, as written, and for the same page with a hostile
- * header and stylesheet (packages/control-plane/test/wp-shell.test.ts, dumped
- * with WPSHELL_DUMP=1). A tripwire that refused them would put every migrated
- * site back in the template's own design.
+ * Twenty Twenty fixture, as written, for the same page with a hostile header
+ * and stylesheet, and for its Franz Josef fixture with a breadcrumb trail and
+ * the front page's own layout (packages/control-plane/test/wp-shell.test.ts,
+ * dumped with WPSHELL_DUMP=1). A tripwire that refused them would put every
+ * migrated site back in the template's own design.
  */
 
 describe("the tripwire reads the writer's form", () => {

@@ -1,7 +1,7 @@
 [
 	{
 		"version": 1,
-		"id": "d6c007342dcf3d4d2d37c3be",
+		"id": "c3f5ed4f814d3f08f54d632e",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -14,7 +14,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/812e3b74296c60b241edc2af00191e5a.css"
+			"/_emdash/api/media/file/wp-shell/1e9523cb1c1c93066fa37db4d628f6b8.css"
 		],
 		"parts": [
 			{
@@ -22,7 +22,7 @@
 			},
 			{
 				"slot": "logo",
-				"src": "/_emdash/api/media/file/wp-shell/ee92502c193053b6c9ca1da17c068587.png",
+				"src": "/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png",
 				"alt": "Example logo",
 				"class": "custom-logo",
 				"width": 120,
@@ -73,7 +73,7 @@
 				"class": "entry-content"
 			},
 			{
-				"html": "\n\t\t</div>\n\t\t<div class=\"section-inner\"></div>\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/7dbfbc3a2d70a4cf071f63e9d585cf14.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
+				"html": "\n\t\t</div>\n\t\t<div class=\"section-inner\"></div>\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
 			},
 			{
 				"slot": "siteTitle",
@@ -99,7 +99,7 @@
 					{
 						"s": "label"
 					},
-					"</a></li>"
+					"</a></li> "
 				],
 				"parent": [
 					"<li class=\"menu-item menu-item-has-children",
@@ -118,9 +118,10 @@
 					{
 						"s": "children"
 					},
-					"</ul>\n\t\t\t\t\t</li>"
+					"</ul>\n\t\t\t\t\t</li> "
 				],
-				"fallback": "\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-home page_item\"><a href=\"/\">Home</a></li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-has-children\"><a href=\"/history/\">History</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">\n\t\t\t\t\t\t\t<li class=\"menu-item\"><a href=\"/history/pioneer/\">Pioneers</a></li>\n\t\t\t\t\t\t</ul>\n\t\t\t\t\t</li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type\"><a href=\"/contact/\">Contact <b>Us</b></a></li>\n\t\t\t\t"
+				"fallback": "\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-home\"><a href=\"/\">Home</a></li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-has-children\"><a href=\"/history/\">History</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">\n\t\t\t\t\t\t\t<li class=\"menu-item\"><a href=\"/history/pioneer/\">Pioneers</a></li>\n\t\t\t\t\t\t</ul>\n\t\t\t\t\t</li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type\"><a href=\"/contact/\">Contact <b>Us</b></a></li>\n\t\t\t\t",
+				"current": "current-menu-item current_page_item"
 			},
 			{
 				"location": "primary",
@@ -137,7 +138,7 @@
 					{
 						"s": "label"
 					},
-					"</a></div></li>"
+					"</a></div></li> "
 				],
 				"parent": [
 					"<li class=\"menu-item menu-item-has-children",
@@ -156,15 +157,16 @@
 					{
 						"s": "children"
 					},
-					"</ul>\n\t\t\t</li>"
+					"</ul>\n\t\t\t</li> "
 				],
-				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t"
+				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t",
+				"current": "current-menu-item"
 			}
 		]
 	},
 	{
 		"version": 1,
-		"id": "1d9f671d380ef1161adf135d",
+		"id": "a320ffbf9d028a5b6fa13816",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -177,7 +179,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/a17ed84715cb7def3ad51f4d1ec49df7.css"
+			"/_emdash/api/media/file/wp-shell/2e9e60d3b96879d3ce81e0350731994c.css"
 		],
 		"parts": [
 			{
@@ -185,7 +187,7 @@
 			},
 			{
 				"slot": "logo",
-				"src": "/_emdash/api/media/file/wp-shell/ee92502c193053b6c9ca1da17c068587.png",
+				"src": "/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png",
 				"alt": "Example logo",
 				"class": "custom-logo",
 				"width": 120,
@@ -236,7 +238,7 @@
 				"class": "entry-content"
 			},
 			{
-				"html": "\n\t\t</div>\n\t\t<div class=\"section-inner\"></div>\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/7dbfbc3a2d70a4cf071f63e9d585cf14.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
+				"html": "\n\t\t</div>\n\t\t<div class=\"section-inner\"></div>\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
 			},
 			{
 				"slot": "siteTitle",
@@ -262,7 +264,7 @@
 					{
 						"s": "label"
 					},
-					"</a></li>"
+					"</a></li> "
 				],
 				"parent": [
 					"<li class=\"menu-item menu-item-has-children",
@@ -281,9 +283,10 @@
 					{
 						"s": "children"
 					},
-					"</ul>\n\t\t\t\t\t</li>"
+					"</ul>\n\t\t\t\t\t</li> "
 				],
-				"fallback": "\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-home page_item\"><a href=\"/\">Home</a></li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-has-children\"><a href=\"/history/\">History</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">\n\t\t\t\t\t\t\t<li class=\"menu-item\"><a href=\"/history/pioneer/\">Pioneers</a></li>\n\t\t\t\t\t\t</ul>\n\t\t\t\t\t</li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type\"><a href=\"/contact/\">Contact <b>Us</b></a></li>\n\t\t\t\t"
+				"fallback": "\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-home\"><a href=\"/\">Home</a></li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-has-children\"><a href=\"/history/\">History</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">\n\t\t\t\t\t\t\t<li class=\"menu-item\"><a href=\"/history/pioneer/\">Pioneers</a></li>\n\t\t\t\t\t\t</ul>\n\t\t\t\t\t</li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type\"><a href=\"/contact/\">Contact <b>Us</b></a></li>\n\t\t\t\t",
+				"current": "current-menu-item current_page_item"
 			},
 			{
 				"location": "primary",
@@ -300,7 +303,7 @@
 					{
 						"s": "label"
 					},
-					"</a></div></li>"
+					"</a></div></li> "
 				],
 				"parent": [
 					"<li class=\"menu-item menu-item-has-children",
@@ -319,10 +322,171 @@
 					{
 						"s": "children"
 					},
-					"</ul>\n\t\t\t</li>"
+					"</ul>\n\t\t\t</li> "
 				],
-				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t"
+				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><span class=\"toggle sub-menu-toggle\"></span></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t",
+				"current": "current-menu-item"
 			}
 		]
+	},
+	{
+		"version": 1,
+		"id": "b8dc59bac4e27d4a270eebd1",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": ""
+		},
+		"body": {
+			"class": "wp-singular page-template-default page singular two-column right-sidebar"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></h2></div>\n\t<div id=\"header-menu-wrapper\" class=\"collapse navbar-collapse\"><ul id=\"menu-main-menu\" class=\"nav navbar-nav flip\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul></div></div></div>\n<div class=\"breadcrumbs-wrapper\"><div class=\"container breadcrumbs\"><span><a href=\"/\" class=\"home\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></span> &gt; <span>"
+			},
+			{
+				"slot": "titleText"
+			},
+			{
+				"html": "</span></div></div>\n<div class=\"container main\"><div class=\"row\">\n\t<div class=\"main col-md-9\">\n\t\t<div id=\"entry-23\" class=\"page type-page status-publish hentry\">\n\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "\n\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "entry-content clearfix"
+			},
+			{
+				"html": "\n\t\t</div>\n\t</div>\n\t<div class=\"sidebar col-md-3\"><div class=\"widget\"><h4 class=\"item-title\">Sidebar words</h4></div></div>\n</div></div>\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p></div>\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"dropdown-toggle\">",
+					{
+						"s": "label"
+					},
+					" <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-home menu-item-has-children\"><a href=\"/\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">About Us <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">\n\t<li class=\"menu-item\"><a href=\"/team/\">Our Team</a></li>\n</ul>\n</li>\n<li class=\"menu-item\"><a href=\"/updates/\">Updates</a></li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"home": {
+			"body": {
+				"class": "wp-singular home page-template page-template-template-single-column page-template-template-single-column-php page singular front-page one-column"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+			],
+			"parts": [
+				{
+					"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+				},
+				{
+					"slot": "siteTitle",
+					"fallback": "Example Site"
+				},
+				{
+					"html": "</a></h2></div>\n\t<div id=\"header-menu-wrapper\" class=\"collapse navbar-collapse\"><ul id=\"menu-main-menu\" class=\"nav navbar-nav flip\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "</ul></div></div></div>\n<div class=\"highlights static-front-page\"><div class=\"container\">"
+				},
+				{
+					"slot": "title",
+					"tag": "h2",
+					"class": "highlight-title"
+				},
+				{
+					"slot": "content",
+					"tag": "div"
+				},
+				{
+					"html": "</div></div>\n\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+				},
+				{
+					"slot": "siteTitle",
+					"fallback": "Example Site"
+				},
+				{
+					"html": "</a></p></div>\n"
+				}
+			]
+		}
 	}
 ]
