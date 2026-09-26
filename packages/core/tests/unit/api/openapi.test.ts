@@ -328,6 +328,14 @@ describe("OpenAPI document generation", () => {
 		expect(paths).toContain("/_emdash/api/settings");
 	});
 
+	it("documents the homepage entry the settings response reports, and not the request", () => {
+		const doc = generateOpenApiDocument();
+		const schemas = doc.components?.schemas ?? {};
+
+		expect(JSON.stringify(schemas.SiteSettings)).toContain('"entry"');
+		expect(JSON.stringify(schemas.SettingsUpdateBody)).not.toContain('"entry"');
+	});
+
 	it("includes search paths", () => {
 		const doc = generateOpenApiDocument();
 		const paths = Object.keys(doc.paths ?? {});

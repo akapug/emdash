@@ -77,6 +77,18 @@ const mediaReferenceResponse = z.object({
 	height: z.number().int().optional(),
 });
 
+const homepageResponse = homepageReference.extend({
+	/**
+	 * The translation of the homepage the site resolves: the original when it
+	 * is published, else a published translation, else the first left. `null`
+	 * when no translation is left. Resolved on read; never stored.
+	 */
+	entry: z
+		.object({ id: z.string(), locale: z.string().nullable(), status: z.string() })
+		.nullable()
+		.optional(),
+});
+
 const seoSettingsResponse = z.object({
 	titleSeparator: z.string().max(10).optional(),
 	defaultOgImage: mediaReferenceResponse.optional(),
@@ -92,7 +104,7 @@ export const siteSettingsSchema = z
 		logo: mediaReferenceResponse.optional(),
 		favicon: mediaReferenceResponse.optional(),
 		url: z.string().optional(),
-		homepage: homepageReference.optional(),
+		homepage: homepageResponse.optional(),
 		postsPerPage: z.number().int().optional(),
 		dateFormat: z.string().optional(),
 		timezone: z.string().optional(),

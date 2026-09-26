@@ -101,6 +101,9 @@ async function resolveHomepage<D>(options: { locale?: string }): Promise<Homepag
 		variant.locale && requestedLocale && variant.locale !== requestedLocale
 			? variant.locale
 			: result.fallbackLocale;
-	const cacheHint = { ...result.cacheHint, tags: [...new Set([...(result.cacheHint.tags ?? []), ...tags])] };
+	const cacheHint = {
+		...result.cacheHint,
+		tags: [...new Set([...(result.cacheHint.tags ?? []), ...tags])],
+	};
 	return { ...result, collection, fallbackLocale, cacheHint };
 }
