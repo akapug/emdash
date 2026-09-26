@@ -34,7 +34,11 @@ interface SiteSettingsResponse {
 	logo?: { mediaId: string; alt?: string; url?: string };
 	favicon?: { mediaId: string; alt?: string; url?: string };
 	url?: string;
-	homepage?: { collection: string; id: string };
+	homepage?: {
+		collection: string;
+		id: string;
+		entry?: { id: string; locale: string | null; status: string } | null;
+	};
 	postsPerPage?: number;
 	dateFormat?: string;
 	timezone?: string;
@@ -312,9 +316,12 @@ describe("settings_update", () => {
 			arguments: { homepage: { collection: "pages", id: page.data.item.id } },
 		});
 		expect(set.isError, extractText(set)).toBeFalsy();
+		// The response reports the translation the homepage resolves to: here the
+		// page itself, still a draft, which is why "/" would show the latest posts.
 		expect(extractJson<SiteSettingsResponse>(set).homepage).toEqual({
 			collection: "pages",
 			id: page.data.item.id,
+			entry: { id: page.data.item.id, locale: expect.any(String), status: "draft" },
 		});
 
 		const missing = await harness.client.callTool({
