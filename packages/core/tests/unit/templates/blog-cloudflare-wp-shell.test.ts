@@ -519,6 +519,33 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 		);
 	});
 
+	it("prints an excerpt's paragraphs in the item's own <p>s where the theme does, escaped", () => {
+		const listing = {
+			...listingOf(),
+			excerpt: { words: 55, more: " [\u2026]", paragraphs: true as const },
+		};
+		const html = renderListing(listing, [
+			{ title: "T", url: "/posts/t", excerpt: "One <b>.\n\nTwo." },
+		]);
+		expect(html).toContain('<div class="excerpt"><p>One &lt;b&gt;.</p><p>Two.</p></div>');
+		// a hole in no <p> of its own gets one paragraph
+		const bare = {
+			...listing,
+			item: listing.item.map((x) =>
+				x === '</a></h3><div class="excerpt"><p>' ? '</a></h3><div class="excerpt">' : x,
+			),
+		};
+		expect(
+			renderListing(bare, [{ title: "T", url: "/posts/t", excerpt: "One.\n\nTwo." }]),
+		).toContain('<div class="excerpt">One. Two.</p></div>');
+		expect(wpShellProblem(withListing(listing))).toBeNull();
+		expect(
+			wpShellProblem(
+				withListing({ ...listing, excerpt: { ...listing.excerpt, paragraphs: "yes" } } as never),
+			),
+		).not.toBeNull();
+	});
+
 	it("draws the listing where the front page's layout has it, from the posts it is given", () => {
 		const shell = withListing();
 		expect(wpShellProblem(shell)).toBeNull();
@@ -554,13 +581,31 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 				{ _type: "image" },
 				{ _type: "block", children: [{ text: "three" }] },
 			]),
-		).toBe("One two three");
+		).toBe("One two\n\nthree");
+		const cut = { words: 5, more: " \u2026" };
+		const post = (text: string, excerpt = "") => ({ title: "", url: "", text, excerpt });
+		expect(listingExcerpt(post("a b c"), { words: 2, more: "\u2026" })).toEqual(["a b\u2026"]);
+		expect(listingExcerpt(post("a b"), { words: 2, more: "\u2026" })).toEqual(["a b"]);
+		// the words run on across paragraphs, into one unless the theme prints its excerpts' paragraphs
+		expect(listingExcerpt(post("a b c\n\nd e f"), cut)).toEqual(["a b c d e \u2026"]);
+		expect(listingExcerpt(post("a b c\n\nd e f"), { ...cut, paragraphs: true })).toEqual([
+			"a b c",
+			"d e \u2026",
+		]);
+		expect(listingExcerpt(post("a b c\n\nd e"), { ...cut, paragraphs: true })).toEqual([
+			"a b c",
+			"d e",
+		]);
+		expect(listingExcerpt(post("a b c d e\n\nf"), { ...cut, paragraphs: true })).toEqual([
+			"a b c d e \u2026",
+		]);
+		// the post's own excerpt, whole, paragraphs and all
 		expect(
-			listingExcerpt({ title: "", url: "", text: "a b c" }, { words: 2, more: "\u2026" }),
-		).toBe("a b\u2026");
-		expect(listingExcerpt({ title: "", url: "", text: "a b" }, { words: 2, more: "\u2026" })).toBe(
-			"a b",
-		);
+			listingExcerpt(post("x", "One two three four five six.\n\nSeven."), {
+				...cut,
+				paragraphs: true,
+			}),
+		).toEqual(["One two three four five six.", "Seven."]);
 		expect(ownImagePath("/_emdash/api/media/file/a.png")).toBe("/_emdash/api/media/file/a.png");
 		expect(ownImagePath({ provider: "local", id: "x", src: "/_emdash/api/media/file/b.jpg" })).toBe(
 			"/_emdash/api/media/file/b.jpg",

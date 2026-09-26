@@ -118,8 +118,11 @@ export interface WpShellListing {
 	/** The site's time zone: an IANA name, or a fixed offset from UTC in minutes. */
 	timeZone?: string;
 	utcOffset?: number;
-	/** An excerpt made from a post's content: its words, and what ends one that was cut. */
-	excerpt: { words: number; more: string };
+	/**
+	 * An excerpt made from a post's content: its words, and what ends one that
+	 * was cut; `paragraphs` when the theme prints the excerpt's paragraphs.
+	 */
+	excerpt: { words: number; more: string; paragraphs?: true };
 }
 
 /** One layout of the site: the body classes, stylesheets and parts a page is drawn with. */
@@ -515,7 +518,8 @@ function checkListing(l: unknown): string | null {
 		excerpt.words < 1 ||
 		excerpt.words > 1000 ||
 		typeof excerpt.more !== "string" ||
-		excerpt.more.length > 20
+		excerpt.more.length > 20 ||
+		(excerpt.paragraphs !== undefined && excerpt.paragraphs !== true)
 	)
 		return "a listing's excerpt rule is not one";
 	return null;
@@ -735,7 +739,7 @@ export interface WpShellPost {
 	url: string;
 	/** The post's own excerpt; with none, one is made from `text`. */
 	excerpt?: string | null;
-	/** The post's content as plain text. */
+	/** The post's content as plain text, a blank line between its paragraphs. */
 	text?: string | null;
 	date?: Date | null;
 	/** The featured image's path, when it is one of the site's own files. */
@@ -743,15 +747,30 @@ export interface WpShellPost {
 }
 
 const WORDS = /\s+/;
+const PARAGRAPHS = /\n\s*\n/;
 
-/** The post's excerpt as WordPress prints one: its own, or its first words and the more marker. */
-export function listingExcerpt(post: WpShellPost, rule: WpShellListing["excerpt"]): string {
+/**
+ * The post's excerpt as WordPress prints one, paragraph by paragraph: its
+ * own, or its first words and the more marker when there were more. One
+ * paragraph unless the theme prints an excerpt's paragraphs.
+ */
+export function listingExcerpt(post: WpShellPost, rule: WpShellListing["excerpt"]): string[] {
 	const own = (post.excerpt ?? "").trim();
-	if (own) return own;
-	const words = (post.text ?? "").split(WORDS).filter(Boolean);
-	return words.length > rule.words
-		? `${words.slice(0, rule.words).join(" ")}${rule.more}`
-		: words.join(" ");
+	const paragraphs = (own || (post.text ?? ""))
+		.split(PARAGRAPHS)
+		.map((p) => p.split(WORDS).filter(Boolean))
+		.filter((p) => p.length > 0);
+	const out: string[] = [];
+	let left = own ? Number.POSITIVE_INFINITY : rule.words;
+	let cut = false;
+	for (const words of paragraphs) {
+		cut = left <= 0 || words.length > left;
+		if (left > 0) out.push(words.slice(0, left).join(" "));
+		if (cut) break;
+		left -= words.length;
+	}
+	if (cut) out[out.length - 1] += rule.more;
+	return rule.paragraphs || out.length === 0 ? out : [out.join(" ")];
 }
 
 const MONTH_NAMES = [
@@ -821,6 +840,9 @@ export function formatWpDate(
 	return Array.from(format, (ch) => letters[ch] ?? ch).join("");
 }
 
+/** A template piece's markup; a hole has none. */
+const markup = (y: WpShellListingPart | undefined) => (typeof y === "string" ? y : "");
+
 function fillListing(
 	t: readonly WpShellListingPart[],
 	listing: WpShellListing,
@@ -828,7 +850,7 @@ function fillListing(
 	at: number,
 ): string {
 	let out = "";
-	for (const x of t) {
+	for (const [i, x] of t.entries()) {
 		if (typeof x === "string") {
 			out += x;
 			continue;
@@ -837,8 +859,13 @@ function fillListing(
 			out += escapeAttr(listing.classes[Math.min(at, listing.classes.length - 1)] ?? "");
 		else if (x.s === "href") out += escapeAttr(safeHref(post.url));
 		else if (x.s === "title") out += escapeHtml(post.title);
-		else if (x.s === "excerpt") out += escapeHtml(listingExcerpt(post, listing.excerpt));
-		else if (x.s === "date")
+		else if (x.s === "excerpt") {
+			// Paragraphs only where the hole sits in a <p> of its own, which each one closes and reopens.
+			const inP = markup(t[i - 1]).endsWith("<p>") && markup(t[i + 1]).startsWith("</p>");
+			out += listingExcerpt(post, listing.excerpt)
+				.map(escapeHtml)
+				.join(inP ? "</p><p>" : " ");
+		} else if (x.s === "date")
 			out +=
 				post.date && listing.date ? escapeHtml(formatWpDate(post.date, listing.date, listing)) : "";
 		else if (x.s === "src") out += escapeAttr(post.image ?? "");
@@ -859,7 +886,7 @@ export function renderListing(listing: WpShellListing, posts: readonly WpShellPo
 
 const isText = (v: unknown): v is string => typeof v === "string";
 
-/** Portable Text as plain text: each text block's spans, a space between blocks. */
+/** Portable Text as plain text: each text block's spans, a blank line between blocks. */
 export function plainText(blocks: unknown): string {
 	if (!Array.isArray(blocks)) return "";
 	return blocks
@@ -868,7 +895,7 @@ export function plainText(blocks: unknown): string {
 				? [b.children.map((c) => (isObject(c) && isText(c.text) ? c.text : "")).join("")]
 				: [],
 		)
-		.join(" ");
+		.join("\n\n");
 }
 
 /** A featured image's path, when it is one of the site's own files: a bare path, or a media value's. */
