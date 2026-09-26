@@ -33,29 +33,39 @@ describe("text alignment: the classic editor", () => {
 	});
 
 	it("reads the block editor's class in classic content", () => {
-		expect(aligns(htmlToPortableText(`<p class="has-text-align-right">Saved markup</p>`))).toEqual(["right"]);
+		expect(aligns(htmlToPortableText(`<p class="has-text-align-right">Saved markup</p>`))).toEqual([
+			"right",
+		]);
 	});
 
 	it("leaves old HTML's align attribute to the theme, which may override it", () => {
 		// Twenty Twenty's reset (`p { text-align: inherit }`) beats the hint, so
 		// WordPress draws this left; a stored textAlign would centre it.
-		const blocks = htmlToPortableText(`<p align="center">Old HTML</p><h2 align="center">Old heading</h2>`);
+		const blocks = htmlToPortableText(
+			`<p align="center">Old HTML</p><h2 align="center">Old heading</h2>`,
+		);
 		expect(aligns(blocks)).toEqual(["-", "-"]);
 		expect(textAlignOfTag(`<p align="center" style="text-align: right">`)).toBe("right");
 	});
 
 	it("reads it the way a browser does: inline style over class, the last declaration last", () => {
-		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: right">`)).toBe("right");
+		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: right">`)).toBe(
+			"right",
+		);
 		expect(textAlignOfTag(`<p style="text-align: center; text-align: right;">`)).toBe("right");
 		// an explicit left wins over the class it overrides
-		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: left">`)).toBe("left");
+		expect(textAlignOfTag(`<p class="has-text-align-center" style="text-align: left">`)).toBe(
+			"left",
+		);
 		expect(textAlignOfTag(`<p style="text-align: center !important;">`)).toBe("center");
 	});
 
 	it("stores nothing it does not know, and nothing from another attribute", () => {
 		expect(textAlignOfTag(`<p style="text-align: centre">`)).toBeUndefined();
 		expect(textAlignOfTag(`<p style="text-align: start">`)).toBeUndefined();
-		expect(textAlignOfTag(`<p data-style="text-align: center" data-align="right">`)).toBeUndefined();
+		expect(
+			textAlignOfTag(`<p data-style="text-align: center" data-align="right">`),
+		).toBeUndefined();
 		expect(textAlignOfTag(`<p title="text-align: center">`)).toBeUndefined();
 		expect(textAlignOfTag(`<p class="has-text-align-toString">`)).toBeUndefined();
 		expect(textAlignOfTag("plain text")).toBeUndefined();
@@ -64,7 +74,9 @@ describe("text alignment: the classic editor", () => {
 	it("stores a left WordPress wrote: the theme may align the region otherwise", () => {
 		// Franz Josef centres its front page's highlights; the classic editor's
 		// inline left is what keeps these paragraphs left there
-		const blocks = htmlToPortableText(`<p style="text-align: left;">Left words.</p><p>Words.</p><p class="has-text-align-left">Saved left.</p>`);
+		const blocks = htmlToPortableText(
+			`<p style="text-align: left;">Left words.</p><p>Words.</p><p class="has-text-align-left">Saved left.</p>`,
+		);
 		expect(aligns(blocks)).toEqual(["left", "-", "left"]);
 		expect(Object.hasOwn(blocks[1]!, "textAlign")).toBe(false);
 	});

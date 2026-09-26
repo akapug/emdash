@@ -77,7 +77,11 @@ export function textAlignOfTag(html: string): TextAlign | undefined {
 /** The alignment a paragraph or heading block's attributes name, in any of the spellings WordPress used. */
 export function textAlignOfAttrs(attrs: Record<string, unknown>): TextAlign | undefined {
 	const typography = attrObject(attrObject(attrs, "style") ?? {}, "typography") ?? {};
-	for (const v of [attrString(attrs, "textAlign"), attrString(typography, "textAlign"), attrString(attrs, "align")]) {
+	for (const v of [
+		attrString(attrs, "textAlign"),
+		attrString(typography, "textAlign"),
+		attrString(attrs, "align"),
+	]) {
 		const a = alignment(v);
 		if (a) return a;
 	}

@@ -27,19 +27,30 @@ const block = (key: string, textAlign: string | undefined, text: string, style =
 const image = (key: string, extra: Record<string, unknown>) => ({
 	_type: "image",
 	_key: key,
-	asset: { _ref: "https://example.org/wp-content/uploads/a-300x256.png", url: "https://example.org/wp-content/uploads/a-300x256.png" },
+	asset: {
+		_ref: "https://example.org/wp-content/uploads/a-300x256.png",
+		url: "https://example.org/wp-content/uploads/a-300x256.png",
+	},
 	alt: "A picture",
 	...extra,
 });
 
 async function render(value: unknown[], shell = true) {
 	const c = await AstroContainer.create();
-	return c.renderToString(PortableText, { props: { value, ...(shell ? { components } : {}) }, locals });
+	return c.renderToString(PortableText, {
+		props: { value, ...(shell ? { components } : {}) },
+		locals,
+	});
 }
 
 describe("the WpShell layout's content components", () => {
 	it("draws a stored left as WordPress's class, and every other block as EmDash draws it", async () => {
-		const html = await render([block("a", "left", "Left"), block("b", "center", "Centred"), block("c", undefined, "Plain"), block("d", "left", "Heading", "h3")]);
+		const html = await render([
+			block("a", "left", "Left"),
+			block("b", "center", "Centred"),
+			block("c", undefined, "Plain"),
+			block("d", "left", "Heading", "h3"),
+		]);
 		expect(html).toMatch(/<p class="has-text-align-left"[^>]*>Left<\/p>/);
 		expect(html).toMatch(/<p class="has-text-align-center"[^>]*>Centred<\/p>/);
 		expect(html).toMatch(/<p(?![^>]*class=)[^>]*>Plain<\/p>/);
@@ -50,7 +61,9 @@ describe("the WpShell layout's content components", () => {
 
 	it("draws an image aligned left or right as the theme's floated img, and any other image as EmDash's figure", async () => {
 		const left = await render([image("l", { alignment: "left" })]);
-		expect(left).toMatch(/<img class="alignleft" src="https:\/\/example\.org\/wp-content\/uploads\/a-300x256\.png" alt="A picture"/);
+		expect(left).toMatch(
+			/<img class="alignleft" src="https:\/\/example\.org\/wp-content\/uploads\/a-300x256\.png" alt="A picture"/,
+		);
 		expect(left).not.toContain("<figure");
 		expect(await render([image("r", { alignment: "right" })])).toMatch(/<img class="alignright"/);
 		for (const other of [
@@ -64,6 +77,8 @@ describe("the WpShell layout's content components", () => {
 			expect(html).not.toMatch(/class="align(left|right)"/);
 		}
 		// EmDash's own renderer draws its figure for the aligned image too
-		expect(await render([image("l", { alignment: "left" })], false)).toContain("emdash-image--align-left");
+		expect(await render([image("l", { alignment: "left" })], false)).toContain(
+			"emdash-image--align-left",
+		);
 	});
 });

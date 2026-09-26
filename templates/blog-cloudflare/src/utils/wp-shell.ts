@@ -153,19 +153,57 @@ const MAX_MARKUP = 1_000_000;
  * a menu template is checked with its holes filled, the label and children
  * holes with markup that only fits between tags.
  */
-// eslint-disable-next-line no-control-regex -- an attribute name holds no control character
-const CANONICAL_TAG = /<(\/?)([a-z][a-z0-9-]*)((?:\s+[^\s"'<>/=\u0000-\u001F]+(?:="[^"<>]*")?)*)\s*\/?>/y;
+const CANONICAL_TAG =
+	// eslint-disable-next-line no-control-regex -- an attribute name holds no control character
+	/<(\/?)([a-z][a-z0-9-]*)((?:\s+[^\s"'<>/=\u0000-\u001F]+(?:="[^"<>]*")?)*)\s*\/?>/y;
 // eslint-disable-next-line no-control-regex -- an attribute name holds no control character
 const ATTRIBUTE = /\s+([^\s"'<>/=\u0000-\u001F]+)(?:="([^"<>]*)")?/g;
 
 /** Elements the writer never emits: they run, fetch, submit, or change how what follows them is parsed. */
 const NEVER_TAGS = new Set([
-	"script", "iframe", "object", "embed", "frame", "frameset", "base", "meta", "link", "style", "form",
-	"svg", "math", "template", "noscript", "noembed", "noframes", "xmp", "plaintext", "textarea", "title",
-	"select", "option", "input", "button", "portal", "applet", "isindex", "param", "dialog",
+	"script",
+	"iframe",
+	"object",
+	"embed",
+	"frame",
+	"frameset",
+	"base",
+	"meta",
+	"link",
+	"style",
+	"form",
+	"svg",
+	"math",
+	"template",
+	"noscript",
+	"noembed",
+	"noframes",
+	"xmp",
+	"plaintext",
+	"textarea",
+	"title",
+	"select",
+	"option",
+	"input",
+	"button",
+	"portal",
+	"applet",
+	"isindex",
+	"param",
+	"dialog",
 ]);
 /** Attributes the writer never emits. */
-const NEVER_ATTRS = new Set(["action", "formaction", "background", "ping", "srcdoc", "data", "codebase", "dynsrc", "lowsrc"]);
+const NEVER_ATTRS = new Set([
+	"action",
+	"formaction",
+	"background",
+	"ping",
+	"srcdoc",
+	"data",
+	"codebase",
+	"dynsrc",
+	"lowsrc",
+]);
 
 const ENTITY = /&(?:(amp|lt|gt|quot|#39);)?/g;
 const ENTITY_VALUE: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
@@ -210,19 +248,25 @@ function styleProblem(css: string): string | null {
 	if (CSS_RUNS.test(v)) return "a style attribute runs script";
 	for (const m of v.matchAll(CSS_URL)) {
 		const url = (m[2] ?? "").trim();
-		if (!STYLE_DATA.test(url) && !ownFile(url)) return "a style attribute loads from outside the site";
+		if (!STYLE_DATA.test(url) && !ownFile(url))
+			return "a style attribute loads from outside the site";
 	}
 	return CSS_STRING_URL.test(v) ? "a style attribute names a URL outside url()" : null;
 }
 
 function attributeProblem(tag: string, name: string, value: string): string | null {
-	if (name.startsWith("on") || NEVER_ATTRS.has(name) || (name.includes(":") && !name.startsWith("data-"))) {
+	if (
+		name.startsWith("on") ||
+		NEVER_ATTRS.has(name) ||
+		(name.includes(":") && !name.startsWith("data-"))
+	) {
 		return `the markup carries a ${name} attribute`;
 	}
 	if (name.startsWith("data-emdash") || (name === "id" && EMDASH_ID.test(value))) {
 		return "the markup claims to be EmDash's own";
 	}
-	if (name === "href") return RUNNING_SCHEME.test(value.replace(URL_NOISE, "")) ? "a link runs script" : null;
+	if (name === "href")
+		return RUNNING_SCHEME.test(value.replace(URL_NOISE, "")) ? "a link runs script" : null;
 	if (name === "src" || name === "poster") {
 		return ((tag === "img" || tag === "source") && IMG_DATA.test(value.trim())) || ownFile(value)
 			? null
@@ -251,7 +295,12 @@ function markupProblem(html: string): string | null {
 }
 
 /** Holes filled for the check: a label or children hole takes markup, which only fits between tags. */
-const HOLE_FILL: Record<string, string> = { cls: "", href: "#", label: "<b></b>", children: "<b></b>" };
+const HOLE_FILL: Record<string, string> = {
+	cls: "",
+	href: "#",
+	label: "<b></b>",
+	children: "<b></b>",
+};
 
 /** Every layout a record draws pages with. */
 const layoutsOf = (s: WpShell): WpShellLayout[] => (s.home ? [s, s.home] : [s]);
@@ -262,7 +311,8 @@ function drawnMarkup(s: WpShell): string[] {
 	for (const l of layoutsOf(s)) for (const p of l.parts) if ("html" in p) out.push(p.html);
 	for (const m of s.menus) {
 		out.push(m.fallback);
-		for (const t of [m.leaf, m.parent]) out.push(t.map((x) => (typeof x === "string" ? x : HOLE_FILL[x.s])).join(""));
+		for (const t of [m.leaf, m.parent])
+			out.push(t.map((x) => (typeof x === "string" ? x : HOLE_FILL[x.s])).join(""));
 	}
 	return out;
 }
@@ -317,7 +367,11 @@ const TEMPLATE_HOLES = new Set(["cls", "href", "label", "children"]);
 function checkTemplate(t: unknown): t is WpShellTemplatePart[] {
 	return (
 		Array.isArray(t) &&
-		t.every((x) => typeof x === "string" || (isObject(x) && typeof x.s === "string" && TEMPLATE_HOLES.has(x.s)))
+		t.every(
+			(x) =>
+				typeof x === "string" ||
+				(isObject(x) && typeof x.s === "string" && TEMPLATE_HOLES.has(x.s)),
+		)
 	);
 }
 
@@ -335,12 +389,14 @@ const hrefInAttribute = (t: WpShellTemplatePart[]) =>
 
 function checkMenu(m: unknown): string | null {
 	if (!isObject(m)) return "a menu is not an object";
-	if (typeof m.location !== "string" || !MENU_LOCATION.test(m.location)) return "a menu has no location";
+	if (typeof m.location !== "string" || !MENU_LOCATION.test(m.location))
+		return "a menu has no location";
 	const { leaf, parent } = m;
 	if (!checkTemplate(leaf) || !checkTemplate(parent)) return "a menu template is malformed";
 	if (typeof m.fallback !== "string") return "a menu has no fallback";
 	if (!optionalToken(m.current)) return "a menu's current classes are not tokens";
-	if (!hrefInAttribute(leaf) || !hrefInAttribute(parent)) return "a menu link is not inside an href attribute";
+	if (!hrefInAttribute(leaf) || !hrefInAttribute(parent))
+		return "a menu link is not inside an href attribute";
 	return null;
 }
 
@@ -355,7 +411,8 @@ function markupOf(s: WpShell): string[] {
 	return out;
 }
 
-const countSlot = (parts: unknown[], slot: string) => parts.filter((p) => isObject(p) && p.slot === slot).length;
+const countSlot = (parts: unknown[], slot: string) =>
+	parts.filter((p) => isObject(p) && p.slot === slot).length;
 
 /** Why a layout's body, stylesheets or parts are not ones this template draws, or null. */
 function checkLayout(l: Record<string, unknown>, menus: number): string | null {
@@ -380,7 +437,8 @@ function checkLayout(l: Record<string, unknown>, menus: number): string | null {
 /** Why `value` is not a shell record this layout can draw, or null when it is one. */
 export function wpShellProblem(value: unknown): string | null {
 	if (!isObject(value)) return "not an object";
-	if (value.version !== WP_SHELL_VERSION) return `version ${String(value.version)} is not ${WP_SHELL_VERSION}`;
+	if (value.version !== WP_SHELL_VERSION)
+		return `version ${String(value.version)} is not ${WP_SHELL_VERSION}`;
 	if (typeof value.id !== "string" || !RECORD_ID.test(value.id)) return "no id";
 	if (!isObject(value.source) || typeof value.source.url !== "string") return "no source";
 	const { html, body, styles, menus, parts } = value;
@@ -403,7 +461,8 @@ export function wpShellProblem(value: unknown): string | null {
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
 	const shell = value as unknown as WpShell;
-	if (markupOf(shell).reduce((n, h) => n + h.length, 0) > MAX_MARKUP) return "the markup is larger than a shell";
+	if (markupOf(shell).reduce((n, h) => n + h.length, 0) > MAX_MARKUP)
+		return "the markup is larger than a shell";
 	for (const piece of drawnMarkup(shell)) {
 		const why = markupProblem(piece);
 		if (why) return why;
@@ -423,7 +482,10 @@ export function parseWpShell(value: unknown): WpShell | null {
  */
 const checked = new WeakMap<object, WpShell | null>();
 
-export function parseWpShellCached(value: unknown, warn: (why: string) => void = () => {}): WpShell | null {
+export function parseWpShellCached(
+	value: unknown,
+	warn: (why: string) => void = () => {},
+): WpShell | null {
 	if (!isObject(value)) {
 		if (value !== undefined) warn("not an object");
 		return null;
@@ -534,7 +596,10 @@ export function renderMenu(
 }
 
 /** What the layout draws: markup, or the element that holds the title or the content. */
-export type WpShellPiece = { html: string } | { title: WpShellElement } | { content: WpShellElement };
+export type WpShellPiece =
+	| { html: string }
+	| { title: WpShellElement }
+	| { content: WpShellElement };
 
 /** What EmDash knows that the record left a slot for. */
 export interface WpShellFill {
@@ -564,7 +629,10 @@ const element = (p: WpShellElement): WpShellElement => ({
 	...(p.id !== undefined ? { id: p.id } : {}),
 });
 
-function logoHtml(p: Extract<WpShellPart, { slot: "logo" }>, url: string | null | undefined): string {
+function logoHtml(
+	p: Extract<WpShellPart, { slot: "logo" }>,
+	url: string | null | undefined,
+): string {
 	const src = url && safeHref(url) !== "#" ? url : p.src;
 	const attrs = [
 		`src="${escapeAttr(src)}"`,

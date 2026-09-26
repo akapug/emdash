@@ -15,7 +15,11 @@ import type { PortableTextBlock } from "../src/types.js";
 /** Each text block's text, "\n" for a line break; an image block as its alignment. */
 const shape = (blocks: PortableTextBlock[]) =>
 	blocks.map((b) =>
-		b._type === "block" ? b.children.map((c) => c.text).join("") : b._type === "image" ? `[image ${b.alignment ?? "-"}]` : b._type,
+		b._type === "block"
+			? b.children.map((c) => c.text).join("")
+			: b._type === "image"
+				? `[image ${b.alignment ?? "-"}]`
+				: b._type,
 	);
 
 describe("classic content: paragraphs and line breaks as WordPress draws them", () => {
@@ -76,7 +80,13 @@ describe("classic content: an aligned image", () => {
 <img class="aligncenter" src="https://example.org/c.png" alt="C" />
 <p><img class="text-alignleft" src="https://example.org/d.png" alt="D" /></p>`;
 		const blocks = gutenbergToPortableText(content);
-		expect(shape(blocks)).toEqual(["[image left]", "Words beside the picture.", "[image right]", "[image center]", "[image -]"]);
+		expect(shape(blocks)).toEqual([
+			"[image left]",
+			"Words beside the picture.",
+			"[image right]",
+			"[image center]",
+			"[image -]",
+		]);
 		expect(blocks[1]).toMatchObject({ textAlign: "left" });
 		expect(blocks[2]).toMatchObject({ link: "https://example.org/b/" });
 	});

@@ -14,7 +14,6 @@ import {
 	type WpShell,
 	type WpShellMenu,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
-
 import writerRecords from "./wp-shell-writer-records.json";
 
 /** A front page's own layout: its highlights, around the title and content, and the record's menu. */
@@ -25,7 +24,9 @@ function homeOf(): NonNullable<WpShell["home"]> {
 		parts: [
 			{ html: '<header id="site-header"><nav><ul class="primary-menu">' },
 			{ slot: "menu", menu: 0 },
-			{ html: '</ul></nav></header><div class="highlights static-front-page"><div class="container">' },
+			{
+				html: '</ul></nav></header><div class="highlights static-front-page"><div class="container">',
+			},
 			{ slot: "title", tag: "h2", class: "highlight-title" },
 			{ slot: "content", tag: "div" },
 			{ html: "</div></div><footer></footer>" },
@@ -37,7 +38,15 @@ function homeOf(): NonNullable<WpShell["home"]> {
 function sample(): WpShell {
 	const menu: WpShellMenu = {
 		location: "primary",
-		leaf: ['<li class="menu-item', { s: "cls" }, '"><a href="', { s: "href" }, '">', { s: "label" }, "</a></li>"],
+		leaf: [
+			'<li class="menu-item',
+			{ s: "cls" },
+			'"><a href="',
+			{ s: "href" },
+			'">',
+			{ s: "label" },
+			"</a></li>",
+		],
 		parent: [
 			'<li class="menu-item menu-item-has-children',
 			{ s: "cls" },
@@ -65,11 +74,13 @@ function sample(): WpShell {
 			{ slot: "tagline", fallback: "Captured tagline" },
 			{ html: '</div><nav><ul class="primary-menu reset-list-style">' },
 			{ slot: "menu", menu: 0 },
-			{ html: '</ul></nav></header><main id="site-content"><article class="page type-page"><header class="entry-header">' },
+			{
+				html: '</ul></nav></header><main id="site-content"><article class="page type-page"><header class="entry-header">',
+			},
 			{ slot: "title", tag: "h1", class: "entry-title" },
 			{ html: '</header><div class="post-inner thin">' },
 			{ slot: "content", tag: "div", class: "entry-content" },
-			{ html: "</div></article></main><footer id=\"site-footer\"></footer>" },
+			{ html: '</div></article></main><footer id="site-footer"></footer>' },
 		],
 		menus: [menu],
 	};
@@ -89,33 +100,105 @@ describe("wp-shell record", () => {
 		["another version", (s) => void ((s as { version: number }).version = 2)],
 		["a script", (s) => void s.parts.unshift({ html: "<script>alert(1)</script>" })],
 		["a script written with a space", (s) => void s.parts.unshift({ html: "< script src=x>" })],
-		["an event handler", (s) => void s.parts.unshift({ html: '<img src="/x.png" onerror="alert(1)">' })],
-		["an event handler after a slash", (s) => void s.parts.unshift({ html: "<img/onerror=alert(1) src=x>" })],
-		["an event handler after a quoted value", (s) => void s.parts.unshift({ html: '<img src="x"onerror=alert(1)>' })],
-		["a javascript: link", (s) => void s.parts.unshift({ html: '<a href=" javascript:alert(1)">x</a>' })],
-		["an iframe", (s) => void s.parts.unshift({ html: '<iframe src="https://evil.example"></iframe>' })],
-		["a stylesheet in the body", (s) => void s.parts.unshift({ html: '<link rel="stylesheet" href="https://evil.example/x.css">' })],
+		[
+			"an event handler",
+			(s) => void s.parts.unshift({ html: '<img src="/x.png" onerror="alert(1)">' }),
+		],
+		[
+			"an event handler after a slash",
+			(s) => void s.parts.unshift({ html: "<img/onerror=alert(1) src=x>" }),
+		],
+		[
+			"an event handler after a quoted value",
+			(s) => void s.parts.unshift({ html: '<img src="x"onerror=alert(1)>' }),
+		],
+		[
+			"a javascript: link",
+			(s) => void s.parts.unshift({ html: '<a href=" javascript:alert(1)">x</a>' }),
+		],
+		[
+			"an iframe",
+			(s) => void s.parts.unshift({ html: '<iframe src="https://evil.example"></iframe>' }),
+		],
+		[
+			"a stylesheet in the body",
+			(s) =>
+				void s.parts.unshift({ html: '<link rel="stylesheet" href="https://evil.example/x.css">' }),
+		],
 		["a style element", (s) => void s.parts.unshift({ html: "<style>body{}</style>" })],
-		["a stylesheet on another host", (s) => void (s.styles = ["https://old-host.example/style.css"])],
-		["a stylesheet outside wp-shell/", (s) => void (s.styles = ["/_emdash/api/media/file/other.css"])],
+		[
+			"a stylesheet on another host",
+			(s) => void (s.styles = ["https://old-host.example/style.css"]),
+		],
+		[
+			"a stylesheet outside wp-shell/",
+			(s) => void (s.styles = ["/_emdash/api/media/file/other.css"]),
+		],
 		["two title slots", (s) => void s.parts.push({ slot: "title", tag: "h1" })],
-		["no content slot", (s) => void (s.parts = s.parts.filter((p) => !("slot" in p) || p.slot !== "content"))],
-		["a title tag it does not draw", (s) => void s.parts.splice(7, 1, { slot: "title", tag: "script" as "h1" })],
-		["a class that leaves its attribute", (s) => void s.parts.splice(7, 1, { slot: "title", tag: "h1", class: 'x" onclick="y' })],
+		[
+			"no content slot",
+			(s) => void (s.parts = s.parts.filter((p) => !("slot" in p) || p.slot !== "content")),
+		],
+		[
+			"a title tag it does not draw",
+			(s) => void s.parts.splice(7, 1, { slot: "title", tag: "script" as "h1" }),
+		],
+		[
+			"a class that leaves its attribute",
+			(s) => void s.parts.splice(7, 1, { slot: "title", tag: "h1", class: 'x" onclick="y' }),
+		],
 		["a body class that leaves its attribute", (s) => void (s.body.class = 'x" onload="y')],
 		["a menu slot naming no menu", (s) => void s.parts.push({ slot: "menu", menu: 3 })],
-		["a menu link outside an href", (s) => void (s.menus[0]!.leaf = ["<li>", { s: "href" }, "</li>"])],
-		["executable markup in a menu template", (s) => void s.menus[0]!.leaf.unshift('<a onmouseover="x">')],
-		["executable markup in a menu fallback", (s) => void (s.menus[0]!.fallback = "<script>x</script>")],
-		["a logo from another host", (s) => void s.parts.push({ slot: "logo", src: "https://old-host.example/logo.png" })],
-		["a menu's current classes that leave their attribute", (s) => void (s.menus[0]!.current = 'x" onclick="y')],
+		[
+			"a menu link outside an href",
+			(s) => void (s.menus[0]!.leaf = ["<li>", { s: "href" }, "</li>"]),
+		],
+		[
+			"executable markup in a menu template",
+			(s) => void s.menus[0]!.leaf.unshift('<a onmouseover="x">'),
+		],
+		[
+			"executable markup in a menu fallback",
+			(s) => void (s.menus[0]!.fallback = "<script>x</script>"),
+		],
+		[
+			"a logo from another host",
+			(s) => void s.parts.push({ slot: "logo", src: "https://old-host.example/logo.png" }),
+		],
+		[
+			"a menu's current classes that leave their attribute",
+			(s) => void (s.menus[0]!.current = 'x" onclick="y'),
+		],
 		// the front page's layout is checked as the record's own is
 		["a home layout that is not an object", (s) => void ((s as { home: unknown }).home = "home")],
-		["a script in the home layout", (s) => void (s.home = { ...homeOf(), parts: [{ html: "<script>alert(1)</script>" }, ...homeOf().parts] })],
-		["a home layout with no content slot", (s) => void (s.home = { ...homeOf(), parts: homeOf().parts.filter((p) => !("slot" in p) || p.slot !== "content") })],
-		["a home stylesheet on another host", (s) => void (s.home = { ...homeOf(), styles: ["https://old-host.example/style.css"] })],
-		["a home body class that leaves its attribute", (s) => void (s.home = { ...homeOf(), body: { class: 'x" onload="y' } })],
-		["a home menu slot naming no menu", (s) => void (s.home = { ...homeOf(), parts: [...homeOf().parts, { slot: "menu", menu: 5 }] })],
+		[
+			"a script in the home layout",
+			(s) =>
+				void (s.home = {
+					...homeOf(),
+					parts: [{ html: "<script>alert(1)</script>" }, ...homeOf().parts],
+				}),
+		],
+		[
+			"a home layout with no content slot",
+			(s) =>
+				void (s.home = {
+					...homeOf(),
+					parts: homeOf().parts.filter((p) => !("slot" in p) || p.slot !== "content"),
+				}),
+		],
+		[
+			"a home stylesheet on another host",
+			(s) => void (s.home = { ...homeOf(), styles: ["https://old-host.example/style.css"] }),
+		],
+		[
+			"a home body class that leaves its attribute",
+			(s) => void (s.home = { ...homeOf(), body: { class: 'x" onload="y' } }),
+		],
+		[
+			"a home menu slot naming no menu",
+			(s) => void (s.home = { ...homeOf(), parts: [...homeOf().parts, { slot: "menu", menu: 5 }] }),
+		],
 	];
 	for (const [what, spoil] of refused) {
 		it(`is refused whole for ${what}`, () => {
@@ -197,7 +280,13 @@ describe("wp-shell layout pieces", () => {
 			menuItems: () => [{ label: "Home", url: "/", children: [] }],
 			currentPath: "/",
 		});
-		expect(pieces.map((p) => Object.keys(p)[0])).toEqual(["html", "title", "html", "content", "html"]);
+		expect(pieces.map((p) => Object.keys(p)[0])).toEqual([
+			"html",
+			"title",
+			"html",
+			"content",
+			"html",
+		]);
 		const first = (pieces[0] as { html: string }).html;
 		expect(first).toContain("Pah &lt;Tempe&gt;");
 		expect(first).toContain("Captured tagline");
@@ -213,46 +302,92 @@ describe("wp-shell layout pieces", () => {
 
 	it("draws the logo setting over the captured logo", () => {
 		const s = sample();
-		s.parts.unshift({ slot: "logo", src: "/_emdash/api/media/file/wp-shell/logo1.png", alt: "Logo", class: "custom-logo", width: 120, height: 40 });
+		s.parts.unshift({
+			slot: "logo",
+			src: "/_emdash/api/media/file/wp-shell/logo1.png",
+			alt: "Logo",
+			class: "custom-logo",
+			width: 120,
+			height: 40,
+		});
 		const drawn = (fill: { logoUrl?: string | null }) =>
-			(composeWpShell(s, { ...fill, menuItems: () => null, currentPath: "/" })[0] as { html: string }).html;
-		expect(drawn({})).toMatch(/^<img src="\/_emdash\/api\/media\/file\/wp-shell\/logo1.png" alt="Logo" class="custom-logo" width="120" height="40">/);
-		expect(drawn({ logoUrl: "/_emdash/api/media/file/new.png" })).toMatch(/^<img src="\/_emdash\/api\/media\/file\/new.png"/);
-		expect(drawn({ logoUrl: "javascript:x" })).toMatch(/^<img src="\/_emdash\/api\/media\/file\/wp-shell\/logo1.png"/);
+			(
+				composeWpShell(s, { ...fill, menuItems: () => null, currentPath: "/" })[0] as {
+					html: string;
+				}
+			).html;
+		expect(drawn({})).toMatch(
+			/^<img src="\/_emdash\/api\/media\/file\/wp-shell\/logo1.png" alt="Logo" class="custom-logo" width="120" height="40">/,
+		);
+		expect(drawn({ logoUrl: "/_emdash/api/media/file/new.png" })).toMatch(
+			/^<img src="\/_emdash\/api\/media\/file\/new.png"/,
+		);
+		expect(drawn({ logoUrl: "javascript:x" })).toMatch(
+			/^<img src="\/_emdash\/api\/media\/file\/wp-shell\/logo1.png"/,
+		);
 	});
 
 	it("gives each kind of page WordPress's body classes for it", () => {
 		const s = sample();
 		s.body.class = "home page page-template-default wp-theme-twentytwenty singular";
-		expect(bodyClassFor(s, "home")).toBe("home page page-template-default wp-theme-twentytwenty singular");
-		expect(bodyClassFor(s, "page")).toBe("page page-template-default wp-theme-twentytwenty singular");
-		expect(bodyClassFor(s, "post")).toBe("single single-post single-format-standard wp-theme-twentytwenty singular");
+		expect(bodyClassFor(s, "home")).toBe(
+			"home page page-template-default wp-theme-twentytwenty singular",
+		);
+		expect(bodyClassFor(s, "page")).toBe(
+			"page page-template-default wp-theme-twentytwenty singular",
+		);
+		expect(bodyClassFor(s, "post")).toBe(
+			"single single-post single-format-standard wp-theme-twentytwenty singular",
+		);
 	});
 });
 
 describe("wp-shell: the chrome that prints the title, and the front page's own layout", () => {
 	it("draws the entry title, escaped, where the chrome prints it as text", () => {
 		const s = sample();
-		s.parts.unshift({ html: '<div class="breadcrumbs"><a href="/" class="home">' }, { slot: "siteTitle", fallback: "Example" }, { html: "</a> &gt; <span>" }, { slot: "titleText" }, { html: "</span></div>" });
+		s.parts.unshift(
+			{ html: '<div class="breadcrumbs"><a href="/" class="home">' },
+			{ slot: "siteTitle", fallback: "Example" },
+			{ html: "</a> &gt; <span>" },
+			{ slot: "titleText" },
+			{ html: "</span></div>" },
+		);
 		expect(wpShellProblem(s)).toBeNull();
-		const first = (composeWpShell(s, { menuItems: () => null, currentPath: "/pages/team", title: "Our <Team> & Co" })[0] as { html: string }).html;
-		expect(first).toMatch(/^<div class="breadcrumbs"><a href="\/" class="home">Example<\/a> &gt; <span>Our &lt;Team&gt; &amp; Co<\/span><\/div>/);
+		const first = (
+			composeWpShell(s, {
+				menuItems: () => null,
+				currentPath: "/pages/team",
+				title: "Our <Team> & Co",
+			})[0] as { html: string }
+		).html;
+		expect(first).toMatch(
+			/^<div class="breadcrumbs"><a href="\/" class="home">Example<\/a> &gt; <span>Our &lt;Team&gt; &amp; Co<\/span><\/div>/,
+		);
 	});
 
 	it("draws the home from the front page's layout, and every other page from the record's", () => {
 		const s = sample();
 		s.home = homeOf();
 		expect(wpShellProblem(s)).toBeNull();
-		const kinds = (kind: "home" | "page") => composeWpShell(s, { menuItems: () => null, currentPath: "/", kind }).map((p) => ("html" in p ? "html" : Object.keys(p)[0]));
+		const kinds = (kind: "home" | "page") =>
+			composeWpShell(s, { menuItems: () => null, currentPath: "/", kind }).map((p) =>
+				"html" in p ? "html" : Object.keys(p)[0],
+			);
 		const home = composeWpShell(s, { menuItems: () => null, currentPath: "/", kind: "home" });
 		expect(home[1]).toEqual({ title: { tag: "h2", class: "highlight-title" } });
 		expect(home[2]).toEqual({ content: { tag: "div" } });
-		expect((home[0] as { html: string }).html).toContain('<div class="highlights static-front-page">');
+		expect((home[0] as { html: string }).html).toContain(
+			'<div class="highlights static-front-page">',
+		);
 		expect(kinds("page")).toEqual(["html", "title", "html", "content", "html"]);
 		expect(layoutFor(s, "home").styles).toEqual(["/_emdash/api/media/file/wp-shell/front1.css"]);
 		expect(layoutFor(s, "page").styles).toEqual(s.styles);
-		expect(bodyClassFor(s, "home")).toBe("home page-template-template-single-column front-page one-column");
-		expect(bodyClassFor(s, "page")).toBe("page page-template-default wp-singular wp-theme-twentytwenty singular enable-search-modal");
+		expect(bodyClassFor(s, "home")).toBe(
+			"home page-template-template-single-column front-page one-column",
+		);
+		expect(bodyClassFor(s, "page")).toBe(
+			"page page-template-default wp-singular wp-theme-twentytwenty singular enable-search-modal",
+		);
 		// no home layout: the home is the record's own
 		expect(layoutFor(sample(), "home").parts).toEqual(sample().parts);
 	});
@@ -303,27 +438,79 @@ describe("the tripwire reads the writer's form", () => {
 		["a named-entity colon", withHtml('<a href="javascript&colon;alert(1)">x</a>')],
 		["a tab inside the scheme", withHtml('<a href="java&#x09;script:alert(1)">x</a>')],
 		["a raw tab inside the scheme", withHtml('<a href="java\tscript:alert(1)">x</a>')],
-		["a > inside a quoted value before a handler", withHtml('<a title=">" onclick="alert(1)">x</a>')],
+		[
+			"a > inside a quoted value before a handler",
+			withHtml('<a title=">" onclick="alert(1)">x</a>'),
+		],
 		["a quote inside an attribute name", withHtml('<a x"y=1 onclick=alert(1)>x</a>')],
-		["a tag cut in two by a slot", (() => {
-			const s = sample();
-			return { ...s, parts: [...s.parts, { html: '<img src="/_emdash/api/media/file/a.png" ' }, { slot: "tagline", fallback: "" }, { html: ' onerror="alert(1)">' }] };
-		})()],
-		["a label hole inside an attribute", (() => {
-			const s = sample();
-			const leaf = ['<li class="menu-item', { s: "cls" }, '"><a title="', { s: "label" }, '" href="', { s: "href" }, '">x</a></li>'];
-			return { ...s, menus: s.menus.map((m) => ({ ...m, leaf })) };
-		})()],
-		["a formaction on a button", withHtml('<button form="c" formaction="&#106;avascript:alert(1)">x</button>')],
-		["a noscript that hides a tag from a parser with scripting off", withHtml('<noscript><p title="</noscript><img src=x onerror=alert(1)>"></p></noscript>')],
-		["a data-emdash-ref the editor toolbar would take for the page's own", withHtml('<div data-emdash-ref="{&quot;collection&quot;:&quot;posts&quot;,&quot;id&quot;:&quot;p1&quot;,&quot;status&quot;:&quot;draft&quot;}">x</div>')],
+		[
+			"a tag cut in two by a slot",
+			(() => {
+				const s = sample();
+				return {
+					...s,
+					parts: [
+						...s.parts,
+						{ html: '<img src="/_emdash/api/media/file/a.png" ' },
+						{ slot: "tagline", fallback: "" },
+						{ html: ' onerror="alert(1)">' },
+					],
+				};
+			})(),
+		],
+		[
+			"a label hole inside an attribute",
+			(() => {
+				const s = sample();
+				const leaf = [
+					'<li class="menu-item',
+					{ s: "cls" },
+					'"><a title="',
+					{ s: "label" },
+					'" href="',
+					{ s: "href" },
+					'">x</a></li>',
+				];
+				return { ...s, menus: s.menus.map((m) => ({ ...m, leaf })) };
+			})(),
+		],
+		[
+			"a formaction on a button",
+			withHtml('<button form="c" formaction="&#106;avascript:alert(1)">x</button>'),
+		],
+		[
+			"a noscript that hides a tag from a parser with scripting off",
+			withHtml('<noscript><p title="</noscript><img src=x onerror=alert(1)>"></p></noscript>'),
+		],
+		[
+			"a data-emdash-ref the editor toolbar would take for the page's own",
+			withHtml(
+				'<div data-emdash-ref="{&quot;collection&quot;:&quot;posts&quot;,&quot;id&quot;:&quot;p1&quot;,&quot;status&quot;:&quot;draft&quot;}">x</div>',
+			),
+		],
 		["an emdash id", withHtml('<div id="emdash-toolbar">x</div>')],
 		["an image from another server", withHtml('<img src="https://tracker.example/p.gif">')],
 		["a protocol-relative image", withHtml('<img src="//tracker.example/p.gif">')],
-		["a style url to another server", withHtml('<div style="background:url(\'https://tracker.example/b.png\')">x</div>')],
-		["a CSS-escaped url()", withHtml('<div style="background:u\\72 l(https://tracker.example/b.png)">x</div>')],
-		["an image-set string", withHtml('<div style="background-image:image-set(\'https://tracker.example/b.png\' 1x)">x</div>')],
-		["a srcset", withHtml('<img src="/_emdash/api/media/file/a.png" srcset="https://tracker.example/b.png 2x">')],
+		[
+			"a style url to another server",
+			withHtml("<div style=\"background:url('https://tracker.example/b.png')\">x</div>"),
+		],
+		[
+			"a CSS-escaped url()",
+			withHtml('<div style="background:u\\72 l(https://tracker.example/b.png)">x</div>'),
+		],
+		[
+			"an image-set string",
+			withHtml(
+				"<div style=\"background-image:image-set('https://tracker.example/b.png' 1x)\">x</div>",
+			),
+		],
+		[
+			"a srcset",
+			withHtml(
+				'<img src="/_emdash/api/media/file/a.png" srcset="https://tracker.example/b.png 2x">',
+			),
+		],
 		["an unquoted attribute", withHtml("<img src=/_emdash/api/media/file/a.png>")],
 		["a comment", withHtml("<!--><img src=x onerror=alert(1)>-->")],
 	];
