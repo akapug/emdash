@@ -76,10 +76,15 @@ async function decodePersistedPluginSetting(
  * Worker-isolate cache for the resolved `site:*` settings.
  *
  * Site settings (title, logo, SEO defaults) change rarely but are read on
- * every public request. Caching across the isolate's lifetime drops the
+ * every public request. Caching in the isolate drops the
  * `options WHERE name LIKE 'site:%'` prefix scan from once-per-request to
- * once-per-isolate. Cross-isolate staleness is bounded by isolate lifetime
- * (workerd typically recycles within minutes); acceptable for chrome.
+ * once per isolate per SITE_SETTINGS_CACHE_TTL_MS. A write invalidates only
+ * the isolate that made it, so the TTL is what bounds every other isolate's
+ * staleness. Isolate lifetime alone is not a bound: an isolate kept busy by
+ * traffic lives on, and the homepage setting decides what "/" renders, so
+ * "/" kept serving the latest posts on warm isolates for over six minutes
+ * after the homepage was set (measured on a live Worker, 2026-09-26). The
+ * TTL matches the redirects cache (redirects/cache.ts).
  *
  * Backed by single-flight-cache.ts: concurrent cold reads coalesce onto one
  * query via a reclaimable single-flight lock and the resolved *value* is
@@ -97,6 +102,18 @@ const settingsCache: SingleFlightCache<Partial<SiteSettings>> =
 		const c = createSingleFlightCache<Partial<SiteSettings>>();
 		g[SITE_SETTINGS_CACHE_KEY] = c;
 		return c;
+	})();
+
+/** How long an isolate serves its cached settings before reading them again. */
+const SITE_SETTINGS_CACHE_TTL_MS = 30_000;
+const SITE_SETTINGS_EXPIRY_KEY = Symbol.for("emdash:site-settings-expiry");
+const settingsExpiry: { at: number } =
+	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- globalThis singleton pattern (see request-context.ts)
+	(g[SITE_SETTINGS_EXPIRY_KEY] as { at: number } | undefined) ??
+	(() => {
+		const e = { at: 0 };
+		g[SITE_SETTINGS_EXPIRY_KEY] = e;
+		return e;
 	})();
 
 /**
@@ -262,8 +279,15 @@ export function getSiteSettings(): Promise<Partial<SiteSettings>> {
 	// global scope's lifetime without ever sharing an awaitable promise. The
 	// distributed object cache (cachedQuery) sits beneath both, backing cold
 	// isolates without a database round-trip.
-	return requestCached("siteSettings", () =>
-		singleFlightCached(
+	return requestCached("siteSettings", () => {
+		// Past its TTL, the isolate's copy is dropped (only this isolate's; the
+		// distributed object cache below is invalidated by writes themselves).
+		const now = Date.now();
+		if (now >= settingsExpiry.at) {
+			invalidateSingleFlightCache(settingsCache);
+			settingsExpiry.at = now + SITE_SETTINGS_CACHE_TTL_MS;
+		}
+		return singleFlightCached(
 			settingsCache,
 			() =>
 				cachedQuery({
@@ -275,8 +299,8 @@ export function getSiteSettings(): Promise<Partial<SiteSettings>> {
 					},
 				}),
 			{ anchor: (promise) => after(() => promise), ownerTimeoutMs: 30_000 },
-		),
-	);
+		);
+	});
 }
 
 /**
