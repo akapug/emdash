@@ -159,6 +159,34 @@ export class SeoRepository {
 	}
 
 	/**
+	 * Write SEO data for a content item that has none yet. Returns false, and
+	 * changes nothing, when the item already has an SEO row.
+	 */
+	async insertIfAbsent(
+		collection: string,
+		contentId: string,
+		input: ContentSeoInput,
+	): Promise<boolean> {
+		if (!hasAnyField(input)) return false;
+		const result = await this.db
+			.insertInto("_emdash_seo")
+			.values({
+				collection,
+				content_id: contentId,
+				seo_title: input.title ?? null,
+				seo_description: input.description ?? null,
+				seo_image: input.image ?? null,
+				seo_canonical: input.canonical ?? null,
+				seo_no_index: input.noIndex ? 1 : 0,
+			})
+			.onConflict((oc) => oc.columns(["collection", "content_id"]).doNothing())
+			.executeTakeFirst();
+		const inserted = Number(result.numInsertedOrUpdatedRows ?? 0) > 0;
+		if (inserted) invalidateCollectionCache(collection);
+		return inserted;
+	}
+
+	/**
 	 * Delete SEO data for a content item.
 	 */
 	async delete(collection: string, contentId: string): Promise<void> {

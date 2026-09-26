@@ -5,7 +5,14 @@ import { ContentRepository } from "../../../../src/database/repositories/content
 import { SeoRepository } from "../../../../src/database/repositories/seo.js";
 import type { Database } from "../../../../src/database/types.js";
 import { SQL_BATCH_SIZE } from "../../../../src/utils/chunks.js";
-import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../../../utils/test-db.js";
+import {
+	describeEachDialect,
+	setupForDialectWithCollections,
+	setupTestDatabaseWithCollections,
+	teardownForDialect,
+	teardownTestDatabase,
+	type DialectTestContext,
+} from "../../../utils/test-db.js";
 
 describe("SeoRepository", () => {
 	let db: Kysely<Database>;
@@ -110,5 +117,44 @@ describe("SeoRepository", () => {
 
 		// The real entry should resolve to its SEO row regardless of the duplicate input
 		expect(result.get(content.id)?.title).toBe("Duplicate SEO");
+	});
+});
+
+describeEachDialect("SeoRepository.insertIfAbsent", (dialect) => {
+	let ctx: DialectTestContext;
+	let seoRepo: SeoRepository;
+	let contentRepo: ContentRepository;
+
+	beforeEach(async () => {
+		ctx = await setupForDialectWithCollections(dialect);
+		await ctx.db
+			.updateTable("_emdash_collections")
+			.set({ has_seo: 1 })
+			.where("slug", "=", "post")
+			.execute();
+		seoRepo = new SeoRepository(ctx.db);
+		contentRepo = new ContentRepository(ctx.db);
+	});
+
+	afterEach(async () => {
+		await teardownForDialect(ctx);
+	});
+
+	it("writes an entry's first SEO row and reports that it did", async () => {
+		const content = await contentRepo.create({ type: "post", slug: "first", data: { title: "First" } });
+		expect(await seoRepo.insertIfAbsent("post", content.id, { title: "Imported", noIndex: true })).toBe(
+			true,
+		);
+		expect(await seoRepo.get("post", content.id)).toMatchObject({ title: "Imported", noIndex: true });
+	});
+
+	it("leaves an existing SEO row as it is", async () => {
+		const content = await contentRepo.create({ type: "post", slug: "kept", data: { title: "Kept" } });
+		await seoRepo.upsert("post", content.id, { description: "Set by an editor" });
+		expect(await seoRepo.insertIfAbsent("post", content.id, { title: "Imported" })).toBe(false);
+		expect(await seoRepo.get("post", content.id)).toMatchObject({
+			title: null,
+			description: "Set by an editor",
+		});
 	});
 });
