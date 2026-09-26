@@ -1,11 +1,15 @@
 ---
 import {
 	getEmDashCollection,
+	getHomepage,
+	getSeoMeta,
 	getTermsForEntries,
 	getSiteSettings,
+	type InferCollectionData,
 } from "emdash";
 import { Image } from "emdash/ui";
 import Base from "../layouts/Base.astro";
+import PageArticle from "../components/PageArticle.astro";
 import PostCard from "../components/PostCard.astro";
 import { getReadingTime } from "../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../utils/site-identity";
@@ -14,16 +18,29 @@ import { resolveBlogSiteIdentity } from "../utils/site-identity";
 // instead of fetching every post and discarding the tail in JS.
 const POSTS_PER_PAGE = 7;
 
-const [{ entries: posts, cacheHint }, settings] = await Promise.all([
-	getEmDashCollection("posts", {
-		orderBy: { published_at: "desc" },
-		limit: POSTS_PER_PAGE + 1, // +1 to detect "view all" need
-	}),
+const [homepage, settings] = await Promise.all([
+	getHomepage<InferCollectionData<"pages">>(),
 	getSiteSettings(),
 ]);
 const { siteTitle, siteTagline } = resolveBlogSiteIdentity(settings);
+const page = homepage.entry;
 
-if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
+const postsResult = page
+	? null
+	: await getEmDashCollection("posts", {
+			orderBy: { published_at: "desc" },
+			limit: POSTS_PER_PAGE + 1, // +1 to detect "view all" need
+		});
+const posts = postsResult?.entries ?? [];
+
+if (Astro.cache?.enabled) {
+	Astro.cache.set(homepage.cacheHint);
+	if (postsResult) Astro.cache.set(postsResult.cacheHint);
+}
+
+const pageSeo = page
+	? getSeoMeta(page, { siteTitle, siteUrl: Astro.url.origin, path: "/" })
+	: null;
 
 // Trim the lookahead post used to detect overflow
 const visiblePosts = posts.slice(0, POSTS_PER_PAGE);
@@ -75,9 +92,24 @@ function formatDate(date: Date | null | undefined) {
 }
 ---
 
-<Base title={siteTitle} description={siteTagline}>
+<Base
+	title={pageSeo?.title ?? siteTitle}
+	pageTitle={pageSeo?.ogTitle}
+	description={pageSeo?.description ?? siteTagline}
+	canonical={pageSeo?.canonical}
+	robots={pageSeo?.robots}
+	content={page && homepage.collection
+		? { collection: homepage.collection, id: page.data.id, slug: page.id }
+		: undefined}
+>
 	{
-		posts.length === 0 ? (
+		page ? (
+			<PageArticle
+				title={page.data.title}
+				content={page.data.content}
+				edit={page.edit}
+			/>
+		) : posts.length === 0 ? (
 			<section class="empty-state">
 				<h1>No posts yet</h1>
 				<p>Create your first post in the admin panel.</p>

@@ -6,7 +6,7 @@ A blog with posts, pages, categories, tags, full-text search, and RSS. Designed 
 
 | Page        | Path               | What it shows                                                                                          |
 | ----------- | ------------------ | ------------------------------------------------------------------------------------------------------ |
-| Home        | `/`                | Featured post hero (large image + excerpt), latest posts grid                                          |
+| Home        | `/`                | Latest posts (featured hero + grid), or the page chosen under Homepage displays in General settings    |
 | All posts   | `/posts`           | Article count, full post list with excerpts and tag chips                                              |
 | Post detail | `/posts/[slug]`    | Featured image, title, body, left meta column (authors + date), right TOC + search + categories gutter |
 | Search      | `/search`          | Full-text search UI                                                                                    |
