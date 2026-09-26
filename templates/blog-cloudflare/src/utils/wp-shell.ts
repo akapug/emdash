@@ -309,6 +309,7 @@ export function escapeAttr(s: string): string {
 }
 
 /** What a browser strips from a URL before it reads the scheme. */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
 const URL_CONTROLS = /[\u0000-\u001F\u007F]/g;
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const FOLLOWABLE_SCHEME = /^(https?|mailto|tel):/i;

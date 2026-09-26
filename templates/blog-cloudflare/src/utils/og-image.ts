@@ -1,17 +1,19 @@
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+	typeof v === "object" && v !== null && !Array.isArray(v);
+
 /**
  * A post's featured image as an absolute URL, for the Open Graph fallback.
  * The image may have `src` (external) or `meta.storageKey` (local).
  */
 export function featuredImageUrl(img: unknown, origin: string): string | undefined {
-	if (!img || typeof img !== "object") return undefined;
-	const image = img as Record<string, unknown>;
-	if (typeof image.src === "string" && image.src) {
-		return image.src.startsWith("http") ? image.src : `${origin}${image.src}`;
+	if (!isRecord(img)) return undefined;
+	if (typeof img.src === "string" && img.src) {
+		return img.src.startsWith("http") ? img.src : `${origin}${img.src}`;
 	}
-	const meta = image.meta as Record<string, unknown> | undefined;
+	const meta = isRecord(img.meta) ? img.meta : undefined;
 	const storageKey =
 		(typeof meta?.storageKey === "string" ? meta.storageKey : undefined) ||
-		(typeof image.id === "string" ? image.id : undefined);
+		(typeof img.id === "string" ? img.id : undefined);
 	if (storageKey) {
 		return `${origin}/_emdash/api/media/file/${storageKey}`;
 	}
