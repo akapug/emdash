@@ -12,6 +12,8 @@ import {
 	headerText,
 	limitsOf,
 	mailbox,
+	PRUNE_TASK,
+	pruneBudgets,
 	withoutAddresses,
 	type CloudflareEmailConfig,
 } from "../src/plugins/cloudflare-email.js";
@@ -44,6 +46,11 @@ function memoryKv(initial: Record<string, unknown> = {}) {
 			const revision = String(++rev);
 			rows.set(key, { value, revision });
 			return { applied: true as const, revision };
+		},
+		async compareAndDelete(key: string, expected: string) {
+			if (rows.get(key)?.revision !== expected) return { applied: false as const };
+			rows.delete(key);
+			return { applied: true as const };
 		},
 		async set(key: string, value: unknown) {
 			rows.set(key, { value, revision: String(++rev) });
@@ -487,7 +494,7 @@ describe("the sending budget", () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
-	it("holds the day across hours, and a new hour clears the last hour's count", async () => {
+	it("holds the day across hours, and a send deletes no hour's count, its own or another's", async () => {
 		const { env, send } = fakeEnv();
 		const kv = memoryKv();
 		const ctx = fakeCtx({ kv });
@@ -513,8 +520,55 @@ describe("the sending budget", () => {
 
 		expect(send).toHaveBeenCalledTimes(2);
 		expect([...kv.rows.keys()].filter((k) => k.startsWith("budget:h:")).toSorted()).toEqual([
+			"budget:h:2026-01-01T10:x",
+			"budget:h:2026-01-01T11:x",
 			"budget:h:2026-01-01T12:x",
 		]);
+	});
+
+	it("a send that read its clock before midnight and ran after it deletes no count of the new day, so no cap is reset", async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const cfg = {
+			from: "notify@mail.example.org",
+			limits: { perHour: 100, perDay: 2, perDayTotal: 2, systemReserve: 0 },
+		};
+		const sendAt = (iso: string) =>
+			createCloudflareEmailDeliver(
+				cfg,
+				async () => env,
+				at(iso),
+			)({ message, source: "x" }, fakeCtx({ kv }));
+
+		await sendAt("2026-01-02T00:05:00Z");
+		await sendAt("2026-01-02T00:06:00Z");
+		await expect(sendAt("2026-01-02T00:07:00Z")).rejects.toThrow(/"x" this day has reached 2/);
+		// The stalled send: its windows are yesterday's, which hold nothing, so it goes.
+		await sendAt("2026-01-01T23:59:59Z");
+
+		// Today's counts are as they were: the cap still refuses.
+		expect(kv.rows.get("budget:d:2026-01-02:x")?.value).toBe(2);
+		expect(kv.rows.get("budget:t:2026-01-02")?.value).toBe(2);
+		expect(kv.rows.get("budget:h:2026-01-02T00:x")?.value).toBe(2);
+		await expect(sendAt("2026-01-02T00:08:00Z")).rejects.toThrow(/"x" this day has reached 2/);
+		expect(send).toHaveBeenCalledTimes(3);
+	});
+
+	it("a send stalled across an hour deletes no count of the new hour", async () => {
+		const { env } = fakeEnv();
+		const kv = memoryKv();
+		const cfg = { from: "notify@mail.example.org", limits: { perHour: 1, perDay: 100 } };
+		const sendAt = (iso: string) =>
+			createCloudflareEmailDeliver(
+				cfg,
+				async () => env,
+				at(iso),
+			)({ message, source: "x" }, fakeCtx({ kv }));
+
+		await sendAt("2026-01-01T11:00:01Z");
+		await sendAt("2026-01-01T10:59:59Z");
+		expect(kv.rows.get("budget:h:2026-01-01T11:x")?.value).toBe(1);
+		await expect(sendAt("2026-01-01T11:30:00Z")).rejects.toThrow(/"x" this hour has reached 1/);
 	});
 
 	it("a message the day refuses spends nothing of the hour", async () => {
@@ -724,6 +778,86 @@ describe("what a log carries", () => {
 		expect(withoutAddresses("İstanbul a@x.example.org", ["a@x.example.org"])).toBe(
 			"İstanbul <an address at x.example.org>",
 		);
+	});
+});
+
+describe("pruning the counts of windows that are over", () => {
+	const seeded = () =>
+		memoryKv({
+			"budget:h:2026-01-03T10:x": 1, // the current hour
+			"budget:h:2026-01-03T09:x": 1, // the one before it
+			"budget:h:2026-01-03T08:x": 1,
+			"budget:h:2026-01-02T23:system": 1,
+			"budget:h:2026-01-04T00:x": 1, // later than now (another isolate's clock)
+			"budget:d:2026-01-03:x": 1, // today
+			"budget:t:2026-01-02": 1, // yesterday
+			"budget:r:2026-01-01:0123456789abcdef0123456789abcdef": 1,
+			"budget:t:2026-01-01": 1,
+			"budget:d:2025-12-31:x": 1,
+			"budget:q:2020-01-01": 1, // a kind it does not know
+			"settings:replyTo": "office@example.org",
+		});
+
+	it("deletes only windows two or more before now's, never the current one, the one before it, or a later one", async () => {
+		const kv = seeded();
+		expect(await pruneBudgets(kv, new Date("2026-01-03T10:30:00Z"))).toEqual({
+			deleted: 5,
+			more: false,
+		});
+		expect([...kv.rows.keys()].toSorted()).toEqual([
+			"budget:d:2026-01-03:x",
+			"budget:h:2026-01-03T09:x",
+			"budget:h:2026-01-03T10:x",
+			"budget:h:2026-01-04T00:x",
+			"budget:q:2020-01-01",
+			"budget:t:2026-01-02",
+			"settings:replyTo",
+		]);
+	});
+
+	it("a prune that read an earlier clock deletes less, and still none of the current windows", async () => {
+		const kv = seeded();
+		await pruneBudgets(kv, new Date("2026-01-02T05:00:00Z"));
+		for (const key of ["budget:h:2026-01-03T10:x", "budget:d:2026-01-03:x", "budget:t:2026-01-02"])
+			expect(kv.rows.has(key)).toBe(true);
+		expect(kv.rows.has("budget:d:2025-12-31:x")).toBe(false);
+		expect(kv.rows.has("budget:t:2026-01-01")).toBe(true);
+	});
+
+	it("deletes at most max counts a run, and says more is left", async () => {
+		const kv = seeded();
+		expect(await pruneBudgets(kv, new Date("2026-01-03T10:30:00Z"), 2)).toEqual({
+			deleted: 2,
+			more: true,
+		});
+		expect(await pruneBudgets(kv, new Date("2026-01-03T10:30:00Z"), 2)).toEqual({
+			deleted: 2,
+			more: true,
+		});
+		expect(await pruneBudgets(kv, new Date("2026-01-03T10:30:00Z"), 2)).toEqual({
+			deleted: 1,
+			more: false,
+		});
+	});
+
+	it("runs as the plugin's daily cron task, which activating it or reading its status schedules", async () => {
+		const plugin = createPlugin({ from: "cms@mails.example.com" });
+		const schedule = vi.fn(async () => {});
+		const kv = memoryKv({
+			"budget:t:2020-01-01": 5,
+			[`budget:t:${new Date().toISOString().slice(0, 10)}`]: 1,
+		});
+		const ctx = { ...fakeCtx({ kv }), cron: { schedule } } as unknown as PluginContext;
+
+		await plugin.hooks["plugin:activate"]?.handler({} as never, ctx);
+		expect(schedule).toHaveBeenLastCalledWith(PRUNE_TASK, { schedule: "@daily" });
+		await plugin.routes.status?.handler(ctx as never);
+		expect(schedule).toHaveBeenCalledTimes(2);
+
+		await plugin.hooks.cron?.handler({ name: "something-else", scheduledAt: "" }, ctx);
+		expect(kv.rows.has("budget:t:2020-01-01")).toBe(true);
+		await plugin.hooks.cron?.handler({ name: PRUNE_TASK, scheduledAt: "" }, ctx);
+		expect([...kv.rows.keys()]).toEqual([`budget:t:${new Date().toISOString().slice(0, 10)}`]);
 	});
 });
 

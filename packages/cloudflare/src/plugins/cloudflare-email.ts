@@ -34,6 +34,9 @@
  *   requests from rotating IPs can neither flood one inbox nor spend the
  *   day. A message over any of them is refused, and a message the binding
  *   refuses gives its places back: only a send Cloudflare accepts is counted.
+ *   A send moves its own counts and deletes none: the counts of windows that
+ *   are over go in a daily cron task ({@link pruneBudgets}), a bounded number
+ *   at a time, and never the current window's or the one before it.
  * - A log names a recipient's domain, never the address, and an error the
  *   binding throws has the address replaced by its domain.
  *
@@ -221,19 +224,22 @@ export interface Taken {
 	n: number;
 }
 
-/** A key's own counter never passes `limit`: one compare-and-set per try, so two sends at once cannot both take the last place. */
+/**
+ * A key's own counter never passes `limit`: one compare-and-set per try, so two
+ * sends at once cannot both take the last place. It moves this one row and
+ * nothing else: a send deletes no count, of its own window or any other
+ * ({@link pruneBudgets} does that, apart from sending).
+ */
 async function takeOne(
 	kv: PluginContext["kv"],
 	key: string,
 	n: number,
 	limit: number,
-	iso: string,
 ): Promise<"taken" | { count: number } | "contended"> {
 	for (let attempt = 0; attempt < 5; attempt++) {
 		const current = await kv.getVersioned<number>(key);
 		const count = typeof current?.value === "number" ? current.value : 0;
 		if (count + n > limit) return { count };
-		if (!current) await dropOldBudgets(kv, iso);
 		if ((await kv.compareAndSet(key, current?.revision ?? null, count + n)).applied) return "taken";
 	}
 	return "contended";
@@ -303,7 +309,7 @@ export async function takeBudget(
 	);
 	const taken: Taken[] = [];
 	for (const w of windows) {
-		const r = await takeOne(kv, w.key, w.n, w.limit, iso);
+		const r = await takeOne(kv, w.key, w.n, w.limit);
 		if (r === "taken") {
 			taken.push({ key: w.key, n: w.n });
 			continue;
@@ -336,17 +342,50 @@ export async function refundBudget(
 	}
 }
 
-/** Delete the counts of hours and days before `iso`'s: a new window's first send clears the old ones. Best effort. */
-async function dropOldBudgets(kv: PluginContext["kv"], iso: string): Promise<void> {
-	try {
-		for (const { key } of await kv.list("budget:")) {
-			// budget:<kind>:<window>[:<who>], the window a day (10 characters) or an hour (13).
-			const window = key.split(":")[2] ?? "";
-			if (window !== iso.slice(0, window.length === 10 ? 10 : 13)) await kv.delete(key);
-		}
-	} catch {
-		// A count left behind is a row, not a wrong answer: its window never comes back.
+/** The cron task that runs {@link pruneBudgets}, once a day. */
+export const PRUNE_TASK = "prune-budgets";
+/** The most counts one prune deletes; the next day's run takes the rest. */
+export const PRUNE_MAX = 500;
+
+/**
+ * Delete counts of windows that are over: an hour's (`budget:h:`) once it is
+ * two hours or more before `now`'s, a day's (`budget:d:`, `budget:t:`,
+ * `budget:r:`) once it is two days or more before it. The window just before
+ * the current one stays too, so a send that started in it and is still
+ * running finds its count, and no clock `now` can be read from makes this
+ * delete the current window or a later one: a prune that stalled only reads
+ * an earlier `now`, which deletes less. At most `max` counts go; a key it does
+ * not recognize is kept. Runs apart from sending (the plugin's daily cron
+ * task), never on the way to a send. Returns what it deleted, and whether
+ * more is left.
+ */
+export async function pruneBudgets(
+	kv: PluginContext["kv"],
+	now: Date,
+	max = PRUNE_MAX,
+): Promise<{ deleted: number; more: boolean }> {
+	const HOUR = 3_600_000;
+	const hourCut = new Date(now.getTime() - HOUR).toISOString().slice(0, 13);
+	const dayCut = new Date(now.getTime() - 24 * HOUR).toISOString().slice(0, 10);
+	let deleted = 0;
+	for (const { key } of await kv.list("budget:")) {
+		// budget:<kind>:<window>[:<who>], the window an hour (13 characters) or a day (10).
+		const [, kind, window = ""] = key.split(":");
+		const over =
+			kind === "h"
+				? window.length === 13 && window < hourCut
+				: (kind === "d" || kind === "t" || kind === "r") && window.length === 10 && window < dayCut;
+		if (!over) continue;
+		if (deleted >= max) return { deleted, more: true };
+		await kv.delete(key);
+		deleted++;
 	}
+	return { deleted, more: false };
+}
+
+/** Schedule the daily prune; the same task again is a no-op until it is due. */
+async function schedulePrune(ctx: PluginContext): Promise<void> {
+	await ctx.cron?.schedule(PRUNE_TASK, { schedule: "@daily" });
 }
 
 /**
@@ -552,9 +591,24 @@ export function createPlugin(config: CloudflareEmailConfig): ResolvedPlugin {
 				exclusive: true,
 				handler: createCloudflareEmailDeliver(config),
 			},
+			"plugin:activate": { handler: async (_event, ctx) => schedulePrune(ctx) },
+			cron: {
+				handler: async (event, ctx) => {
+					if (event.name !== PRUNE_TASK) return;
+					const pruned = await pruneBudgets(ctx.kv, new Date());
+					ctx.log.info("sending budget pruned", pruned);
+				},
+			},
 		},
 		routes: {
-			status: { handler: async (ctx) => status(ctx) },
+			// A site whose provider was turned on in its database never ran
+			// plugin:activate, so reading the status schedules the prune too.
+			status: {
+				handler: async (ctx) => {
+					await schedulePrune(ctx);
+					return status(ctx);
+				},
+			},
 		},
 		admin: {
 			settingsSchema: {
