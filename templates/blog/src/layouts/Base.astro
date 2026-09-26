@@ -133,17 +133,88 @@ const isLoggedIn = !!Astro.locals.user;
 					/>
 					<div class="nav-links">
 						{
-							menu?.items.map((item) => (
-								<a
-									href={item.url}
-									target={item.target}
-									rel={
-										item.target === "_blank" ? "noopener noreferrer" : undefined
-									}
-								>
-									{item.label}
-								</a>
-							))
+							menu?.items.map((item) =>
+								item.children.length > 0 ? (
+									<div class="nav-item has-submenu">
+										<a
+											href={item.url}
+											target={item.target}
+											rel={
+												item.target === "_blank"
+													? "noopener noreferrer"
+													: undefined
+											}
+										>
+											{item.label}
+										</a>
+										<button
+											type="button"
+											class="submenu-toggle"
+											aria-expanded="false"
+											aria-controls={`submenu-${item.id}`}
+											aria-label={`${item.label} submenu`}
+										>
+											<svg
+												width="12"
+												height="12"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												stroke-width="2"
+												aria-hidden="true"
+											>
+												<polyline points="6 9 12 15 18 9" />
+											</svg>
+										</button>
+										<ul class="submenu" id={`submenu-${item.id}`}>
+											{item.children.map((child) => (
+												<li>
+													<a
+														href={child.url}
+														target={child.target}
+														rel={
+															child.target === "_blank"
+																? "noopener noreferrer"
+																: undefined
+														}
+													>
+														{child.label}
+													</a>
+													{child.children.length > 0 && (
+														<ul>
+															{child.children.map((grandchild) => (
+																<li>
+																	<a
+																		href={grandchild.url}
+																		target={grandchild.target}
+																		rel={
+																			grandchild.target === "_blank"
+																				? "noopener noreferrer"
+																				: undefined
+																		}
+																	>
+																		{grandchild.label}
+																	</a>
+																</li>
+															))}
+														</ul>
+													)}
+												</li>
+											))}
+										</ul>
+									</div>
+								) : (
+									<a
+										href={item.url}
+										target={item.target}
+										rel={
+											item.target === "_blank" ? "noopener noreferrer" : undefined
+										}
+									>
+										{item.label}
+									</a>
+								),
+							)
 						}
 					</div>
 				</div>
@@ -197,6 +268,25 @@ const isLoggedIn = !!Astro.locals.user;
 										>
 											{item.label}
 										</a>
+										{item.children.length > 0 && (
+											<ul class="footer-sublinks">
+												{item.children.map((child) => (
+													<li>
+														<a
+															href={child.url}
+															target={child.target}
+															rel={
+																child.target === "_blank"
+																	? "noopener noreferrer"
+																	: undefined
+															}
+														>
+															{child.label}
+														</a>
+													</li>
+												))}
+											</ul>
+										)}
 									</li>
 								))
 							}
@@ -348,6 +438,47 @@ const isLoggedIn = !!Astro.locals.user;
 			themeBtns.forEach((btn) => {
 				btn.addEventListener("click", () => {
 					setTheme(btn.dataset.theme || "system");
+				});
+			});
+
+			// Submenus: hover opens one in CSS; the toggle button opens it for the
+			// keyboard and on a touch screen, where there is no hover.
+			const submenus = document.querySelectorAll<HTMLElement>(".has-submenu");
+
+			function setOpen(item: HTMLElement, open: boolean) {
+				item.classList.toggle("open", open);
+				item
+					.querySelector(".submenu-toggle")
+					?.setAttribute("aria-expanded", String(open));
+			}
+
+			submenus.forEach((item) => {
+				item
+					.querySelector<HTMLButtonElement>(".submenu-toggle")
+					?.addEventListener("click", () => {
+						const open = !item.classList.contains("open");
+						submenus.forEach((other) => setOpen(other, false));
+						setOpen(item, open);
+					});
+				item.addEventListener("focusout", (event) => {
+					if (!item.contains(event.relatedTarget as Node | null)) {
+						setOpen(item, false);
+					}
+				});
+			});
+
+			document.addEventListener("click", (event) => {
+				submenus.forEach((item) => {
+					if (!item.contains(event.target as Node)) setOpen(item, false);
+				});
+			});
+
+			document.addEventListener("keydown", (event) => {
+				if (event.key !== "Escape") return;
+				submenus.forEach((item) => {
+					if (!item.classList.contains("open")) return;
+					setOpen(item, false);
+					item.querySelector<HTMLButtonElement>(".submenu-toggle")?.focus();
 				});
 			});
 		</script>
@@ -523,6 +654,94 @@ const isLoggedIn = !!Astro.locals.user;
 
 			.nav-links a:hover {
 				color: var(--color-brand);
+			}
+
+			.nav-item {
+				position: relative;
+				display: flex;
+				align-items: center;
+				gap: var(--spacing-1);
+			}
+
+			/* 24px is the smallest target a finger can hit reliably (WCAG 2.5.8). */
+			.submenu-toggle {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				min-width: 24px;
+				min-height: 24px;
+				padding: 2px;
+				border: none;
+				background: none;
+				color: var(--color-text-secondary);
+				cursor: pointer;
+				border-radius: var(--radius);
+			}
+
+			.submenu-toggle svg {
+				transition: transform var(--transition-fast);
+			}
+
+			.has-submenu.open .submenu-toggle svg {
+				transform: rotate(180deg);
+			}
+
+			/*
+			 * The links sit at the end of the header, so the list opens toward
+			 * the start: opened toward the end, an item near the edge pushes it
+			 * past the viewport. It hangs below a gap that ::before bridges.
+			 */
+			.submenu {
+				display: none;
+				position: absolute;
+				top: calc(100% + var(--spacing-2));
+				inset-inline-end: calc(-1 * var(--spacing-3));
+				z-index: 10;
+				min-width: 12rem;
+				margin: 0;
+				padding: var(--spacing-2) 0;
+				list-style: none;
+				background: var(--color-bg);
+				border: 1px solid var(--color-border);
+				border-radius: var(--radius);
+				box-shadow: var(--shadow-lg);
+			}
+
+			/* A hover gap would close the menu on the way down to it. */
+			.submenu::before {
+				content: "";
+				position: absolute;
+				inset-inline: 0;
+				bottom: 100%;
+				height: var(--spacing-2);
+			}
+
+			/* Only where hover is real: a touch screen keeps :hover after a tap,
+			   so the button could not close the list again. */
+			@media (hover: hover) {
+				.has-submenu:hover .submenu {
+					display: block;
+				}
+			}
+
+			.has-submenu.open .submenu {
+				display: block;
+			}
+
+			.submenu a {
+				display: block;
+				padding: var(--spacing-2) var(--spacing-3);
+				white-space: nowrap;
+			}
+
+			.submenu ul {
+				margin: 0;
+				padding: 0;
+				list-style: none;
+			}
+
+			.submenu ul a {
+				padding-inline-start: var(--spacing-6);
 			}
 
 			.nav-admin {
@@ -718,6 +937,12 @@ const isLoggedIn = !!Astro.locals.user;
 				color: var(--color-text);
 			}
 
+			.footer-sublinks {
+				margin: var(--spacing-2) 0 0;
+				padding-inline-start: var(--spacing-4);
+				list-style: none;
+			}
+
 			.footer-widgets-section :global(.widget-area) {
 				display: block;
 			}
@@ -857,6 +1082,23 @@ const isLoggedIn = !!Astro.locals.user;
 					row-gap: var(--spacing-1);
 					flex-wrap: wrap;
 					justify-content: flex-start;
+					position: relative;
+				}
+
+				/* The links wrap here, so a list hung from its item could open
+				   off either edge: it spans the links' full width instead. */
+				.nav-item {
+					position: static;
+				}
+
+				.submenu {
+					inset-inline: 0;
+					top: calc(100% + var(--spacing-2));
+					min-width: 0;
+				}
+
+				.submenu a {
+					white-space: normal;
 				}
 
 				.nav-admin {
