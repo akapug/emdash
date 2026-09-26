@@ -898,14 +898,23 @@ export function plainText(blocks: unknown): string {
 		.join("\n\n");
 }
 
+/** A local media value's storage key, as EmDashMedia reads it: its meta's, else its id. */
+function storageKeyOf(image: Record<string, unknown>): string | null {
+	if (image.provider !== undefined && image.provider !== "local") return null;
+	if (isObject(image.meta) && isText(image.meta.storageKey) && image.meta.storageKey)
+		return image.meta.storageKey;
+	return isText(image.id) && image.id ? image.id : null;
+}
+
 /** A featured image's path, when it is one of the site's own files: a bare path, or a media value's. */
 export function ownImagePath(image: unknown): string | null {
+	const key = isObject(image) && !isText(image.src) ? storageKeyOf(image) : null;
 	const path = isText(image)
 		? image
 		: isObject(image) && isText(image.src)
 			? image.src
-			: isObject(image) && isObject(image.meta) && isText(image.meta.storageKey)
-				? `${MEDIA_PATH}${image.meta.storageKey}`
+			: key
+				? `${MEDIA_PATH}${key}`
 				: null;
 	return path && ownFile(path) && MEDIA_SRC.test(path) ? path : null;
 }

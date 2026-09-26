@@ -613,6 +613,10 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 		expect(ownImagePath({ id: "x", meta: { storageKey: "c.webp" } })).toBe(
 			"/_emdash/api/media/file/c.webp",
 		);
+		// a local value with no storage key in its meta: its id, as EmDashMedia reads it
+		expect(ownImagePath({ provider: "local", id: "01KSEO.jpg" })).toBe(
+			"/_emdash/api/media/file/01KSEO.jpg",
+		);
 		for (const bad of [
 			{ provider: "external", src: "https://example.org/p.png" },
 			"/_emdash/api/media/file/../../x.png",
