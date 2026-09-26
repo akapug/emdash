@@ -1,0 +1,26 @@
+/* The forms plugin's own styles for embedded forms (FormEmbed imports none). */
+@import "@emdash-cms/plugin-forms/styles";
+
+/*
+ * The plugin's colours are light-only: under the dark theme a field keeps its
+ * white background while its text turns light, so what a visitor types cannot
+ * be read. Take them from this template's tokens, which follow the theme.
+ */
+.ec-form {
+	--ec-form-field-border: 1px solid var(--color-border);
+	--ec-form-field-bg: var(--color-bg);
+	--ec-form-help-color: var(--color-text-secondary);
+	--ec-form-submit-bg: var(--color-text);
+	--ec-form-submit-color: var(--color-bg);
+}
+
+.ec-form-input,
+.ec-form select,
+.ec-form textarea {
+	color: var(--color-text);
+}
+
+/* The plugin gives a single checkbox the text-field class, and so the full width. */
+.ec-form input[type="checkbox"].ec-form-input {
+	width: auto;
+}
