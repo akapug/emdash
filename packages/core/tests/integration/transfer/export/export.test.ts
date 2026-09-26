@@ -298,4 +298,17 @@ describeEachDialect("site export", (dialect) => {
 		expect(manifest.records.comment_reaction).toBeUndefined();
 		expect(manifest.features).not.toContain("comments");
 	});
+
+	it("exports the homepage setting with the entry it names", async () => {
+		const homepage = { collection: "pages", id: site.ids.about };
+		await ctx.db
+			.insertInto("options")
+			.values({ name: "site:homepage", value: JSON.stringify(homepage) })
+			.execute();
+
+		const { reader } = await runExport(ctx.db, storage);
+		const records = await packageRecords(reader);
+		const setting = byId(records.get("setting")).get("site:homepage");
+		expect(setting?.kind === "setting" && setting.value).toEqual(homepage);
+	});
 });

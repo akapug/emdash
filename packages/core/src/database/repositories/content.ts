@@ -11,7 +11,7 @@ import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { slugify } from "../../utils/slugify.js";
 import { ContentDatetimeNormalizer, type DatetimeContextCache } from "../content-datetime.js";
-import { executeAtomicBatchIfSupported } from "../dialect-helpers.js";
+import { executeAtomicBatchIfSupported, localeChainOrder } from "../dialect-helpers.js";
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { validateIdentifier } from "../validate.js";
@@ -2171,6 +2171,28 @@ export class ContentRepository {
 			AND deleted_at IS NULL
 		`.execute(this.db);
 		return result.rows.map((row) => row.id);
+	}
+
+	/**
+	 * The live rows of a translation group with their locale and status,
+	 * published rows first, then ranked by `localeChain` the way
+	 * `loadEntriesByGroups()` ranks them. A row without a translation group is
+	 * left out, because the loader never matches it.
+	 */
+	async findTranslationStatuses(
+		type: string,
+		translationGroup: string,
+		localeChain: readonly string[] = [],
+	): Promise<Array<{ id: string; locale: string | null; status: string }>> {
+		const tableName = getTableName(type);
+		const result = await sql<{ id: string; locale: string | null; status: string }>`
+			SELECT id, locale, status FROM ${sql.ref(tableName)}
+			WHERE translation_group = ${translationGroup}
+			AND deleted_at IS NULL
+			ORDER BY CASE WHEN status = ${"published"} THEN 0 ELSE 1 END,
+				${localeChainOrder(localeChain)}, id ASC
+		`.execute(this.db);
+		return result.rows;
 	}
 
 	async findTranslationIdsForGroups(

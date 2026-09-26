@@ -18,6 +18,15 @@ export interface SiteSettings {
 	url?: string;
 
 	// Display
+	/**
+	 * `id` is the entry's translation group. `entry` is the translation the API
+	 * reports for it on read (`null` when none is left) and is ignored on write.
+	 */
+	homepage?: {
+		collection: string;
+		id: string;
+		entry?: { id: string; locale: string | null; status: string } | null;
+	};
 	postsPerPage: number;
 	dateFormat: string;
 	timezone: string;
@@ -43,10 +52,11 @@ export interface SiteSettings {
 }
 export interface SiteSettingsUpdate extends Omit<
 	Partial<SiteSettings>,
-	"logo" | "favicon" | "seo"
+	"logo" | "favicon" | "homepage" | "seo"
 > {
 	logo?: SiteSettings["logo"] | null;
 	favicon?: SiteSettings["favicon"] | null;
+	homepage?: SiteSettings["homepage"] | null;
 	seo?: Omit<NonNullable<SiteSettings["seo"]>, "defaultOgImage"> & {
 		defaultOgImage?: NonNullable<SiteSettings["seo"]>["defaultOgImage"] | null;
 	};

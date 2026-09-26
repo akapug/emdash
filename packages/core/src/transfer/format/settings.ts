@@ -14,6 +14,7 @@ export const PORTABLE_SETTING_NAMES = [
 	"emdash:site_title",
 	"site:dateFormat",
 	"site:favicon",
+	"site:homepage",
 	"site:logo",
 	"site:postsPerPage",
 	"site:seo",

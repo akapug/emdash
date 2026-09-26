@@ -583,10 +583,14 @@ export {
 	getSiteSettingsWithCacheHint,
 	setSiteSettings,
 } from "./settings/index.js";
+export { getHomepage } from "./settings/homepage.js";
+export type { HomepageResult } from "./settings/homepage.js";
 export type {
 	SiteSettings,
 	SiteSettingsUpdate,
 	SiteSettingKey,
+	HomepageEntry,
+	HomepageReference,
 	MediaReference,
 	SeoSettings,
 	SeoSettingsUpdate,

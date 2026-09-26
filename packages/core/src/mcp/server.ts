@@ -152,6 +152,11 @@ const settingsMediaReferenceSchema = z.object({
 	alt: z.string().optional().describe("Alt text for the media reference"),
 });
 
+const settingsHomepageSchema = z.object({
+	collection: z.string().min(1).describe("Collection slug of the homepage entry (e.g. 'pages')"),
+	id: z.string().min(1).describe("ID of the entry, or of any of its translations"),
+});
+
 const settingsSocialSchema = z.object({
 	twitter: z.string().optional(),
 	github: z.string().optional(),
@@ -3645,7 +3650,7 @@ export function createMcpServer(
 		{
 			title: "Get Site Settings",
 			description:
-				"Get all site-wide settings (title, tagline, logo, favicon, URL, " +
+				"Get all site-wide settings (title, tagline, logo, favicon, URL, homepage, " +
 				"date/time formatting, social links, SEO defaults). Media references " +
 				"(logo, favicon, defaultOgImage) include resolved URLs. Unset values " +
 				"are omitted from the response.",
@@ -3694,6 +3699,12 @@ export function createMcpServer(
 					])
 					.optional()
 					.describe("Canonical site URL (http or https). Empty string clears it."),
+				homepage: settingsHomepageSchema
+					.nullable()
+					.optional()
+					.describe(
+						"Entry shown at the site root instead of the latest posts; null restores the latest posts",
+					),
 				postsPerPage: z
 					.number()
 					.int()

@@ -3,12 +3,19 @@ import * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 
-import type { MediaItem, SiteSettings, SiteSettingsUpdate } from "../../../src/lib/api";
+import type { PickedContentEntry } from "../../../src/components/ContentPickerModal";
+import type {
+	ContentItem,
+	MediaItem,
+	SiteSettings,
+	SiteSettingsUpdate,
+} from "../../../src/lib/api";
 import { render } from "../../utils/render";
 
 const mockFetchSettings = vi.fn<() => Promise<Partial<SiteSettings>>>();
 const mockUpdateSettings =
 	vi.fn<(settings: SiteSettingsUpdate) => Promise<Partial<SiteSettings>>>();
+const mockFetchContent = vi.fn<(collection: string, id: string) => Promise<ContentItem>>();
 
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual("@tanstack/react-router");
@@ -28,8 +35,41 @@ vi.mock("../../../src/lib/api", async () => {
 		...actual,
 		fetchSettings: () => mockFetchSettings(),
 		updateSettings: (settings: SiteSettingsUpdate) => mockUpdateSettings(settings),
+		fetchContent: (collection: string, id: string) => mockFetchContent(collection, id),
+		fetchManifest: async () => ({ collections: {} }),
 	};
 });
+
+vi.mock("../../../src/components/ContentPickerModal", () => ({
+	ContentPickerModal: ({
+		open,
+		title,
+		onConfirm,
+		onOpenChange,
+	}: {
+		open: boolean;
+		title?: string;
+		onConfirm: (entries: PickedContentEntry[]) => void;
+		onOpenChange: (open: boolean) => void;
+	}) => {
+		if (!open) return null;
+		return (
+			<div role="dialog" aria-label={title}>
+				<button
+					type="button"
+					onClick={() => {
+						onConfirm([
+							{ collection: "pages", id: "page_about", slug: "about", title: "About us" },
+						]);
+						onOpenChange(false);
+					}}
+				>
+					Choose About us
+				</button>
+			</div>
+		);
+	},
+}));
 
 vi.mock("../../../src/components/MediaPickerModal", () => ({
 	MediaPickerModal: ({
@@ -241,5 +281,157 @@ describe("GeneralSettings", () => {
 				expect.objectContaining({ logo: null, favicon: null }),
 			);
 		});
+	});
+
+	it("saves a chosen page as the homepage", async () => {
+		const screen = await renderGeneralSettings();
+		await expect.element(screen.getByRole("radio", { name: "Latest posts" })).toBeChecked();
+
+		await screen.getByText("A page", { exact: true }).click();
+		await screen.getByRole("button", { name: "Choose About us" }).click();
+
+		await expect.element(screen.getByRole("radio", { name: "A page" })).toBeChecked();
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+		await screen.getByRole("button", { name: "Save", exact: true }).first().click();
+		await vi.waitFor(() => {
+			expect(mockUpdateSettings).toHaveBeenCalledWith(
+				expect.objectContaining({ homepage: { collection: "pages", id: "page_about" } }),
+			);
+		});
+	});
+
+	it("shows the saved homepage and switches back to the latest posts", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "page_about",
+				entry: { id: "page_about", locale: "en", status: "published" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+		expect(mockFetchContent).toHaveBeenCalledWith("pages", "page_about");
+
+		await screen.getByText("Latest posts", { exact: true }).click();
+		await expect.element(screen.getByText("About us")).not.toBeInTheDocument();
+		await screen.getByRole("button", { name: "Save", exact: true }).first().click();
+		await vi.waitFor(() => {
+			expect(mockUpdateSettings).toHaveBeenCalledWith(expect.objectContaining({ homepage: null }));
+		});
+	});
+
+	it("says when the saved homepage entry no longer exists", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: { collection: "pages", id: "page_gone", entry: null },
+		});
+		const screen = await renderGeneralSettings();
+
+		await expect
+			.element(screen.getByText(/The chosen page is no longer available/))
+			.toBeInTheDocument();
+		await expect.element(screen.getByRole("button", { name: "Change page" })).toBeInTheDocument();
+		expect(mockFetchContent).not.toHaveBeenCalled();
+	});
+
+	it("shows the translation the site renders once the original is gone", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "group_about",
+				entry: { id: "page_about_es", locale: "es", status: "published" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about_es",
+			slug: "sobre",
+			data: { title: "Sobre nosotros" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await expect.element(screen.getByText("Sobre nosotros")).toBeInTheDocument();
+		expect(mockFetchContent).toHaveBeenCalledWith("pages", "page_about_es");
+		await expect
+			.element(screen.getByText(/The chosen page is no longer available/))
+			.not.toBeInTheDocument();
+	});
+
+	it("marks a homepage that is not published", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "page_about",
+				entry: { id: "page_about", locale: "en", status: "draft" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
+	});
+
+	it("marks a picked homepage that is not published once it is saved", async () => {
+		const draft = { id: "page_about", locale: "en", status: "draft" };
+		mockUpdateSettings.mockImplementation(async () => {
+			const saved = {
+				...defaultSettings,
+				homepage: { collection: "pages", id: "page_about", entry: draft },
+			};
+			mockFetchSettings.mockResolvedValue(saved);
+			return saved;
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+
+		await screen.getByText("A page", { exact: true }).click();
+		await screen.getByRole("button", { name: "Choose About us" }).click();
+		await screen.getByRole("button", { name: "Save", exact: true }).first().click();
+
+		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+	});
+
+	it("stays saved when the chosen homepage is picked again", async () => {
+		mockFetchSettings.mockResolvedValue({
+			...defaultSettings,
+			homepage: {
+				collection: "pages",
+				id: "page_about",
+				entry: { id: "page_about", locale: "en", status: "draft" },
+			},
+		});
+		mockFetchContent.mockResolvedValue({
+			id: "page_about",
+			slug: "about",
+			data: { title: "About us" },
+		} as ContentItem);
+		const screen = await renderGeneralSettings();
+		await expect.element(screen.getByText("About us")).toBeInTheDocument();
+
+		await screen.getByRole("button", { name: "Change page" }).click();
+		await screen.getByRole("button", { name: "Choose About us" }).click();
+
+		await expect.element(screen.getByText("Draft", { exact: true })).toBeInTheDocument();
+		const savedButtons = screen.getByRole("button", { name: "Saved", exact: true }).all();
+		expect(savedButtons).toHaveLength(2);
+		for (const button of savedButtons) await expect.element(button).toBeDisabled();
 	});
 });

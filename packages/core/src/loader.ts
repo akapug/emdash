@@ -14,7 +14,7 @@
 import type { LiveLoader } from "astro/loaders";
 import { Kysely, type RawBuilder, sql, type Dialect } from "kysely";
 
-import { buildStatusCondition, isPostgres } from "./database/dialect-helpers.js";
+import { buildStatusCondition, isPostgres, localeChainOrder } from "./database/dialect-helpers.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import { selectTaxonomyDefs } from "./database/repositories/taxonomy-def.js";
 import { decodeCursor, encodeCursor } from "./database/repositories/types.js";
@@ -623,14 +623,7 @@ export async function loadEntriesByGroups(
 	const tableName = getTableName(type);
 	const statusFilter = options.publishedOnly ? sql`AND status = ${"published"}` : sql``;
 	const booleanFieldsSelect = foldedBooleanFieldsSelect(db, type);
-	const localeChain = options.localeChain ?? [];
-	const chainPosition =
-		localeChain.length > 0
-			? sql`CASE locale ${sql.join(
-					localeChain.map((locale, index) => sql`WHEN ${locale} THEN ${sql.lit(index)}`),
-					sql` `,
-				)} ELSE ${sql.lit(localeChain.length)} END,`
-			: sql``;
+	const variantOrder = localeChainOrder(options.localeChain ?? []);
 
 	const entries: LoadedEntry[] = [];
 	try {
@@ -639,7 +632,7 @@ export async function loadEntriesByGroups(
 				SELECT * FROM (
 					SELECT *, ${booleanFieldsSelect},
 						ROW_NUMBER() OVER (
-							PARTITION BY translation_group ORDER BY ${chainPosition} locale ASC
+							PARTITION BY translation_group ORDER BY ${variantOrder}
 						) AS ${sql.ref(VARIANT_RANK_COLUMN)}
 					FROM ${sql.ref(tableName)}
 					WHERE translation_group IN (${sql.join(chunk.map((group) => sql`${group}`))})

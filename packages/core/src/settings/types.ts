@@ -50,6 +50,34 @@ export interface SeoSettings {
 	bingVerification?: string;
 }
 
+/**
+ * The entry a site shows at its root URL instead of its latest posts.
+ *
+ * `id` is the entry's translation group, so the reference names the entry in
+ * every locale rather than one locale's row. Writes accept the id of any
+ * translation and store its group.
+ */
+export interface HomepageReference {
+	collection: string;
+	id: string;
+	/**
+	 * The translation an editor should see for this reference. Populated by
+	 * the settings API on read; absent on raw stored values and ignored on
+	 * write. `null` when the group has no live translation left.
+	 */
+	entry?: HomepageEntry | null;
+}
+
+/**
+ * One live translation of a homepage reference: the published one a visitor
+ * sees at the root, else the first by the same order.
+ */
+export interface HomepageEntry {
+	id: string;
+	locale: string | null;
+	status: string;
+}
+
 /** Site settings schema */
 export interface SiteSettings {
 	// Identity
@@ -62,6 +90,7 @@ export interface SiteSettings {
 	url?: string;
 
 	// Display
+	homepage?: HomepageReference;
 	postsPerPage: number;
 	dateFormat: string;
 	timezone: string;
@@ -85,13 +114,17 @@ export interface SeoSettingsUpdate extends Omit<SeoSettings, "defaultOgImage"> {
 	defaultOgImage?: MediaReference | null;
 }
 
-/** Site-settings write shape. `null` removes media references; omitted fields are unchanged. */
+/**
+ * Site-settings write shape. `null` removes media references and the homepage;
+ * omitted fields are unchanged.
+ */
 export interface SiteSettingsUpdate extends Omit<
 	Partial<SiteSettings>,
-	"logo" | "favicon" | "seo"
+	"logo" | "favicon" | "homepage" | "seo"
 > {
 	logo?: MediaReference | null;
 	favicon?: MediaReference | null;
+	homepage?: HomepageReference | null;
 	seo?: SeoSettingsUpdate;
 }
 
