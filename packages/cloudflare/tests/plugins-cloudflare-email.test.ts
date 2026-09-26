@@ -5,7 +5,11 @@ import { describe, it, expect, vi } from "vitest";
 import {
 	cloudflareEmail,
 	createCloudflareEmailDeliver,
+	createCloudflareEmailStatus,
 	createPlugin,
+	displayName,
+	headerText,
+	mailbox,
 	type CloudflareEmailConfig,
 } from "../src/plugins/cloudflare-email.js";
 
@@ -17,12 +21,61 @@ const message = {
 
 const event: EmailDeliverEvent = { message, source: "system" };
 
-function fakeCtx(): PluginContext {
-	return { log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } as unknown as PluginContext;
+/** Plugin KV as the host gives it: get/set/list/delete plus compare-and-set on a revision. */
+function memoryKv(initial: Record<string, unknown> = {}) {
+	const rows = new Map<string, { value: unknown; revision: string }>();
+	let rev = 0;
+	for (const [k, v] of Object.entries(initial)) rows.set(k, { value: v, revision: String(++rev) });
+	return {
+		rows,
+		async get<T>(key: string) {
+			return (rows.get(key)?.value ?? null) as T | null;
+		},
+		async getVersioned<T>(key: string) {
+			const row = rows.get(key);
+			return row ? { value: row.value as T, revision: row.revision } : null;
+		},
+		async compareAndSet(key: string, expected: string | null, value: unknown) {
+			const row = rows.get(key);
+			if ((row?.revision ?? null) !== expected) return { applied: false as const };
+			const revision = String(++rev);
+			rows.set(key, { value, revision });
+			return { applied: true as const, revision };
+		},
+		async set(key: string, value: unknown) {
+			rows.set(key, { value, revision: String(++rev) });
+		},
+		async delete(key: string) {
+			return rows.delete(key);
+		},
+		async list(prefix = "") {
+			return [...rows]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, r]) => ({ key, value: r.value }));
+		},
+	};
 }
 
+function fakeCtx(opts: { site?: string; kv?: ReturnType<typeof memoryKv> } = {}): PluginContext {
+	return {
+		log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+		kv: opts.kv ?? memoryKv(),
+		site: { name: opts.site ?? "", url: "https://example.org", locale: "en" },
+	} as unknown as PluginContext;
+}
+
+/** What the binding is handed. */
+type Sent = {
+	from: { email: string; name?: string };
+	to: string;
+	subject: string;
+	replyTo?: string;
+} & Record<string, unknown>;
+
 function fakeEnv(sendImpl?: () => Promise<{ messageId?: string }>) {
-	const send = vi.fn(sendImpl ?? (async () => ({ messageId: "msg-1" })));
+	const send = vi.fn<(message: Sent) => Promise<{ messageId?: string }>>(
+		sendImpl ?? (async () => ({ messageId: "msg-1" })),
+	);
 	return { env: { EMAIL: { send } }, send };
 }
 
@@ -187,5 +240,308 @@ describe("createCloudflareEmailDeliver()", () => {
 		);
 
 		await expect(deliver(event, fakeCtx())).rejects.toThrow("sender domain not verified");
+	});
+});
+
+describe("the sender's name", () => {
+	it("is the site's title when the config names nobody", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org" },
+			async () => env,
+		);
+
+		await deliver(event, fakeCtx({ site: "Example Garden Club" }));
+
+		expect(send.mock.calls[0]![0]).toMatchObject({
+			from: { email: "notify@mail.example.org", name: "Example Garden Club" },
+		});
+	});
+
+	it("is the configured name when the config gives one", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: { email: "notify@mail.example.org", name: "Example CMS" } },
+			async () => env,
+		);
+
+		await deliver(event, fakeCtx({ site: "Example Garden Club" }));
+
+		expect(send.mock.calls[0]![0].from).toEqual({
+			email: "notify@mail.example.org",
+			name: "Example CMS",
+		});
+	});
+
+	it("carries no line break, quote or angle bracket from the title", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org" },
+			async () => env,
+		);
+
+		await deliver(event, fakeCtx({ site: 'Club"\r\nBcc: victim@example.net <boss@example.org>' }));
+
+		const { name } = send.mock.calls[0]![0].from;
+		expect(name).toBe("Club Bcc: victim@example.net boss@example.org");
+		expect(name).not.toMatch(/[\r\n"<>]/);
+	});
+});
+
+describe("headers a visitor or an admin can reach", () => {
+	it("a subject loses its CR and LF, so it cannot start another header", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org" },
+			async () => env,
+		);
+
+		await deliver(
+			{
+				message: { ...message, subject: "New submission\r\nBcc: victim@example.net" },
+				source: "emdash-forms",
+			},
+			fakeCtx(),
+		);
+
+		expect(send.mock.calls[0]![0].subject).toBe("New submission Bcc: victim@example.net");
+	});
+
+	it("a reply-to that is not one plain address is dropped, and the message still goes", async () => {
+		for (const replyTo of [
+			"visitor@example.net\r\nBcc: victim@example.net",
+			"visitor@example.net, victim@example.net",
+			"Visitor <visitor@example.net>",
+			"visitor@example.net\u0000",
+		]) {
+			const { env, send } = fakeEnv();
+			const ctx = fakeCtx();
+			const deliver = createCloudflareEmailDeliver(
+				{ from: "notify@mail.example.org" },
+				async () => env,
+			);
+
+			await deliver({ message: { ...message, replyTo }, source: "emdash-forms" }, ctx);
+
+			expect(send).toHaveBeenCalledOnce();
+			expect(send.mock.calls[0]![0]).not.toHaveProperty("replyTo");
+			expect(ctx.log.warn).toHaveBeenCalledWith("reply-to dropped: it is not one plain address", {
+				source: "emdash-forms",
+			});
+		}
+	});
+
+	it("a recipient that is not one plain address is refused before the binding", async () => {
+		for (const to of [
+			"a@example.org, b@example.org",
+			"a@example.org\r\nBcc: b@example.org",
+			"nobody",
+		]) {
+			const { env, send } = fakeEnv();
+			const deliver = createCloudflareEmailDeliver(
+				{ from: "notify@mail.example.org" },
+				async () => env,
+			);
+
+			await expect(
+				deliver({ message: { ...message, to }, source: "emdash-forms" }, fakeCtx()),
+			).rejects.toThrow(/every recipient must be one plain address/);
+			expect(send).not.toHaveBeenCalled();
+		}
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org" },
+			async () => env,
+		);
+		await expect(
+			deliver(
+				{
+					message: { ...message, cc: ["ok@example.org", "x@example.org;y@example.org"] },
+					source: "x",
+				},
+				fakeCtx(),
+			),
+		).rejects.toThrow(/one plain address/);
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it("mailbox, headerText and displayName are exact about what they keep", () => {
+		expect(mailbox(" someone+tag@sub.example.org ")).toBe("someone+tag@sub.example.org");
+		expect(mailbox("someone@localhost")).toBeNull();
+		expect(mailbox(`${"a".repeat(250)}@example.org`)).toBeNull();
+		expect(headerText("a\tb\u2028c\u0085d   e", 250)).toBe("a b c d e");
+		expect(headerText("x".repeat(300), 250)).toHaveLength(250);
+		expect(displayName("\r\n")).toBeUndefined();
+	});
+});
+
+describe("reply-to when the message names nobody", () => {
+	it("is the site's own address from the plugin's Reply-To setting", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", replyTo: "fallback@example.org" },
+			async () => env,
+		);
+
+		await deliver(event, fakeCtx({ kv: memoryKv({ "settings:replyTo": "office@example.org" }) }));
+
+		expect(send.mock.calls[0]![0].replyTo).toBe("office@example.org");
+	});
+
+	it("is the visitor when the message names one, over the site's own address", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org" },
+			async () => env,
+		);
+
+		await deliver(
+			{ message: { ...message, replyTo: "visitor@example.net" }, source: "emdash-forms" },
+			fakeCtx({ kv: memoryKv({ "settings:replyTo": "office@example.org" }) }),
+		);
+
+		expect(send.mock.calls[0]![0].replyTo).toBe("visitor@example.net");
+	});
+});
+
+describe("the sending budget", () => {
+	const at = (iso: string) => () => new Date(iso);
+
+	it("refuses a source past its hourly limit, and never calls the binding for it", async () => {
+		const { env, send } = fakeEnv();
+		const ctx = fakeCtx();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits: { perHour: 2, perDay: 10 } },
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		);
+		const forms = { message, source: "emdash-forms" };
+
+		await deliver(forms, ctx);
+		await deliver(forms, ctx);
+		await expect(deliver(forms, ctx)).rejects.toThrow(/would pass its limit of 2/);
+
+		expect(send).toHaveBeenCalledTimes(2);
+		expect(ctx.log.warn).toHaveBeenCalledWith(
+			"email refused: sending budget spent",
+			expect.objectContaining({ source: "emdash-forms" }),
+		);
+	});
+
+	it("gives each source its own budget, so a flooded form leaves the login email its own", async () => {
+		const { env, send } = fakeEnv();
+		const ctx = fakeCtx();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits: { perHour: 1, perDay: 10 } },
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		);
+
+		await deliver({ message, source: "emdash-forms" }, ctx);
+		await expect(deliver({ message, source: "emdash-forms" }, ctx)).rejects.toThrow(/limit/);
+		await deliver({ message, source: "system" }, ctx);
+
+		expect(send).toHaveBeenCalledTimes(2);
+	});
+
+	it("counts every recipient, cc included", async () => {
+		const { env, send } = fakeEnv();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits: { perHour: 2, perDay: 10 } },
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		);
+
+		await expect(
+			deliver(
+				{ message: { ...message, cc: ["b@example.org", "c@example.org"] }, source: "x" },
+				fakeCtx(),
+			),
+		).rejects.toThrow(/3 more|and 3/);
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it("holds the day across hours, and a new hour clears the last hour's count", async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		const ctx = fakeCtx({ kv });
+		const cfg = { from: "notify@mail.example.org", limits: { perHour: 1, perDay: 2 } };
+
+		await createCloudflareEmailDeliver(
+			cfg,
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		)({ message, source: "x" }, ctx);
+		await createCloudflareEmailDeliver(
+			cfg,
+			async () => env,
+			at("2026-01-01T11:15:00Z"),
+		)({ message, source: "x" }, ctx);
+		await expect(
+			createCloudflareEmailDeliver(
+				cfg,
+				async () => env,
+				at("2026-01-01T12:15:00Z"),
+			)({ message, source: "x" }, ctx),
+		).rejects.toThrow(/this day/);
+
+		expect(send).toHaveBeenCalledTimes(2);
+		expect([...kv.rows.keys()].filter((k) => k.startsWith("budget:h:")).toSorted()).toEqual([
+			"budget:h:2026-01-01T12:x",
+		]);
+	});
+
+	it("never lets two sends at once take the last place", async () => {
+		const { env, send } = fakeEnv();
+		const kv = memoryKv();
+		// Every read answers what it answered first: a writer that loses the race must read again.
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", limits: { perHour: 1, perDay: 10 } },
+			async () => env,
+			at("2026-01-01T10:15:00Z"),
+		);
+
+		const results = await Promise.allSettled([
+			deliver({ message, source: "x" }, fakeCtx({ kv })),
+			deliver({ message, source: "x" }, fakeCtx({ kv })),
+		]);
+
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(send).toHaveBeenCalledOnce();
+	});
+});
+
+describe("createCloudflareEmailStatus()", () => {
+	it("says the sender, whether the binding is there, and where replies go", async () => {
+		const { env } = fakeEnv();
+		const status = createCloudflareEmailStatus(
+			{ from: "notify@mail.example.org" },
+			async () => env,
+		);
+
+		expect(
+			await status(fakeCtx({ kv: memoryKv({ "settings:replyTo": "office@example.org" }) })),
+		).toEqual({
+			provider: "cloudflare-email",
+			from: "notify@mail.example.org",
+			senderName: "site title",
+			binding: { name: "EMAIL", present: true },
+			replyTo: "site",
+			limits: { perHour: 50, perDay: 200 },
+		});
+	});
+
+	it("says the binding is missing, and sends nothing to find out", async () => {
+		const status = createCloudflareEmailStatus(
+			{ from: "notify@mail.example.org" },
+			async () => ({}),
+		);
+		const missing = createCloudflareEmailStatus({ from: "notify@mail.example.org" }, async () => {
+			throw new Error("not on workerd");
+		});
+
+		expect((await status(fakeCtx())).binding).toEqual({ name: "EMAIL", present: false });
+		expect((await missing(fakeCtx())).binding.present).toBe(false);
+		expect((await status(fakeCtx())).replyTo).toBeNull();
 	});
 });
