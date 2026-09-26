@@ -8,6 +8,7 @@
 
 import { parse } from "@wordpress/block-serialization-default-parser";
 
+import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
 import { parseInlineContent } from "./inline.js";
 import { getTransformer } from "./transformers/index.js";
@@ -150,6 +151,12 @@ export function gutenbergToPortableText(
 
 	// Transform blocks
 	return blocks.flatMap((block) => transformBlock(block, options, context));
+}
+
+/** The `textAlign` field for a text block from the element `html` opens with, or nothing. */
+function aligned(html: string): { textAlign?: "center" | "right" | "justify" } {
+	const textAlign = textAlignOfTag(html);
+	return textAlign ? { textAlign } : {};
 }
 
 /**
@@ -304,6 +311,7 @@ export function htmlToPortableText(
 							_type: "block",
 							_key: generateKey(),
 							style: "normal",
+							...aligned(fullMatch),
 							children,
 							markDefs: markDefs.length > 0 ? markDefs : undefined,
 						});
@@ -323,6 +331,7 @@ export function htmlToPortableText(
 					_type: "block",
 					_key: generateKey(),
 					style: tag,
+					...aligned(fullMatch),
 					children,
 					markDefs: markDefs.length > 0 ? markDefs : undefined,
 				});
@@ -335,6 +344,7 @@ export function htmlToPortableText(
 					_type: "block",
 					_key: generateKey(),
 					style: "blockquote",
+					...aligned(fullMatch),
 					children,
 					markDefs: markDefs.length > 0 ? markDefs : undefined,
 				});

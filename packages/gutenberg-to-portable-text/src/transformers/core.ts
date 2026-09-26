@@ -2,6 +2,7 @@
  * Transformers for WordPress core/* blocks
  */
 
+import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
 import { extractAlt, extractCaption, extractSrc, extractText } from "../inline.js";
 import type {
@@ -63,12 +64,25 @@ export const paragraph: BlockTransformer = (block, _options, context) => {
 		children,
 	};
 
+	const textAlign = blockTextAlign(block);
+	if (textAlign) {
+		result.textAlign = textAlign;
+	}
+
 	if (markDefs.length > 0) {
 		result.markDefs = markDefs;
 	}
 
 	return [result];
 };
+
+/**
+ * A paragraph's or heading's text alignment: the saved markup first (what
+ * WordPress served), then the block's attributes.
+ */
+function blockTextAlign(block: GutenbergBlock): PortableTextTextBlock["textAlign"] {
+	return textAlignOfTag(block.innerHTML) ?? textAlignOfAttrs(block.attrs);
+}
 
 /**
  * core/heading → block with style "h1"-"h6"
@@ -83,6 +97,11 @@ export const heading: BlockTransformer = (block, _options, context) => {
 		style: toHeadingStyle(level),
 		children,
 	};
+
+	const textAlign = blockTextAlign(block);
+	if (textAlign) {
+		result.textAlign = textAlign;
+	}
 
 	if (markDefs.length > 0) {
 		result.markDefs = markDefs;
