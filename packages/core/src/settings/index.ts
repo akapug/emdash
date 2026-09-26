@@ -80,7 +80,8 @@ async function decodePersistedPluginSetting(
  * `options WHERE name LIKE 'site:%'` prefix scan from once-per-request to
  * once per isolate per SITE_SETTINGS_CACHE_TTL_MS. A write invalidates only
  * the isolate that made it, so the TTL is what bounds every other isolate's
- * staleness. Isolate lifetime alone is not a bound: an isolate kept busy by
+ * staleness, plus the object cache backend's own propagation delay when one
+ * is configured (Workers KV can take about a minute). Isolate lifetime alone is not a bound: an isolate kept busy by
  * traffic lives on, and the homepage setting decides what "/" renders, so
  * "/" kept serving the latest posts on warm isolates for over six minutes
  * after the homepage was set (measured on a live Worker, 2026-09-26). The
@@ -104,7 +105,10 @@ const settingsCache: SingleFlightCache<Partial<SiteSettings>> =
 		return c;
 	})();
 
-/** How long an isolate serves its cached settings before reading them again. */
+/**
+ * How long an isolate serves its cached settings before reading them again,
+ * counted from the read, as in the redirects cache.
+ */
 const SITE_SETTINGS_CACHE_TTL_MS = 30_000;
 const SITE_SETTINGS_EXPIRY_KEY = Symbol.for("emdash:site-settings-expiry");
 const settingsExpiry: { at: number } =
@@ -121,7 +125,7 @@ const settingsExpiry: { at: number } =
  * `getSiteSettings()` to re-query the database.
  *
  * Called from every `site:*` write path. Other isolates still serve their
- * own cached copy until they expire — staleness bounded by isolate lifetime.
+ * own cached copy until it expires, SITE_SETTINGS_CACHE_TTL_MS after they read it.
  */
 export function invalidateSiteSettingsCache(): void {
 	invalidateSingleFlightCache(settingsCache);
@@ -282,22 +286,25 @@ export function getSiteSettings(): Promise<Partial<SiteSettings>> {
 	return requestCached("siteSettings", () => {
 		// Past its TTL, the isolate's copy is dropped (only this isolate's; the
 		// distributed object cache below is invalidated by writes themselves).
-		const now = Date.now();
-		if (now >= settingsExpiry.at) {
+		// Only a held copy expires, so the rest of a burst at expiry finds the
+		// cache empty and waits for the one read instead of starting its own.
+		if (settingsCache.hasValue && Date.now() >= settingsExpiry.at) {
 			invalidateSingleFlightCache(settingsCache);
-			settingsExpiry.at = now + SITE_SETTINGS_CACHE_TTL_MS;
 		}
 		return singleFlightCached(
 			settingsCache,
-			() =>
-				cachedQuery({
+			async () => {
+				const settings = await cachedQuery({
 					namespace: SETTINGS_CACHE_NAMESPACE,
 					key: "all",
 					load: async () => {
 						const db = await getDb();
 						return getSiteSettingsWithDb(db);
 					},
-				}),
+				});
+				settingsExpiry.at = Date.now() + SITE_SETTINGS_CACHE_TTL_MS;
+				return settings;
+			},
 			{ anchor: (promise) => after(() => promise), ownerTimeoutMs: 30_000 },
 		);
 	});
