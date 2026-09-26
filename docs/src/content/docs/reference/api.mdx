@@ -18,6 +18,7 @@ The maintained templates call these runtime helpers:
 | `decodeSlug` | Decoding a dynamic route parameter before lookup |
 | `getEmDashCollection` | Reading and filtering entries in a collection |
 | `getEmDashEntry` | Reading one entry by ID or slug |
+| `getHomepage` | Rendering the entry chosen as the site's homepage |
 | `getMenuWithCacheHint` | Rendering a navigation menu with cache invalidation |
 | `getSeoMeta` | Resolving an entry's SEO panel values and template fallbacks |
 | `getSiteSettings` | Reading public site identity and other global settings |
@@ -450,6 +451,26 @@ Settings are read-only from the runtime API. Use the admin API to update them.
 `getSiteSettings()` returns a partial object because unset keys are omitted. Media settings such as the site logo and favicon are resolved to media-reference objects before the function returns.
 
 `getSiteSettingsWithCacheHint()` returns `{ data, cacheHint }`. Pass the hint to `Astro.cache.set()` when an Astro route cache should be invalidated after site settings change.
+
+### `getHomepage()`
+
+Resolve the entry chosen under **Homepage displays** in the General settings:
+
+```ts
+function getHomepage<D = Record<string, unknown>>(options?: {
+	locale?: string;
+}): Promise<HomepageResult<D>>;
+```
+
+`HomepageResult` has the fields of the [`getEmDashEntry()`](#getemdashentry) result plus `collection`, the collection of the chosen entry. `entry` is `null` when no homepage is chosen, when the chosen entry is deleted, and when it has no published version the request can see. `collection` is `null` only when no homepage is chosen. The entry resolves in `options.locale`, or the request's locale, through the configured fallback chain.
+
+```ts
+import { getHomepage } from "emdash";
+
+const { entry: page, cacheHint } = await getHomepage();
+```
+
+See [Render the chosen homepage](/guides/site-settings/#render-the-chosen-homepage) for a complete index route.
 
 ## SEO
 

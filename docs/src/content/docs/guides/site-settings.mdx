@@ -11,7 +11,7 @@ Site settings hold values that apply across the site. Templates can use them for
 
 Open **Settings** in the EmDash admin, then choose the page for the values you need:
 
-- **General** contains the site title, tagline, logo, favicon, public URL, posts per page, date format, and timezone.
+- **General** contains the site title, tagline, logo, favicon, public URL, homepage, posts per page, date format, and timezone.
 - **Social** contains profile handles for the supported social services.
 - **SEO** contains the title separator, default social image, verification values, and `robots.txt` content.
 
@@ -123,6 +123,66 @@ const formatted = new Intl.DateTimeFormat(Astro.currentLocale, {
 ```
 
 The `dateFormat` setting is a pattern string such as `MMMM d, yyyy`. `Intl.DateTimeFormat` does not consume that syntax; use a formatting library that supports pattern strings when the template needs to apply it exactly.
+
+## Render the chosen homepage
+
+**Homepage displays**, under **Reading** in the **General** settings, chooses what the site shows at its root URL: **Latest posts** or **A page**. **A page** opens a picker for an entry in any collection.
+
+The setting takes effect in templates that read it. Call `getHomepage()` in the index route. It returns the chosen entry in the request's locale, falling back through the configured locales the same way `getEmDashEntry()` does. It returns `entry: null` when no homepage is chosen, and also when the chosen entry is deleted or has no published version, so the route can render its default content instead. In visual editing, an editor sees the draft of the chosen entry.
+
+The following index route renders the chosen page, or the latest posts when there is none. The type argument describes the entry's fields, here those of the `pages` collection:
+
+```astro title="src/pages/index.astro"
+---
+import { getEmDashCollection, getHomepage, type InferCollectionData } from "emdash";
+import { PortableText } from "emdash/ui";
+import Base from "../layouts/Base.astro";
+
+const homepage = await getHomepage<InferCollectionData<"pages">>();
+const page = homepage.entry;
+const latest = page
+  ? null
+  : await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: 10 });
+
+if (Astro.cache?.enabled) {
+  Astro.cache.set(homepage.cacheHint);
+  if (latest) Astro.cache.set(latest.cacheHint);
+}
+---
+
+<Base title={page?.data.title ?? "Latest posts"}>
+  {page ? (
+    <article>
+      <h1 {...page.edit.title}>{page.data.title}</h1>
+      <PortableText value={page.data.content} />
+    </article>
+  ) : (
+    <ul>
+      {latest?.entries.map((post) => (
+        <li><a href={`/posts/${post.id}`}>{post.data.title}</a></li>
+      ))}
+    </ul>
+  )}
+</Base>
+```
+
+Pass the returned `cacheHint` to `Astro.cache.set()` even when no entry is returned. It carries the chosen entry's collection, so publishing the entry refreshes a cached root page.
+
+The chosen page is still served at its own URL. To keep search engines from indexing both copies, set that URL's canonical link to the site root. `getSiteSettings()` returns the choice as `homepage: { collection, id }`, where `id` is the ID of the entry's original translation. On a single-language site, that is the entry's ID.
+
+The following lines in a page route, after it loads `page`, point the canonical link at the root when the page is the homepage:
+
+```ts title="src/pages/pages/[slug].astro"
+const settings = await getSiteSettings();
+const isHomepage =
+  settings.homepage?.collection === "pages" && settings.homepage.id === page.data.id;
+const seo = getSeoMeta(page, {
+  siteUrl: Astro.url.origin,
+  path: isHomepage ? "/" : Astro.url.pathname,
+});
+```
+
+API and MCP clients set the homepage by sending `homepage: { collection, id }` with the ID of the entry or of any of its translations, and remove it by sending `homepage: null`. A request that names an entry that does not exist is refused with a `VALIDATION_ERROR`.
 
 ## Render social profiles
 
