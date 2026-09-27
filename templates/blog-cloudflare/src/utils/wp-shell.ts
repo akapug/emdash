@@ -681,7 +681,7 @@ function postMarkupForCheck(post: WpShellPostLayout): string[] {
 			fill(post.adjacent.prev),
 			fill(post.adjacent.next),
 		);
-	if (post.commentArea) out.push(...commentMarkupForCheck(post.commentArea));
+	if (post.commentArea) out.push(commentMarkupForCheck(post.commentArea));
 	return out;
 }
 
@@ -709,7 +709,8 @@ const COMMENT_FILL: Record<WpShellCommentHole["s"], string> = {
 	emdash: "<b></b>",
 };
 
-function commentMarkupForCheck(a: WpShellCommentArea): string[] {
+/** The whole area filled for the check: every template drawn in its hole (the tripwire requires each hole the area's templates need). */
+function commentMarkupForCheck(a: WpShellCommentArea): string {
 	const fill = (t: readonly WpShellCommentPart[], holes: Partial<Record<string, string>> = {}) =>
 		t.map((x) => (isText(x) ? x : (holes[x.s] ?? COMMENT_FILL[x.s]))).join("");
 	const fields = a.fields;
@@ -721,15 +722,7 @@ function commentMarkupForCheck(a: WpShellCommentArea): string[] {
 	const heading = a.heading ? fill(a.heading.item) : "";
 	const comment = a.list ? fill(a.list.comment, { replies: fill(a.list.replies) }) : "";
 	const list = a.list ? fill(a.list.item, { items: comment + comment }) : "";
-	return [
-		fill(a.parts, { heading, list, respond }),
-		respond,
-		heading,
-		list,
-		comment,
-		...(a.list ? [fill(a.list.replies)] : []),
-		...(fields ? WP_SHELL_COMMENT_FIELDS.map((f) => fill(fields[f])) : []),
-	];
+	return fill(a.parts, { heading, list, respond });
 }
 
 /** Every template of a comment area. */
@@ -1702,7 +1695,7 @@ function clockIn(
 				hourCycle: "h23",
 			}).formatToParts(date);
 			const part = (type: string) => Number(parts.find((x) => x.type === type)?.value);
-			return { h: part("hour") % 24, i: part("minute") };
+			return { h: part("hour"), i: part("minute") };
 		} catch {
 			// An unknown zone: UTC, below.
 		}

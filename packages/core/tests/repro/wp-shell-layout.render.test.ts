@@ -1191,6 +1191,20 @@ describe("WpShellComments: EmDash's comments and form in the theme's comment are
 		});
 	});
 
+	it("starts the comment client once however many forms' scripts start it: one listener, one request per submit", () => {
+		const listen = vi.fn();
+		vi.stubGlobal("document", { addEventListener: listen });
+		try {
+			initCommentForms();
+			initCommentForms();
+			initCommentForms();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+		// One listener at most: none more where an earlier test (posted()) started it already.
+		expect(listen.mock.calls.length).toBeLessThanOrEqual(1);
+	});
+
 	it("runs CommentForm's own client, started as CommentForm starts it", () => {
 		const script = (file: string) =>
 			/<script>([\s\S]*?)<\/script>/
@@ -1261,12 +1275,14 @@ describe("WpShellComments: EmDash's comments and form in the theme's comment are
 		};
 		expect(wpShellProblem(withArea(area))).toBeNull();
 		const html = await skinned({}, area);
+		// EmDash's list without its own heading (the theme's area prints the count), and CommentForm, which brings its own client
 		expect(html).toMatch(
-			/<div id="comments-list">\s*<section class="ec-comments" data-for="posts\/01POST">EMDASH COMMENTS<\/section>\s*<\/div>/,
+			/<div id="comments-list">\s*<section class="ec-comments" data-for="posts\/01POST" data-heading="none">EMDASH COMMENTS<\/section>\s*<\/div>/,
 		);
 		expect(html).toMatch(
 			/<h3 id="reply-title">Leave a Reply<\/h3>\s*<form class="ec-comment-form" data-for="posts\/01POST"><\/form>\s*<\/div>/,
 		);
+		expect(html).not.toContain("WpShellCommentClient");
 	});
 
 	it("keeps EmDash's Comments' own count heading, but where the theme's area prints its own", async () => {

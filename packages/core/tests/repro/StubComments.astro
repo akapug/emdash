@@ -1,5 +1,9 @@
 ---
-/** EmDash's comment list, stood in for: which entry's comments it lists. */
-const { collection, contentId } = Astro.props as { collection: string; contentId: string };
+/** EmDash's comment list, stood in for: which entry's comments it lists, and whether with its own heading. */
+const { collection, contentId, heading } = Astro.props as {
+	collection: string;
+	contentId: string;
+	heading?: boolean;
+};
 ---
-<section class="ec-comments" data-for={`${collection}/${contentId}`}>EMDASH COMMENTS</section>
+<section class="ec-comments" data-for={`${collection}/${contentId}`} data-heading={heading === false ? "none" : undefined}>EMDASH COMMENTS</section>

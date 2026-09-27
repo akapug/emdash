@@ -2192,12 +2192,39 @@ describe("wp-shell: a post's comments in the theme's comment area", () => {
 		);
 	});
 
+	it("draws a box with the theme's size and hint, EmDash's own size where it has none, and a label outside the boxes", () => {
+		const a = areaOf();
+		a.fields!.body = [
+			'<p class="comment-form-comment">',
+			{ s: "control", id: "comment", placeholder: 'Say "hi" & more' },
+			"</p>",
+		];
+		a.respond = a.respond.flatMap((x) =>
+			typeof x !== "string" && x.s === "/form"
+				? [{ s: "label", for: "comment", class: "note" }, "Your words", { s: "/label" }, x]
+				: [x],
+		);
+		expect(wpShellProblem(withArea(a))).toBeNull();
+		const html = drawComments({}, withArea(a).post!);
+		expect(html).toContain(
+			'<textarea id="comment" name="body" required maxlength="5000" rows="4" placeholder="Say &quot;hi&quot; &amp; more"></textarea>',
+		);
+		expect(html).toContain('<label for="comment" class="note">Your words</label>');
+	});
+
+	it("prints no date or time for a comment of no known moment", () => {
+		const html = drawComments({ total: 1, items: [aComment({ createdAt: "not a date" })] });
+		expect(html).toContain("<time> at </time>");
+	});
+
 	it("prints a comment's time as PHP's date() does, in the site's zone", () => {
 		const at = new Date("2014-05-01T17:05:00Z");
 		expect(formatWpTime(at, "g:i a", { utcOffset: -480 })).toBe("9:05 am");
 		expect(formatWpTime(at, "g:i A", { timeZone: "America/Denver" })).toBe("11:05 AM");
 		expect(formatWpTime(at, "H:i")).toBe("17:05");
 		expect(formatWpTime(new Date("2014-05-01T00:07:00Z"), "g:i a h G")).toBe("12:07 am 12 0");
+		// a zone this runtime does not know: the site's offset from UTC
+		expect(formatWpTime(at, "H:i", { timeZone: "Nowhere/Atlantis", utcOffset: 60 })).toBe("18:05");
 	});
 
 	const area = (change: (a: WpShellCommentArea) => void) => {
@@ -2352,6 +2379,51 @@ describe("wp-shell: a post's comments in the theme's comment area", () => {
 		[
 			"a hole inside a tag",
 			area((a) => (a.heading!.item = ["<abbr ", { s: "count" }, "></abbr>"])),
+		],
+		["a second list", area((a) => a.parts.push({ s: "list" }))],
+		["a heading with no phrase hole", area((a) => (a.heading!.item = ["<abbr></abbr>"]))],
+		["a reply list with no items hole", area((a) => (a.list!.replies = ["<ol></ol>"]))],
+		["a hole of the form's in a comment", area((a) => a.list!.comment.push({ s: "control" }))],
+		[
+			"a comment with no author",
+			area(
+				(a) =>
+					(a.list!.comment = a.list!.comment.filter(
+						(x) => typeof x === "string" || x.s !== "author",
+					)),
+			),
+		],
+		[
+			"a comment with no replies hole",
+			area(
+				(a) =>
+					(a.list!.comment = a.list!.comment.filter(
+						(x) => typeof x === "string" || x.s !== "replies",
+					)),
+			),
+		],
+		["a time hole with no time format", area((a) => delete a.list!.time)],
+		[
+			"a box's class that is not tokens",
+			area((a) => (a.fields!.body = [{ s: "control", class: 'x" onclick="y' }])),
+		],
+		["a box with no control", area((a) => (a.fields!.body = ["<p></p>"]))],
+		[
+			"a field of no EmDash field's among the fields",
+			area((a) => ((a.fields as Record<string, unknown>).website = [{ s: "control" }])),
+		],
+		[
+			"a submit control with no words",
+			area(
+				(a) =>
+					(a.respond = a.respond.map((x) =>
+						typeof x !== "string" && x.s === "submit" ? { ...x, label: "" } : x,
+					)),
+			),
+		],
+		[
+			"an area larger than a shell",
+			area((a) => a.respond.unshift(`<p>${"x".repeat(1_000_001)}</p>`)),
 		],
 	])("refuses the record whole for %s", (_, record) => {
 		expect(wpShellProblem(record)).not.toBeNull();
