@@ -1,0 +1,51 @@
+---
+/**
+ * A form in a migrated WordPress design (layouts/WpShell.astro).
+ *
+ * The site's form was imported into EmDash's forms plugin, and the record
+ * carries the WordPress plugin's own markup for it (a skin: Gravity Forms'
+ * labels beside the boxes, Jetpack's). When this EmDash form is the one
+ * imported from it, unchanged (utils/wp-shell.ts formSkin), it is drawn in
+ * that markup, so the site's own stylesheets draw it as WordPress did. It is
+ * still EmDash's form: the same element, action, input names, validation,
+ * spam checks and client (renderWpShellForm). Any other form, or one an
+ * admin has changed, is the forms plugin's own.
+ */
+import { blockComponents } from "@emdash-cms/plugin-forms/astro";
+import { loadPublicFormDefinition } from "@emdash-cms/plugin-forms/public-definition";
+import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
+import { formSkin, renderWpShellForm } from "../utils/wp-shell";
+import { loadWpShell } from "../utils/wp-shell-loader";
+
+interface Props {
+	node: { formId: string };
+}
+
+const { node } = Astro.props;
+const FormEmbed = blockComponents["emdash-form"];
+const { shell } = await loadWpShell();
+const definition =
+	shell?.forms?.length && typeof node?.formId === "string"
+		? await loadPublicFormDefinition({
+				formId: node.formId,
+				baseUrl: Astro.url,
+				handlePublicPluginApiRoute: getPublicPluginApiRouteHandler(Astro.locals),
+			})
+		: null;
+const match = shell && definition ? formSkin(shell, definition) : null;
+const html =
+	match && definition
+		? renderWpShellForm(match, definition, {
+				formId: node.formId,
+				submitUrl: "/_emdash/api/plugins/emdash-forms/submit",
+			})
+		: null;
+---
+
+{html ? <Fragment set:html={html} /> : <FormEmbed node={node} />}
+
+<script>
+	// The forms plugin's own client, as FormEmbed loads it: the skin is its form.
+	import { initForms } from "@emdash-cms/plugin-forms/client";
+	initForms();
+</script>

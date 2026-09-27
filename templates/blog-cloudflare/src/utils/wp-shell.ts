@@ -148,6 +148,65 @@ export interface WpShell extends WpShellLayout {
 	 * stylesheets and parts. The menus are the record's.
 	 */
 	home?: WpShellLayout;
+	/** Pages cut on their own (a page on a template of its own, a page with a form): each drawn for the page of its slug. */
+	pages?: WpShellPageLayout[];
+	/** The site's forms in their plugin's markup: an EmDash form imported from one is drawn in it (renderWpShellForm). */
+	forms?: WpShellForm[];
+}
+
+/** A page's own layout, for the EmDash page of its slug. */
+export interface WpShellPageLayout extends WpShellLayout {
+	slug: string;
+}
+
+/** The field types a form's skin draws. */
+export const WP_SHELL_FORM_TYPES = [
+	"text",
+	"email",
+	"tel",
+	"url",
+	"number",
+	"date",
+	"textarea",
+	"select",
+	"checkbox",
+	"radio",
+	"checkbox-group",
+] as const;
+
+/**
+ * A field of a form's skin, as the importer made the EmDash field: the skin
+ * is drawn only for a form whose fields are these, so an admin's edit to one
+ * (its label, whether it is required) shows, in EmDash's own form.
+ */
+export interface WpShellFormField {
+	/** The EmDash field's name, when the plugin gives the importer one; the label otherwise. */
+	name?: string;
+	label: string;
+	type: (typeof WP_SHELL_FORM_TYPES)[number];
+	required: boolean;
+	help?: string;
+	/** A choice field's number of choices. */
+	options?: number;
+}
+
+/** A hole in a form's skin: EmDash's form element, a field's control, a label for it, the submit control. */
+export type WpShellFormHole =
+	| { s: "form"; class?: string }
+	| { s: "/form" }
+	| { s: "control"; field: number; option?: number; class?: string; rows?: number; cols?: number }
+	| { s: "label"; field?: number; option?: number; class?: string }
+	| { s: "/label" }
+	/** Where a field's error message goes: the end of its container, where the plugin wrote its own. */
+	| { s: "error"; field: number }
+	| { s: "submit"; tag: "button" | "input"; class?: string };
+export type WpShellFormPart = string | WpShellFormHole;
+
+/** One of the site's forms as its plugin drew it, with holes for EmDash's form. */
+export interface WpShellForm {
+	plugin: "gravityforms" | "jetpack";
+	fields: WpShellFormField[];
+	parts: WpShellFormPart[];
 }
 
 /** What a page is, for the body classes WordPress would have given it. */
@@ -337,7 +396,11 @@ const HOLE_FILL: Record<string, string> = {
 };
 
 /** Every layout a record draws pages with. */
-const layoutsOf = (s: WpShell): WpShellLayout[] => (s.home ? [s, s.home] : [s]);
+const layoutsOf = (s: WpShell): WpShellLayout[] => [
+	s,
+	...(s.home ? [s.home] : []),
+	...(s.pages ?? []),
+];
 
 /**
  * A listing's holes filled for the check: its links and image with values the
@@ -373,8 +436,21 @@ function drawnMarkup(s: WpShell): string[] {
 		const thumb = l.thumb ? fillForCheck(l.thumb, "") : "";
 		out.push(fillForCheck(l.item, thumb), fillForCheck(l.item, ""));
 	}
+	// A form's holes as elements that fit between tags: renderWpShellForm writes the form's own.
+	for (const f of s.forms ?? []) out.push(f.parts.map(formFillForCheck).join(""));
 	return out;
 }
+
+const FORM_FILL: Record<WpShellFormHole["s"], string> = {
+	form: "<div>",
+	"/form": "</div>",
+	control: "<b></b>",
+	label: "<b>",
+	"/label": "</b>",
+	error: "<b></b>",
+	submit: "<b></b>",
+};
+const formFillForCheck = (x: WpShellFormPart) => (typeof x === "string" ? x : FORM_FILL[x.s]);
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
@@ -535,7 +611,79 @@ function markupOf(s: WpShell): string[] {
 	}
 	for (const l of s.listings ?? [])
 		for (const x of [...l.item, ...(l.thumb ?? [])]) if (typeof x === "string") out.push(x);
+	for (const f of s.forms ?? []) for (const x of f.parts) if (typeof x === "string") out.push(x);
 	return out;
+}
+
+const FORM_PLUGINS = new Set(["gravityforms", "jetpack"]);
+const FIELD_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+const PAGE_SLUG = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
+const MAX_FORM_FIELDS = 100;
+const isText = (v: unknown): v is string => typeof v === "string";
+
+function checkFormField(f: unknown): boolean {
+	return (
+		isObject(f) &&
+		(f.name === undefined || (isText(f.name) && FIELD_NAME.test(f.name))) &&
+		isText(f.label) &&
+		f.label.length <= 500 &&
+		isText(f.type) &&
+		(WP_SHELL_FORM_TYPES as readonly string[]).includes(f.type) &&
+		typeof f.required === "boolean" &&
+		(f.help === undefined || (isText(f.help) && f.help.length <= 2000)) &&
+		(f.options === undefined || isIndex(f.options, 101))
+	);
+}
+
+/** Why a form's skin is not one this layout draws, or null. */
+function checkForm(f: unknown): string | null {
+	if (!isObject(f)) return "a form is not an object";
+	if (!isText(f.plugin) || !FORM_PLUGINS.has(f.plugin))
+		return "a form's plugin is not one this layout draws";
+	const { fields, parts } = f;
+	if (
+		!Array.isArray(fields) ||
+		fields.length === 0 ||
+		fields.length > MAX_FORM_FIELDS ||
+		!fields.every(checkFormField)
+	)
+		return "a form's fields are malformed";
+	if (!Array.isArray(parts)) return "a form has no parts";
+	const count: Record<string, number> = {};
+	let depth = 0;
+	for (const [i, x] of parts.entries()) {
+		if (isText(x)) continue;
+		if (!isObject(x) || !isText(x.s) || !(x.s in FORM_FILL))
+			return "a form's hole is not one this layout fills";
+		count[x.s] = (count[x.s] ?? 0) + 1;
+		if (!optionalToken(x.class)) return "a form's classes are not tokens";
+		if (x.field !== undefined && !isIndex(x.field, fields.length))
+			return "a form's hole names no field";
+		const field: unknown = typeof x.field === "number" ? fields[x.field] : undefined;
+		const options = isObject(field) && typeof field.options === "number" ? field.options : 1;
+		if (x.option !== undefined && !isIndex(x.option, options))
+			return "a form's hole names no choice";
+		if ((x.s === "control" || x.s === "error") && x.field === undefined)
+			return "a form's hole names no field";
+		if (
+			(x.rows !== undefined && !isIndex(x.rows, 1000)) ||
+			(x.cols !== undefined && !isIndex(x.cols, 1000))
+		)
+			return "a form's text box size is not one";
+		if (x.s === "submit" && x.tag !== "button" && x.tag !== "input")
+			return "a form's submit control is not one";
+		if (x.s === "label") depth++;
+		if (x.s === "/label" && --depth < 0) return "a form's labels do not nest";
+		// Every hole sits between tags, never inside one.
+		const before = parts
+			.slice(0, i)
+			.map((y) => (isText(y) ? y : "X"))
+			.join("");
+		if (before.lastIndexOf("<") > before.lastIndexOf(">")) return "a form's hole is inside a tag";
+	}
+	if (count.form !== 1 || count["/form"] !== 1 || count.submit !== 1 || depth !== 0)
+		return "a form needs one form element and one submit control";
+	return null;
 }
 
 const countSlot = (parts: unknown[], slot: string) =>
@@ -593,6 +741,21 @@ export function wpShellProblem(value: unknown): string | null {
 			? checkLayout(value.home, menus.length, listings.length)
 			: "not an object";
 		if (why) return `the home layout: ${why}`;
+	}
+	const { pages = [], forms = [] } = value;
+	if (!Array.isArray(pages)) return "the pages are not a list";
+	const slugs = new Set<string>();
+	for (const pg of pages) {
+		if (!isObject(pg) || !isText(pg.slug) || !PAGE_SLUG.test(pg.slug) || slugs.has(pg.slug))
+			return "a page layout names no page";
+		slugs.add(pg.slug);
+		const why = checkLayout(pg, menus.length, listings.length);
+		if (why) return `the ${pg.slug} page layout: ${why}`;
+	}
+	if (!Array.isArray(forms)) return "the forms are not a list";
+	for (const f of forms) {
+		const why = checkForm(f);
+		if (why) return why;
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
 	const shell = value as unknown as WpShell;
@@ -884,8 +1047,6 @@ export function renderListing(listing: WpShellListing, posts: readonly WpShellPo
 		.join("");
 }
 
-const isText = (v: unknown): v is string => typeof v === "string";
-
 /** Portable Text as plain text: each text block's spans, a blank line between blocks. */
 export function plainText(blocks: unknown): string {
 	if (!Array.isArray(blocks)) return "";
@@ -919,6 +1080,193 @@ export function ownImagePath(image: unknown): string | null {
 	return path && ownFile(path) && MEDIA_SRC.test(path) ? path : null;
 }
 
+// --- a form in its plugin's markup ---------------------------------------------
+
+/** An EmDash form field, as the forms plugin's public definition gives it. */
+export interface WpShellFormDefinitionField {
+	type: string;
+	name: string;
+	label: string;
+	required: boolean;
+	placeholder?: string;
+	helpText?: string;
+	defaultValue?: string;
+	options?: Array<{ label: string; value: string }>;
+	validation?: {
+		minLength?: number;
+		maxLength?: number;
+		min?: number;
+		max?: number;
+		pattern?: string;
+	};
+	condition?: unknown;
+}
+
+/** An EmDash form, as the forms plugin's public definition gives it (loadPublicFormDefinition). */
+export interface WpShellFormDefinition {
+	pages: Array<{ fields: WpShellFormDefinitionField[] }>;
+	settings: { spamProtection: string; submitLabel: string };
+	_turnstileSiteKey?: string | null;
+}
+
+/** A skin, and the EmDash field each of its fields is. */
+export interface WpShellFormMatch {
+	form: WpShellForm;
+	fields: WpShellFormDefinitionField[];
+}
+
+const squeezed = (s: string | undefined) => (s ?? "").replace(WHITESPACE_RUN, " ").trim();
+const WHITESPACE_RUN = /\s+/g;
+
+/**
+ * The skin an EmDash form is drawn in: the site's form whose fields are this
+ * form's, as the importer made them (the same names or labels, types, labels,
+ * required fields, help texts and choices). Null for any other form, one of
+ * several pages, with a condition, a file or a hidden field of its own, or one
+ * an admin has changed: it is drawn in EmDash's own markup, and the change
+ * shows.
+ */
+export function formSkin(shell: WpShell, def: WpShellFormDefinition): WpShellFormMatch | null {
+	if (def.pages.length !== 1) return null;
+	const fields = def.pages[0]?.fields ?? [];
+	if (fields.some((f) => f.condition !== undefined || f.type === "file")) return null;
+	const shown = fields.filter((f) => f.type !== "hidden");
+	for (const form of shell.forms ?? []) {
+		if (form.fields.length !== shown.length) continue;
+		const used = new Set<WpShellFormDefinitionField>();
+		const matched = form.fields.map((sf) => {
+			const f = shown.find(
+				(x) =>
+					!used.has(x) && (sf.name ? x.name === sf.name : squeezed(x.label) === squeezed(sf.label)),
+			);
+			if (!f) return null;
+			used.add(f);
+			const same =
+				f.type === sf.type &&
+				squeezed(f.label) === squeezed(sf.label) &&
+				f.required === sf.required &&
+				squeezed(f.helpText) === squeezed(sf.help) &&
+				(sf.options === undefined || (f.options?.length ?? 0) === sf.options);
+			return same ? f : null;
+		});
+		const fields = matched.filter((f) => f !== null);
+		if (fields.length === matched.length) return { form, fields };
+	}
+	return null;
+}
+
+const attr = (name: string, value: string | number | boolean | undefined) =>
+	value === undefined || value === false
+		? ""
+		: value === true
+			? ` ${name}`
+			: ` ${name}="${escapeAttr(String(value))}"`;
+
+/** A field's control, as the forms plugin's FormEmbed draws it, with the skin's classes. */
+function formControl(
+	f: WpShellFormDefinitionField,
+	hole: Extract<WpShellFormHole, { s: "control" }>,
+	id: string,
+): string {
+	const cls = attr("class", hole.class);
+	const v = f.validation ?? {};
+	if (f.type === "textarea") {
+		return `<textarea${cls}${attr("id", id)}${attr("name", f.name)}${attr("placeholder", f.placeholder)}${attr("required", f.required)}${attr("minlength", v.minLength)}${attr("maxlength", v.maxLength)}${attr("rows", hole.rows)}${attr("cols", hole.cols)}>${escapeHtml(f.defaultValue ?? "")}</textarea>`;
+	}
+	if (f.type === "select") {
+		const options = f.options ?? [];
+		const chosen = options.some((o) => o.value === f.defaultValue);
+		const prompt = f.placeholder
+			? `<option value=""${attr("disabled", true)}${attr("selected", !chosen)}>${escapeHtml(f.placeholder)}</option>`
+			: "";
+		const list = options
+			.map(
+				(o) =>
+					`<option${attr("value", o.value)}${attr("selected", o.value === f.defaultValue)}>${escapeHtml(o.label)}</option>`,
+			)
+			.join("");
+		return `<select${cls}${attr("id", id)}${attr("name", f.name)}${attr("required", f.required)}>${prompt}${list}</select>`;
+	}
+	if (f.type === "checkbox") {
+		return `<input type="checkbox"${cls}${attr("id", id)}${attr("name", f.name)}${attr("value", f.defaultValue || "1")}${attr("required", f.required)}>`;
+	}
+	if (f.type === "radio" || f.type === "checkbox-group") {
+		const o = f.options?.[hole.option ?? 0];
+		const type = f.type === "radio" ? "radio" : "checkbox";
+		return `<input type="${type}"${cls}${attr("id", id)}${attr("name", f.name)}${attr("value", o?.value ?? "")}${attr("checked", f.type === "radio" && o !== undefined && o.value === f.defaultValue)}${attr("required", f.type === "radio" && f.required)}>`;
+	}
+	return `<input${attr("type", f.type)}${cls}${attr("id", id)}${attr("name", f.name)}${attr("placeholder", f.placeholder)}${attr("required", f.required)}${attr("minlength", v.minLength)}${attr("maxlength", v.maxLength)}${attr("min", v.min)}${attr("max", v.max)}${attr("pattern", v.pattern)}${attr("value", f.defaultValue)}>`;
+}
+
+/**
+ * An EmDash form drawn in its site's plugin's markup (formSkin): the skin's
+ * captured markup, and in its holes the form as the forms plugin's FormEmbed
+ * draws it: the same element, action, input names and values, validation,
+ * spam checks (the honeypot, Turnstile), hidden fields and status line, so
+ * what it submits and where is EmDash's. Every value is escaped here.
+ */
+export function renderWpShellForm(
+	match: WpShellFormMatch,
+	def: WpShellFormDefinition,
+	o: { formId: string; submitUrl: string },
+): string {
+	const { form, fields } = match;
+	// A choice's control has an id of its own; a field of one control, the field's (FormEmbed's).
+	const idOf = (field: number, option?: number) =>
+		`${o.formId}-${fields[field]?.name ?? ""}${form.fields[field]?.options === undefined ? "" : `-${option ?? 0}`}`;
+	const errorLine = (f: WpShellFormDefinitionField) =>
+		`<output class="ec-form-error"${attr("data-error-for", f.name)} aria-live="polite"></output>`;
+	const placed = new Set(
+		form.parts.flatMap((x) => (typeof x !== "string" && x.s === "error" ? [x.field] : [])),
+	);
+	let out = "";
+	for (const x of form.parts) {
+		if (typeof x === "string") {
+			out += x;
+			continue;
+		}
+		if (x.s === "error") {
+			const f = fields[x.field];
+			if (f) out += errorLine(f);
+		} else if (x.s === "form") {
+			out += `<form${attr("class", x.class)} method="POST"${attr("action", o.submitUrl)}${attr("data-form-id", o.formId)} data-ec-form${attr("data-ec-skin", form.plugin)}><div data-page="0" style="display:contents">`;
+		} else if (x.s === "/form") {
+			const spam = def.settings.spamProtection;
+			const hp = `${o.formId}-_hp`;
+			out += "</div>";
+			if (spam === "honeypot")
+				out += `<div class="ec-form-field" style="position:absolute;left:-9999px;" aria-hidden="true"><label${attr("for", hp)}>Leave blank</label><input type="text"${attr("id", hp)} name="_hp" tabindex="-1" autocomplete="off"></div>`;
+			if (spam === "turnstile" && def._turnstileSiteKey)
+				out += `<div class="ec-form-turnstile" data-ec-turnstile${attr("data-sitekey", def._turnstileSiteKey)}></div>`;
+			for (const h of def.pages[0]?.fields.filter((f) => f.type === "hidden") ?? [])
+				out += `<input type="hidden"${attr("name", h.name)}${attr("value", h.defaultValue)}>`;
+			out += `<input type="hidden" name="formId"${attr("value", o.formId)}><div class="ec-form-status" data-form-status aria-live="polite"></div></form>`;
+		} else if (x.s === "control") {
+			const f = fields[x.field];
+			if (!f) continue;
+			out += formControl(f, x, idOf(x.field, x.option));
+			// The field's error line, where the forms plugin's client writes a message: where the skin
+			// puts it, else after its last control. An <output>: a plugin's rules for the spans of its
+			// fields (Gravity Forms' complex fields draw every span a block) would draw an empty span.
+			const choices = form.fields[x.field]?.options;
+			if (!placed.has(x.field) && (choices === undefined || (x.option ?? 0) === choices - 1))
+				out += errorLine(f);
+		} else if (x.s === "label") {
+			out += `<label${x.field === undefined ? "" : attr("for", idOf(x.field, x.option))}${attr("class", x.class)}>`;
+		} else if (x.s === "/label") {
+			out += "</label>";
+		} else {
+			const label = def.settings.submitLabel || "Submit";
+			const cls = [x.class, "ec-form-submit"].filter(Boolean).join(" ");
+			out +=
+				x.tag === "input"
+					? `<input type="submit"${attr("class", cls)}${attr("value", label)}>`
+					: `<button type="submit"${attr("class", cls)}>${escapeHtml(label)}</button>`;
+		}
+	}
+	return out;
+}
+
 /** What the layout draws: markup, or the element that holds the title or the content. */
 export type WpShellPiece =
 	| { html: string }
@@ -938,15 +1286,19 @@ export interface WpShellFill {
 	currentPath: string;
 	/** What kind of page is drawn: the home draws the record's home layout when it has one. */
 	kind?: WpShellKind;
+	/** The page's slug: a page cut on its own draws its own layout. */
+	slug?: string | null;
 	/** The entry's title, for the chrome that prints it as text (titleText). */
 	title?: string;
 	/** The site's latest posts, newest first, for a listing slot. */
 	posts?: readonly WpShellPost[] | null;
 }
 
-/** The layout a kind of page is drawn with. */
-export function layoutFor(shell: WpShell, kind: WpShellKind): WpShellLayout {
-	return kind === "home" && shell.home ? shell.home : shell;
+/** The layout a kind of page is drawn with: a page of a slug cut on its own draws its own. */
+export function layoutFor(shell: WpShell, kind: WpShellKind, slug?: string | null): WpShellLayout {
+	if (kind === "home" && shell.home) return shell.home;
+	const own = kind === "page" && slug ? shell.pages?.find((p) => p.slug === slug) : undefined;
+	return own ?? shell;
 }
 
 const element = (p: WpShellElement): WpShellElement => ({
@@ -981,7 +1333,7 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		if (last && "html" in last) last.html += html;
 		else out.push({ html });
 	};
-	for (const p of layoutFor(shell, fill.kind ?? "page").parts) {
+	for (const p of layoutFor(shell, fill.kind ?? "page", fill.slug).parts) {
 		if ("html" in p) push(p.html);
 		else if (p.slot === "titleText") push(escapeHtml(fill.title ?? ""));
 		else if (p.slot === "title") out.push({ title: element(p) });
@@ -1013,9 +1365,10 @@ const KIND_CLASSES: Record<WpShellKind, readonly string[]> = {
 const ANY_KIND = new Set(Object.values(KIND_CLASSES).flat());
 const WHITESPACE = /\s+/;
 
-export function bodyClassFor(shell: WpShell, kind: WpShellKind): string {
-	// The home layout was cut from the front page: its classes are the front page's own.
-	if (kind === "home" && shell.home) return shell.home.body.class;
+export function bodyClassFor(shell: WpShell, kind: WpShellKind, slug?: string | null): string {
+	// The home layout was cut from the front page, a page layout from its page: their classes are their own.
+	const own = layoutFor(shell, kind, slug);
+	if (own !== shell) return own.body.class;
 	const kept = shell.body.class.split(WHITESPACE).filter((c) => c !== "" && !ANY_KIND.has(c));
 	return [...KIND_CLASSES[kind], ...kept].join(" ");
 }

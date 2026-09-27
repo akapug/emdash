@@ -4,6 +4,7 @@ import {
 	bodyClassFor,
 	composeWpShell,
 	formatWpDate,
+	formSkin,
 	isCurrent,
 	layoutFor,
 	listingExcerpt,
@@ -13,13 +14,17 @@ import {
 	plainText,
 	renderListing,
 	renderMenu,
+	renderWpShellForm,
 	safeHref,
 	wpShellDocumentTitle,
 	wpShellProblem,
 	wpShellRoute,
 	type WpShell,
+	type WpShellForm,
+	type WpShellFormDefinition,
 	type WpShellListing,
 	type WpShellMenu,
+	type WpShellPageLayout,
 	type WpShellPost,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
 import writerRecords from "./wp-shell-writer-records.json";
@@ -805,3 +810,457 @@ describe("the tripwire reads the writer's form", () => {
 		});
 	}
 });
+
+/** A page cut on its own, as Embark's writer cuts one: a contact page on a single-column template. */
+function contactOf(): WpShellPageLayout {
+	return {
+		slug: "contact",
+		body: { class: "page-template-template-full-width page page-id-9" },
+		styles: ["/_emdash/api/media/file/wp-shell/contact1.css"],
+		parts: [
+			{ html: '<header id="site-header"><nav><ul class="primary-menu">' },
+			{ slot: "menu", menu: 0 },
+			{ html: '</ul></nav></header><main class="one-column">' },
+			{ slot: "title", tag: "h1", class: "entry-title" },
+			{ slot: "content", tag: "div", class: "entry-content" },
+			{ html: "</main><footer></footer>" },
+		],
+	};
+}
+
+describe("wp-shell: a page cut on its own, for the EmDash page of its slug", () => {
+	const html = (s: WpShell, kind: "page" | "post", slug: string | null) =>
+		composeWpShell(s, { menuItems: () => null, currentPath: "/pages/x", kind, slug })
+			.flatMap((p) => ("html" in p ? [p.html] : []))
+			.join("");
+
+	it("draws that page in its own layout, classes and stylesheets, and every other page in the record's", () => {
+		const s = { ...sample(), pages: [contactOf()] };
+		expect(wpShellProblem(s)).toBeNull();
+		expect(layoutFor(s, "page", "contact").styles).toEqual([
+			"/_emdash/api/media/file/wp-shell/contact1.css",
+		]);
+		expect(bodyClassFor(s, "page", "contact")).toBe(
+			"page-template-template-full-width page page-id-9",
+		);
+		expect(html(s, "page", "contact")).toContain('<main class="one-column">');
+		// another page, a page with no slug, and a post of that slug wear the record's layout
+		for (const [kind, slug] of [
+			["page", "about"],
+			["page", null],
+			["post", "contact"],
+		] as const) {
+			expect(layoutFor(s, kind, slug), `${kind} ${slug}`).toBe(s);
+			expect(html(s, kind, slug)).toContain('<div class="post-inner thin">');
+			expect(html(s, kind, slug)).not.toContain("one-column");
+		}
+		expect(bodyClassFor(s, "page", "about")).toBe(bodyClassFor(sample(), "page"));
+	});
+
+	const refused: Array<[string, unknown]> = [
+		["pages that are not a list", { ...sample(), pages: { contact: contactOf() } }],
+		["a page layout that is not an object", { ...sample(), pages: ["contact"] }],
+		["a page with no slug", { ...sample(), pages: [{ ...contactOf(), slug: undefined }] }],
+		["a slug that is a path", { ...sample(), pages: [{ ...contactOf(), slug: "../admin" }] }],
+		["a slug with a space", { ...sample(), pages: [{ ...contactOf(), slug: "a b" }] }],
+		[
+			"a slug past 128 letters",
+			{ ...sample(), pages: [{ ...contactOf(), slug: "a".repeat(129) }] },
+		],
+		["two pages of one slug", { ...sample(), pages: [contactOf(), contactOf()] }],
+		[
+			"a script in a page layout",
+			{
+				...sample(),
+				pages: [{ ...contactOf(), parts: [{ html: "<script>x</script>" }, ...contactOf().parts] }],
+			},
+		],
+		[
+			"a page stylesheet on another host",
+			{ ...sample(), pages: [{ ...contactOf(), styles: ["https://old-host.example/c.css"] }] },
+		],
+		[
+			"a page layout with no content slot",
+			{
+				...sample(),
+				pages: [
+					{
+						...contactOf(),
+						parts: contactOf().parts.filter((p) => !("slot" in p) || p.slot !== "content"),
+					},
+				],
+			},
+		],
+		[
+			"a page body class that leaves its attribute",
+			{ ...sample(), pages: [{ ...contactOf(), body: { class: 'x" onload="y' } }] },
+		],
+	];
+	for (const [what, record] of refused) {
+		it(`refuses ${what}`, () => {
+			expect(wpShellProblem(record)).not.toBeNull();
+		});
+	}
+});
+
+/** A Gravity Forms form as Embark's writer cuts it: the plugin's markup, with holes for EmDash's form. */
+function gfSkin(): WpShellForm {
+	return {
+		plugin: "gravityforms",
+		fields: [
+			{ name: "input_2_3", label: "Your Name: First", type: "text", required: true },
+			{
+				name: "input_1",
+				label: "Your Email",
+				type: "email",
+				required: true,
+				help: "We write rarely.",
+			},
+			{ name: "input_6", label: "Keep me up to date", type: "checkbox", required: false },
+			{ name: "input_4", label: "Size", type: "select", required: false },
+			{ name: "input_5", label: "Colour", type: "radio", required: true, options: 2 },
+			{ name: "input_3", label: "Comments?", type: "textarea", required: false },
+		],
+		parts: [
+			'<div class="gform_wrapper" id="gform_wrapper_2">',
+			{ s: "form" },
+			'<ul class="gform_fields"><li class="gfield">',
+			{ s: "label", class: "gfield_label" },
+			'Your Name<span class="gfield_required">*</span>',
+			{ s: "/label" },
+			'<span class="name_first">',
+			{ s: "control", field: 0 },
+			{ s: "label", field: 0, option: 0 },
+			"First",
+			{ s: "/label" },
+			"</span>",
+			{ s: "error", field: 0 },
+			'</li><li class="gfield">',
+			{ s: "label", field: 1, class: "gfield_label" },
+			"Your Email",
+			{ s: "/label" },
+			'<div class="ginput_container">',
+			{ s: "control", field: 1, class: "large" },
+			'</div><div class="gfield_description">We write rarely.</div></li><li class="gfield"><ul class="gfield_checkbox"><li>',
+			{ s: "control", field: 2 },
+			{ s: "label", field: 2, option: 0 },
+			"Keep me up to date",
+			{ s: "/label" },
+			'</li></ul></li><li class="gfield">',
+			{ s: "control", field: 3, class: "medium gfield_select" },
+			'</li><li class="gfield">',
+			{ s: "control", field: 4, option: 0 },
+			{ s: "label", field: 4, option: 0 },
+			"Red",
+			{ s: "/label" },
+			{ s: "control", field: 4, option: 1 },
+			{ s: "label", field: 4, option: 1 },
+			"Blue",
+			{ s: "/label" },
+			'</li><li class="gfield">',
+			{ s: "control", field: 5, class: "textarea medium", rows: 10, cols: 50 },
+			'</li></ul><div class="gform_footer">',
+			{ s: "submit", tag: "input", class: "gform_button button" },
+			"</div>",
+			{ s: "/form" },
+			"</div>",
+		],
+	};
+}
+
+/** The EmDash form the importer made of it, as the forms plugin's public definition gives it. */
+function gfDefinition(): WpShellFormDefinition {
+	return {
+		pages: [
+			{
+				fields: [
+					{ type: "text", name: "input_2_3", label: "Your Name: First", required: true },
+					{
+						type: "email",
+						name: "input_1",
+						label: "Your  Email",
+						required: true,
+						helpText: "We write rarely.",
+					},
+					{ type: "checkbox", name: "input_6", label: "Keep me up to date", required: false },
+					{
+						type: "select",
+						name: "input_4",
+						label: "Size",
+						required: false,
+						placeholder: "Pick one",
+						options: [
+							{ label: "S", value: "S" },
+							{ label: "M & L", value: 'M"L' },
+						],
+					},
+					{
+						type: "radio",
+						name: "input_5",
+						label: "Colour",
+						required: true,
+						defaultValue: "blue",
+						options: [
+							{ label: "Red", value: "red" },
+							{ label: "Blue", value: "blue" },
+						],
+					},
+					{
+						type: "textarea",
+						name: "input_3",
+						label: "Comments?",
+						required: false,
+						validation: { maxLength: 1000 },
+					},
+					{
+						type: "hidden",
+						name: "source",
+						label: "Source",
+						required: false,
+						defaultValue: "wp&co",
+					},
+				],
+			},
+		],
+		settings: { spamProtection: "honeypot", submitLabel: 'Get in "touch"!' },
+	};
+}
+
+const SUBMIT = "/_emdash/api/plugins/emdash-forms/submit";
+
+describe("wp-shell: a form in its plugin's markup, for the EmDash form imported from it", () => {
+	it("matches the skin to the EmDash form whose fields are its own, in the skin's order", () => {
+		const s = { ...sample(), forms: [gfSkin()] };
+		expect(wpShellProblem(s)).toBeNull();
+		const match = formSkin(s, gfDefinition());
+		expect(match?.form).toBe(s.forms[0]);
+		expect(match?.fields.map((f) => f.name)).toEqual([
+			"input_2_3",
+			"input_1",
+			"input_6",
+			"input_4",
+			"input_5",
+			"input_3",
+		]);
+		// a Jetpack skin names no fields: they are matched by label
+		const byLabel = {
+			...gfSkin(),
+			plugin: "jetpack" as const,
+			fields: gfSkin().fields.map(({ name: _name, ...f }) => f),
+		};
+		expect(formSkin({ ...sample(), forms: [byLabel] }, gfDefinition())?.form).toBe(byLabel);
+	});
+
+	it("draws in EmDash's own markup a form an admin has changed, or one the skin cannot hold", () => {
+		const s = { ...sample(), forms: [gfSkin()] };
+		const changed = (change: (d: WpShellFormDefinition) => void) => {
+			const d = gfDefinition();
+			change(d);
+			return formSkin(s, d);
+		};
+		const fields = (d: WpShellFormDefinition) => d.pages[0]!.fields;
+		for (const [what, change] of [
+			["a label", (d) => void (fields(d)[0]!.label = "Given name")],
+			["a field made required", (d) => void (fields(d)[2]!.required = true)],
+			["a help text", (d) => void (fields(d)[1]!.helpText = "Or not.")],
+			["a type", (d) => void (fields(d)[1]!.type = "text")],
+			["a name", (d) => void (fields(d)[1]!.name = "email")],
+			[
+				"a choice added",
+				(d) => void fields(d)[4]!.options!.push({ label: "Green", value: "green" }),
+			],
+			[
+				"a field added",
+				(d) =>
+					void fields(d).push({ type: "text", name: "extra", label: "Extra", required: false }),
+			],
+			["a field taken away", (d) => void fields(d).splice(5, 1)],
+			["a second page", (d) => void d.pages.push({ fields: [] })],
+			["a condition", (d) => void (fields(d)[5]!.condition = { field: "input_6", equals: "1" })],
+			[
+				"a file field",
+				(d) => void fields(d).push({ type: "file", name: "cv", label: "CV", required: false }),
+			],
+		] as Array<[string, (d: WpShellFormDefinition) => void]>)
+			expect(changed(change), what).toBeNull();
+		// and a record with no skins draws every form as EmDash's
+		expect(formSkin(sample(), gfDefinition())).toBeNull();
+	});
+
+	it("draws the EmDash form in the skin: its element, action, names, validation, spam check and status line", () => {
+		const def = gfDefinition();
+		const match = formSkin({ ...sample(), forms: [gfSkin()] }, def)!;
+		const html = renderWpShellForm(match, def, { formId: "01FORM", submitUrl: SUBMIT });
+		expect(html).toBe(
+			[
+				'<div class="gform_wrapper" id="gform_wrapper_2">',
+				`<form method="POST" action="${SUBMIT}" data-form-id="01FORM" data-ec-form data-ec-skin="gravityforms"><div data-page="0" style="display:contents">`,
+				'<ul class="gform_fields"><li class="gfield">',
+				'<label class="gfield_label">Your Name<span class="gfield_required">*</span></label>',
+				'<span class="name_first"><input type="text" id="01FORM-input_2_3" name="input_2_3" required><label for="01FORM-input_2_3">First</label></span>',
+				// the field's error line where the skin puts it, not after its control
+				'<output class="ec-form-error" data-error-for="input_2_3" aria-live="polite"></output>',
+				'</li><li class="gfield"><label for="01FORM-input_1" class="gfield_label">Your Email</label>',
+				'<div class="ginput_container"><input type="email" class="large" id="01FORM-input_1" name="input_1" required>',
+				'<output class="ec-form-error" data-error-for="input_1" aria-live="polite"></output>',
+				'</div><div class="gfield_description">We write rarely.</div></li><li class="gfield"><ul class="gfield_checkbox"><li>',
+				'<input type="checkbox" id="01FORM-input_6" name="input_6" value="1">',
+				'<output class="ec-form-error" data-error-for="input_6" aria-live="polite"></output>',
+				'<label for="01FORM-input_6">Keep me up to date</label></li></ul></li><li class="gfield">',
+				'<select class="medium gfield_select" id="01FORM-input_4" name="input_4"><option value="" disabled selected>Pick one</option><option value="S">S</option><option value="M&quot;L">M &amp; L</option></select>',
+				'<output class="ec-form-error" data-error-for="input_4" aria-live="polite"></output>',
+				'</li><li class="gfield">',
+				'<input type="radio" id="01FORM-input_5-0" name="input_5" value="red" required><label for="01FORM-input_5-0">Red</label>',
+				// one error line for the choices, after the last
+				'<input type="radio" id="01FORM-input_5-1" name="input_5" value="blue" checked required>',
+				'<output class="ec-form-error" data-error-for="input_5" aria-live="polite"></output>',
+				'<label for="01FORM-input_5-1">Blue</label>',
+				'</li><li class="gfield">',
+				'<textarea class="textarea medium" id="01FORM-input_3" name="input_3" maxlength="1000" rows="10" cols="50"></textarea>',
+				'<output class="ec-form-error" data-error-for="input_3" aria-live="polite"></output>',
+				'</li></ul><div class="gform_footer"><input type="submit" class="gform_button button ec-form-submit" value="Get in &quot;touch&quot;!"></div>',
+				"</div>",
+				// the honeypot, the form's hidden fields, its id and its status line, as FormEmbed draws them
+				'<div class="ec-form-field" style="position:absolute;left:-9999px;" aria-hidden="true"><label for="01FORM-_hp">Leave blank</label><input type="text" id="01FORM-_hp" name="_hp" tabindex="-1" autocomplete="off"></div>',
+				'<input type="hidden" name="source" value="wp&amp;co">',
+				'<input type="hidden" name="formId" value="01FORM"><div class="ec-form-status" data-form-status aria-live="polite"></div></form>',
+				"</div>",
+			].join(""),
+		);
+	});
+
+	it("draws Turnstile where the form asks for it, a button where the skin has one, and escapes every value", () => {
+		const def = gfDefinition();
+		def.settings = { spamProtection: "turnstile", submitLabel: "<b>Send</b>" };
+		def._turnstileSiteKey = 'key"1';
+		fieldsOf(def)[5]!.defaultValue = "</textarea><script>x</script>";
+		fieldsOf(def)[1]!.placeholder = 'you@"example".org';
+		const skin = gfSkin();
+		skin.parts = skin.parts.map((x) =>
+			typeof x !== "string" && x.s === "submit"
+				? { s: "submit", tag: "button", class: "gform_button" }
+				: x,
+		);
+		const html = renderWpShellForm(formSkin({ ...sample(), forms: [skin] }, def)!, def, {
+			formId: 'F"1',
+			submitUrl: SUBMIT,
+		});
+		expect(html).toContain(
+			'<div class="ec-form-turnstile" data-ec-turnstile data-sitekey="key&quot;1"></div>',
+		);
+		expect(html).not.toContain('name="_hp"');
+		expect(html).toContain(
+			'<button type="submit" class="gform_button ec-form-submit">&lt;b&gt;Send&lt;/b&gt;</button>',
+		);
+		expect(html).toContain("&lt;/textarea&gt;&lt;script&gt;x&lt;/script&gt;</textarea>");
+		expect(html).toContain('placeholder="you@&quot;example&quot;.org"');
+		expect(html).toContain('data-form-id="F&quot;1"');
+		expect(html).not.toMatch(/<script|<b>/);
+		// Turnstile with no site key draws no widget, as FormEmbed does not
+		def._turnstileSiteKey = null;
+		expect(
+			renderWpShellForm(formSkin({ ...sample(), forms: [skin] }, def)!, def, {
+				formId: "F",
+				submitUrl: SUBMIT,
+			}),
+		).not.toContain("turnstile");
+	});
+
+	/** The sample record with the skin changed. */
+	const skinned = (change: (f: Record<string, unknown>) => void): unknown => {
+		const f = gfSkin() as unknown as Record<string, unknown>;
+		change(f);
+		return { ...sample(), forms: [f] };
+	};
+	const parts = (f: Record<string, unknown>) => f.parts as unknown[];
+	const refused: Array<[string, unknown]> = [
+		["forms that are not a list", { ...sample(), forms: gfSkin() }],
+		["a form of another plugin", skinned((f) => void (f.plugin = "wpforms"))],
+		["a form with no fields", skinned((f) => void (f.fields = []))],
+		[
+			"a field name that is not one",
+			skinned((f) => void ((f.fields as Array<Record<string, unknown>>)[0]!.name = 'a" b')),
+		],
+		[
+			"a field type the skin does not draw",
+			skinned((f) => void ((f.fields as Array<Record<string, unknown>>)[0]!.type = "file")),
+		],
+		[
+			"a field whose required is not a yes or no",
+			skinned((f) => void ((f.fields as Array<Record<string, unknown>>)[0]!.required = "yes")),
+		],
+		[
+			"a control in the captured markup",
+			skinned((f) => void parts(f).splice(2, 0, '<input name="x">')),
+		],
+		[
+			"a form element in the captured markup",
+			skinned((f) => void parts(f).splice(2, 0, '<form action="https://x.example/">')),
+		],
+		[
+			"an event handler in the captured markup",
+			skinned((f) => void parts(f).splice(2, 0, '<div onclick="x">')),
+		],
+		[
+			"a hole inside a tag",
+			skinned((f) => void parts(f).splice(2, 0, '<div class="', { s: "error", field: 0 }, '">')),
+		],
+		[
+			"a hole of a kind the layout does not fill",
+			skinned((f) => void parts(f).splice(2, 0, { s: "script" })),
+		],
+		[
+			"a control that names no field",
+			skinned((f) => void parts(f).splice(2, 0, { s: "control", field: 6 })),
+		],
+		[
+			"an error line that names no field",
+			skinned((f) => void parts(f).splice(2, 0, { s: "error" })),
+		],
+		[
+			"a choice past the field's",
+			skinned((f) => void parts(f).splice(2, 0, { s: "control", field: 4, option: 2 })),
+		],
+		[
+			"a class that is not tokens",
+			skinned(
+				(f) => void parts(f).splice(2, 0, { s: "control", field: 0, class: 'x" onclick="y' }),
+			),
+		],
+		[
+			"a text box past a thousand rows",
+			skinned((f) => void parts(f).splice(2, 0, { s: "control", field: 5, rows: 5000 })),
+		],
+		[
+			"a second submit control",
+			skinned((f) => void parts(f).splice(2, 0, { s: "submit", tag: "input" })),
+		],
+		[
+			"a submit control that is another element",
+			skinned((f) => void parts(f).splice(2, 0, { s: "submit", tag: "a" })),
+		],
+		[
+			"no form element",
+			skinned(
+				(f) =>
+					void (f.parts = parts(f).filter(
+						(x) => typeof x === "string" || (x as { s: string }).s !== "form",
+					)),
+			),
+		],
+		["a label left open", skinned((f) => void parts(f).splice(2, 0, { s: "label" }))],
+		[
+			"a label closed that was never opened",
+			skinned((f) => void parts(f).splice(2, 0, { s: "/label" })),
+		],
+	];
+	for (const [what, record] of refused) {
+		it(`refuses ${what}`, () => {
+			expect(wpShellProblem(record)).not.toBeNull();
+		});
+	}
+});
+
+const fieldsOf = (d: WpShellFormDefinition) => d.pages[0]!.fields;
+
+/** The listing, lai

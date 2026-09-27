@@ -85,6 +85,7 @@ const seo = getSeoMeta(entry, {
 	shell={shell}
 	kind={route.kind}
 	path={route.kind === "home" ? "/" : origin}
+	slug={route.kind === "page" ? entry.id : null}
 	title={seo.title}
 	seoTitle={getContentSeo(entry)?.title}
 	pageTitle={seo.ogTitle}

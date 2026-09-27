@@ -29,6 +29,7 @@ import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
 import WpShellBlock from "../components/WpShellBlock.astro";
 import WpShellImage from "../components/WpShellImage.astro";
+import WpShellForm from "../components/WpShellForm.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
 	bodyClassFor,
@@ -48,6 +49,8 @@ interface Props {
 	kind: WpShellKind;
 	/** The path the visitor asked for (before the rewrite). */
 	path: string;
+	/** A page's slug: a page the record cut on its own is drawn in its own layout. */
+	slug?: string | null;
 	title: string;
 	/** The entry's own SEO title, carried from WordPress: the document title, as written. */
 	seoTitle?: string | null;
@@ -68,6 +71,7 @@ const {
 	shell,
 	kind,
 	path,
+	slug,
 	title,
 	seoTitle,
 	pageTitle,
@@ -100,7 +104,7 @@ const menus = new Map<string, readonly WpShellMenuItem[] | null>(
 const siteTitle = settings.title ?? shell.parts.flatMap((p) => ("slot" in p && p.slot === "siteTitle" ? [p.fallback] : []))[0] ?? "";
 const fullTitle = wpShellDocumentTitle(title, siteTitle, seoTitle);
 
-const layout = layoutFor(shell, kind);
+const layout = layoutFor(shell, kind, slug);
 
 // The site's latest posts, where the layout lists them (the front page's highlights).
 const listed = Math.max(
@@ -130,12 +134,17 @@ const pieces = composeWpShell(shell, {
 	menuItems: (location) => menus.get(location),
 	currentPath: path,
 	kind,
+	slug,
 	title: entry.title,
 	posts,
 });
 
-// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image.
-const components = { block: WpShellBlock, type: { image: WpShellImage } };
+// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, and a
+// form imported from the site's form plugin, in that plugin's markup (EmDash's form, its submit path).
+const components = {
+	block: WpShellBlock,
+	type: { image: WpShellImage, "emdash-form": WpShellForm },
+};
 
 const pageCtx = createPublicPageContext({
 	url: new URL(path + Astro.url.search, Astro.url.origin),
@@ -169,7 +178,7 @@ const pageCtx = createPublicPageContext({
 		{/* The captured chrome carries no script by design: the site's analytics come from its setting. */}
 		<SiteAnalytics settings={settings} />
 	</head>
-	<body class={bodyClassFor(shell, kind)}>
+	<body class={bodyClassFor(shell, kind, slug)}>
 		<EmDashBodyStart page={pageCtx} />
 		{
 			pieces.map((piece) => {
