@@ -26,7 +26,10 @@ import {
 	type AuthMailTables,
 } from "./mediator.js";
 
-export { AUTH_MAIL_MARKER, AUTH_MAIL_PROTOCOL } from "./mediator.js";
+// Nothing else is exported: workerd reads every export of a Worker's main
+// module as an entrypoint, and refuses to start one whose export is not a
+// function or handler (measured 2026-09-27: "Incorrect type for map entry
+// 'AUTH_MAIL_MARKER'"). The marker and protocol come from ./auth-mail.
 
 /** The mediator's Worker entrypoint: the four operations and the status, as RPC methods. */
 export default class AuthMail extends WorkerEntrypoint<Record<string, unknown>> {

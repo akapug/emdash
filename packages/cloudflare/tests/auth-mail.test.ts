@@ -605,6 +605,12 @@ describe("the mediator's own configuration", () => {
 		expect(await m.status({ protocol: 9 })).toMatchObject({ status: "refused" });
 	});
 
+	it("exports its entrypoint and nothing else, since workerd starts no main module with an export that is not one", async () => {
+		const mod: Record<string, unknown> = await import("../src/auth-mail/worker.js");
+		expect(Object.keys(mod)).toEqual(["default"]);
+		expect(typeof mod.default).toBe("function");
+	});
+
 	it("is a Worker with no HTTP surface: fetch answers 404, and its RPC methods are the mediator's", async () => {
 		const worker = new AuthMail({ waitUntil: () => {} } as never, {} as never);
 		const r = worker.fetch();
