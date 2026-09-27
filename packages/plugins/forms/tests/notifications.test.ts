@@ -202,6 +202,46 @@ describe("a mail that fails to send", () => {
 		expect(JSON.stringify(log.error.mock.calls)).not.toContain("office@");
 	});
 
+	it("keeps no address in any letter case, quoted or in the error's cause", async () => {
+		const { ctx, send, log } = context(form([EMAIL]), { email: "visitor@example.net" });
+		send.mockImplementation(async () => {
+			throw new Error('E_RECIPIENT_NOT_ALLOWED: "Office@Example.ORG" is not allowed', {
+				cause: new Error("rejected <OFFICE@example.org>; reply-to Visitor@Example.net"),
+			});
+		});
+
+		await submitHandler(ctx as never);
+
+		expect(log.error).toHaveBeenCalledWith("Failed to send notification email", {
+			error:
+				'Error: E_RECIPIENT_NOT_ALLOWED: "<an address at example.org>" is not allowed [cause: Error: rejected <<an address at example.org>>; reply-to <an address at Example.net>]',
+			toDomain: "example.org",
+		});
+		expect(JSON.stringify(log.error.mock.calls).toLowerCase()).not.toMatch(/office@|visitor@/);
+	});
+
+	it("is logged with the visitor's domain, never the address, from the autoresponder", async () => {
+		const { ctx, send, log } = context(
+			form([EMAIL], {
+				notifyEmails: [],
+				autoresponder: { subject: "Thanks", body: "We got it" },
+			}),
+			{ email: "Visitor@Example.net" },
+		);
+		send.mockImplementation(async () => {
+			throw new Error("E_RECIPIENT_NOT_ALLOWED: visitor@example.NET is not allowed");
+		});
+
+		await submitHandler(ctx as never);
+
+		expect(send).toHaveBeenCalledOnce();
+		expect(log.error).toHaveBeenCalledWith("Failed to send autoresponder", {
+			error: "Error: E_RECIPIENT_NOT_ALLOWED: <an address at Example.net> is not allowed",
+			toDomain: "Example.net",
+		});
+		expect(JSON.stringify(log.error.mock.calls).toLowerCase()).not.toContain("visitor@");
+	});
+
 	it("is logged the same way from the daily digest", async () => {
 		const f = form([EMAIL], { digestEnabled: true });
 		const send = vi.fn(async () => refused());

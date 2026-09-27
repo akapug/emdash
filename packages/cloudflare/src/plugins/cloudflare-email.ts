@@ -38,7 +38,8 @@
  *   are over go in a daily cron task ({@link pruneBudgets}), a bounded number
  *   at a time, and never the current window's or the one before it.
  * - A log names a recipient's domain, never the address, and an error the
- *   binding throws has the address replaced by its domain.
+ *   binding throws has every address replaced by its domain, in any letter
+ *   case, in its message, its stack and its causes (EmDash's scrubAddresses).
  *
  * The sender's name is `from.name` when the config gives one, otherwise the
  * site's title.
@@ -75,7 +76,7 @@
  */
 
 import type { PluginContext, PluginDescriptor, ResolvedPlugin } from "emdash";
-import { definePlugin } from "emdash";
+import { definePlugin, redactAddresses, scrubAddresses } from "emdash";
 import type { EmailDeliverEvent } from "emdash/plugin";
 
 /**
@@ -153,8 +154,6 @@ const MAX_NAME = 78;
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 const WHITESPACE_RUN = /\s+/g;
-/** ASCII capitals, folded to find an address in an error's text whatever its case. */
-const ASCII_UPPER = /[A-Z]/g;
 /** A display name keeps no quote, angle bracket or backslash, so it cannot read as an address. */
 const NAME_SPECIALS = /["<>\\]/g;
 /**
@@ -500,8 +499,7 @@ export function createCloudflareEmailDeliver(
 		} catch (error) {
 			// Only a send Cloudflare accepts spends the budget.
 			await refundBudget(ctx.kv, budget.taken);
-			if (error instanceof Error) error.message = withoutAddresses(error.message, [to, ...cc]);
-			throw error;
+			throw scrubAddresses(error, [to, ...cc, ...(replyTo ? [replyTo] : [])]);
 		}
 
 		ctx.log.info("email delivered via Cloudflare Email Sending", {
@@ -514,23 +512,14 @@ export function createCloudflareEmailDeliver(
 	};
 }
 
-/** `text` with each of `addresses` (in any case) replaced by its domain: an error the binding throws may name its recipient, and it is logged. */
+/**
+ * `text` with each of `addresses` (in any case), and every other address in
+ * it, replaced by its domain: an error the binding throws may name its
+ * recipient, and it is logged. EmDash's redactAddresses, the one redaction the
+ * email pipeline and the forms plugin use too.
+ */
 export function withoutAddresses(text: string, addresses: readonly string[]): string {
-	// ASCII case only, so an index into the folded text is an index into the text.
-	const fold = (t: string) => t.replace(ASCII_UPPER, (c) => c.toLowerCase());
-	let out = text;
-	for (const address of addresses) {
-		const needle = fold(address);
-		const stand = `<an address at ${domainOf(address)}>`;
-		for (
-			let at = fold(out).indexOf(needle);
-			at !== -1;
-			at = fold(out).indexOf(needle, at + stand.length)
-		) {
-			out = out.slice(0, at) + stand + out.slice(at + address.length);
-		}
-	}
-	return out;
+	return redactAddresses(text, addresses);
 }
 
 /**

@@ -766,14 +766,37 @@ describe("what a log carries", () => {
 		});
 	});
 
+	it("an error the binding throws keeps no address in any case, quoted, in its stack or in its cause", async () => {
+		const { env } = fakeEnv(async () => {
+			throw new Error('E_RECIPIENT_NOT_ALLOWED: "USER@example.com"', {
+				cause: new Error("upstream: <User@Example.Com> refused, reply-to Visitor@Example.net"),
+			});
+		});
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "cms@mails.example.com" },
+			async () => env,
+		);
+
+		const error = (await deliver(
+			{ message: { ...message, replyTo: "visitor@example.net" }, source: "emdash-forms" },
+			fakeCtx(),
+		).catch((e: unknown) => e)) as Error & { cause: Error };
+
+		expect(error.message).toBe('E_RECIPIENT_NOT_ALLOWED: "<an address at example.com>"');
+		const told =
+			`${error.message}${error.stack}${error.cause.message}${error.cause.stack}`.toLowerCase();
+		expect(told).not.toMatch(/user@|visitor@/);
+	});
+
 	it("domainOf and withoutAddresses keep the domain and nothing of the local part", () => {
 		expect(domainOf("o'brien+forms@sub.example.org")).toBe("sub.example.org");
+		// The named address in any case, and every other address in the text too.
 		expect(
 			withoutAddresses("to A@x.example.org and a@x.example.org, not b@x.example.org", [
 				"a@x.example.org",
 			]),
 		).toBe(
-			"to <an address at x.example.org> and <an address at x.example.org>, not b@x.example.org",
+			"to <an address at x.example.org> and <an address at x.example.org>, not <an address at x.example.org>",
 		);
 		expect(withoutAddresses("İstanbul a@x.example.org", ["a@x.example.org"])).toBe(
 			"İstanbul <an address at x.example.org>",

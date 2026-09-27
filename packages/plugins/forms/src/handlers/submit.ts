@@ -309,7 +309,7 @@ export async function submitHandler(
 					text: settings.autoresponder.body,
 				})
 				.catch((err: unknown) => {
-					ctx.log.error("Failed to send autoresponder", { error: String(err) });
+					ctx.log.error("Failed to send autoresponder", sendFailure(err, submitterEmail));
 				});
 		}
 	}

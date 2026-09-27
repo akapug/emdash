@@ -574,6 +574,56 @@ describe("EmailPipeline", () => {
 		errorSpy.mockRestore();
 	});
 
+	it("redacts a provider error whole, in any letter case: its message, stack and cause, logged and thrown", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const deliverHandler: EmailDeliverHandler = async () => {
+			throw Object.assign(
+				new Error('rejected "Admin@Example.COM" (cc Team@Example.com)', {
+					cause: new Error(
+						"E_RECIPIENT_NOT_ALLOWED: ADMIN@EXAMPLE.COM, reply-to Visitor@Example.net",
+					),
+				}),
+				{ code: "E_RECIPIENT_NOT_ALLOWED" },
+			);
+		};
+		const provider = createTestPlugin({
+			id: "cloudflare-email",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("cloudflare-email", deliverHandler, { exclusive: true }),
+			},
+		});
+		const hookPipeline = new HookPipeline([provider], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "cloudflare-email");
+
+		const thrown = await new EmailPipeline(hookPipeline)
+			.send(
+				createTestMessage({
+					to: "admin@example.com",
+					cc: ["team@example.com"],
+					replyTo: "visitor@example.net",
+				}),
+				"forms",
+			)
+			.catch((e: unknown) => e as Error & { cause: Error; code: string });
+
+		expect(thrown.code).toBe("E_RECIPIENT_NOT_ALLOWED");
+		const logged = errorSpy.mock.calls
+			.flat()
+			.map((v) =>
+				v instanceof Error ? `${v.stack} ${String((v.cause as Error)?.stack)}` : String(v),
+			)
+			.join("\n");
+		const told = `${thrown.message} ${thrown.stack} ${thrown.cause.message} ${thrown.cause.stack} ${logged}`;
+		for (const local of ["admin@", "team@", "visitor@"])
+			expect(told.toLowerCase()).not.toContain(local);
+		expect(thrown.message).toBe(
+			'rejected "<an address at example.com>" (cc <an address at example.com>)',
+		);
+
+		errorSpy.mockRestore();
+	});
+
 	it("afterSend errors do not propagate to caller", async () => {
 		const deliverHandler: EmailDeliverHandler = async () => {};
 		const afterSendHandler: EmailAfterSendHandler = async () => {

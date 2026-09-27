@@ -16,6 +16,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { HookPipeline } from "./hooks.js";
+import { describeRedacted, scrubAddresses } from "./redact-addresses.js";
 import type { EmailDeliverEvent, EmailMessage } from "./types.js";
 
 /** Hook name for the exclusive email delivery hook */
@@ -31,6 +32,11 @@ const SYSTEM_SOURCE = "system";
  */
 function recipientDomain(address: string): string {
 	return address.slice(address.lastIndexOf("@") + 1);
+}
+
+/** Every address a message names, which an error about it may repeat. */
+function addressesOf(message: EmailMessage): string[] {
+	return [message.to, ...(message.cc ?? []), ...(message.replyTo ? [message.replyTo] : [])];
 }
 
 /**
@@ -206,12 +212,15 @@ export class EmailPipeline {
 		if (deliverResult.error) {
 			// The caller (e.g. auth routes) often swallows delivery errors to avoid
 			// leaking whether an email address exists. Log here so the failure and
-			// the responsible provider are always visible in runtime logs.
+			// the responsible provider are always visible in runtime logs. The
+			// error is redacted first, whole (message, stack, causes), in any
+			// letter case: it is logged here and by whoever catches it.
+			const error = scrubAddresses(deliverResult.error, addressesOf(finalMessage));
 			console.error(
 				`[email:deliver] Provider "${deliverResult.pluginId}" failed to send email to an address at ${recipientDomain(finalMessage.to)}:`,
-				deliverResult.error,
+				error,
 			);
-			throw deliverResult.error;
+			throw error;
 		}
 
 		// Stage 3: email:afterSend (fire-and-forget)
@@ -225,7 +234,7 @@ export class EmailPipeline {
 				.catch((err) =>
 					console.error(
 						"[email] afterSend pipeline error:",
-						err instanceof Error ? err.message : err,
+						describeRedacted(err, addressesOf(finalMessage)),
 					),
 				);
 		}
