@@ -1221,7 +1221,93 @@ describe("createCloudflareEmailStatus()", () => {
 				systemPerRecipient: 10,
 			},
 			accountBudget: null,
+			attestation: {
+				v: 1,
+				provider: "cloudflare-email",
+				capability: CLOUDFLARE_EMAIL_CAPABILITY,
+				guarantees: {
+					headersChecked: true,
+					siteBudget: true,
+					accountBudget: false,
+					cancellation: "reported",
+					redaction: "addresses",
+				},
+				accountBudget: null,
+			},
 		});
+	});
+
+	it("attests what the build enforces and, live, what the account's budget holds this site to, and never the token; it takes and refunds nothing", async () => {
+		const budget = fakeBudget();
+		const caps = { accountPerDay: 200, systemReserve: 50, tenantPerDay: 100, systemPerRecipient: 10 };
+		const report = vi.fn(async (req: { protocol: number; token: string }) =>
+			req.token === TOKEN
+				? { ok: true, protocol: 1, tenant: "acme", site: { used: 3, cap: 100 }, caps }
+				: { ok: false, protocol: 1, scope: "token", refused: "unknown" },
+		);
+		const service = { ...budget.service, report };
+		const status = createCloudflareEmailStatus(
+			{ from: "notify@mail.example.org", accountBudget: {} },
+			async () => ({ ...fakeEnv().env, MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: TOKEN }),
+		);
+		const answer = await status(fakeCtx());
+		expect(answer.attestation).toEqual({
+			v: 1,
+			provider: "cloudflare-email",
+			capability: CLOUDFLARE_EMAIL_CAPABILITY,
+			guarantees: {
+				headersChecked: true,
+				siteBudget: true,
+				accountBudget: true,
+				cancellation: "reported",
+				redaction: "addresses",
+			},
+			accountBudget: { protocol: 1, ready: true, live: { ok: true, limits: caps } },
+		});
+		expect(report).toHaveBeenCalledWith({ protocol: 1, token: TOKEN });
+		expect(budget.takes).toEqual([]);
+		expect(budget.refunds).toEqual([]);
+		expect(JSON.stringify(answer)).not.toContain(TOKEN);
+	});
+
+	it("attests the account's budget NOT live, and why, for every answer short of a report in its protocol with the limits", async () => {
+		const at = async (
+			report: unknown,
+			{ token = TOKEN, timeoutMs }: { token?: string; timeoutMs?: number } = {},
+		) => {
+			const service = { ...fakeBudget().service, ...(report === undefined ? {} : { report }) };
+			const status = createCloudflareEmailStatus(
+				{ from: "notify@mail.example.org", accountBudget: timeoutMs ? { timeoutMs } : {} },
+				async () => ({
+					...fakeEnv().env,
+					MAIL_BUDGET: service,
+					...(token ? { MAIL_BUDGET_TOKEN: token } : {}),
+				}),
+			);
+			return (await status(fakeCtx())).attestation.accountBudget;
+		};
+		const caps = { accountPerDay: 200, systemReserve: 50, tenantPerDay: 100, systemPerRecipient: 10 };
+		for (const [report, why, opts] of [
+			[undefined, /has no report/, {}],
+			[async () => ({ ok: false, protocol: 1, scope: "token", refused: "unknown or revoked" }), /refused this site's token \(unknown or revoked\)/, {}],
+			[async () => ({ ok: true, protocol: 2, caps }), /answered in protocol 2, not 1/, {}],
+			[async () => ({ ok: true, caps }), /answered in protocol null, not 1/, {}],
+			[async () => ({ ok: true, protocol: 1 }), /does not say the limits/, {}],
+			[async () => ({ ok: true, protocol: 1, caps: { ...caps, tenantPerDay: "100" } }), /does not say the limits/, {}],
+			[
+				async () => {
+					throw new Error("service unavailable for User@Example.com");
+				},
+				/could not be asked \(Error: service unavailable for <an address at Example\.com>\)/,
+				{},
+			],
+			[() => new Promise(() => {}), /did not answer within 20 ms/, { timeoutMs: 20 }],
+			[async () => ({ ok: true, protocol: 1, caps }), /no token: the secret "MAIL_BUDGET_TOKEN" is not set/, { token: "" }],
+		] as const) {
+			const live = await at(report, opts);
+			expect(live?.live, String(why)).toMatchObject({ ok: false, why: expect.stringMatching(why) });
+			expect(JSON.stringify(live).toLowerCase()).not.toContain("user@");
+		}
 	});
 
 	it("says whether the Worker has what the account budget needs, and never the token", async () => {

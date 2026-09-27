@@ -186,6 +186,8 @@ interface MailBudgetService {
 		recipients: string[];
 	}): Promise<unknown>;
 	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
+	/** Read-only: this tenant's day and the caps in force. Takes and refunds nothing. */
+	report?(request: { protocol: number; token: string }): Promise<unknown>;
 }
 
 /** How many recipients the site may reach (see {@link CloudflareEmailConfig.limits}). */
@@ -222,6 +224,14 @@ interface SendEmailBinding {
  */
 export const CLOUDFLARE_EMAIL_CAPABILITY =
 	"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1";
+
+/**
+ * The version of the provider's attestation (the status route's
+ * `attestation`): the machine-readable statement of what this build enforces
+ * and what the account's budget holds it to, which a deployment reads before
+ * it turns the site's email on. A change to its shape or meaning changes it.
+ */
+export const EMAIL_ATTESTATION_VERSION = 1;
 
 /** A subject longer than this is cut: Email Sending refuses a header value over 2,048 bytes. */
 const MAX_SUBJECT = 250;
@@ -793,6 +803,17 @@ export function withoutAddresses(text: string, addresses: readonly string[]): st
  * import report: the sender, whether the Worker has the binding, where
  * replies go when a message names nobody. It sends nothing.
  *
+ * `attestation` (EMAIL_ATTESTATION_VERSION) is what a deployment checks
+ * before it turns the site's email on: the provider and its capability
+ * marker, what this build guarantees (headers checked before the binding,
+ * the site's own budget, the account's budget, a cancelled send reported as
+ * cancelled, addresses redacted from what is logged), and, with
+ * `accountBudget`, the mail-budget protocol this provider speaks and the
+ * service's LIVE answer to this site's token: its report, read-only, which
+ * proves the service is there and knows the token, and says the limits it
+ * holds this site to. It never carries the token or a recipient, and takes
+ * and refunds nothing.
+ *
  * @internal
  */
 export function createCloudflareEmailStatus(
@@ -806,6 +827,7 @@ export function createCloudflareEmailStatus(
 		const env = await loadEnv().catch((): Record<string, unknown> => ({}));
 		const site = await siteReplyTo(ctx);
 		const budget = account ? accountBudgetIn(env, account) : null;
+		const live = budget ? await liveAccountBudget(budget) : null;
 		return {
 			provider: "cloudflare-email",
 			capability: CLOUDFLARE_EMAIL_CAPABILITY,
@@ -824,8 +846,68 @@ export function createCloudflareEmailStatus(
 						...(budget && "missing" in budget ? { why: budget.missing } : {}),
 					}
 				: null,
+			attestation: {
+				v: EMAIL_ATTESTATION_VERSION,
+				provider: "cloudflare-email",
+				capability: CLOUDFLARE_EMAIL_CAPABILITY,
+				guarantees: {
+					headersChecked: true,
+					siteBudget: true,
+					accountBudget: account !== null,
+					cancellation: "reported",
+					redaction: "addresses",
+				},
+				accountBudget: account
+					? {
+							protocol: MAIL_BUDGET_PROTOCOL,
+							ready: Boolean(budget && !("missing" in budget)),
+							live: live ?? { ok: false, why: (budget && "missing" in budget && budget.missing) || "not asked" },
+						}
+					: null,
+			},
 		};
 	};
+}
+
+/**
+ * The mail-budget service's live answer to this site's token: its report,
+ * read-only (it takes and refunds nothing), in this provider's protocol and
+ * within the budget's timeout. `{ ok: true, limits }` with the caps the
+ * service holds this site to, or `{ ok: false, why }`: no report method, an
+ * unknown or revoked token, another protocol, an error, no answer in time.
+ */
+async function liveAccountBudget(
+	budget: AccountBudget | { missing: string },
+): Promise<{ ok: true; limits: Record<string, number> } | { ok: false; why: string } | null> {
+	if ("missing" in budget) return null;
+	const { service, token, timeoutMs } = budget;
+	if (typeof service.report !== "function") {
+		return { ok: false, why: "the mail-budget service has no report" };
+	}
+	let answer: unknown;
+	try {
+		const got = await within(service.report({ protocol: MAIL_BUDGET_PROTOCOL, token }), timeoutMs);
+		if ("late" in got) return { ok: false, why: `it did not answer within ${timeoutMs} ms` };
+		answer = got.answer;
+	} catch (error) {
+		return { ok: false, why: `it could not be asked (${describeRedacted(error)})` };
+	}
+	if (!isRecord(answer) || answer.protocol !== MAIL_BUDGET_PROTOCOL) {
+		return { ok: false, why: `it answered in protocol ${JSON.stringify(isRecord(answer) ? (answer.protocol ?? null) : null)}, not ${MAIL_BUDGET_PROTOCOL}` };
+	}
+	if (answer.ok !== true) {
+		return { ok: false, why: `it refused this site's token (${typeof answer.refused === "string" ? redactAddresses(answer.refused) : "no reason given"})` };
+	}
+	const caps = isRecord(answer.caps) ? answer.caps : {};
+	const limits: Record<string, number> = {};
+	for (const name of ["accountPerDay", "systemReserve", "tenantPerDay", "systemPerRecipient"]) {
+		const cap = caps[name];
+		if (typeof cap !== "number") {
+			return { ok: false, why: "its report does not say the limits it holds this site to" };
+		}
+		limits[name] = cap;
+	}
+	return { ok: true, limits };
 }
 
 /** Validate the sender address early so misconfiguration fails at config time. */
