@@ -703,9 +703,11 @@ describe("wp-shell route", () => {
  * and stylesheet, for its Twenty Twenty and Bootstrap toggles (links to a
  * menu's id, a details summary), and for its Franz Josef fixtures with a
  * breadcrumb trail, the front page's own layout and its listing of the latest
- * posts (packages/control-plane/test/wp-shell.test.ts, dumped with
- * WPSHELL_DUMP=1). A tripwire that refused them would put every migrated site
- * back in the template's own design.
+ * posts (packages/control-plane/test/wp-shell.test.ts), and for its Kleo
+ * fixtures: a post in its own layout, a page whose title is hidden, and a post
+ * with no title band and related posts (test/wp-shell-kleo.test.ts), each
+ * dumped with WPSHELL_DUMP=1. A tripwire that refused them would put every
+ * migrated site back in the template's own design.
  */
 
 describe("the tripwire reads the writer's form", () => {
@@ -734,6 +736,15 @@ describe("the tripwire reads the writer's form", () => {
 			'{"slot":"adjacent"}',
 			'{"s":"adjTitle"}',
 			'"many":"%d Comments"',
+			// Kleo's: the hidden title, jQuery Sticky's wrapper, a textless toggle's line, both collapses
+			// the toggle opens, the search link, the sticky links' ids and the bare comment count.
+			'{"slot":"title","tag":"h1","class":"wp-shell-untitled"}',
+			'<div class=\\"sticky-wrapper\\">',
+			"wp-shell-noline",
+			'id=\\"wp-shell-menu-0-1\\"',
+			'class=\\"search-trigger wp-shell-control\\" href=\\"/search\\"',
+			'id=\\"older-nav\\"',
+			'"many":"%d"',
 		])
 			expect(all).toContain(shape);
 	});

@@ -1,7 +1,7 @@
 [
 	{
 		"version": 1,
-		"id": "92e78fa2f8f52eb549b50046",
+		"id": "8b770f24338194adc903a56c",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -14,7 +14,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/3dfc3ba2dabc287426c1c1157a0f348e.css"
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
 		],
 		"parts": [
 			{
@@ -166,7 +166,7 @@
 	},
 	{
 		"version": 1,
-		"id": "f1d86eb5a6df3195b8be05ef",
+		"id": "7901e92722a3666d43e773aa",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -179,7 +179,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/5582367a86c0416ab4c674d53c133427.css"
+			"/_emdash/api/media/file/wp-shell/741a177d51a43ac254552a84c48ddc4a.css"
 		],
 		"parts": [
 			{
@@ -331,7 +331,7 @@
 	},
 	{
 		"version": 1,
-		"id": "92427547b9ee97e82d057ab2",
+		"id": "e22ca82d0bb14163d213b09e",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -344,7 +344,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/5cdeb8c469d88403c41a601b478148d7.css"
+			"/_emdash/api/media/file/wp-shell/8bc66e4cd701ad99ff2f357449eab657.css"
 		],
 		"parts": [
 			{
@@ -496,7 +496,7 @@
 	},
 	{
 		"version": 1,
-		"id": "c7528055992e81feac3d092a",
+		"id": "154068ab93070982b117df6c",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -509,11 +509,11 @@
 			"class": "wp-singular page-template-default page singular two-column right-sidebar"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/03e8e52d23f339a1fa10cc7ad5b90f6c.css"
+			"/_emdash/api/media/file/wp-shell/f0cfe9c2a7d5c6616ab8f5f1e32ace2e.css"
 		],
 		"parts": [
 			{
-				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle collapsed wp-shell-control\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></summary></details>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle collapsed wp-shell-control wp-shell-noline\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></summary></details>\n\t<h2 class=\"site-title\"><a href=\"/\">"
 			},
 			{
 				"slot": "siteTitle",
@@ -1064,7 +1064,7 @@
 	},
 	{
 		"version": 1,
-		"id": "1eee0f13a83fe1cbc32ba155",
+		"id": "6df1e27faf5ae62b61abd881",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -1077,7 +1077,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/3dfc3ba2dabc287426c1c1157a0f348e.css"
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
 		],
 		"parts": [
 			{
@@ -1233,7 +1233,7 @@
 					"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 				},
 				"styles": [
-					"/_emdash/api/media/file/wp-shell/c3472f0fc48986af513a1a7056059b49.css"
+					"/_emdash/api/media/file/wp-shell/e97c8accf2963f27f3bb8daa1468f80a.css"
 				],
 				"parts": [
 					{
@@ -1890,7 +1890,7 @@
 	},
 	{
 		"version": 1,
-		"id": "f52874878af053d56bde3581",
+		"id": "26f5e71e84fb652ea5d09988",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -1903,7 +1903,7 @@
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/3dfc3ba2dabc287426c1c1157a0f348e.css"
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
 		],
 		"parts": [
 			{
@@ -2057,7 +2057,7 @@
 				"class": "post-template-default single single-post single-format-standard wp-theme-twentytwenty singular enable-search-modal"
 			},
 			"styles": [
-				"/_emdash/api/media/file/wp-shell/3dfc3ba2dabc287426c1c1157a0f348e.css"
+				"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
 			],
 			"parts": [
 				{
@@ -2217,6 +2217,585 @@
 				}
 			},
 			"timeZone": "America/Denver"
+		}
+	},
+	{
+		"version": 1,
+		"id": "3090a95abd02367cd53ea6fd",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-27T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "no-js"
+		},
+		"body": {
+			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n<section class=\"container-wrap main-title alternate-color main-center-title border-bottom breadcrumbs-container\">\n\t<div class=\"container\">\n\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "page-title"
+			},
+			{
+				"html": "\n\t\t<div class=\"breadcrumb-extra\"><p class=\"page-info\"><em class=\"muted\">Write to us!</em> <i class=\"icon-mail-alt\"></i> team@example.org</p></div>\n\t</div>\n</section>\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix page type-page status-publish\">\n\t\t\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "article-content"
+			},
+			{
+				"html": "\n\t\t\t\t</article>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\" href=\"#\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item dropdown menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"js-activated\">",
+					{
+						"s": "label"
+					},
+					" <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Team\" href=\"/team/\">Team</a></li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page menu-item-has-children dropdown mega-2-cols\"><a title=\"About\" href=\"/about/\" class=\"js-activated\">About <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"History\" href=\"/history/\">History</a></li>\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Board\" href=\"/board/\">Board</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-custom menu-item-object-custom menu-item-has-children dropdown mega-1-cols\"><a title=\"Help\" href=\"#\" class=\"js-activated\">Help <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Donate\" href=\"/donate/\">Donate</a></li>\n</ul>\n</li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"post": {
+			"body": {
+				"class": "wp-singular post-template-default single single-post single-format-standard wp-theme-kleo kleo-navbar-fixed"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/adf8a3130e5217c82aea365f7b974caa.css"
+			],
+			"parts": [
+				{
+					"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n<section class=\"container-wrap main-title alternate-color main-center-title border-bottom breadcrumbs-container\">\n\t<div class=\"container\">\n\t\t"
+				},
+				{
+					"slot": "title",
+					"tag": "h1",
+					"class": "page-title"
+				},
+				{
+					"html": "\n\t\t<div class=\"breadcrumb-extra\"><p class=\"page-info\"><em class=\"muted\">Write to us!</em> <i class=\"icon-mail-alt\"></i> team@example.org</p></div>\n\t</div>\n</section>\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix post type-post status-publish format-standard hentry\">\n\t"
+				},
+				{
+					"slot": "postMeta",
+					"meta": 0
+				},
+				{
+					"html": "\n\t"
+				},
+				{
+					"slot": "featured"
+				},
+				{
+					"html": "\n\t"
+				},
+				{
+					"slot": "content",
+					"tag": "div",
+					"class": "article-content"
+				},
+				{
+					"html": "\n</article>\n\t\n\t\n\t"
+				},
+				{
+					"slot": "adjacent"
+				},
+				{
+					"html": "\n\t<section class=\"container-wrap\"><div class=\"container\">"
+				},
+				{
+					"slot": "comments",
+					"tag": "div",
+					"class": "comments-area",
+					"id": "comments"
+				},
+				{
+					"html": "</div></section>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+				}
+			],
+			"meta": [
+				[
+					"<div class=\"article-meta\">\n\t\t<span class=\"post-meta\">\n\t\t    <small><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" rel=\"bookmark\" class=\"post-time\"><time class=\"entry-date\">",
+					{
+						"s": "date"
+					},
+					"</time></a></small>, <small class=\"meta-comment-count\">",
+					{
+						"s": "comments"
+					},
+					"</small>\n\t\t</span>\n\t</div>"
+				]
+			],
+			"date": "F j, Y",
+			"comments": {
+				"item": [
+					"<a href=\"",
+					{
+						"s": "href"
+					},
+					"#comments\">",
+					{
+						"s": "count"
+					},
+					" <i class=\"icon-chat-1 hover-tip\" data-toggle=\"tooltip\"></i></a>"
+				],
+				"zero": "0",
+				"one": "%d",
+				"many": "%d"
+			},
+			"timeZone": "America/Los_Angeles",
+			"featured": {
+				"item": [
+					"<div class=\"article-media\"><img alt=\"",
+					{
+						"s": "alt"
+					},
+					"\" src=\"",
+					{
+						"s": "src"
+					},
+					"\" height=\"800\" width=\"800\" class=\"attachment-kleo-full-width size-kleo-full-width wp-post-image\"></div>"
+				],
+				"minWidth": 0
+			},
+			"share": [
+				"<section class=\"main-color container-wrap social-share-wrap\"><div class=\"container\"><div class=\"share-links\">\n\t\t<div class=\"hr-title hr-long\"><abbr>Share this</abbr></div>\n\t\t\n\t\t<span class=\"kleo-facebook\"><a href=\"",
+				{
+					"s": "share-facebook"
+				},
+				"\" class=\"post_share_facebook\"><i class=\"icon-facebook\"></i></a></span>\n\t\t<span class=\"kleo-twitter\"><a href=\"",
+				{
+					"s": "share-x"
+				},
+				"\" class=\"post_share_twitter\"><i class=\"icon-twitter\"></i></a></span>\n\t\t<span class=\"kleo-mail\"><a href=\"",
+				{
+					"s": "share-email"
+				},
+				"\" class=\"post_share_email\"><i class=\"icon-mail\"></i></a></span>\n\t</div></div></section>"
+			],
+			"adjacent": {
+				"item": [
+					"<nav class=\"pagination-sticky member-navigation\" role=\"navigation\">",
+					{
+						"s": "prev"
+					},
+					{
+						"s": "next"
+					},
+					"</nav>"
+				],
+				"prev": [
+					"<a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" rel=\"prev\"><span id=\"older-nav\"><span class=\"outter-title\"><span class=\"entry-title\">",
+					{
+						"s": "adjTitle"
+					},
+					"</span></span></span></a>"
+				],
+				"next": [
+					"<a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" rel=\"next\"><span id=\"newer-nav\"><span class=\"outter-title\"><span class=\"entry-title\">",
+					{
+						"s": "adjTitle"
+					},
+					"</span></span></span></a>"
+				]
+			}
+		}
+	},
+	{
+		"version": 1,
+		"id": "3661d979d3a183f3b49f2979",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-27T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "no-js"
+		},
+		"body": {
+			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6be2a25527a1bcf7ed87fbb6ee255839.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix page type-page status-publish\">\n\t\t\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "wp-shell-untitled"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "article-content"
+			},
+			{
+				"html": "\n\t\t\t\t</article>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\" href=\"#\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item dropdown menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"js-activated\">",
+					{
+						"s": "label"
+					},
+					" <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Team\" href=\"/team/\">Team</a></li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page menu-item-has-children dropdown mega-2-cols\"><a title=\"About\" href=\"/about/\" class=\"js-activated\">About <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"History\" href=\"/history/\">History</a></li>\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Board\" href=\"/board/\">Board</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-custom menu-item-object-custom menu-item-has-children dropdown mega-1-cols\"><a title=\"Help\" href=\"#\" class=\"js-activated\">Help <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Donate\" href=\"/donate/\">Donate</a></li>\n</ul>\n</li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"id": "2223d441dd12e17b251f7cd3",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-27T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "no-js"
+		},
+		"body": {
+			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n<section class=\"container-wrap main-title alternate-color main-center-title border-bottom breadcrumbs-container\">\n\t<div class=\"container\">\n\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "page-title"
+			},
+			{
+				"html": "\n\t\t<div class=\"breadcrumb-extra\"><p class=\"page-info\"><em class=\"muted\">Write to us!</em> <i class=\"icon-mail-alt\"></i> team@example.org</p></div>\n\t</div>\n</section>\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix page type-page status-publish\">\n\t\t\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "article-content"
+			},
+			{
+				"html": "\n\t\t\t\t</article>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\" href=\"#\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item dropdown menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"js-activated\">",
+					{
+						"s": "label"
+					},
+					" <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Team\" href=\"/team/\">Team</a></li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page menu-item-has-children dropdown mega-2-cols\"><a title=\"About\" href=\"/about/\" class=\"js-activated\">About <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"History\" href=\"/history/\">History</a></li>\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Board\" href=\"/board/\">Board</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-custom menu-item-object-custom menu-item-has-children dropdown mega-1-cols\"><a title=\"Help\" href=\"#\" class=\"js-activated\">Help <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Donate\" href=\"/donate/\">Donate</a></li>\n</ul>\n</li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"post": {
+			"body": {
+				"class": "wp-singular post-template-default single single-post single-format-standard wp-theme-kleo kleo-navbar-fixed"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/746ed9492621bcf0226fdc8785aed8a9.css"
+			],
+			"parts": [
+				{
+					"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix post type-post status-publish format-standard hentry\">\n\t"
+				},
+				{
+					"slot": "postMeta",
+					"meta": 0
+				},
+				{
+					"html": "\n\t"
+				},
+				{
+					"slot": "featured"
+				},
+				{
+					"html": "\n\t"
+				},
+				{
+					"slot": "title",
+					"tag": "h1",
+					"class": "wp-shell-untitled"
+				},
+				{
+					"slot": "content",
+					"tag": "div",
+					"class": "article-content"
+				},
+				{
+					"html": "\n</article>\n\t\n\t<section class=\"container-wrap\"><div class=\"container\"></div></section>\n\t"
+				},
+				{
+					"slot": "adjacent"
+				},
+				{
+					"html": "\n\t<section class=\"container-wrap\"><div class=\"container\">"
+				},
+				{
+					"slot": "comments",
+					"tag": "div",
+					"class": "comments-area",
+					"id": "comments"
+				},
+				{
+					"html": "</div></section>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+				}
+			],
+			"meta": [
+				[
+					"<div class=\"article-meta\">\n\t\t<span class=\"post-meta\">\n\t\t    <small><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" rel=\"bookmark\" class=\"post-time\"><time class=\"entry-date\">",
+					{
+						"s": "date"
+					},
+					"</time></a></small>, <small class=\"meta-comment-count\">",
+					{
+						"s": "comments"
+					},
+					"</small>\n\t\t</span>\n\t</div>"
+				]
+			],
+			"date": "F j, Y",
+			"comments": {
+				"item": [
+					"<a href=\"",
+					{
+						"s": "href"
+					},
+					"#comments\">",
+					{
+						"s": "count"
+					},
+					" <i class=\"icon-chat-1 hover-tip\" data-toggle=\"tooltip\"></i></a>"
+				],
+				"zero": "0",
+				"one": "%d",
+				"many": "%d"
+			},
+			"timeZone": "America/Los_Angeles",
+			"featured": {
+				"item": [
+					"<div class=\"article-media\"><img alt=\"",
+					{
+						"s": "alt"
+					},
+					"\" src=\"",
+					{
+						"s": "src"
+					},
+					"\" height=\"800\" width=\"800\" class=\"attachment-kleo-full-width size-kleo-full-width wp-post-image\"></div>"
+				],
+				"minWidth": 0
+			},
+			"share": [
+				"<section class=\"main-color container-wrap social-share-wrap\"><div class=\"container\"><div class=\"share-links\">\n\t\t<div class=\"hr-title hr-long\"><abbr>Share this</abbr></div>\n\t\t\n\t\t<span class=\"kleo-facebook\"><a href=\"",
+				{
+					"s": "share-facebook"
+				},
+				"\" class=\"post_share_facebook\"><i class=\"icon-facebook\"></i></a></span>\n\t\t<span class=\"kleo-twitter\"><a href=\"",
+				{
+					"s": "share-x"
+				},
+				"\" class=\"post_share_twitter\"><i class=\"icon-twitter\"></i></a></span>\n\t\t<span class=\"kleo-mail\"><a href=\"",
+				{
+					"s": "share-email"
+				},
+				"\" class=\"post_share_email\"><i class=\"icon-mail\"></i></a></span>\n\t</div></div></section>"
+			],
+			"adjacent": {
+				"item": [
+					"<nav class=\"pagination-sticky member-navigation\" role=\"navigation\">",
+					{
+						"s": "prev"
+					},
+					{
+						"s": "next"
+					},
+					"</nav>"
+				],
+				"prev": [
+					"<a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" rel=\"prev\"><span id=\"older-nav\"><span class=\"outter-title\"><span class=\"entry-title\">",
+					{
+						"s": "adjTitle"
+					},
+					"</span></span></span></a>"
+				],
+				"next": [
+					"<a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" rel=\"next\"><span id=\"newer-nav\"><span class=\"outter-title\"><span class=\"entry-title\">",
+					{
+						"s": "adjTitle"
+					},
+					"</span></span></span></a>"
+				]
+			}
 		}
 	}
 ]
