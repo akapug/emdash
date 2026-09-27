@@ -123,6 +123,29 @@ export interface WpShellListing {
 	 * was cut; `paragraphs` when the theme prints the excerpt's paragraphs.
 	 */
 	excerpt: { words: number; more: string; paragraphs?: true };
+	/**
+	 * The theme laid the items out as masonry, each into its shortest column:
+	 * the items after the first `from` are drawn in `columns` lanes (the
+	 * record's stylesheet holds them at `min` px and wider), each post into the
+	 * lane an estimate of its height says is the shortest.
+	 */
+	lanes?: WpShellLanes;
+}
+
+/** A listing's masonry as lanes, and what estimates an item's height in them. */
+export interface WpShellLanes {
+	columns: number;
+	from: number;
+	min: number;
+	estimate: {
+		titleChars: number;
+		titleLine: number;
+		textChars: number;
+		textLine: number;
+		paragraph: number;
+		base: number;
+		thumbWidth: number;
+	};
 }
 
 /** One layout of the site: the body classes, stylesheets and parts a page is drawn with. */
@@ -598,7 +621,34 @@ function checkListing(l: unknown): string | null {
 		(excerpt.paragraphs !== undefined && excerpt.paragraphs !== true)
 	)
 		return "a listing's excerpt rule is not one";
+	if (l.lanes !== undefined && !checkLanes(l.lanes, l.count))
+		return "a listing's lanes are not ones";
 	return null;
+}
+
+const LANE_ESTIMATE = [
+	"titleChars",
+	"titleLine",
+	"textChars",
+	"textLine",
+	"paragraph",
+	"base",
+	"thumbWidth",
+];
+
+function checkLanes(v: unknown, count: number): boolean {
+	if (!isObject(v) || !isObject(v.estimate)) return false;
+	const { estimate } = v;
+	return (
+		isIndex(v.columns, 13) &&
+		v.columns !== 0 &&
+		isIndex(v.from, count + 1) &&
+		isIndex(v.min, 10_000) &&
+		LANE_ESTIMATE.every((k) => {
+			const n = estimate[k];
+			return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 10_000;
+		})
+	);
 }
 
 /** Every markup string a record carries. */
@@ -898,6 +948,8 @@ export function renderMenu(
 /** One post a listing draws, as layouts/WpShell.astro reads it from EmDash. */
 export interface WpShellPost {
 	title: string;
+	/** The featured image's height over its width, when EmDash knows its size (a listing's lanes estimate by it). */
+	imageRatio?: number | null;
 	/** The post's path on the site. */
 	url: string;
 	/** The post's own excerpt; with none, one is made from `text`. */
@@ -1019,7 +1071,10 @@ function fillListing(
 			continue;
 		}
 		if (x.s === "cls")
-			out += escapeAttr(listing.classes[Math.min(at, listing.classes.length - 1)] ?? "");
+			// In lanes, each item also says its place, which orders the items where the lanes do not hold.
+			out += escapeAttr(
+				`${listing.classes[Math.min(at, listing.classes.length - 1)] ?? ""}${listing.lanes ? ` wp-shell-at-${at}` : ""}`,
+			);
 		else if (x.s === "href") out += escapeAttr(safeHref(post.url));
 		else if (x.s === "title") out += escapeHtml(post.title);
 		else if (x.s === "excerpt") {
@@ -1033,18 +1088,62 @@ function fillListing(
 				post.date && listing.date ? escapeHtml(formatWpDate(post.date, listing.date, listing)) : "";
 		else if (x.s === "src") out += escapeAttr(post.image ?? "");
 		// The thumbnail only for an image that is one of the site's own files.
-		else if (listing.thumb && post.image && ownFile(post.image) && MEDIA_SRC.test(post.image))
+		else if (listing.thumb && thumbDrawn(listing, post))
 			out += fillListing(listing.thumb, listing, post, at);
 	}
 	return out;
 }
 
-/** A listing's items: as many of `posts` as WordPress listed, each in the theme's markup. */
+/** Whether a post's thumbnail is drawn: an image of the site's own files, where the listing draws one. */
+const thumbDrawn = (listing: WpShellListing, post: WpShellPost) =>
+	Boolean(listing.thumb && post.image && ownFile(post.image) && MEDIA_SRC.test(post.image));
+
+/** The lines `n` letters take at `per` to a line: one at least. */
+const linesOf = (n: number, per: number) => Math.max(1, Math.ceil(n / Math.max(per, 1)));
+
+/** The height an item of `post` is estimated to draw at in a listing's lanes (WpShellLanes.estimate). */
+export function laneHeight(listing: WpShellListing, post: WpShellPost): number {
+	const e = listing.lanes?.estimate;
+	if (!e) return 0;
+	const text = listingExcerpt(post, listing.excerpt);
+	const ratio =
+		typeof post.imageRatio === "number" && post.imageRatio > 0 && post.imageRatio < 10
+			? post.imageRatio
+			: 0.75;
+	return (
+		e.base +
+		e.titleLine * linesOf(post.title.length, e.titleChars) +
+		e.textLine * linesOf(text.join("").length, e.textChars) +
+		e.paragraph * Math.max(0, text.length - 1) +
+		(thumbDrawn(listing, post) ? e.thumbWidth * ratio : 0)
+	);
+}
+
+/**
+ * A listing's items: as many of `posts` as WordPress listed, each in the
+ * theme's markup. In lanes (the theme's masonry), the first `from` items,
+ * then each lane with the posts the theme's rule puts in it: each post in
+ * turn into the lane whose estimated height is the least, the leftmost of
+ * equals.
+ */
 export function renderListing(listing: WpShellListing, posts: readonly WpShellPost[]): string {
-	return posts
-		.slice(0, listing.count)
-		.map((post, i) => fillListing(listing.item, listing, post, i))
-		.join("");
+	const shown = posts.slice(0, listing.count);
+	const lanes = listing.lanes;
+	if (!lanes) return shown.map((post, i) => fillListing(listing.item, listing, post, i)).join("");
+	const heights: number[] = Array.from<number>({ length: lanes.columns }).fill(0);
+	const into: string[][] = heights.map(() => []);
+	let lead = "";
+	for (const [i, post] of shown.entries()) {
+		const html = fillListing(listing.item, listing, post, i);
+		if (i < lanes.from) {
+			lead += html;
+			continue;
+		}
+		const lane = heights.indexOf(Math.min(...heights));
+		into[lane]?.push(html);
+		heights[lane] = (heights[lane] ?? 0) + laneHeight(listing, post);
+	}
+	return lead + into.map((items) => `<div class="wp-shell-lane">${items.join("")}</div>`).join("");
 }
 
 /** Portable Text as plain text: each text block's spans, a blank line between blocks. */
@@ -1078,6 +1177,15 @@ export function ownImagePath(image: unknown): string | null {
 				? `${MEDIA_PATH}${key}`
 				: null;
 	return path && ownFile(path) && MEDIA_SRC.test(path) ? path : null;
+}
+
+/** A featured image's height over its width, when its media value says its size (WpShellPost.imageRatio). */
+export function imageRatio(image: unknown): number | null {
+	if (!isObject(image)) return null;
+	const { width, height } = image;
+	return typeof width === "number" && typeof height === "number" && width > 0 && height > 0
+		? height / width
+		: null;
 }
 
 // --- a form in its plugin's markup ---------------------------------------------

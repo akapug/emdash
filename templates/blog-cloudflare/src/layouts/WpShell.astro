@@ -35,6 +35,7 @@ import {
 	bodyClassFor,
 	composeWpShell,
 	layoutFor,
+	imageRatio,
 	ownImagePath,
 	plainText,
 	type WpShell,
@@ -125,6 +126,7 @@ const posts: WpShellPost[] = (postsResult?.entries ?? []).map((post) => ({
 	text: plainText(post.data.content),
 	date: post.data.publishedAt,
 	image: ownImagePath(post.data.featured_image),
+	imageRatio: imageRatio(post.data.featured_image),
 }));
 
 const pieces = composeWpShell(shell, {

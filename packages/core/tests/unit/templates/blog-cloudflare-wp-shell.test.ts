@@ -5,7 +5,9 @@ import {
 	composeWpShell,
 	formatWpDate,
 	formSkin,
+	imageRatio,
 	isCurrent,
+	laneHeight,
 	layoutFor,
 	listingExcerpt,
 	ownImagePath,
@@ -1263,4 +1265,125 @@ describe("wp-shell: a form in its plugin's markup, for the EmDash form imported 
 
 const fieldsOf = (d: WpShellFormDefinition) => d.pages[0]!.fields;
 
-/** The listing, lai
+/** The listing, laid out in lanes as a theme's masonry, each item's height estimated by its image alone. */
+function lanesOf(columns = 2): WpShellListing {
+	return {
+		...listingOf(),
+		count: 5,
+		lanes: {
+			columns,
+			from: 1,
+			min: 992,
+			estimate: {
+				titleChars: 16,
+				titleLine: 0,
+				textChars: 29,
+				textLine: 0,
+				paragraph: 0,
+				base: 100,
+				thumbWidth: 200,
+			},
+		},
+	};
+}
+const own = (n: number) => `/_emdash/api/media/file/0${n}.png`;
+const LANE_POSTS: WpShellPost[] = [
+	{ title: "Lead", url: "/posts/lead", text: "a" },
+	{ title: "Tall", url: "/posts/tall", text: "a", image: own(1), imageRatio: 1 },
+	{ title: "B", url: "/posts/b", text: "a" },
+	{ title: "C", url: "/posts/c", text: "a" },
+	{ title: "D", url: "/posts/d", text: "a" },
+	{ title: "Past the count", url: "/posts/e", text: "a" },
+];
+
+describe("wp-shell: a listing's masonry drawn in lanes, with no script", () => {
+	it("draws the first items, then each post in the lane an estimate of its height says is the shortest", () => {
+		const html = renderListing(lanesOf(), LANE_POSTS);
+		const items = (lane: string) =>
+			Array.from(lane.matchAll(/item-title"><a href="\/posts\/(\w+)"/g), (m) => m[1]);
+		const [lead, ...lanes] = html.split('<div class="wp-shell-lane">');
+		expect(items(lead!)).toEqual(["lead"]);
+		// Tall (100 + 200) goes left; B, C and D (100 each) go right until it passes Tall's 300
+		expect(lanes.map(items)).toEqual([["tall"], ["b", "c", "d"]]);
+		// each item says its place, which orders the items where the lanes do not hold
+		expect(Array.from(html.matchAll(/wp-shell-at-(\d)/g), (m) => Number(m[1]))).toEqual([
+			0, 1, 2, 3, 4,
+		]);
+		expect(html).toContain('<div class="item-wrap col-md-12 wp-shell-at-0">');
+		expect(html).toContain('<div class="item-wrap col-md-3 col-sm-6 wp-shell-at-4">');
+		// the leftmost of equal lanes; and with no lanes, the items in order and no place classes
+		expect(
+			renderListing(lanesOf(3), LANE_POSTS)
+				.split('<div class="wp-shell-lane">')
+				.slice(1)
+				.map(items),
+		).toEqual([["tall"], ["b", "d"], ["c"]]);
+		expect(renderListing(listingOf(), LANE_POSTS)).not.toMatch(/wp-shell-(lane|at-)/);
+	});
+
+	it("estimates an item's height from its title, text, paragraphs and image, as the record says", () => {
+		const listing = {
+			...listingOf(),
+			excerpt: { words: 55, more: " […]", paragraphs: true as const },
+			lanes: {
+				columns: 4,
+				from: 1,
+				min: 992,
+				estimate: {
+					titleChars: 16,
+					titleLine: 24,
+					textChars: 29,
+					textLine: 24,
+					paragraph: 20,
+					base: 78,
+					thumbWidth: 263,
+				},
+			},
+		};
+		const post = (over: Partial<WpShellPost>): WpShellPost => ({
+			title: "A".repeat(20),
+			url: "/posts/a",
+			excerpt: `${"b".repeat(40)}\n\n${"c".repeat(10)}`,
+			...over,
+		});
+		// 78 + 2 title lines + 2 text lines (50 letters) + one paragraph break
+		expect(laneHeight(listing, post({}))).toBe(78 + 48 + 48 + 20);
+		// its own image at its own height over width, and one of unknown size at 3:4
+		expect(laneHeight(listing, post({ image: own(2), imageRatio: 0.5 }))).toBe(
+			78 + 48 + 48 + 20 + 131.5,
+		);
+		expect(laneHeight(listing, post({ image: own(2) }))).toBe(78 + 48 + 48 + 20 + 263 * 0.75);
+		// an image from elsewhere is not drawn, so it adds nothing
+		expect(
+			laneHeight(listing, post({ image: "https://elsewhere.example/p.png", imageRatio: 1 })),
+		).toBe(78 + 48 + 48 + 20);
+		expect(laneHeight(listingOf(), post({}))).toBe(0);
+		expect(imageRatio({ width: 300, height: 228 })).toBe(0.76);
+		for (const bad of [null, "x", {}, { width: 0, height: 10 }, { width: "300", height: 200 }])
+			expect(imageRatio(bad)).toBeNull();
+	});
+
+	const lanesWith = (patch: Record<string, unknown>) =>
+		withListing({ ...lanesOf(), lanes: { ...lanesOf().lanes!, ...patch } } as WpShellListing);
+	const estimateWith = (patch: Record<string, unknown>) =>
+		lanesWith({ estimate: { ...lanesOf().lanes!.estimate, ...patch } });
+	it("accepts the lanes the writer produces", () => {
+		expect(wpShellProblem(withListing(lanesOf()))).toBeNull();
+	});
+	const refused: Array<[string, WpShell]> = [
+		["lanes that are not an object", withListing({ ...lanesOf(), lanes: "4" } as never)],
+		["no lanes", lanesWith({ columns: 0 })],
+		["more lanes than a row holds", lanesWith({ columns: 13 })],
+		["lanes that start past the items", lanesWith({ from: 6 })],
+		["a width that is not one", lanesWith({ min: -1 })],
+		["an estimate that is not a number", estimateWith({ base: "78" })],
+		["an estimate past any page", estimateWith({ thumbWidth: 1e9 })],
+		["an estimate that is not finite", estimateWith({ titleLine: Number.NaN })],
+		["an estimate short of a field", lanesWith({ estimate: { titleChars: 16 } })],
+	];
+	for (const [what, record] of refused) {
+		it(`refuses ${what}`, () => {
+			expect(wpShellProblem(record)).not.toBeNull();
+		});
+	}
+});
