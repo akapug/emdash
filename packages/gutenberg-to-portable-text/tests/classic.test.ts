@@ -111,3 +111,31 @@ describe("classic content: an aligned image", () => {
 		expect(blocks[2]).toMatchObject({ link: "https://example.org/b/" });
 	});
 });
+
+describe("classic content: what WordPress draws that a converter would drop or join", () => {
+	it("keeps a paragraph that holds a no-break space alone, as the line WordPress draws for it", () => {
+		const content = `Via a newsletter: a short note on the week.\n\n&nbsp;\n\nThe second paragraph.\n\n&nbsp;`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"Via a newsletter: a short note on the week.",
+			"\u00a0",
+			"The second paragraph.",
+			"\u00a0",
+		]);
+		// white space alone is no paragraph, as before
+		expect(shape(gutenbergToPortableText("One.\n\n<p>   </p>\n\nTwo."))).toEqual(["One.", "Two."]);
+	});
+
+	it("draws each paragraph of a div that wraps the post apart, and what follows the div after it", () => {
+		const content = `<div id="post-body" class="content">\n\n<em><strong>A first line.</strong></em>\n\nThe middle paragraph.\n\n<em>A last line.</em>\n\n</div>\n\n<b>Follow along.</b>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"A first line.",
+			"The middle paragraph.",
+			"A last line.",
+			"Follow along.",
+		]);
+		// a div of text alone is still one paragraph
+		expect(
+			shape(gutenbergToPortableText('<div class="note">A note, and <em>its</em> end.</div>')),
+		).toEqual(["A note, and its end."]);
+	});
+});

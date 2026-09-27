@@ -41,6 +41,16 @@ const APOS_ENTITY_PATTERN = /&#039;/g;
 const NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const NBSP_ENTITY_PATTERN = /&nbsp;/g;
+/** A block-level element inside a `<div>`: its paragraphs are the div's content, one block each. */
+const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|hr)\b/i;
+
+/**
+ * Whether a paragraph's spans draw anything: text, or a no-break space alone.
+ * WordPress draws `<p>&nbsp;</p>` (the classic editor's spacer) as a line of
+ * its own, one line tall; dropped, every line after it sat that much higher.
+ */
+const drawsLine = (children: ReadonlyArray<{ text: string }>) =>
+	children.some((c) => c.text.trim() !== "") || children.some((c) => c.text.includes("\u00a0"));
 
 // Re-export types
 export type {
@@ -248,7 +258,7 @@ export function htmlToPortableText(
 	const pushParagraph = (text: string) => {
 		if (!text) return;
 		const { children, markDefs } = parseInlineContent(text, generateKey);
-		if (children.some((c) => c.text.trim())) {
+		if (drawsLine(children)) {
 			blocks.push({
 				_type: "block",
 				_key: generateKey(),
@@ -310,6 +320,17 @@ export function htmlToPortableText(
 					...imageAligned(fullMatch),
 				});
 			}
+			continue;
+		}
+
+		// A <div> that holds paragraphs (a classic post wrapped whole in one `<div>`):
+		// WordPress draws each of its paragraphs apart, so each is a block, not one run of text.
+		// The block pattern is shared and global, so its place in this content is kept across the call.
+		if (tag === "div" && BLOCK_INSIDE_PATTERN.test(content)) {
+			const at = BLOCK_ELEMENT_PATTERN.lastIndex;
+			BLOCK_ELEMENT_PATTERN.lastIndex = 0;
+			blocks.push(...htmlToPortableText(content, { ...options, keyGenerator: generateKey }));
+			BLOCK_ELEMENT_PATTERN.lastIndex = at;
 			continue;
 		}
 
@@ -384,7 +405,7 @@ export function htmlToPortableText(
 					.trim();
 				if (textContent) {
 					const { children, markDefs } = parseInlineContent(textContent, generateKey);
-					if (children.some((c) => c.text.trim())) {
+					if (drawsLine(children)) {
 						blocks.push({
 							_type: "block",
 							_key: generateKey(),
