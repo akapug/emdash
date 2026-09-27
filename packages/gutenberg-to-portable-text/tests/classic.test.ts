@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { gutenbergToPortableText } from "../src/index.js";
+import { gutenbergToPortableText, htmlToPortableText } from "../src/index.js";
 import type { PortableTextBlock } from "../src/types.js";
 
 /** Each text block's text, "\n" for a line break; an image block as its alignment. */
@@ -140,6 +140,15 @@ describe("an image keeps the size WordPress drew it at", () => {
 <figure class="wp-block-image size-large is-resized"><img src="https://example.org/e-1024x640.jpg" alt="E" class="wp-image-5" width="320" height="200"/></figure>
 <!-- /wp:image -->`;
 		expect(size(gutenbergToPortableText(content)[0])).toEqual([320, 200]);
+	});
+
+	it("reads the size of an image that stands outside any paragraph", () => {
+		// wpautop puts an image of classic content in a paragraph, so this is the HTML
+		// converter's own entry, and a paragraph's image that a <div> closes before its </p>
+		const img = `<img class="alignleft" src="https://example.org/h-300x256.png" alt="" width="300" height="256" />`;
+		expect(htmlToPortableText(img).map(size)).toEqual([[300, 256]]);
+		const blocks = gutenbergToPortableText(`<div><p>Words.</p>${img}</div>`);
+		expect(blocks.filter((b) => b._type === "image").map(size)).toEqual([[300, 256]]);
 	});
 
 	it("records no size where the tag gives none, or none in whole pixels", () => {
