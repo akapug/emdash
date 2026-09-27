@@ -38,9 +38,9 @@ describe("pluginManifestSchema — reserved id", () => {
 		const result = pluginManifestSchema.safeParse({ ...makeManifest({}), id: "system" });
 		expect(result.success).toBe(false);
 		expect(JSON.stringify(result.error?.issues)).toMatch(/reserved/);
-		expect(pluginManifestSchema.safeParse({ ...makeManifest({}), id: "system-status" }).success).toBe(
-			true,
-		);
+		expect(
+			pluginManifestSchema.safeParse({ ...makeManifest({}), id: "system-status" }).success,
+		).toBe(true);
 	});
 });
 

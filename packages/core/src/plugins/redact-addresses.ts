@@ -32,7 +32,11 @@ const REGEXP_SPECIAL = /[.*+?^${}()|[\]\\]/g;
 const MAX_QUOTED = 130;
 
 /** Every address a message names, which an error about it may repeat. */
-export function messageAddresses(message: { to: string; cc?: string[]; replyTo?: string }): string[] {
+export function messageAddresses(message: {
+	to: string;
+	cc?: string[];
+	replyTo?: string;
+}): string[] {
 	return [message.to, ...(message.cc ?? []), ...(message.replyTo ? [message.replyTo] : [])];
 }
 
@@ -113,7 +117,9 @@ export function describeRedacted(error: unknown, known: readonly string[] = []):
 
 /** Plain data: an array, or an object whose prototype is Object's or none. */
 const isPlain = (v: object): boolean =>
-	Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null;
+	Array.isArray(v) ||
+	Object.getPrototypeOf(v) === Object.prototype ||
+	Object.getPrototypeOf(v) === null;
 
 function redactValue(
 	value: unknown,

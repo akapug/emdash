@@ -4,10 +4,10 @@
  * cancelled returns normally and sent nothing, and the answer says so.
  */
 
-import { Role } from "@emdash-cms/auth";
-import type { Kysely } from "kysely";
 import { inspect } from "node:util";
 
+import { Role } from "@emdash-cms/auth";
+import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "../../../src/astro/routes/api/settings/email.js";

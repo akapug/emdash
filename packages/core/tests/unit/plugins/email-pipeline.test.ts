@@ -1112,7 +1112,7 @@ describe("ctx.email gating", () => {
 		expect(receivedSource).toBe("forms-plugin");
 	});
 
-	it("a plugin whose id is \"system\" cannot send as the reserved source, natively or through a sandbox bridge", async () => {
+	it('a plugin whose id is "system" cannot send as the reserved source, natively or through a sandbox bridge', async () => {
 		// Built without definePlugin (which refuses the id), as a sandboxed
 		// manifest that skipped the schema would be.
 		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
