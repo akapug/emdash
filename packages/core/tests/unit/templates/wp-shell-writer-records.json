@@ -1489,7 +1489,7 @@
 	},
 	{
 		"version": 1,
-		"id": "7c8084970741ddb77a16310c",
+		"id": "11722c5f6fdbe69637aa7144",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -1692,7 +1692,7 @@
 					"id": "respond"
 				},
 				{
-					"html": "\n</div>\n\t</div>\n\t<div class=\"sidebar col-md-3\"><div class=\"widget\"><h4 class=\"item-title\">Sidebar words</h4></div></div>\n</div></div>\n<div class=\"footer\"><p class=\"copyright\">© <a href=\"/\">"
+					"html": "\n</div>\n\t</div>\n\t<div class=\"sidebar col-md-3\"><div class=\"widget\"><h4 class=\"item-title\">Sidebar words</h4></div></div>\n</div></div>\n<div class=\"footer\"><ul class=\"social-links\"><li><a title=\"Subscribe to the feed\"><i class=\"fa fa-rss\"></i></a></li></ul><div style=\"display:none;\"></div><p class=\"copyright\">© <a href=\"/\">"
 				},
 				{
 					"slot": "siteTitle",
@@ -1890,7 +1890,7 @@
 	},
 	{
 		"version": 1,
-		"id": "9525d9317b03c1169314bf54",
+		"id": "f52874878af053d56bde3581",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -2061,7 +2061,7 @@
 			],
 			"parts": [
 				{
-					"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+					"html": "\n<a class=\"skip-link screen-reader-text\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
 				},
 				{
 					"slot": "logo",
@@ -2145,7 +2145,7 @@
 					"fallback": "Example Site"
 				},
 				{
-					"html": "</a></p>\n\t\t<p class=\"powered-by-wordpress\"><a href=\"https://wordpress.org/\">Powered by WordPress</a></p>\n\t\t<a class=\"to-the-top\" href=\"#site-header\">To the top <span class=\"arrow\">↑</span></a>\n\t\t<a>bad</a>\n\t</div>\n</footer>\n\n\n"
+					"html": "</a></p>\n\t\t<p class=\"powered-by-wordpress\"><a href=\"https://wordpress.org/\">Powered by WordPress</a></p>\n\t\t<a class=\"to-the-top\">To the top <span class=\"arrow\">↑</span></a>\n\t\t<a>bad</a>\n\t</div>\n</footer>\n\n\n"
 				}
 			],
 			"meta": [
