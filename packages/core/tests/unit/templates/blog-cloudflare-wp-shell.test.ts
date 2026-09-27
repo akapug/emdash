@@ -4,6 +4,7 @@ import {
 	bodyClassFor,
 	classicVideoEmbed,
 	composeWpShell,
+	featuredDrawn,
 	formatWpDate,
 	formSkin,
 	imageRatio,
@@ -20,6 +21,7 @@ import {
 	renderWpShellForm,
 	safeHref,
 	wpShellDocumentTitle,
+	wpShellPostFill,
 	wpShellProblem,
 	wpShellRoute,
 	type WpShell,
@@ -29,6 +31,8 @@ import {
 	type WpShellMenu,
 	type WpShellPageLayout,
 	type WpShellPost,
+	type WpShellPostFill,
+	type WpShellPostLayout,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
 import writerRecords from "./wp-shell-writer-records.json";
 
@@ -720,6 +724,13 @@ describe("the tripwire reads the writer's form", () => {
 			'"pages"',
 			'"forms"',
 			'{"s":"control","field":0',
+			'"post"',
+			'{"slot":"postMeta","meta":0}',
+			'{"slot":"trailTerm"}',
+			'{"slot":"featured"}',
+			'{"slot":"comments","tag":"div","class":"comment-respond","id":"respond"}',
+			'{"s":"share-x"}',
+			'"many":"%d Comments"',
 		])
 			expect(all).toContain(shape);
 	});
@@ -1425,5 +1436,387 @@ describe("wp-shell: a video embedded from a link in classic content", () => {
 			null,
 		])
 			expect(classicVideoEmbed(node), JSON.stringify(node)).toBeNull();
+	});
+});
+
+/** A Franz Josef single post's layout, as Embark's writer cuts it from a donor post. */
+function postOf(): WpShellPostLayout {
+	return {
+		body: { class: "wp-singular post-template-default single single-post single-format-standard" },
+		styles: ["/_emdash/api/media/file/wp-shell/post1.css"],
+		parts: [
+			{ html: '<div class="breadcrumbs"><span><a href="/">Home</a></span> &gt; ' },
+			{ slot: "trailTerm" },
+			{ slot: "titleText" },
+			{ html: '</div><div class="post hentry">' },
+			{ slot: "title", tag: "h1", class: "entry-title" },
+			{ slot: "postMeta", meta: 0 },
+			{ slot: "featured" },
+			{ slot: "content", tag: "div", class: "entry-content clearfix" },
+			{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
+			{ html: "</div>" },
+		],
+		date: "F j, Y",
+		utcOffset: -480,
+		meta: [
+			[
+				'<ul class="entry-meta"><li class="date"><a href="',
+				{ s: "href" },
+				'">',
+				{ s: "date" },
+				'</a></li><li class="byline">By <span class="author"><a rel="author">',
+				{ s: "author" },
+				"</a></span>",
+				{ s: "categories" },
+				"</li>",
+				{ s: "comments" },
+				{ s: "tags" },
+				"</ul>",
+			],
+		],
+		terms: {
+			category: {
+				item: [' under <span class="terms">', { s: "terms" }, "</span>"],
+				term: ['<a class="term term-category" href="', { s: "href" }, '">', { s: "label" }, "</a>"],
+				sep: ", ",
+			},
+			tag: {
+				item: ['<li class="entry-tags"><i class="fa fa-tags"></i>', { s: "terms" }, "</li>"],
+				term: ['<a href="', { s: "href" }, '">', { s: "label" }, "</a>"],
+				sep: ", ",
+			},
+		},
+		comments: {
+			item: [
+				'<li class="comments-count"><a href="',
+				{ s: "href" },
+				'#respond">',
+				{ s: "count" },
+				"</a></li>",
+			],
+			zero: "Leave a reply",
+		},
+		featured: {
+			item: [
+				'<div class="featured-image"><img alt="',
+				{ s: "alt" },
+				'" src="',
+				{ s: "src" },
+				'" width="850" height="450" class="wp-post-image wp-shell-crop"></div>',
+			],
+			minWidth: 850,
+		},
+		trailTerm: [
+			'<span><a href="',
+			{ s: "href" },
+			'" class="taxonomy category">',
+			{ s: "label" },
+			"</a></span> &gt; ",
+		],
+		share: [
+			'<div class="sharedaddy"><ul><li><a href="',
+			{ s: "share-x" },
+			'" class="share-twitter">X</a></li><li><a href="',
+			{ s: "share-email" },
+			'" class="share-email">Email</a></li></ul></div>',
+		],
+	};
+}
+const withPost = (post: WpShellPostLayout = postOf()): WpShell => ({ ...sample(), post });
+const aPost = (o: Partial<WpShellPostFill> = {}): WpShellPostFill => ({
+	url: "/posts/a-post",
+	absoluteUrl: "https://example.org/posts/a-post",
+	title: "A Post",
+	date: new Date("2014-05-01T05:57:19Z"),
+	author: "Pat Author",
+	categories: [
+		{ label: "Research", slug: "research" },
+		{ label: "advocacy", slug: "advocacy" },
+	],
+	tags: [{ label: "debt", slug: "debt" }],
+	comments: 0,
+	image: "/_emdash/api/media/file/01ABC.png",
+	imageWidth: 1237,
+	alt: "",
+	...o,
+});
+const drawPost = (fill: WpShellPostFill | null, shell: WpShell = withPost()) =>
+	composeWpShell(shell, {
+		menuItems: () => null,
+		currentPath: "/posts/a-post",
+		kind: "post",
+		title: "A Post",
+		post: fill,
+	})
+		.map((p) =>
+			"html" in p
+				? p.html
+				: "title" in p
+					? "[TITLE]"
+					: "comments" in p
+						? `[COMMENTS ${p.comments.id}]`
+						: `[CONTENT]${p.end ?? ""}`,
+		)
+		.join("");
+
+describe("wp-shell: a single post in its own layout", () => {
+	it("accepts the post layout, and draws a post from it", () => {
+		const shell = withPost();
+		expect(wpShellProblem(shell)).toBeNull();
+		expect(layoutFor(shell, "post")).toBe(shell.post);
+		expect(bodyClassFor(withPost(), "post")).toBe(
+			"wp-singular post-template-default single single-post single-format-standard",
+		);
+		const html = drawPost(aPost());
+		// the trail names the first category by name, WordPress's order
+		expect(html).toContain(
+			'<span><a href="/category/advocacy" class="taxonomy category">advocacy</a></span> &gt; A Post',
+		);
+		// the date in the site's zone: 05:57 UTC on May 1 is April 30 at UTC-8
+		expect(html).toContain('<li class="date"><a href="/posts/a-post">April 30, 2014</a></li>');
+		expect(html).toContain(
+			'By <span class="author"><a rel="author">Pat Author</a></span> under <span class="terms"><a class="term term-category" href="/category/advocacy">advocacy</a>, <a class="term term-category" href="/category/research">Research</a></span></li>',
+		);
+		expect(html).toContain(
+			'<li class="comments-count"><a href="/posts/a-post#respond">Leave a reply</a></li>',
+		);
+		expect(html).toContain(
+			'<li class="entry-tags"><i class="fa fa-tags"></i><a href="/tag/debt">debt</a></li>',
+		);
+		expect(html).toContain(
+			'<img alt="" src="/_emdash/api/media/file/01ABC.png" width="850" height="450"',
+		);
+		expect(html).toContain(
+			'[CONTENT]<div class="sharedaddy"><ul><li><a href="https://x.com/intent/tweet?url=https%3A%2F%2Fexample.org%2Fposts%2Fa-post&amp;text=A%20Post" class="share-twitter">X</a></li><li><a href="mailto:?subject=A%20Post&amp;body=https%3A%2F%2Fexample.org%2Fposts%2Fa-post" class="share-email">Email</a></li></ul></div>',
+		);
+		expect(html).toContain("[COMMENTS respond]");
+	});
+
+	it("escapes every value it fills, and links only to the post, its terms and the share pages", () => {
+		const html = drawPost(
+			aPost({
+				title: 'A "quoted" <b>post</b>',
+				author: "<b>Pat</b> & co",
+				url: "javascript:alert(1)",
+				categories: [{ label: 'News "&" <i>views</i>', slug: "news/../x y" }],
+				tags: [],
+			}),
+		);
+		expect(html).toContain("&lt;b&gt;Pat&lt;/b&gt; &amp; co");
+		expect(html).not.toContain("<b>Pat</b>");
+		expect(html).toContain('<a href="#">');
+		expect(html).not.toContain("javascript:");
+		expect(html).toContain(
+			'href="/category/news%2F..%2Fx%20y">News "&amp;" &lt;i&gt;views&lt;/i&gt;</a>',
+		);
+		expect(html).toContain("text=A%20%22quoted%22%20%3Cb%3Epost%3C%2Fb%3E");
+		// no tags: the tags item is not drawn at all
+		expect(html).not.toContain("entry-tags");
+		expect(html).not.toMatch(/<script|onclick|onerror/);
+	});
+
+	it("draws the featured image only for the site's own file at the theme's width", () => {
+		expect(featuredDrawn(postOf(), aPost())).toBe(true);
+		expect(featuredDrawn(postOf(), aPost({ imageWidth: 738 }))).toBe(false);
+		expect(featuredDrawn(postOf(), aPost({ imageWidth: null }))).toBe(false);
+		expect(featuredDrawn(postOf(), aPost({ image: "https://elsewhere.example/a.png" }))).toBe(
+			false,
+		);
+		expect(featuredDrawn(postOf(), aPost({ image: null }))).toBe(false);
+		expect(
+			featuredDrawn(
+				{ ...postOf(), featured: { ...postOf().featured!, minWidth: 0 } },
+				aPost({ imageWidth: null }),
+			),
+		).toBe(true);
+		expect(drawPost(aPost({ imageWidth: 738 }))).not.toContain("featured-image");
+	});
+
+	it("draws the comment count only for a count whose phrase the record knows", () => {
+		expect(drawPost(aPost({ comments: 3 }))).not.toContain("comments-count");
+		expect(drawPost(aPost({ comments: null }))).not.toContain("comments-count");
+		const many = withPost({
+			...postOf(),
+			comments: { ...postOf().comments!, many: "%d comments" },
+		});
+		expect(drawPost(aPost({ comments: 3 }), many)).toContain(
+			'<a href="/posts/a-post#respond">3 comments</a>',
+		);
+		expect(drawPost(aPost({ comments: 1 }), many)).not.toContain("comments-count");
+	});
+
+	it("skips a meta whose date or author the post does not have, and a trail term for a post with no category", () => {
+		expect(drawPost(aPost({ date: null }))).not.toContain("entry-meta");
+		expect(drawPost(aPost({ author: null }))).not.toContain("entry-meta");
+		const none = drawPost(aPost({ categories: [] }));
+		expect(none).toContain('<a rel="author">Pat Author</a></span></li>');
+		expect(none).toContain("&gt; A Post");
+		expect(none).not.toContain("taxonomy category");
+		// no address to share: no share links
+		expect(drawPost(aPost({ absoluteUrl: null }))).toContain("[CONTENT][COMMENTS");
+	});
+
+	it("draws the site time zone's day, by name", () => {
+		const zoned = withPost({ ...postOf(), utcOffset: undefined, timeZone: "America/Los_Angeles" });
+		expect(drawPost(aPost({ date: new Date("2014-05-01T05:57:19Z") }), zoned)).toContain(
+			"April 30, 2014",
+		);
+		expect(drawPost(aPost({ date: new Date("2014-05-01T08:00:00Z") }), zoned)).toContain(
+			"May 1, 2014",
+		);
+	});
+
+	it("draws a post in the record's own layout when the record has no post layout", () => {
+		const s = sample();
+		expect(layoutFor(s, "post")).toBe(s);
+		const html = composeWpShell(s, {
+			menuItems: () => null,
+			currentPath: "/posts/a",
+			kind: "post",
+			post: aPost(),
+		});
+		expect(html.some((p) => "comments" in p)).toBe(false);
+		expect(bodyClassFor(s, "post")).toContain("single single-post");
+	});
+
+	it("reads a post's values from its entry as EmDash hydrates it", () => {
+		const fill = wpShellPostFill(
+			{
+				title: "A Post",
+				publishedAt: new Date("2014-05-01T05:57:19Z"),
+				bylines: [{ byline: { displayName: "Pat Author" }, sortOrder: 0 }],
+				terms: {
+					category: [{ label: "Policy", slug: "policy", id: "x" }],
+					tag: [{ label: "debt", slug: "debt" }, { label: 3 }],
+				},
+				featured_image: {
+					id: "01ABC",
+					provider: "local",
+					width: 1237,
+					height: 906,
+					alt: "A photo",
+					meta: { storageKey: "01ABC.png" },
+				},
+			},
+			{ url: "/posts/a-post", origin: "https://example.org", comments: 2 },
+		);
+		expect(fill).toEqual({
+			url: "/posts/a-post",
+			absoluteUrl: "https://example.org/posts/a-post",
+			title: "A Post",
+			date: new Date("2014-05-01T05:57:19Z"),
+			author: "Pat Author",
+			categories: [{ label: "Policy", slug: "policy" }],
+			tags: [{ label: "debt", slug: "debt" }],
+			comments: 2,
+			image: "/_emdash/api/media/file/01ABC.png",
+			imageWidth: 1237,
+			alt: "A photo",
+		});
+		expect(
+			wpShellPostFill({}, { url: "/posts/x", origin: "https://example.org", comments: null }),
+		).toMatchObject({ author: null, date: null, image: null, categories: [], tags: [] });
+	});
+
+	/** The post layout with one field replaced. */
+	const posted = (
+		change: Partial<WpShellPostLayout> | ((p: WpShellPostLayout) => WpShellPostLayout),
+	) => withPost(typeof change === "function" ? change(postOf()) : { ...postOf(), ...change });
+	it.each<[string, WpShell]>([
+		[
+			"a post slot in the record's own layout",
+			{ ...withPost(), parts: [...sample().parts, { slot: "postMeta", meta: 0 }] },
+		],
+		[
+			"a post slot in the home layout",
+			{ ...withPost(), home: { ...homeOf(), parts: [...homeOf().parts, { slot: "featured" }] } },
+		],
+		[
+			"a comments slot in a page layout",
+			{
+				...withPost(),
+				pages: [
+					{ ...contactOf(), parts: [...contactOf().parts, { slot: "comments", tag: "div" }] },
+				],
+			},
+		],
+		[
+			"a meta slot that names no meta",
+			posted((p) => ({ ...p, parts: [...p.parts, { slot: "postMeta", meta: 3 }] })),
+		],
+		["a featured slot with no featured template", posted((p) => ({ ...p, featured: undefined }))],
+		[
+			"two comments slots",
+			posted((p) => ({ ...p, parts: [...p.parts, { slot: "comments", tag: "div" }] })),
+		],
+		[
+			"a comments element this layout does not draw",
+			posted((p) => ({
+				...p,
+				parts: p.parts.map((x) =>
+					"slot" in x && x.slot === "comments" ? { ...x, tag: "form" as "div" } : x,
+				),
+			})),
+		],
+		[
+			"an href hole outside its attribute",
+			posted({ trailTerm: ["<span>", { s: "href" }, "</span>"] }),
+		],
+		[
+			"a src hole outside its attribute",
+			posted({ featured: { item: ['<img alt="', { s: "src" }, '">'], minWidth: 0 } }),
+		],
+		[
+			"a text hole inside an attribute",
+			posted({ meta: [['<a title="', { s: "author" }, '">x</a>']] }),
+		],
+		[
+			"a markup hole inside an attribute",
+			posted({ meta: [['<a title="', { s: "categories" }, '">x</a>']] }),
+		],
+		["a hole a meta does not draw", posted({ meta: [["<p>", { s: "src" }, "</p>"]] })],
+		[
+			"a script in a meta template",
+			posted({ meta: [["<script>alert(1)</script>", { s: "date" }]] }),
+		],
+		[
+			"a handler in a term template",
+			posted((p) => ({
+				...p,
+				terms: {
+					tag: {
+						...p.terms!.tag!,
+						term: ['<a onclick="x()" href="', { s: "href" }, '">', { s: "label" }, "</a>"],
+					},
+				},
+			})),
+		],
+		[
+			"a javascript: link in the share links",
+			posted({ share: ['<a href="javascript:alert(1)">x</a>'] }),
+		],
+		[
+			"a phrase with markup",
+			posted((p) => ({ ...p, comments: { ...p.comments!, zero: "<b>Leave</b>" } })),
+		],
+		[
+			"a phrase with two counts",
+			posted((p) => ({ ...p, comments: { ...p.comments!, many: "%d of %d" } })),
+		],
+		[
+			"a separator with markup",
+			posted((p) => ({ ...p, terms: { tag: { ...p.terms!.tag!, sep: "<br>" } } })),
+		],
+		[
+			"a width that is not one",
+			posted((p) => ({ ...p, featured: { ...p.featured!, minWidth: -1 } })),
+		],
+		["a date format that is not one", posted({ date: "F j, Y <b>" })],
+		[
+			"an image from elsewhere in a template",
+			posted({ meta: [['<img src="https://tracker.example/p.gif">', { s: "date" }]] }),
+		],
+	])("refuses the record whole for %s", (_, record) => {
+		expect(wpShellProblem(record)).not.toBeNull();
 	});
 });

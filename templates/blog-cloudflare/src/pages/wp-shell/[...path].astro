@@ -14,6 +14,7 @@
  */
 import {
 	decodeSlug,
+	getCommentCount,
 	getContentSeo,
 	getEmDashEntry,
 	getHomepage,
@@ -25,7 +26,7 @@ import { Comments, CommentForm } from "emdash/ui/comments";
 import WpShell from "../../layouts/WpShell.astro";
 import { featuredImageUrl } from "../../utils/og-image";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
-import { wpShellRoute } from "../../utils/wp-shell";
+import { wpShellPostFill, wpShellRoute } from "../../utils/wp-shell";
 import { loadWpShell } from "../../utils/wp-shell-loader";
 
 const origin = Astro.originPathname;
@@ -79,6 +80,19 @@ const seo = getSeoMeta(entry, {
 		? { defaultOgImage: featuredImageUrl(data.featured_image, Astro.url.origin) }
 		: {}),
 });
+
+// A post drawn in the record's post layout: its own values for the layout's holes. The comment
+// count is read only where the layout prints one.
+const post =
+	isPost && shell.post
+		? wpShellPostFill(data, {
+				url: path,
+				origin: Astro.url.origin,
+				comments: shell.post.comments ? await getCommentCount("posts", data.id) : null,
+			})
+		: null;
+// The post layout's comment element holds EmDash's comments itself.
+const layoutComments = Boolean(post && shell.post?.parts.some((p) => "slot" in p && p.slot === "comments"));
 ---
 
 <WpShell
@@ -98,13 +112,20 @@ const seo = getSeoMeta(entry, {
 	modifiedTime={isPost ? data.updatedAt.toISOString() : null}
 	content={{ collection, id: data.id, slug: entry.id }}
 	entry={{ title: data.title, body: data.content, edit: entry.edit }}
+	post={post}
 >
 	{
-		isPost && (
-			<div class="comments-wrapper section-inner">
-				<Comments collection="posts" contentId={data.id} threaded />
-				<CommentForm collection="posts" contentId={data.id} />
-			</div>
-		)
+		isPost &&
+			(layoutComments ? (
+				<Fragment>
+					<Comments collection="posts" contentId={data.id} threaded />
+					<CommentForm collection="posts" contentId={data.id} />
+				</Fragment>
+			) : (
+				<div class="comments-wrapper section-inner">
+					<Comments collection="posts" contentId={data.id} threaded />
+					<CommentForm collection="posts" contentId={data.id} />
+				</div>
+			))
 	}
 </WpShell>

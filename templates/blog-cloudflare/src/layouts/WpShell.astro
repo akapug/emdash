@@ -14,7 +14,10 @@
  * the theme), the site title, tagline and logo, and the title again where the
  * chrome prints it as text (a breadcrumb). Everything else in the header and
  * footer is the captured markup, sanitized when it was captured. The home is
- * drawn from the record's home layout when it has one (the front page's own).
+ * drawn from the record's home layout when it has one (the front page's own),
+ * and a post from its post layout: its meta, featured image and share links
+ * from the post's own values, and EmDash's comments inside the theme's
+ * comment element.
  */
 import type { HTMLTag } from "astro/types";
 import {
@@ -43,6 +46,7 @@ import {
 	type WpShellKind,
 	type WpShellMenuItem,
 	type WpShellPost,
+	type WpShellPostFill,
 	wpShellDocumentTitle,
 } from "../utils/wp-shell";
 
@@ -67,6 +71,8 @@ interface Props {
 	author?: string | null;
 	content?: { collection: string; id: string; slug?: string | null };
 	entry: { title: string; body?: PortableTextBlock[]; edit: EditProxy };
+	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
+	post?: WpShellPostFill | null;
 }
 
 const {
@@ -87,6 +93,7 @@ const {
 	author,
 	content,
 	entry,
+	post,
 } = Astro.props;
 
 const locations = [...new Set(shell.menus.map((m) => m.location))];
@@ -140,7 +147,11 @@ const pieces = composeWpShell(shell, {
 	slug,
 	title: entry.title,
 	posts,
+	post,
 });
+// EmDash's comments (the route's slot) go inside the theme's comment element where the layout has
+// one (a post), and after the content otherwise.
+const commentsInLayout = pieces.some((piece) => "comments" in piece);
 
 // WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
 // video embedded from a link in classic content, and a form imported from the site's form plugin,
@@ -187,6 +198,14 @@ const pageCtx = createPublicPageContext({
 		{
 			pieces.map((piece) => {
 				if ("html" in piece) return <Fragment set:html={piece.html} />;
+				if ("comments" in piece) {
+					const Comments = piece.comments.tag as HTMLTag;
+					return (
+						<Comments class={piece.comments.class} id={piece.comments.id}>
+							<slot />
+						</Comments>
+					);
+				}
 				if ("title" in piece) {
 					const Title = piece.title.tag as HTMLTag;
 					return (
@@ -200,8 +219,9 @@ const pageCtx = createPublicPageContext({
 					<Fragment>
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
 							<PortableText value={entry.body} components={components} />
+							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>
-						<slot />
+						{!commentsInLayout && <slot />}
 					</Fragment>
 				);
 			})

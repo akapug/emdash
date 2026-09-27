@@ -75,7 +75,89 @@ export type WpShellPart =
 	/** The entry's title as text, where the chrome prints it: a breadcrumb trail's last crumb. */
 	| { slot: "titleText" }
 	/** The site's latest posts, where the front page lists them: the record's `listings[listing]`. */
-	| { slot: "listing"; listing: number };
+	| { slot: "listing"; listing: number }
+	// Only in the record's post layout (WpShellPostLayout); anywhere else the record is refused.
+	/** The post's meta: the post layout's `meta[meta]`. */
+	| { slot: "postMeta"; meta: number }
+	/** The post's featured image: the post layout's `featured`. */
+	| { slot: "featured" }
+	/** The post's first category, where a breadcrumb trail names it: the post layout's `trailTerm`. */
+	| { slot: "trailTerm" }
+	/** EmDash's comments and comment form, drawn inside the theme's comment element. */
+	| ({ slot: "comments" } & WpShellElement)
+	/** The post author's bio: the post layout's `author`. */
+	| { slot: "authorBio" }
+	/** The links to the posts before and after: the post layout's `adjacent`. */
+	| { slot: "adjacent" };
+
+/**
+ * A hole in a post layout's templates, filled here for each post. Text
+ * (escaped): date, author, title, label, count, name, adjTitle. Each inside
+ * its own attribute: href, src, alt, avatar, adjHref, and the share links
+ * (this file's own share page for the network, for the post). Markup, drawn
+ * only from the record's own sub-templates: categories, tags, comments,
+ * terms, bio, prev, next.
+ */
+export type WpShellPostHole =
+	| "href"
+	| "date"
+	| "author"
+	| "title"
+	| "categories"
+	| "tags"
+	| "comments"
+	| "count"
+	| "terms"
+	| "label"
+	| "src"
+	| "alt"
+	| "share-x"
+	| "share-facebook"
+	| "share-linkedin"
+	| "share-email"
+	| "name"
+	| "bio"
+	| "avatar"
+	| "prev"
+	| "next"
+	| "adjHref"
+	| "adjTitle";
+export type WpShellPostPart = string | { s: WpShellPostHole };
+
+/** A post's terms of one taxonomy: the markup around them (drawn when the post has one), one term, and what joins two. */
+export interface WpShellPostTerms {
+	item: WpShellPostPart[];
+	term: WpShellPostPart[];
+	sep: string;
+}
+
+/**
+ * The layout every single post is drawn in, cut from one of the site's posts:
+ * a layout like any other, and the theme's markup for what WordPress's
+ * single-post template prints around the content, with holes each post's own
+ * values fill.
+ */
+export interface WpShellPostLayout extends WpShellLayout {
+	/** How the meta prints a date, in PHP date() letters, and the site's time zone. */
+	date?: string;
+	timeZone?: string;
+	utcOffset?: number;
+	/** The meta blocks, each drawn at its `postMeta` slot. */
+	meta: WpShellPostPart[][];
+	terms?: { category?: WpShellPostTerms; tag?: WpShellPostTerms };
+	/** The comment count link, drawn for a count whose phrase the record knows ("%d Comments"). */
+	comments?: { item: WpShellPostPart[]; zero?: string; one?: string; many?: string };
+	/** The featured image, drawn for an image of the site's own at least `minWidth` px wide. */
+	featured?: { item: WpShellPostPart[]; minWidth: number };
+	/** The trail's category crumb, and what follows it. */
+	trailTerm?: WpShellPostPart[];
+	/** The theme's share links, drawn at the end of the content. */
+	share?: WpShellPostPart[];
+	/** The author's bio: their name and bio text, and their avatar where they have one. */
+	author?: { item: WpShellPostPart[]; avatar?: WpShellPostPart[] };
+	/** The links to the posts before and after: each side drawn for a post that has one. */
+	adjacent?: { item: WpShellPostPart[]; prev: WpShellPostPart[]; next: WpShellPostPart[] };
+}
 
 /** A piece of a menu item template: captured markup, or a hole this file fills. */
 export type WpShellTemplatePart = string | { s: "cls" | "href" | "label" | "children" };
@@ -175,6 +257,8 @@ export interface WpShell extends WpShellLayout {
 	pages?: WpShellPageLayout[];
 	/** The site's forms in their plugin's markup: an EmDash form imported from one is drawn in it (renderWpShellForm). */
 	forms?: WpShellForm[];
+	/** The layout every single post is drawn in; without it, posts wear the record's own layout. */
+	post?: WpShellPostLayout;
 }
 
 /** A page's own layout, for the EmDash page of its slug. */
@@ -423,6 +507,7 @@ const layoutsOf = (s: WpShell): WpShellLayout[] => [
 	s,
 	...(s.home ? [s.home] : []),
 	...(s.pages ?? []),
+	...(s.post ? [s.post] : []),
 ];
 
 /**
@@ -461,7 +546,87 @@ function drawnMarkup(s: WpShell): string[] {
 	}
 	// A form's holes as elements that fit between tags: renderWpShellForm writes the form's own.
 	for (const f of s.forms ?? []) out.push(f.parts.map(formFillForCheck).join(""));
+	if (s.post) out.push(...postMarkupForCheck(s.post));
 	return out;
+}
+
+/**
+ * A post layout's holes filled for the check: its links and images with
+ * values the tripwire reads as the site's, its text holes with markup that
+ * only fits between tags, and its markup holes with the record's own
+ * sub-templates, filled the same way.
+ */
+const POST_FILL: Record<WpShellPostHole, string> = {
+	href: "#",
+	adjHref: "#",
+	"share-x": "#",
+	"share-facebook": "#",
+	"share-linkedin": "#",
+	"share-email": "#",
+	src: "/_emdash/api/media/file/a.png",
+	avatar: "/_emdash/api/media/file/a.png",
+	alt: "",
+	date: "<b></b>",
+	author: "<b></b>",
+	title: "<b></b>",
+	label: "<b></b>",
+	count: "<b></b>",
+	name: "<b></b>",
+	adjTitle: "<b></b>",
+	bio: "<b></b>",
+	terms: "<b></b>",
+	categories: "<b></b>",
+	tags: "<b></b>",
+	comments: "<b></b>",
+	prev: "<b></b>",
+	next: "<b></b>",
+};
+
+function postMarkupForCheck(post: WpShellPostLayout): string[] {
+	const fill = (
+		t: readonly WpShellPostPart[],
+		holes: Partial<Record<WpShellPostHole, string>> = {},
+	) => t.map((x) => (typeof x === "string" ? x : (holes[x.s] ?? POST_FILL[x.s]))).join("");
+	const terms = (t: WpShellPostTerms | undefined) =>
+		t ? fill(t.item, { terms: [fill(t.term), fill(t.term)].join(escapeHtml(t.sep)) }) : "";
+	const markup = {
+		categories: terms(post.terms?.category),
+		tags: terms(post.terms?.tag),
+		comments: post.comments ? fill(post.comments.item) : "",
+	};
+	const out = post.meta.map((m) => fill(m, markup));
+	for (const t of [post.featured?.item, post.trailTerm, post.share, post.comments?.item])
+		if (t) out.push(fill(t));
+	out.push(markup.categories, markup.tags);
+	if (post.author)
+		out.push(
+			fill(post.author.item, { avatar: post.author.avatar ? fill(post.author.avatar) : "" }),
+		);
+	if (post.author?.avatar) out.push(fill(post.author.avatar));
+	if (post.adjacent)
+		out.push(
+			fill(post.adjacent.item, { prev: fill(post.adjacent.prev), next: fill(post.adjacent.next) }),
+			fill(post.adjacent.prev),
+			fill(post.adjacent.next),
+		);
+	return out;
+}
+
+/** Every template of a post layout. */
+function postTemplatesOf(post: WpShellPostLayout): WpShellPostPart[][] {
+	return [
+		...post.meta,
+		...[post.terms?.category, post.terms?.tag].flatMap((t) => (t ? [t.item, t.term] : [])),
+		...[
+			post.comments?.item,
+			post.featured?.item,
+			post.trailTerm,
+			post.share,
+			post.author?.item,
+			post.author?.avatar,
+		].filter((t): t is WpShellPostPart[] => t !== undefined),
+		...(post.adjacent ? [post.adjacent.item, post.adjacent.prev, post.adjacent.next] : []),
+	];
 }
 
 const FORM_FILL: Record<WpShellFormHole["s"], string> = {
@@ -492,7 +657,12 @@ function checkElement(p: Record<string, unknown>): boolean {
 const isIndex = (v: unknown, below: number): boolean =>
 	typeof v === "number" && Number.isInteger(v) && v >= 0 && v < below;
 
-function checkPart(p: unknown, menus: number, listings: number): string | null {
+function checkPart(
+	p: unknown,
+	menus: number,
+	listings: number,
+	post: WpShellPostLayout | null = null,
+): string | null {
 	if (!isObject(p)) return "a part is not an object";
 	if ("html" in p) return typeof p.html === "string" ? null : "an html part is not a string";
 	switch (p.slot) {
@@ -517,6 +687,29 @@ function checkPart(p: unknown, menus: number, listings: number): string | null {
 			return null;
 		case "listing":
 			return isIndex(p.listing, listings) ? null : "a listing slot names no listing";
+		// A post's slots are drawn only in the post layout, from its own templates.
+		case "postMeta":
+			return post && isIndex(p.meta, post.meta.length)
+				? null
+				: "a post meta slot names no meta of a post layout";
+		case "featured":
+		case "trailTerm":
+		case "authorBio":
+		case "adjacent": {
+			const has =
+				p.slot === "featured"
+					? post?.featured
+					: p.slot === "trailTerm"
+						? post?.trailTerm
+						: p.slot === "authorBio"
+							? post?.author
+							: post?.adjacent;
+			return has ? null : `a ${String(p.slot)} slot outside a post layout that carries one`;
+		}
+		case "comments":
+			return post && checkElement(p)
+				? null
+				: "a comments slot outside a post layout, or on an element this layout does not draw";
 		default:
 			return `unknown slot ${JSON.stringify(p.slot)}`;
 	}
@@ -662,6 +855,11 @@ function markupOf(s: WpShell): string[] {
 	for (const l of s.listings ?? [])
 		for (const x of [...l.item, ...(l.thumb ?? [])]) if (typeof x === "string") out.push(x);
 	for (const f of s.forms ?? []) for (const x of f.parts) if (typeof x === "string") out.push(x);
+	if (s.post) {
+		for (const t of postTemplatesOf(s.post))
+			for (const x of t) if (typeof x === "string") out.push(x);
+		for (const t of [s.post.terms?.category, s.post.terms?.tag]) if (t) out.push(t.sep);
+	}
 	return out;
 }
 
@@ -740,7 +938,12 @@ const countSlot = (parts: unknown[], slot: string) =>
 	parts.filter((p) => isObject(p) && p.slot === slot).length;
 
 /** Why a layout's body, stylesheets or parts are not ones this template draws, or null. */
-function checkLayout(l: Record<string, unknown>, menus: number, listings: number): string | null {
+function checkLayout(
+	l: Record<string, unknown>,
+	menus: number,
+	listings: number,
+	post: WpShellPostLayout | null = null,
+): string | null {
 	const { body, styles, parts } = l;
 	if (!isObject(body) || typeof body.class !== "string" || !TOKENS.test(body.class)) {
 		return "body class is not tokens";
@@ -750,12 +953,145 @@ function checkLayout(l: Record<string, unknown>, menus: number, listings: number
 	}
 	if (!Array.isArray(parts)) return "no parts";
 	for (const p of parts) {
-		const why = checkPart(p, menus, listings);
+		const why = checkPart(p, menus, listings, post);
 		if (why) return why;
 	}
 	if (countSlot(parts, "title") !== 1 || countSlot(parts, "content") !== 1) {
 		return "the record needs exactly one title and one content slot";
 	}
+	if (countSlot(parts, "comments") > 1) return "a post layout has more than one comments slot";
+	return null;
+}
+
+const POST_META_HOLES = new Set([
+	"href",
+	"date",
+	"author",
+	"title",
+	"categories",
+	"tags",
+	"comments",
+]);
+const SHARE_HOLES = ["share-x", "share-facebook", "share-linkedin", "share-email"] as const;
+/** What each attribute hole of a post template is filled inside, and only there. */
+const POST_IN_ATTRIBUTE: Record<string, string> = {
+	href: 'href="',
+	adjHref: 'href="',
+	src: 'src="',
+	avatar: 'src="',
+	alt: 'alt="',
+	...Object.fromEntries(SHARE_HOLES.map((h) => [h, 'href="'])),
+};
+const MAX_POST_META = 20;
+const PHRASE_PERCENT = /%d/g;
+
+/** A post template: markup and holes of `allowed` kinds, each attribute hole inside its own attribute. */
+function checkPostTemplate(t: unknown, allowed: ReadonlySet<string>): boolean {
+	return (
+		Array.isArray(t) &&
+		t.every((x, i) => {
+			if (typeof x === "string") return true;
+			if (!isObject(x) || typeof x.s !== "string" || !allowed.has(x.s)) return false;
+			const attribute = POST_IN_ATTRIBUTE[x.s];
+			const before = t[i - 1];
+			return attribute === undefined || (typeof before === "string" && before.endsWith(attribute));
+		})
+	);
+}
+
+/** A comment count's phrase: short, no markup, at most one `%d`. */
+const checkPhrase = (v: unknown) =>
+	v === undefined ||
+	(isText(v) &&
+		v.length <= 80 &&
+		!v.includes("<") &&
+		!v.includes(">") &&
+		(v.match(PHRASE_PERCENT)?.length ?? 0) <= 1);
+
+function checkTerms(t: unknown): boolean {
+	return (
+		t === undefined ||
+		(isObject(t) &&
+			checkPostTemplate(t.item, new Set(["terms"])) &&
+			checkPostTemplate(t.term, new Set(["href", "label"])) &&
+			isText(t.sep) &&
+			t.sep.length <= 20 &&
+			!t.sep.includes("<") &&
+			!t.sep.includes(">"))
+	);
+}
+
+/** Why a post layout's own templates are not ones this layout fills, or null (its layout is checkLayout's). */
+function checkPost(v: Record<string, unknown>): string | null {
+	const {
+		date,
+		timeZone,
+		utcOffset,
+		meta,
+		terms,
+		comments,
+		featured,
+		trailTerm,
+		share,
+		author,
+		adjacent,
+	} = v;
+	if (date !== undefined && (typeof date !== "string" || !DATE_FORMAT.test(date)))
+		return "the post layout's date format is not one";
+	if (timeZone !== undefined && (typeof timeZone !== "string" || !TIME_ZONE.test(timeZone)))
+		return "the post layout's time zone is not one";
+	if (
+		utcOffset !== undefined &&
+		(typeof utcOffset !== "number" || !Number.isInteger(utcOffset) || Math.abs(utcOffset) > 840)
+	)
+		return "the post layout's offset from UTC is not one";
+	if (
+		!Array.isArray(meta) ||
+		meta.length > MAX_POST_META ||
+		!meta.every((m) => checkPostTemplate(m, POST_META_HOLES))
+	)
+		return "a post meta template is malformed";
+	if (
+		terms !== undefined &&
+		(!isObject(terms) || !checkTerms(terms.category) || !checkTerms(terms.tag))
+	)
+		return "the post layout's terms are malformed";
+	if (
+		comments !== undefined &&
+		(!isObject(comments) ||
+			!checkPostTemplate(comments.item, new Set(["href", "count", "title"])) ||
+			!checkPhrase(comments.zero) ||
+			!checkPhrase(comments.one) ||
+			!checkPhrase(comments.many))
+	)
+		return "the post layout's comment count is malformed";
+	if (
+		featured !== undefined &&
+		(!isObject(featured) ||
+			!checkPostTemplate(featured.item, new Set(["src", "alt"])) ||
+			!isIndex(featured.minWidth, 10_000))
+	)
+		return "the post layout's featured image is malformed";
+	if (trailTerm !== undefined && !checkPostTemplate(trailTerm, new Set(["href", "label"])))
+		return "the post layout's trail term is malformed";
+	if (share !== undefined && !checkPostTemplate(share, new Set(SHARE_HOLES)))
+		return "the post layout's share links are malformed";
+	if (
+		author !== undefined &&
+		(!isObject(author) ||
+			!checkPostTemplate(author.item, new Set(["name", "bio", "avatar"])) ||
+			(author.avatar !== undefined &&
+				!checkPostTemplate(author.avatar, new Set(["avatar", "name"]))))
+	)
+		return "the post layout's author bio is malformed";
+	if (
+		adjacent !== undefined &&
+		(!isObject(adjacent) ||
+			!checkPostTemplate(adjacent.item, new Set(["prev", "next"])) ||
+			!checkPostTemplate(adjacent.prev, new Set(["adjHref", "adjTitle"])) ||
+			!checkPostTemplate(adjacent.next, new Set(["adjHref", "adjTitle"])))
+	)
+		return "the post layout's adjacent posts are malformed";
 	return null;
 }
 
@@ -806,6 +1142,15 @@ export function wpShellProblem(value: unknown): string | null {
 	for (const f of forms) {
 		const why = checkForm(f);
 		if (why) return why;
+	}
+	if (value.post !== undefined) {
+		if (!isObject(value.post)) return "the post layout: not an object";
+		const own = checkPost(value.post);
+		if (own) return `the post layout: ${own}`;
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checkPost checked the post's own fields
+		const post = value.post as unknown as WpShellPostLayout;
+		const why = checkLayout(value.post, menus.length, listings.length, post);
+		if (why) return `the post layout: ${why}`;
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
 	const shell = value as unknown as WpShell;
@@ -1410,11 +1755,16 @@ export function renderWpShellForm(
 	return out;
 }
 
-/** What the layout draws: markup, or the element that holds the title or the content. */
+/**
+ * What the layout draws: markup, the element that holds the title, the one
+ * that holds the content (and, in a post, what the theme drew at the end of
+ * it), or the theme's comment element, which holds EmDash's comments.
+ */
 export type WpShellPiece =
 	| { html: string }
 	| { title: WpShellElement }
-	| { content: WpShellElement };
+	| { content: WpShellElement; end?: string }
+	| { comments: WpShellElement };
 
 /** What EmDash knows that the record left a slot for. */
 export interface WpShellFill {
@@ -1435,11 +1785,40 @@ export interface WpShellFill {
 	title?: string;
 	/** The site's latest posts, newest first, for a listing slot. */
 	posts?: readonly WpShellPost[] | null;
+	/** The single post being drawn, for the post layout's holes. */
+	post?: WpShellPostFill | null;
+}
+
+/** A post's category or tag, as EmDash hydrates it. */
+export interface WpShellPostTerm {
+	label: string;
+	slug: string;
+}
+
+/** What EmDash knows of the single post being drawn, for the post layout's holes. */
+export interface WpShellPostFill {
+	/** The post's path on the site. */
+	url: string;
+	/** The post's address, for its share links; none, and they are not drawn. */
+	absoluteUrl?: string | null;
+	title: string;
+	date?: Date | null;
+	/** The byline's name. */
+	author?: string | null;
+	categories?: readonly WpShellPostTerm[];
+	tags?: readonly WpShellPostTerm[];
+	/** Its approved comments; unknown, and the count is not drawn. */
+	comments?: number | null;
+	/** The featured image's path, when it is one of the site's own files, its width, and its alt text. */
+	image?: string | null;
+	imageWidth?: number | null;
+	alt?: string | null;
 }
 
 /** The layout a kind of page is drawn with: a page of a slug cut on its own draws its own. */
 export function layoutFor(shell: WpShell, kind: WpShellKind, slug?: string | null): WpShellLayout {
 	if (kind === "home" && shell.home) return shell.home;
+	if (kind === "post" && shell.post) return shell.post;
 	const own = kind === "page" && slug ? shell.pages?.find((p) => p.slug === slug) : undefined;
 	return own ?? shell;
 }
@@ -1465,6 +1844,159 @@ function logoHtml(
 	return `<img ${attrs.join(" ")}>`;
 }
 
+// --- a single post --------------------------------------------------------------
+
+const byLabel = (terms: readonly WpShellPostTerm[] | undefined) =>
+	[...(terms ?? [])].toSorted((a, b) => a.label.toLowerCase().localeCompare(b.label.toLowerCase()));
+
+/** Where the site serves a term's posts (pages/category/[slug], pages/tag/[slug]). */
+const termHref = (taxonomy: "category" | "tag", t: WpShellPostTerm) =>
+	`/${taxonomy}/${encodeURIComponent(t.slug)}`;
+
+/** Each network's own share page for a post: an address of this file's, and the post's, nothing of the record's. */
+const SHARE_PAGE: Record<(typeof SHARE_HOLES)[number], (url: string, title: string) => string> = {
+	"share-x": (url, title) =>
+		`https://x.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(title)}`,
+	"share-facebook": (url) =>
+		`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`,
+	"share-linkedin": (url) =>
+		`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`,
+	"share-email": (url, title) =>
+		`mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(url)}`,
+};
+const isShareHole = (h: WpShellPostHole): h is (typeof SHARE_HOLES)[number] =>
+	(SHARE_HOLES as readonly string[]).includes(h);
+
+/** The comment count's phrase for `n` comments, when the record knows the one for its count. */
+function commentPhrase(post: WpShellPostLayout, n: number | null | undefined): string | null {
+	if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || !post.comments) return null;
+	const phrase = n === 0 ? post.comments.zero : n === 1 ? post.comments.one : post.comments.many;
+	return phrase === undefined ? null : phrase.replace("%d", String(n));
+}
+
+/** Whether a post's featured image is drawn: one of the site's own files, as wide as the theme draws one. */
+export function featuredDrawn(post: WpShellPostLayout, p: WpShellPostFill): boolean {
+	const f = post.featured;
+	if (!f || !p.image || !ownFile(p.image) || !MEDIA_SRC.test(p.image)) return false;
+	if (f.minWidth === 0) return true;
+	return typeof p.imageWidth === "number" && p.imageWidth >= f.minWidth;
+}
+
+/**
+ * A post template filled for one post: every text escaped, every link the
+ * post's own, a term's page, or its network's share page, every markup hole
+ * from the record's own sub-templates. Null when a hole it needs has nothing
+ * to draw (a meta with a date, for a post with none), so the caller draws
+ * nothing of it.
+ */
+function fillPost(
+	t: readonly WpShellPostPart[],
+	post: WpShellPostLayout,
+	p: WpShellPostFill,
+	term?: { href: string; label: string; terms?: string },
+): string | null {
+	let out = "";
+	for (const x of t) {
+		if (typeof x === "string") {
+			out += x;
+			continue;
+		}
+		const h = x.s;
+		if (h === "href") out += escapeAttr(safeHref(term ? term.href : p.url));
+		else if (h === "label") out += escapeHtml(term?.label ?? "");
+		else if (h === "terms") out += term?.terms ?? "";
+		else if (h === "title") out += escapeHtml(p.title);
+		else if (h === "date") {
+			if (!p.date || !post.date) return null;
+			out += escapeHtml(formatWpDate(p.date, post.date, post));
+		} else if (h === "author") {
+			if (!p.author) return null;
+			out += escapeHtml(p.author);
+		} else if (h === "count") {
+			const phrase = commentPhrase(post, p.comments);
+			if (phrase === null) return null;
+			out += escapeHtml(phrase);
+		} else if (h === "categories" || h === "tags") {
+			const taxonomy = h === "categories" ? "category" : "tag";
+			const shape = post.terms?.[taxonomy];
+			const list = byLabel(h === "categories" ? p.categories : p.tags);
+			if (!shape || list.length === 0) continue;
+			const terms = list
+				.map(
+					(one) =>
+						fillPost(shape.term, post, p, { href: termHref(taxonomy, one), label: one.label }) ??
+						"",
+				)
+				.join(escapeHtml(shape.sep));
+			out += fillPost(shape.item, post, p, { href: "#", label: "", terms }) ?? "";
+		} else if (h === "comments") {
+			out += post.comments ? (fillPost(post.comments.item, post, p) ?? "") : "";
+		} else if (h === "src") out += escapeAttr(p.image ?? "");
+		else if (h === "alt") out += escapeAttr(p.alt ?? "");
+		else if (isShareHole(h)) {
+			if (!p.absoluteUrl) return null;
+			out += escapeAttr(SHARE_PAGE[h](p.absoluteUrl, p.title));
+		} else return null;
+	}
+	return out;
+}
+
+/**
+ * A post's values for the post layout, from its entry as EmDash hydrates it:
+ * its first byline's name, its categories and tags, its date, its featured
+ * image when it is one of the site's own files, and the comment count the
+ * route read (only where the layout prints one).
+ */
+export function wpShellPostFill(
+	data: unknown,
+	o: { url: string; origin: string; comments: number | null },
+): WpShellPostFill {
+	const d = isObject(data) ? data : {};
+	const credit: unknown = Array.isArray(d.bylines) ? d.bylines[0] : undefined;
+	const byline =
+		isObject(credit) && isObject(credit.byline)
+			? credit.byline
+			: isObject(d.byline)
+				? d.byline
+				: null;
+	const terms = isObject(d.terms) ? d.terms : {};
+	const list = (name: string): WpShellPostTerm[] => {
+		const v = terms[name];
+		return Array.isArray(v)
+			? v.flatMap((t) =>
+					isObject(t) && isText(t.label) && isText(t.slug)
+						? [{ label: t.label, slug: t.slug }]
+						: [],
+				)
+			: [];
+	};
+	const image = d.featured_image;
+	const media = isObject(image) ? image : null;
+	return {
+		url: o.url,
+		absoluteUrl: URL.parse(o.url, o.origin)?.href ?? null,
+		title: isText(d.title) ? d.title : "",
+		date: d.publishedAt instanceof Date ? d.publishedAt : null,
+		author: byline && isText(byline.displayName) ? byline.displayName : null,
+		categories: list("category"),
+		tags: list("tag"),
+		comments: o.comments,
+		image: ownImagePath(image),
+		imageWidth: media && typeof media.width === "number" ? media.width : null,
+		alt: media && isText(media.alt) ? media.alt : "",
+	};
+}
+
+/** The trail's category crumb for a post: its first category by name, which WordPress's trail names. */
+function trailTermHtml(post: WpShellPostLayout, p: WpShellPostFill): string {
+	const first = byLabel(p.categories)[0];
+	if (!post.trailTerm || !first) return "";
+	return (
+		fillPost(post.trailTerm, post, p, { href: termHref("category", first), label: first.label }) ??
+		""
+	);
+}
+
 /**
  * The record's parts with every slot but the title and the content filled,
  * and neighbouring markup joined: what the layout draws, in order.
@@ -1476,12 +2008,27 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		if (last && "html" in last) last.html += html;
 		else out.push({ html });
 	};
-	for (const p of layoutFor(shell, fill.kind ?? "page", fill.slug).parts) {
+	const layout = layoutFor(shell, fill.kind ?? "page", fill.slug);
+	// The post layout's own slots draw only for a post, and only from its own templates.
+	const post = layout === shell.post && fill.post ? shell.post : null;
+	const postHtml = (t: readonly WpShellPostPart[] | undefined) =>
+		post && t && fill.post ? (fillPost(t, post, fill.post) ?? "") : "";
+	for (const p of layout.parts) {
 		if ("html" in p) push(p.html);
 		else if (p.slot === "titleText") push(escapeHtml(fill.title ?? ""));
 		else if (p.slot === "title") out.push({ title: element(p) });
-		else if (p.slot === "content") out.push({ content: element(p) });
-		else if (p.slot === "siteTitle") push(escapeHtml(fill.siteTitle ?? p.fallback));
+		else if (p.slot === "content") {
+			const end = postHtml(post?.share);
+			out.push({ content: element(p), ...(end ? { end } : {}) });
+		} else if (p.slot === "comments") out.push({ comments: element(p) });
+		else if (p.slot === "postMeta") push(postHtml(post?.meta[p.meta]));
+		else if (p.slot === "featured") {
+			if (post && fill.post && featuredDrawn(post, fill.post)) push(postHtml(post.featured?.item));
+		} else if (p.slot === "trailTerm") {
+			if (post && fill.post) push(trailTermHtml(post, fill.post));
+		} else if (p.slot === "authorBio" || p.slot === "adjacent") {
+			// Drawn by the post's own fill (phase 2); nothing without one.
+		} else if (p.slot === "siteTitle") push(escapeHtml(fill.siteTitle ?? p.fallback));
 		else if (p.slot === "tagline") push(escapeHtml(fill.tagline ?? p.fallback));
 		else if (p.slot === "logo") push(logoHtml(p, fill.logoUrl));
 		else if (p.slot === "listing") {

@@ -415,3 +415,81 @@ describe("the /wp-shell/ route: the document title", () => {
 		expect(await page(undefined)).toContain("<title>Contact | Example</title>");
 	});
 });
+
+describe("WpShell: a single post in the record's post layout", () => {
+	/** The record with a post layout: its meta, and the theme's comment element. */
+	const withPost = () => ({
+		...record(),
+		post: {
+			body: { class: "single single-post" },
+			styles: ["/_emdash/api/media/file/wp-shell/post.css"],
+			parts: [
+				{ html: '<main id="site-content"><div class="post hentry">' },
+				{ slot: "title", tag: "h1", class: "entry-title" },
+				{ slot: "postMeta", meta: 0 },
+				{ slot: "content", tag: "div", class: "entry-content" },
+				{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
+				{ html: "</div></main>" },
+			],
+			date: "F j, Y",
+			utcOffset: -480,
+			meta: [
+				[
+					'<p class="entry-meta"><a href="',
+					HOLE("href"),
+					'">',
+					HOLE("date"),
+					"</a> by ",
+					HOLE("author"),
+					"</p>",
+				],
+			],
+			share: ['<div class="sharedaddy"><a href="', HOLE("share-x"), '">X</a></div>'],
+		},
+	});
+	async function draw(shell: unknown, post: unknown) {
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShell, {
+			props: {
+				shell,
+				kind: "post",
+				path: "/posts/a-post",
+				title: "A Post",
+				entry: { title: "A Post", body: [], edit: { title: {}, content: {} } },
+				post,
+			},
+			slots: { default: '<section class="ec-comments">EMDASH COMMENTS</section>' },
+		});
+	}
+	const fill = {
+		url: "/posts/a-post",
+		absoluteUrl: "https://example.org/posts/a-post",
+		title: "A Post",
+		date: new Date("2014-05-01T05:57:19Z"),
+		author: "Pat & Co",
+	};
+
+	it("draws EmDash's comments inside the theme's comment element, and the post's meta and share links", async () => {
+		const html = await draw(withPost(), fill);
+		expect(html).toContain(
+			'<div class="comment-respond" id="respond"><section class="ec-comments">EMDASH COMMENTS</section></div>',
+		);
+		expect(html.match(/EMDASH COMMENTS/g)).toHaveLength(1);
+		expect(html).toContain(
+			'<p class="entry-meta"><a href="/posts/a-post">April 30, 2014</a> by Pat &amp; Co</p>',
+		);
+		expect(html).toMatch(
+			/<div class="entry-content"[^>]*><div class="sharedaddy"><a href="https:\/\/x\.com\/intent\/tweet\?url=https%3A%2F%2Fexample\.org%2Fposts%2Fa-post&amp;text=A%20Post">X<\/a><\/div><\/div>/,
+		);
+		expect(html).toContain('<body class="single single-post">');
+		expect(html).toContain('href="/_emdash/api/media/file/wp-shell/post.css"');
+	});
+
+	it("draws a post after its content, in the record's own layout, for a record with no post layout", async () => {
+		const html = await draw(record(), fill);
+		expect(html).toMatch(
+			/<div class="entry-content"[^>]*><\/div><section class="ec-comments">EMDASH COMMENTS<\/section><\/main>/,
+		);
+		expect(html).not.toContain("entry-meta");
+	});
+});
