@@ -513,7 +513,7 @@ describe("WpShell: what the layout draws through its own components", () => {
 					title: "Contact",
 					body: [
 						{ _type: "emdash-form", _key: "f", formId: "01FORM" },
-						{ _type: "embed", _key: "v", url: "https://vimeo.com/58376079", provider: "vimeo" },
+						{ _type: "embed", _key: "v", url: "https://vimeo.com/100000001", provider: "vimeo" },
 					],
 					edit: { title: {}, content: {} },
 				},
@@ -524,7 +524,7 @@ describe("WpShell: what the layout draws through its own components", () => {
 		expect(html).toContain('data-ec-skin="gravityforms"');
 		expect(html).not.toContain('class="ec-form"');
 		expect(html).toMatch(
-			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/58376079"/,
+			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/100000001"/,
 		);
 		expect(html).not.toContain("emdash-embed");
 	});

@@ -1398,9 +1398,9 @@ describe("wp-shell: a listing's masonry drawn in lanes, with no script", () => {
 describe("wp-shell: a video embedded from a link in classic content", () => {
 	it("is WordPress's player for a YouTube or Vimeo link that carries no block markup", () => {
 		expect(
-			classicVideoEmbed({ _type: "embed", url: "https://vimeo.com/58376079", provider: "vimeo" }),
+			classicVideoEmbed({ _type: "embed", url: "https://vimeo.com/100000001", provider: "vimeo" }),
 		).toEqual({
-			src: "https://player.vimeo.com/video/58376079",
+			src: "https://player.vimeo.com/video/100000001",
 			title: "Vimeo video",
 			allow: "autoplay; fullscreen; picture-in-picture",
 		});
