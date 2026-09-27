@@ -1489,7 +1489,7 @@
 	},
 	{
 		"version": 1,
-		"id": "11722c5f6fdbe69637aa7144",
+		"id": "1ebcb81398f6c6cf0059eb6d",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -1827,6 +1827,22 @@
 				},
 				"\" rel=\"noopener noreferrer\" class=\"share-facebook sd-button share-icon no-text\" target=\"_blank\"><span>Facebook</span></a></li><li class=\"share-end\"></li></ul></div></div></div>"
 			],
+			"commentArea": {
+				"parts": [
+					{
+						"s": "list"
+					},
+					{
+						"s": "respond"
+					}
+				],
+				"respond": [
+					"<h3 id=\"reply-title\" class=\"comment-reply-title\">Leave a Reply</h3>",
+					{
+						"s": "emdash"
+					}
+				]
+			},
 			"author": {
 				"item": [
 					"<div class=\"entry-author\">\n        <div class=\"row\">\n            <div class=\"author-avatar col-sm-2\"><a rel=\"author\">",
@@ -1890,7 +1906,7 @@
 	},
 	{
 		"version": 1,
-		"id": "26f5e71e84fb652ea5d09988",
+		"id": "44ea2461e51febdb4556d86e",
 		"source": {
 			"url": "https://www.example.org/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -2216,12 +2232,536 @@
 					"sep": ", "
 				}
 			},
-			"timeZone": "America/Denver"
+			"timeZone": "America/Denver",
+			"commentArea": {
+				"parts": [
+					{
+						"s": "list"
+					},
+					{
+						"s": "respond"
+					}
+				],
+				"respond": [
+					"<div id=\"respond\" class=\"comment-respond\"><h3 id=\"reply-title\">Leave a Reply</h3>",
+					{
+						"s": "emdash"
+					},
+					"</div>"
+				]
+			}
 		}
 	},
 	{
 		"version": 1,
-		"id": "3090a95abd02367cd53ea6fd",
+		"id": "5afb225a77abfc72fa65240f",
+		"source": {
+			"url": "https://www.example.org/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "js"
+		},
+		"body": {
+			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+		],
+		"parts": [
+			{
+				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+			},
+			{
+				"slot": "logo",
+				"src": "/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png",
+				"alt": "Example logo",
+				"class": "custom-logo",
+				"width": 120,
+				"height": 40
+			},
+			{
+				"html": "</a></div>\n\t\t\t\t<div class=\"site-title faux-heading\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></div>\n\t\t\t\t<div class=\"site-description\">"
+			},
+			{
+				"slot": "tagline",
+				"fallback": "Just another example"
+			},
+			{
+				"html": "</div>\n\t\t\t</div>\n\t\t</div>\n\t\t<div class=\"header-navigation-wrapper\">\n\t\t\t<nav class=\"primary-menu-wrapper\" role=\"navigation\">\n\t\t\t\t<ul class=\"primary-menu reset-list-style\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul>\n\t\t\t</nav>\n\t\t</div>\n\t</div>\n\t<div class=\"search-modal cover-modal\">\n\t\t<a href=\"/search\" class=\"wp-shell-form wp-shell-control\"><span class=\"wp-shell-field wp-shell-input wp-shell-input-search\"></span><span class=\"wp-shell-field wp-shell-input-submit\">Search</span></a>\n\t</div>\n</header>\n<div class=\"menu-modal cover-modal\">\n\t<nav class=\"mobile-menu\">\n\t\t<ul class=\"modal-menu reset-list-style\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 1
+			},
+			{
+				"html": "</ul>\n\t</nav>\n</div>\n<main id=\"site-content\" role=\"main\">\n\t<article class=\"page type-page status-publish hentry\">\n\t\t<header class=\"entry-header has-text-align-center header-footer-group\">\n\t\t\t<div class=\"entry-header-inner section-inner medium\">\n\t\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "\n\t\t\t</div>\n\t\t</header>\n\t\t\n\t\t<div class=\"post-inner thin\">\n\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "entry-content"
+			},
+			{
+				"html": "\n\t\t</div>\n\t\t<div class=\"section-inner\"></div>\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p>\n\t\t<p class=\"powered-by-wordpress\"><a href=\"https://wordpress.org/\">Powered by WordPress</a></p>\n\t\t<a class=\"to-the-top\" href=\"#site-header\">To the top <span class=\"arrow\">↑</span></a>\n\t\t<a>bad</a>\n\t</div>\n</footer>\n\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n\t\t\t\t\t</li> "
+				],
+				"fallback": "\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-home\"><a href=\"/\">Home</a></li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type menu-item-has-children\"><a href=\"/history/\">History</a><span class=\"icon\"></span>\n\t\t\t\t\t\t<ul class=\"sub-menu\">\n\t\t\t\t\t\t\t<li class=\"menu-item\"><a href=\"/history/pioneer/\">Pioneers</a></li>\n\t\t\t\t\t\t</ul>\n\t\t\t\t\t</li>\n\t\t\t\t\t<li class=\"menu-item menu-item-type-post_type\"><a href=\"/contact/\">Contact <b>Us</b></a></li>\n\t\t\t\t",
+				"current": "current-menu-item current_page_item"
+			},
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><div class=\"ancestor-wrapper\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></div></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><div class=\"ancestor-wrapper\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a><details class=\"wp-shell-toggle wp-shell-sub\"><summary class=\"toggle sub-menu-toggle wp-shell-control\"></summary></details></div>\n\t\t\t\t<ul class=\"sub-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n\t\t\t</li> "
+				],
+				"fallback": "\n\t\t\t<li class=\"menu-item menu-item-home\"><div class=\"ancestor-wrapper\"><a href=\"/\">Home</a></div></li>\n\t\t\t<li class=\"menu-item menu-item-has-children\"><div class=\"ancestor-wrapper\"><a href=\"/history/\">History</a><details class=\"wp-shell-toggle wp-shell-sub\"><summary class=\"toggle sub-menu-toggle wp-shell-control\"></summary></details></div>\n\t\t\t\t<ul class=\"sub-menu\"><li class=\"menu-item\"><div class=\"ancestor-wrapper\"><a href=\"/history/pioneer/\">Pioneers</a></div></li></ul>\n\t\t\t</li>\n\t\t",
+				"current": "current-menu-item"
+			}
+		],
+		"post": {
+			"body": {
+				"class": "post-template-default single single-post single-format-standard wp-theme-twentytwenty singular enable-search-modal"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+			],
+			"parts": [
+				{
+					"html": "\n<a class=\"skip-link screen-reader-text\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
+				},
+				{
+					"slot": "logo",
+					"src": "/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png",
+					"alt": "Example logo",
+					"class": "custom-logo",
+					"width": 120,
+					"height": 40
+				},
+				{
+					"html": "</a></div>\n\t\t\t\t<div class=\"site-title faux-heading\"><a href=\"/\">"
+				},
+				{
+					"slot": "siteTitle",
+					"fallback": "Example Site"
+				},
+				{
+					"html": "</a></div>\n\t\t\t\t<div class=\"site-description\">"
+				},
+				{
+					"slot": "tagline",
+					"fallback": "Just another example"
+				},
+				{
+					"html": "</div>\n\t\t\t</div>\n\t\t</div>\n\t\t<div class=\"header-navigation-wrapper\">\n\t\t\t<nav class=\"primary-menu-wrapper\" role=\"navigation\">\n\t\t\t\t<ul class=\"primary-menu reset-list-style\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "</ul>\n\t\t\t</nav>\n\t\t</div>\n\t</div>\n\t<div class=\"search-modal cover-modal\">\n\t\t<a href=\"/search\" class=\"wp-shell-form wp-shell-control\"><span class=\"wp-shell-field wp-shell-input wp-shell-input-search\"></span><span class=\"wp-shell-field wp-shell-input-submit\">Search</span></a>\n\t</div>\n</header>\n<div class=\"menu-modal cover-modal\">\n\t<nav class=\"mobile-menu\">\n\t\t<ul class=\"modal-menu reset-list-style\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 1
+				},
+				{
+					"html": "</ul>\n\t</nav>\n</div>\n<main id=\"site-content\" role=\"main\">\n\t<article class=\"post type-post status-publish format-standard hentry\">\n\t\t<header class=\"entry-header has-text-align-center header-footer-group\">\n\t\t\t<div class=\"entry-header-inner section-inner medium\">\n\t\t\t\t"
+				},
+				{
+					"slot": "postMeta",
+					"meta": 1
+				},
+				{
+					"html": "\n\t\t\t\t"
+				},
+				{
+					"slot": "title",
+					"tag": "h1",
+					"class": "entry-title"
+				},
+				{
+					"html": "\n\t\t\t\t"
+				},
+				{
+					"slot": "postMeta",
+					"meta": 0
+				},
+				{
+					"html": "\n\t\t\t</div>\n\t\t</header>\n\t\t\n\t\t<div class=\"post-inner thin\">\n\t\t\t"
+				},
+				{
+					"slot": "content",
+					"tag": "div",
+					"class": "entry-content"
+				},
+				{
+					"html": "\n\t\t</div>\n\t\t"
+				},
+				{
+					"slot": "comments",
+					"tag": "div",
+					"class": "comments-wrapper section-inner"
+				},
+				{
+					"html": "\n\t</article>\n</main>\n<footer id=\"site-footer\" role=\"contentinfo\" class=\"header-footer-group\" style=\"background-image:url('/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png');\">\n\t<div class=\"section-inner\">\n\t\t<p class=\"footer-copyright\">© 2026 <a href=\"/\">"
+				},
+				{
+					"slot": "siteTitle",
+					"fallback": "Example Site"
+				},
+				{
+					"html": "</a></p>\n\t\t<p class=\"powered-by-wordpress\"><a href=\"https://wordpress.org/\">Powered by WordPress</a></p>\n\t\t<a class=\"to-the-top\">To the top <span class=\"arrow\">↑</span></a>\n\t\t<a>bad</a>\n\t</div>\n</footer>\n\n\n"
+				}
+			],
+			"meta": [
+				[
+					"<div class=\"post-meta-wrapper post-meta-single post-meta-single-top\"><ul class=\"post-meta\">\n\t\t\t\t\t<li class=\"post-author meta-wrapper\"><span class=\"meta-icon\"><span class=\"screen-reader-text\">Post author</span><img height=\"20\" width=\"18\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/17341f8285cf61eea885baa076107018.svg\"></span><span class=\"meta-text\">By <a>",
+					{
+						"s": "author"
+					},
+					"</a></span></li>\n\t\t\t\t\t<li class=\"post-date meta-wrapper\"><span class=\"meta-icon\"><span class=\"screen-reader-text\">Post date</span><img height=\"19\" width=\"18\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/41a49f4ac37f93ddab62f3222f5a6492.svg\"></span><span class=\"meta-text\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "date"
+					},
+					"</a></span></li>\n\t\t\t\t\t",
+					{
+						"s": "comments"
+					},
+					"\n\t\t\t\t</ul></div>"
+				],
+				[
+					{
+						"s": "categories"
+					}
+				]
+			],
+			"date": "F j, Y",
+			"comments": {
+				"item": [
+					"<li class=\"post-comment-link meta-wrapper\"><span class=\"meta-icon\"><img height=\"19\" width=\"19\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/caa175666b3c1dd3033741dd51760238.svg\"></span><span class=\"meta-text\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"#comments\">",
+					{
+						"s": "count"
+					},
+					"<span class=\"screen-reader-text\"> on ",
+					{
+						"s": "title"
+					},
+					"</span></a></span></li>"
+				],
+				"many": "%d Comments"
+			},
+			"terms": {
+				"category": {
+					"item": [
+						"<div class=\"entry-categories\"><span class=\"screen-reader-text\">Categories</span><div class=\"entry-categories-inner\">",
+						{
+							"s": "terms"
+						},
+						"</div></div>"
+					],
+					"term": [
+						"<a href=\"",
+						{
+							"s": "href"
+						},
+						"\" rel=\"category tag\">",
+						{
+							"s": "label"
+						},
+						"</a>"
+					],
+					"sep": ", "
+				}
+			},
+			"timeZone": "America/Denver",
+			"commentArea": {
+				"parts": [
+					"\n\t<div class=\"comments\" id=\"comments\">\n\t\t",
+					{
+						"s": "heading"
+					},
+					"\n\t\t\n\t\t",
+					{
+						"s": "list"
+					},
+					"\n\t</div>\n\t",
+					{
+						"s": "respond"
+					},
+					"\n"
+				],
+				"heading": {
+					"item": [
+						"<div class=\"comments-header section-inner small max-percentage\"><h2 class=\"comment-reply-title\">",
+						{
+							"s": "count"
+						},
+						"</h2></div>"
+					],
+					"many": "%d replies on “%t”"
+				},
+				"list": {
+					"item": [
+						"<div class=\"comments-inner section-inner thin max-percentage\">",
+						{
+							"s": "items"
+						},
+						"</div>"
+					],
+					"comment": [
+						"<div id=\"comment-",
+						{
+							"s": "id"
+						},
+						"\" class=\"",
+						{
+							"s": "cls"
+						},
+						"\">\n\t\t\t\t<article id=\"div-comment-",
+						{
+							"s": "id"
+						},
+						"\" class=\"comment-body\">\n\t\t\t\t\t<footer class=\"comment-meta\">\n\t\t\t\t\t\t<div class=\"comment-author vcard\"><a rel=\"external nofollow\" class=\"url\"><span class=\"fn\">",
+						{
+							"s": "author"
+						},
+						"</span><span class=\"screen-reader-text says\">says:</span></a></div>\n\t\t\t\t\t\t<div class=\"comment-metadata\"><a href=\"#comment-",
+						{
+							"s": "id"
+						},
+						"\"><time>",
+						{
+							"s": "date"
+						},
+						" at ",
+						{
+							"s": "time"
+						},
+						"</time></a></div>\n\t\t\t\t\t</footer>\n\t\t\t\t\t<div class=\"comment-content entry-content\">",
+						{
+							"s": "text"
+						},
+						"</div>\n\t\t\t\t\t\n\t\t\t\t</article>\n\t\t\t\t",
+						{
+							"s": "replies"
+						},
+						"\n\t\t\t</div>"
+					],
+					"replies": [
+						{
+							"s": "items"
+						}
+					],
+					"classes": "comment",
+					"date": "F j, Y",
+					"time": "g:i a"
+				},
+				"respond": [
+					"<div id=\"respond\" class=\"comment-respond\">\n\t\t<h2 id=\"reply-title\" class=\"comment-reply-title\">Leave a Reply <small></small></h2>\n\t\t",
+					{
+						"s": "form",
+						"id": "commentform",
+						"class": "section-inner thin max-percentage"
+					},
+					"\n\t\t\t<p class=\"comment-notes\"><span id=\"email-notes\">Your email address will not be published.</span> <span class=\"required-field-message\">Required fields are marked <span class=\"required\">*</span></span></p>\n\t\t\t",
+					{
+						"s": "field",
+						"field": "body"
+					},
+					"\n\t\t\t",
+					{
+						"s": "field",
+						"field": "authorName"
+					},
+					"\n\t\t\t",
+					{
+						"s": "field",
+						"field": "authorEmail"
+					},
+					"\n\t\t\t\n\t\t\t<p class=\"form-submit wp-block-button\">",
+					{
+						"s": "submit",
+						"tag": "input",
+						"id": "submit",
+						"class": "submit wp-block-button__link wp-element-button",
+						"label": "Post Comment"
+					},
+					"  </p>\n\t\t",
+					{
+						"s": "/form"
+					},
+					"\n\t</div>"
+				],
+				"fields": {
+					"body": [
+						"<p class=\"comment-form-comment\">",
+						{
+							"s": "label",
+							"for": "comment"
+						},
+						"Comment <span class=\"required\">*</span>",
+						{
+							"s": "/label"
+						},
+						" ",
+						{
+							"s": "control",
+							"id": "comment",
+							"rows": 8,
+							"cols": 45
+						},
+						"</p>"
+					],
+					"authorName": [
+						"<p class=\"comment-form-author\">",
+						{
+							"s": "label",
+							"for": "author"
+						},
+						"Name <span class=\"required\">*</span>",
+						{
+							"s": "/label"
+						},
+						" ",
+						{
+							"s": "control",
+							"id": "author",
+							"size": 30
+						},
+						"</p>"
+					],
+					"authorEmail": [
+						"<p class=\"comment-form-email\">",
+						{
+							"s": "label",
+							"for": "email"
+						},
+						"Email <span class=\"required\">*</span>",
+						{
+							"s": "/label"
+						},
+						" ",
+						{
+							"s": "control",
+							"id": "email",
+							"size": 30
+						},
+						"</p>"
+					]
+				}
+			}
+		}
+	},
+	{
+		"version": 1,
+		"id": "368a356bb6465525c1f11281",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-27T00:00:00.000Z"
@@ -2432,6 +2972,36 @@
 				},
 				"\" class=\"post_share_email\"><i class=\"icon-mail\"></i></a></span>\n\t</div></div></section>"
 			],
+			"commentArea": {
+				"parts": [
+					{
+						"s": "heading"
+					},
+					{
+						"s": "list"
+					},
+					{
+						"s": "respond"
+					}
+				],
+				"heading": {
+					"item": [
+						"<div class=\"hr-title hr-long\"><abbr>",
+						{
+							"s": "count"
+						},
+						"</abbr></div>"
+					],
+					"zero": "%d Comments"
+				},
+				"respond": [
+					"<div id=\"respond\" class=\"comment-respond\"><h3 class=\"comment-reply-title\">Leave a reply</h3>",
+					{
+						"s": "emdash"
+					},
+					"</div>"
+				]
+			},
 			"adjacent": {
 				"item": [
 					"<nav class=\"pagination-sticky member-navigation\" role=\"navigation\">",
@@ -2554,7 +3124,7 @@
 	},
 	{
 		"version": 1,
-		"id": "2223d441dd12e17b251f7cd3",
+		"id": "4cc1b945b5ef4c633a467996",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-27T00:00:00.000Z"
@@ -2762,6 +3332,411 @@
 				},
 				"\" class=\"post_share_email\"><i class=\"icon-mail\"></i></a></span>\n\t</div></div></section>"
 			],
+			"commentArea": {
+				"parts": [
+					{
+						"s": "heading"
+					},
+					{
+						"s": "list"
+					},
+					{
+						"s": "respond"
+					}
+				],
+				"heading": {
+					"item": [
+						"<div class=\"hr-title hr-long\"><abbr>",
+						{
+							"s": "count"
+						},
+						"</abbr></div>"
+					],
+					"zero": "%d Comments"
+				},
+				"respond": [
+					"<div id=\"respond\" class=\"comment-respond\"><h3 class=\"comment-reply-title\">Leave a reply</h3>",
+					{
+						"s": "emdash"
+					},
+					"</div>"
+				]
+			},
+			"adjacent": {
+				"item": [
+					"<nav class=\"pagination-sticky member-navigation\" role=\"navigation\">",
+					{
+						"s": "prev"
+					},
+					{
+						"s": "next"
+					},
+					"</nav>"
+				],
+				"prev": [
+					"<a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" rel=\"prev\"><span id=\"older-nav\"><span class=\"outter-title\"><span class=\"entry-title\">",
+					{
+						"s": "adjTitle"
+					},
+					"</span></span></span></a>"
+				],
+				"next": [
+					"<a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" rel=\"next\"><span id=\"newer-nav\"><span class=\"outter-title\"><span class=\"entry-title\">",
+					{
+						"s": "adjTitle"
+					},
+					"</span></span></span></a>"
+				]
+			}
+		}
+	},
+	{
+		"version": 1,
+		"id": "6ba95a8381e9ad0bdfc9a525",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-27T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "no-js"
+		},
+		"body": {
+			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n<section class=\"container-wrap main-title alternate-color main-center-title border-bottom breadcrumbs-container\">\n\t<div class=\"container\">\n\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "page-title"
+			},
+			{
+				"html": "\n\t\t<div class=\"breadcrumb-extra\"><p class=\"page-info\"><em class=\"muted\">Write to us!</em> <i class=\"icon-mail-alt\"></i> team@example.org</p></div>\n\t</div>\n</section>\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix page type-page status-publish\">\n\t\t\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "article-content"
+			},
+			{
+				"html": "\n\t\t\t\t</article>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\" href=\"#\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item dropdown menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"js-activated\">",
+					{
+						"s": "label"
+					},
+					" <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Team\" href=\"/team/\">Team</a></li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page menu-item-has-children dropdown mega-2-cols\"><a title=\"About\" href=\"/about/\" class=\"js-activated\">About <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"History\" href=\"/history/\">History</a></li>\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Board\" href=\"/board/\">Board</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-custom menu-item-object-custom menu-item-has-children dropdown mega-1-cols\"><a title=\"Help\" href=\"#\" class=\"js-activated\">Help <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Donate\" href=\"/donate/\">Donate</a></li>\n</ul>\n</li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"post": {
+			"body": {
+				"class": "wp-singular post-template-default single single-post single-format-standard wp-theme-kleo kleo-navbar-fixed"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/adf8a3130e5217c82aea365f7b974caa.css"
+			],
+			"parts": [
+				{
+					"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n<section class=\"container-wrap main-title alternate-color main-center-title border-bottom breadcrumbs-container\">\n\t<div class=\"container\">\n\t\t"
+				},
+				{
+					"slot": "title",
+					"tag": "h1",
+					"class": "page-title"
+				},
+				{
+					"html": "\n\t\t<div class=\"breadcrumb-extra\"><p class=\"page-info\"><em class=\"muted\">Write to us!</em> <i class=\"icon-mail-alt\"></i> team@example.org</p></div>\n\t</div>\n</section>\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix post type-post status-publish format-standard hentry\">\n\t\n\t"
+				},
+				{
+					"slot": "featured"
+				},
+				{
+					"html": "\n\t"
+				},
+				{
+					"slot": "content",
+					"tag": "div",
+					"class": "article-content"
+				},
+				{
+					"html": "\n</article>\n\t\n\t\n\t"
+				},
+				{
+					"slot": "adjacent"
+				},
+				{
+					"html": "\n\t<section class=\"container-wrap\"><div class=\"container\">"
+				},
+				{
+					"slot": "comments",
+					"tag": "div",
+					"class": "comments-area",
+					"id": "comments"
+				},
+				{
+					"html": "</div></section>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+				}
+			],
+			"meta": [],
+			"featured": {
+				"item": [
+					"<div class=\"article-media\"><img alt=\"",
+					{
+						"s": "alt"
+					},
+					"\" src=\"",
+					{
+						"s": "src"
+					},
+					"\" height=\"800\" width=\"800\" class=\"attachment-kleo-full-width size-kleo-full-width wp-post-image\"></div>"
+				],
+				"minWidth": 0
+			},
+			"share": [
+				"<section class=\"main-color container-wrap social-share-wrap\"><div class=\"container\"><div class=\"share-links\">\n\t\t<div class=\"hr-title hr-long\"><abbr>Share this</abbr></div>\n\t\t\n\t\t<span class=\"kleo-facebook\"><a href=\"",
+				{
+					"s": "share-facebook"
+				},
+				"\" class=\"post_share_facebook\"><i class=\"icon-facebook\"></i></a></span>\n\t\t<span class=\"kleo-twitter\"><a href=\"",
+				{
+					"s": "share-x"
+				},
+				"\" class=\"post_share_twitter\"><i class=\"icon-twitter\"></i></a></span>\n\t\t<span class=\"kleo-mail\"><a href=\"",
+				{
+					"s": "share-email"
+				},
+				"\" class=\"post_share_email\"><i class=\"icon-mail\"></i></a></span>\n\t</div></div></section>"
+			],
+			"commentArea": {
+				"parts": [
+					{
+						"s": "heading"
+					},
+					"<div id=\"comments-list\">",
+					{
+						"s": "list"
+					},
+					"</div><div id=\"respond-wrap\">\n\t",
+					{
+						"s": "respond"
+					},
+					"\n</div>"
+				],
+				"heading": {
+					"item": [
+						"<div class=\"hr-title hr-long\"><abbr>",
+						{
+							"s": "count"
+						},
+						"</abbr></div>"
+					],
+					"one": "%d Comment"
+				},
+				"list": {
+					"item": [
+						"<ol>",
+						{
+							"s": "items"
+						},
+						"</ol>"
+					],
+					"comment": [
+						"<li id=\"comment-",
+						{
+							"s": "id"
+						},
+						"\" class=\"",
+						{
+							"s": "cls"
+						},
+						"\"><div class=\"comment-wrap clearfix\">\n\t<div class=\"comment-content\"><div class=\"comment-meta\"><span class=\"comment-author\"><a class=\"url\" rel=\"ugc external nofollow\">",
+						{
+							"s": "author"
+						},
+						"</a></span> <span class=\"comment-date\">",
+						{
+							"s": "date"
+						},
+						"</span></div>\n\t<div class=\"comment-body\">",
+						{
+							"s": "text"
+						},
+						"</div>\n\t</div></div>",
+						{
+							"s": "replies"
+						},
+						"</li>"
+					],
+					"replies": [
+						"<ol class=\"children\">",
+						{
+							"s": "items"
+						},
+						"</ol>"
+					],
+					"classes": "comment clearfix",
+					"date": "F j, Y"
+				},
+				"respond": [
+					"<div id=\"respond\" class=\"comment-respond\">\n\t\t<h3 id=\"reply-title\" class=\"comment-reply-title\">Leave a reply <small></small></h3>\n\t\t",
+					{
+						"s": "form",
+						"id": "commentform",
+						"class": "comment-form"
+					},
+					"\n\t\t\t<p class=\"comment-notes\"><span id=\"email-notes\">Your email address will not be published.</span> <span class=\"required-field-message\">Required fields are marked <span class=\"required\">*</span></span></p>\n\t\t\t",
+					{
+						"s": "field",
+						"field": "body"
+					},
+					"\n\t\t\t<div class=\"row\">",
+					{
+						"s": "field",
+						"field": "authorName"
+					},
+					"\n\t\t\t",
+					{
+						"s": "field",
+						"field": "authorEmail"
+					},
+					"\n\t\t\t</div>\n\t\t\t\n\t\t\t\n\t\t\t<p class=\"form-submit\">",
+					{
+						"s": "submit",
+						"tag": "input",
+						"id": "submit",
+						"class": "submit",
+						"label": "Post comment"
+					},
+					"  </p>\n\t\t\t\n\t\t",
+					{
+						"s": "/form"
+					},
+					"\n\t</div>"
+				],
+				"fields": {
+					"body": [
+						"<p class=\"comment-form-comment\">",
+						{
+							"s": "label",
+							"for": "comment"
+						},
+						"Comment",
+						{
+							"s": "/label"
+						},
+						{
+							"s": "control",
+							"id": "comment",
+							"class": "form-control",
+							"rows": 8,
+							"cols": 45
+						},
+						"</p>"
+					],
+					"authorName": [
+						"<p class=\"comment-form-author col-sm-4\">",
+						{
+							"s": "label",
+							"for": "author"
+						},
+						"Name",
+						{
+							"s": "/label"
+						},
+						" <span class=\"required\">*</span>",
+						{
+							"s": "control",
+							"id": "author",
+							"class": "form-control",
+							"size": 30
+						},
+						"</p>"
+					],
+					"authorEmail": [
+						"<p class=\"comment-form-email col-sm-4\">",
+						{
+							"s": "label",
+							"for": "email"
+						},
+						"Email",
+						{
+							"s": "/label"
+						},
+						" <span class=\"required\">*</span>",
+						{
+							"s": "control",
+							"id": "email",
+							"class": "form-control",
+							"size": 30
+						},
+						"</p>"
+					]
+				}
+			},
+			"timeZone": "America/Los_Angeles",
 			"adjacent": {
 				"item": [
 					"<nav class=\"pagination-sticky member-navigation\" role=\"navigation\">",
