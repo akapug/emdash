@@ -177,19 +177,26 @@ describe("a plugin's log", () => {
 		);
 		const redactor = createPluginSecretRedactor();
 		redactor.add("apiKey", "sk-live-123");
-		for (const log of [createLogAccess("forms"), createLogAccess("forms", redactor)]) {
+		const told = (log: ReturnType<typeof createLogAccess>) => {
+			for (const s of spies) s.mockClear();
 			log.debug("to Owner@Example.org");
 			log.info("sent", { to: "OWNER@example.org", cc: ["Team@Example.org"] });
 			log.warn("refused", { error: new Error("bounced owner@EXAMPLE.org"), key: "sk-live-123" });
 			log.error("failed", { "Team@example.org": 1 });
-		}
-		const told = spies
-			.flatMap((s) => s.mock.calls.flat())
-			.map((v) => inspect(v, { depth: 20 }))
-			.join("\n");
-		expect(leaks(told, ["owner", "team"])).toEqual([]);
-		expect(told).toContain("<an address at");
-		expect(told).not.toContain("sk-live-123");
+			return spies
+				.flatMap((s) => s.mock.calls.flat())
+				.map((v) => inspect(v, { depth: 20 }))
+				.join("\n");
+		};
+		// A plugin with no secret redactor of its own: every address still goes.
+		const bare = told(createLogAccess("forms"));
+		expect(leaks(bare, ["owner", "team"])).toEqual([]);
+		expect(bare).toContain("<an address at");
+		// With one: every address and every secret.
+		const withSecrets = told(createLogAccess("forms", redactor));
+		expect(leaks(withSecrets, ["owner", "team"])).toEqual([]);
+		expect(withSecrets).toContain("<an address at");
+		expect(withSecrets).not.toContain("sk-live-123");
 		// The secrets are still the redactor's to take out.
 		expect(redactor.redact("key sk-live-123 for a@x.example.org")).toBe(
 			"key [REDACTED] for <an address at x.example.org>",
