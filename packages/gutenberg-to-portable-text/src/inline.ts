@@ -43,6 +43,20 @@ const URL_HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const LEADING_WHITESPACE = /^[\t\n\f\r ]+/;
 const TRAILING_WHITESPACE = /[\t\n\f\r ]+$/;
 const CLASS_SEPARATOR = /\s+/;
+/**
+ * The elements whose text a browser never draws: a stylesheet, a script, and
+ * what a page shows only with scripts off. Content holds them (a page
+ * builder's text widget carries its own `<style>`, a pasted embed its
+ * `<script>`), and WordPress prints them as they are: the reader sees none of
+ * their text. Read as text, a stylesheet was a paragraph of CSS on the page.
+ */
+const UNDRAWN = ["script", "style", "noscript"];
+const UNDRAWN_ELEMENTS: ReadonlySet<string> = new Set(UNDRAWN);
+/** Each undrawn element from its opener to its first closer, where a browser ends its raw text. */
+const UNDRAWN_ELEMENT_PATTERN = new RegExp(
+	`<(${UNDRAWN.join("|")})(?=[\\s/>])[^>]*>[\\s\\S]*?</\\1\\s*>`,
+	"gi",
+);
 const IMG_ALIGNMENTS: ReadonlyMap<string, "left" | "right" | "center"> = new Map([
 	["alignleft", "left"],
 	["alignright", "right"],
@@ -269,6 +283,7 @@ function walkNodes(
 			}
 		} else if (isElement(node)) {
 			const tagName = node.tagName.toLowerCase();
+			if (UNDRAWN_ELEMENTS.has(tagName)) continue;
 
 			// Handle <br> as newline
 			if (tagName === "br") {
@@ -406,11 +421,21 @@ function getTextContent(nodes: Node[]): string {
 	for (const node of nodes) {
 		if (isTextNode(node)) {
 			text += node.value;
-		} else if (isElement(node)) {
+		} else if (isElement(node) && !UNDRAWN_ELEMENTS.has(node.tagName.toLowerCase())) {
 			text += getTextContent(node.childNodes);
 		}
 	}
 	return text.trim();
+}
+
+/**
+ * HTML without the elements a browser draws no text of (`UNDRAWN`), each
+ * taken out whole: the regular-expression readers of classic content would
+ * otherwise find a paragraph in a script's string, or an image in a
+ * `<noscript>`, that no reader ever sees.
+ */
+export function withoutUndrawn(html: string): string {
+	return html.replace(UNDRAWN_ELEMENT_PATTERN, "");
 }
 
 /**

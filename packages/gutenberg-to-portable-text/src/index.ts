@@ -17,6 +17,7 @@ import {
 	imageAlignment,
 	parseInlineContent,
 	parseInlineSegments,
+	withoutUndrawn,
 } from "./inline.js";
 import { wptexturize } from "./texturize.js";
 import { getTransformer } from "./transformers/index.js";
@@ -237,9 +238,11 @@ function aligned(html: string): { textAlign?: "left" | "center" | "right" | "jus
  * Convert plain HTML (classic editor) to Portable Text
  */
 export function htmlToPortableText(
-	html: string,
+	source: string,
 	options: ConvertOptions = {},
 ): PortableTextBlock[] {
+	// What the reader sees: no stylesheet, script or scripts-off fallback, read as text or split into blocks.
+	const html = withoutUndrawn(source);
 	const generateKey = options.keyGenerator || createKeyGenerator();
 	const blocks: PortableTextBlock[] = [];
 	const autoembeds = findAutoembeds(html);
