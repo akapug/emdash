@@ -39,14 +39,17 @@ async function render(definition: PublicFormDefinition): Promise<string> {
 	const container = await AstroContainer.create();
 	return container.renderToString(FormEmbed, {
 		props: { node: { formId: "f1" } },
-		locals: { emdash: { handlePublicPluginApiRoute: async () => ({ success: true, data: definition }) } },
+		locals: {
+			emdash: { handlePublicPluginApiRoute: async () => ({ success: true, data: definition }) },
+		},
 	});
 }
 
 /** The <option> tags of the one <select>, in order. */
 const options = (html: string): string[] => {
 	const select = /<select\b[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
-	return [...select.matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/g)].map(
+	return Array.from(
+		select.matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/g),
 		(m) => `${m[1]!.replace(/\s+/g, " ").trim()} | ${m[2]!.trim()}`,
 	);
 };
@@ -64,7 +67,11 @@ describe("FormEmbed select placeholder", () => {
 
 	test("is not selected when a choice is the default: the default is", async () => {
 		const html = await render(form([size({ placeholder: "Pick one", defaultValue: "M" })]));
-		expect(options(html)).toEqual(['value="" disabled | Pick one', 'value="S" | S', 'value="M" selected | M']);
+		expect(options(html)).toEqual([
+			'value="" disabled | Pick one',
+			'value="S" | S',
+			'value="M" selected | M',
+		]);
 	});
 
 	test("a list with no placeholder opens on its first choice, as before", async () => {

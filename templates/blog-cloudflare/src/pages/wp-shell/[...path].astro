@@ -92,11 +92,11 @@ async function adjacent(published: Date | null | undefined) {
 		getEmDashCollection("posts", { where: { published_at: { gt: at } }, orderBy: { published_at: "asc" }, limit: 1 }),
 	]);
 	if (Astro.cache?.enabled) for (const r of [before, after]) Astro.cache.set(r.cacheHint);
-	const side = (r: typeof before) => {
+	const [prev, next] = [before, after].map((r) => {
 		const e = r.entries[0];
 		return e ? { title: e.data.title, url: `/posts/${e.id}` } : null;
-	};
-	return { prev: side(before), next: side(after) };
+	});
+	return { prev, next };
 }
 const post =
 	isPost && shell.post

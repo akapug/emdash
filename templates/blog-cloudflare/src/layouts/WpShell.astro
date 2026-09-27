@@ -127,14 +127,14 @@ const postsResult =
 		? await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: listed })
 		: null;
 if (postsResult && Astro.cache?.enabled) Astro.cache.set(postsResult.cacheHint);
-const posts: WpShellPost[] = (postsResult?.entries ?? []).map((post) => ({
-	title: post.data.title,
-	url: `/posts/${post.id}`,
-	excerpt: post.data.excerpt,
-	text: plainText(post.data.content),
-	date: post.data.publishedAt,
-	image: ownImagePath(post.data.featured_image),
-	imageRatio: imageRatio(post.data.featured_image),
+const posts: WpShellPost[] = (postsResult?.entries ?? []).map((e) => ({
+	title: e.data.title,
+	url: `/posts/${e.id}`,
+	excerpt: e.data.excerpt,
+	text: plainText(e.data.content),
+	date: e.data.publishedAt,
+	image: ownImagePath(e.data.featured_image),
+	imageRatio: imageRatio(e.data.featured_image),
 }));
 
 const pieces = composeWpShell(shell, {
