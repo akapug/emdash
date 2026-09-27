@@ -197,8 +197,16 @@ const URL_IN_TEXT = /https?:\/\/[^\s<>"']+/g;
  * around it read as they would around the URL.
  */
 const URL_MARK = /\ue010([\ue100-\uefff])/g;
+/**
+ * The private-use characters this file writes as stand-ins (the flags above,
+ * URL_MARK's). A run that already holds one, an icon font's glyph typed as
+ * its character, stays as it is: its glyph would be read back as a quote
+ * mark, or dropped.
+ */
+const STAND_INS = /[\ue000-\ue003\ue010]/;
 
 function texturizeText(text: string): string {
+	if (STAND_INS.test(text)) return text;
 	const urls: string[] = [];
 	const marked = text.replace(
 		URL_IN_TEXT,

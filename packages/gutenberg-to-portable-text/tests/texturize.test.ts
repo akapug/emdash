@@ -103,6 +103,15 @@ describe("wptexturize: the rules WordPress documents", () => {
 		expect(wptexturize(`"https://example.org/x" said`)).toBe("“https://example.org/x” said");
 	});
 
+	it("leaves a run that holds one of its own stand-in characters as it was", () => {
+		// an icon font's glyph typed as its private-use character
+		for (const c of ["", "", "", "", ""]) {
+			expect(wptexturize(`It's "${c}" here`)).toBe(`It's "${c}" here`);
+		}
+		// only that run: the next one is texturized as ever
+		expect(wptexturize(`<i> it's</i> it's`)).toBe(`<i> it's</i> it’s`);
+	});
+
 	it("reads a long run of unclosed markup in one pass", () => {
 		const hostile = `${"[a ".repeat(20_000)}${"<!--".repeat(5_000)}`;
 		const t = performance.now();
