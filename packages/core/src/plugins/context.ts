@@ -1342,7 +1342,10 @@ export function createBlockedHttpAccess(pluginId: string): HttpAccess {
  */
 export function createLogAccess(pluginId: string, redactor?: PluginSecretRedactor): LogAccess {
 	const prefix = `[plugin:${pluginId}]`;
-	const redact = <T>(value: T): T => redactor?.redact(value) ?? value;
+	// Every line and its data are sanitized: the plugin's secrets, and every
+	// email address, even for a plugin that has no secret redactor of its own.
+	const sanitizer = redactor ?? createPluginSecretRedactor();
+	const redact = <T>(value: T): T => sanitizer.redact(value);
 
 	return {
 		debug(message: string, data?: unknown): void {

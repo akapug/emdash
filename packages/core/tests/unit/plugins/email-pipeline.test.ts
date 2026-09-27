@@ -665,6 +665,51 @@ describe("EmailPipeline", () => {
 		errorSpy.mockRestore();
 	});
 
+	it("redacts the error an aborting email:beforeSend plugin throws, before it is logged or reaches the caller", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", deliverHandler, { exclusive: true }),
+			},
+		});
+		const guard = createTestPlugin({
+			id: "guard",
+			capabilities: ["hooks.email-events:register"],
+			hooks: {
+				"email:beforeSend": createTestHook(
+					"guard",
+					(async () => {
+						throw Object.assign(
+							new Error("blocked Admin@Example.com and TEAM@example.com", {
+								cause: new Error("list says admin@EXAMPLE.com"),
+							}),
+							{ code: "E_BLOCKED", rejected: ["Admin@Example.com"] },
+						);
+					}) as EmailBeforeSendHandler,
+					{ errorPolicy: "abort" },
+				),
+			},
+		});
+		const hookPipeline = new HookPipeline([provider, guard], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		const error = await new EmailPipeline(hookPipeline)
+			.send(createTestMessage({ to: "admin@example.com", cc: ["team@example.com"] }), "forms")
+			.catch((e: unknown) => e as Error);
+		expect(deliverHandler).not.toHaveBeenCalled();
+		expect(error).toBeInstanceOf(Error);
+		expect(error).toMatchObject({ code: "E_BLOCKED" });
+		const told = [error, ...errorSpy.mock.calls.flat()]
+			.map((v) => inspect(v, { depth: 20 }))
+			.join("\n")
+			.toLowerCase();
+		expect(told).not.toMatch(/admin@|team@/);
+		expect(told).toContain("<an address at example.com>");
+		errorSpy.mockRestore();
+	});
+
 	it("redacts an afterSend error before it is logged", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const provider = createTestPlugin({

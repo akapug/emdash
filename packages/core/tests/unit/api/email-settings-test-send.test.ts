@@ -6,7 +6,9 @@
 
 import { Role } from "@emdash-cms/auth";
 import type { Kysely } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { inspect } from "node:util";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "../../../src/astro/routes/api/settings/email.js";
 import type { Database } from "../../../src/database/types.js";
@@ -24,7 +26,7 @@ describe("the test email route", () => {
 		await teardownTestDatabase(db);
 	});
 
-	function post(outcome: EmailSendResult): Promise<Response> {
+	function post(outcome: EmailSendResult | (() => Promise<never>)): Promise<Response> {
 		return POST({
 			request: new Request("http://test.local/_emdash/api/settings/email", {
 				method: "POST",
@@ -35,7 +37,10 @@ describe("the test email route", () => {
 				user: { id: "u1", role: Role.ADMIN },
 				emdash: {
 					db,
-					email: { isAvailable: () => true, send: async () => outcome },
+					email: {
+						isAvailable: () => true,
+						send: typeof outcome === "function" ? outcome : async () => outcome,
+					},
 				},
 			},
 		} as unknown as Parameters<typeof POST>[0]);
@@ -54,5 +59,25 @@ describe("the test email route", () => {
 		expect(body.error).toMatchObject({ code: "EMAIL_CANCELLED" });
 		expect(body.error.message).toMatch(/not sent: the plugin "quiet-hours" cancelled it/);
 		expect(JSON.stringify(body)).not.toMatch(/"success":true/);
+	});
+
+	it("logs a failed send's error with the recipient redacted, in any letter case", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const res = await post(async () => {
+			throw Object.assign(new Error("provider refused Owner@Example.com"), {
+				code: "E_RECIPIENT_NOT_ALLOWED",
+				response: { to: "OWNER@example.com" },
+			});
+		});
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toMatchObject({ code: "EMAIL_TEST_ERROR" });
+		const told = errorSpy.mock.calls
+			.flat()
+			.map((v) => inspect(v, { depth: 20 }))
+			.join("\n");
+		expect(told.toLowerCase()).not.toContain("owner@");
+		expect(told).toContain("<an address at");
+		expect(told).toContain("E_RECIPIENT_NOT_ALLOWED");
+		errorSpy.mockRestore();
 	});
 });

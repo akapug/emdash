@@ -205,8 +205,22 @@ export class EmailPipeline {
 		if (isSystemEmail) {
 			finalMessage = message;
 		} else {
-			// Stage 1: email:beforeSend middleware (can transform or cancel)
-			const beforeResult = await this.pipeline.runEmailBeforeSend(message, source);
+			// Stage 1: email:beforeSend middleware (can transform or cancel).
+			// A plugin whose error policy is "abort" stops the send by throwing,
+			// and its error may repeat the message's addresses: it is redacted
+			// whole (message, stack, data, causes) before it is logged or reaches
+			// the caller, which may log it too.
+			let beforeResult: Awaited<ReturnType<HookPipeline["runEmailBeforeSend"]>>;
+			try {
+				beforeResult = await this.pipeline.runEmailBeforeSend(message, source);
+			} catch (thrown) {
+				const error = scrubAddresses(thrown, addressesOf(message));
+				console.error(
+					`[email:beforeSend] A plugin stopped the email to an address at ${recipientDomain(message.to)}:`,
+					error,
+				);
+				throw error;
+			}
 
 			if (beforeResult.message === false) {
 				// Cancelled by middleware — find which plugin cancelled for audit log

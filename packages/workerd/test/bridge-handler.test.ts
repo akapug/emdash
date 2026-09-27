@@ -1505,6 +1505,19 @@ describe("Bridge Handler Conformance", () => {
 	// ── Logging ───────────────────────────────────────────────────────────
 
 	describe("logging", () => {
+		it("logs a sandboxed plugin's line and data with every address redacted", async () => {
+			const infoLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
+			const handler = makeHandler({});
+			await call(handler, "log", {
+				level: "info",
+				msg: "notified Owner@Example.org",
+				data: { to: "OWNER@example.org", cc: ["Team@Example.org"] },
+			});
+			const told = JSON.stringify(infoLog.mock.calls).toLowerCase();
+			expect(told).not.toMatch(/owner@|team@/);
+			expect(told).toContain("<an address at example.org>");
+		});
+
 		it("log call succeeds without capabilities", async () => {
 			const handler = makeHandler({});
 			const result = await call(handler, "log", {

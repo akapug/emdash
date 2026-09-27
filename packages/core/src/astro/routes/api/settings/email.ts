@@ -13,6 +13,7 @@ import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
 import { OptionsRepository } from "#db/repositories/options.js";
+import { scrubAddresses } from "#plugins/redact-addresses.js";
 
 export const prerender = false;
 
@@ -104,9 +105,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		);
 	}
 
+	// Whom the test email names: an error about it may repeat the address, and
+	// the error is logged, so it is redacted first.
+	let recipient: string | undefined;
 	try {
 		const body = await parseBody(request, testEmailBody);
 		if (isParseError(body)) return body;
+		recipient = body.to;
 
 		const optionsRepo = new OptionsRepository(emdash.db);
 		const siteName = (await optionsRepo.get<string>("emdash:site_title")) ?? "EmDash";
@@ -150,6 +155,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			message: `Test email sent to ${body.to}`,
 		});
 	} catch (error) {
-		return handleError(error, "Failed to send test email", "EMAIL_TEST_ERROR");
+		return handleError(
+			scrubAddresses(error, recipient ? [recipient] : []),
+			"Failed to send test email",
+			"EMAIL_TEST_ERROR",
+		);
 	}
 };

@@ -7,14 +7,16 @@
 
 import { inspect } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createLogAccess } from "../../../src/plugins/context.js";
 import {
 	describeRedacted,
 	redactAddresses,
 	redactPayload,
 	scrubAddresses,
 } from "../../../src/plugins/redact-addresses.js";
+import { createPluginSecretRedactor } from "../../../src/plugins/secret-redactor.js";
 
 /** Any address left in `text`, in any case: the test's own witness, not the code's pattern. */
 const leaks = (text: string, locals: string[]) =>
@@ -161,5 +163,36 @@ describe("redactPayload", () => {
 		let deep: Record<string, unknown> = { v: "E@x.example.org" };
 		for (let i = 0; i < 12; i++) deep = { deep };
 		expect(leaks(JSON.stringify(redactPayload(deep)), ["e"])).toEqual([]);
+	});
+});
+
+describe("a plugin's log", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("is redacted of every address, in its line and its data, with or without a secret redactor", () => {
+		const spies = (["debug", "info", "warn", "error"] as const).map((level) =>
+			vi.spyOn(console, level).mockImplementation(() => {}),
+		);
+		const redactor = createPluginSecretRedactor();
+		redactor.add("apiKey", "sk-live-123");
+		for (const log of [createLogAccess("forms"), createLogAccess("forms", redactor)]) {
+			log.debug("to Owner@Example.org");
+			log.info("sent", { to: "OWNER@example.org", cc: ["Team@Example.org"] });
+			log.warn("refused", { error: new Error("bounced owner@EXAMPLE.org"), key: "sk-live-123" });
+			log.error("failed", { "Team@example.org": 1 });
+		}
+		const told = spies
+			.flatMap((s) => s.mock.calls.flat())
+			.map((v) => inspect(v, { depth: 20 }))
+			.join("\n");
+		expect(leaks(told, ["owner", "team"])).toEqual([]);
+		expect(told).toContain("<an address at");
+		expect(told).not.toContain("sk-live-123");
+		// The secrets are still the redactor's to take out.
+		expect(redactor.redact("key sk-live-123 for a@x.example.org")).toBe(
+			"key [REDACTED] for <an address at x.example.org>",
+		);
 	});
 });
