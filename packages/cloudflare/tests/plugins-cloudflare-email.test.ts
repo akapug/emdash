@@ -583,7 +583,10 @@ describe("the sending budget", () => {
 		};
 		const run = async (
 			limits: CloudflareEmailConfig["limits"],
-			{ sendImpl, contended = false }: { sendImpl?: () => Promise<never>; contended?: boolean } = {},
+			{
+				sendImpl,
+				contended = false,
+			}: { sendImpl?: () => Promise<never>; contended?: boolean } = {},
 		) => {
 			const kv = memoryKv(seeded);
 			const calls: string[] = [];
@@ -592,7 +595,8 @@ describe("the sending budget", () => {
 				list: async (prefix?: string) => (calls.push(`list ${prefix}`), kv.list(prefix)),
 				delete: async (key: string) => (calls.push(`delete ${key}`), kv.delete(key)),
 				compareAndDelete: async (key: string, rev: string) => (
-					calls.push(`compareAndDelete ${key}`), kv.compareAndDelete(key, rev)
+					calls.push(`compareAndDelete ${key}`),
+					kv.compareAndDelete(key, rev)
 				),
 				// Every compare-and-set loses: the take is contended, and refused.
 				...(contended ? { compareAndSet: async () => ({ applied: false as const }) } : {}),
@@ -915,7 +919,7 @@ describe("the account's budget", () => {
 		// The request carries the token and the hashes only: no source, no lane, no
 		// `system`. The lane is the token's registration, and this Worker's token is
 		// its plugin lane's, so EmDash's own "system" mail from here takes no reserve.
-		expect(Object.keys(take!).sort()).toEqual(["protocol", "recipients", "token"]);
+		expect(Object.keys(take!).toSorted()).toEqual(["protocol", "recipients", "token"]);
 		expect(take).toMatchObject({ protocol: 2, token: TOKEN });
 		expect(take!.recipients).toHaveLength(2);
 		for (const h of take!.recipients) expect(h).toMatch(/^[0-9a-f]{64}$/);
@@ -932,7 +936,7 @@ describe("the account's budget", () => {
 			{ message, source: "emdash-forms" },
 			fakeCtx(),
 		);
-		expect(Object.keys(again.takes[1]!).sort()).toEqual(["protocol", "recipients", "token"]);
+		expect(Object.keys(again.takes[1]!).toSorted()).toEqual(["protocol", "recipients", "token"]);
 		expect(JSON.stringify(again.takes)).not.toMatch(/system|lane|source/);
 	});
 
@@ -1051,7 +1055,12 @@ describe("the account's budget", () => {
 		const budget = fakeBudget();
 		let refunded: (v: unknown) => void = () => {};
 		budget.service.refund.mockImplementation(
-			(req) => (budget.refunds.push(req), new Promise((resolve) => (refunded = resolve))),
+			(req) => (
+				budget.refunds.push(req),
+				new Promise((resolve) => {
+					refunded = (v) => resolve(v as never);
+				})
+			),
 		);
 		const ctx = fakeCtx();
 		const host = lifetime();
@@ -1299,7 +1308,14 @@ describe("createCloudflareEmailStatus()", () => {
 		};
 		const report = vi.fn(async (req: { protocol: number; token: string }) =>
 			req.token === TOKEN
-				? { ok: true, protocol: 2, tenant: "acme", lane: "plugin", site: { used: 3, cap: 90 }, caps }
+				? {
+						ok: true,
+						protocol: 2,
+						tenant: "acme",
+						lane: "plugin",
+						site: { used: 3, cap: 90 },
+						caps,
+					}
 				: { ok: false, protocol: 2, scope: "token", refused: "unknown" },
 		);
 		const service = { ...budget.service, report };
@@ -1340,7 +1356,10 @@ describe("createCloudflareEmailStatus()", () => {
 			systemPerRecipient: 10,
 		};
 		// The service derives the tenant from the token: bravo's Worker holding alpha's token is alpha to it.
-		const byToken: Record<string, string> = { [TOKEN]: "alpha", tok_bravo_0123456789abcdef0123456789abcdef0: "bravo" };
+		const byToken: Record<string, string> = {
+			[TOKEN]: "alpha",
+			tok_bravo_0123456789abcdef0123456789abcdef0: "bravo",
+		};
 		const service = {
 			...fakeBudget().service,
 			report: vi.fn(async (req: { protocol: number; token: string }) =>
@@ -1394,15 +1413,49 @@ describe("createCloudflareEmailStatus()", () => {
 		};
 		for (const [report, why, opts] of [
 			[undefined, /has no report/, {}],
-			[async () => ({ ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" }), /refused this site's token \(unknown or revoked\)/, {}],
-			[async () => ({ ok: true, protocol: 1, tenant: "acme", lane: "plugin", caps }), /answered in protocol 1, not 2/, {}],
-			[async () => ({ ok: true, tenant: "acme", lane: "plugin", caps }), /answered in protocol null, not 2/, {}],
-			[async () => ({ ok: true, protocol: 2, lane: "plugin", caps }), /does not say which tenant this site's token belongs to/, {}],
-			[async () => ({ ok: true, protocol: 2, tenant: "", lane: "plugin", caps }), /does not say which tenant/, {}],
-			[async () => ({ ok: true, protocol: 2, tenant: "acme", caps }), /does not say which lane this site's token holds/, {}],
-			[async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin" }), /does not say the limits/, {}],
 			[
-				async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps: { ...caps, tenantPerDay: "100" } }),
+				async () => ({ ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" }),
+				/refused this site's token \(unknown or revoked\)/,
+				{},
+			],
+			[
+				async () => ({ ok: true, protocol: 1, tenant: "acme", lane: "plugin", caps }),
+				/answered in protocol 1, not 2/,
+				{},
+			],
+			[
+				async () => ({ ok: true, tenant: "acme", lane: "plugin", caps }),
+				/answered in protocol null, not 2/,
+				{},
+			],
+			[
+				async () => ({ ok: true, protocol: 2, lane: "plugin", caps }),
+				/does not say which tenant this site's token belongs to/,
+				{},
+			],
+			[
+				async () => ({ ok: true, protocol: 2, tenant: "", lane: "plugin", caps }),
+				/does not say which tenant/,
+				{},
+			],
+			[
+				async () => ({ ok: true, protocol: 2, tenant: "acme", caps }),
+				/does not say which lane this site's token holds/,
+				{},
+			],
+			[
+				async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin" }),
+				/does not say the limits/,
+				{},
+			],
+			[
+				async () => ({
+					ok: true,
+					protocol: 2,
+					tenant: "acme",
+					lane: "plugin",
+					caps: { ...caps, tenantPerDay: "100" },
+				}),
 				/does not say the limits/,
 				{},
 			],
@@ -1422,7 +1475,11 @@ describe("createCloudflareEmailStatus()", () => {
 				{},
 			],
 			[() => new Promise(() => {}), /did not answer within 20 ms/, { timeoutMs: 20 }],
-			[async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps }), /no token: the secret "MAIL_BUDGET_TOKEN" is not set/, { token: "" }],
+			[
+				async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps }),
+				/no token: the secret "MAIL_BUDGET_TOKEN" is not set/,
+				{ token: "" },
+			],
 		] as const) {
 			const live = await at(report, opts);
 			expect(live?.live, String(why)).toMatchObject({ ok: false, why: expect.stringMatching(why) });

@@ -89,6 +89,12 @@ import type { PluginContext, PluginDescriptor, ResolvedPlugin } from "emdash";
 import { after, definePlugin, describeRedacted, redactAddresses, scrubAddresses } from "emdash";
 import type { EmailDeliverEvent } from "emdash/plugin";
 
+import { MAX_SUBJECT, displayName, domainOf, headerText, mailbox } from "./email-headers.js";
+import { MAIL_BUDGET_PROTOCOL } from "./mail-budget-protocol.js";
+
+export { displayName, domainOf, headerText, mailbox } from "./email-headers.js";
+export { MAIL_BUDGET_PROTOCOL } from "./mail-budget-protocol.js";
+
 /**
  * Cloudflare Email Provider Configuration
  */
@@ -168,17 +174,6 @@ export interface AccountBudgetConfig {
 export const ACCOUNT_BUDGET_TIMEOUT_MS = 5_000;
 
 /**
- * The version of the mail-budget service's RPC this provider speaks. Every
- * request names it, and an answer that does not name the same one is a
- * refusal: a service that changed what a take or a refusal means is never
- * read as the one this provider knows. 2: the reserve kept for sign-in mail
- * is a LANE the token is registered to, never a flag a request carries (1
- * sent `system: true` for "system" mail, which anything in the Worker could
- * send too).
- */
-export const MAIL_BUDGET_PROTOCOL = 2;
-
-/**
  * The mail-budget service as its service binding exposes it (RPC). `take`
  * answers `{ ok: true, protocol, takeId, lane }` or `{ ok: false, protocol,
  * refused }`; the service derives the tenant AND the lane from the token,
@@ -235,40 +230,6 @@ export const CLOUDFLARE_EMAIL_CAPABILITY =
  */
 export const EMAIL_ATTESTATION_VERSION = 2;
 
-/** A subject longer than this is cut: Email Sending refuses a header value over 2,048 bytes. */
-const MAX_SUBJECT = 250;
-/** A display name longer than this is cut (RFC 5322's recommended line length). */
-const MAX_NAME = 78;
-
-/** C0 and C1 controls, DEL, and the Unicode line and paragraph separators: none belongs in a header. */
-// oxlint-disable-next-line no-control-regex -- matching control characters is the point
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
-const WHITESPACE_RUN = /\s+/g;
-/** A display name keeps no quote, angle bracket or backslash, so it cannot read as an address. */
-const NAME_SPECIALS = /["<>\\]/g;
-/**
- * `value` as one plain address, or null when it is anything else.
- *
- * One address is the WHATWG HTML "valid email address" (`<input type=email>`)
- * with at least one dot in the domain, and at most 254 characters, the longest
- * SMTP carries (RFC 5321, 4.5.3.1). Its local part has no whitespace, comma,
- * semicolon, angle bracket, quote or control character, so it cannot carry a
- * second address or a header break.
- *
- * The pattern is function-local, like `defineNativePlugin`'s: `createPlugin`
- * validates the sender with it while the generated plugins module
- * instantiates plugins, which can run during a circular module init, before a
- * module-scope const is initialized.
- */
-export function mailbox(value: unknown): string | null {
-	const pattern =
-		// oxlint-disable-next-line e18e/prefer-static-regex -- avoids circular-init TDZ
-		/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
-	if (typeof value !== "string") return null;
-	const v = value.trim();
-	return v.length <= 254 && pattern.test(v) ? v : null;
-}
-
 /** How many recipients the site may reach: the config's, over 50 an hour and 200 a day per source, 300 a day in all with 50 of them kept for "system" mail, and 10 a day of "system" mail to one address. */
 export function limitsOf(config: CloudflareEmailConfig): SendingLimits {
 	return {
@@ -279,32 +240,6 @@ export function limitsOf(config: CloudflareEmailConfig): SendingLimits {
 		systemPerRecipient: 10,
 		...config.limits,
 	};
-}
-
-/** The domain of one plain address, which a log names in place of the address. */
-export function domainOf(address: string): string {
-	return address.slice(address.lastIndexOf("@") + 1);
-}
-
-/**
- * `value` as header text: controls become spaces, whitespace runs one space,
- * cut to `max` characters (whole graphemes, so an emoji is never split).
- */
-export function headerText(value: unknown, max: number): string {
-	if (typeof value !== "string") return "";
-	const flat = value.replace(CONTROLS, " ").replace(WHITESPACE_RUN, " ").trim();
-	return Array.from(new Intl.Segmenter().segment(flat), (g) => g.segment)
-		.slice(0, max)
-		.join("")
-		.trim();
-}
-
-/** A sender's display name, or undefined when nothing printable is left. */
-export function displayName(value: unknown): string | undefined {
-	return (
-		headerText(typeof value === "string" ? value.replace(NAME_SPECIALS, "") : "", MAX_NAME) ||
-		undefined
-	);
 }
 
 /** One count the budget moved: the row, and by how much. */
@@ -902,7 +837,10 @@ export function createCloudflareEmailStatus(
 					? {
 							protocol: MAIL_BUDGET_PROTOCOL,
 							ready: Boolean(budget && !("missing" in budget)),
-							live: live ?? { ok: false, why: (budget && "missing" in budget && budget.missing) || "not asked" },
+							live: live ?? {
+								ok: false,
+								why: (budget && "missing" in budget && budget.missing) || "not asked",
+							},
 						}
 					: null,
 			},
@@ -938,10 +876,16 @@ async function liveAccountBudget(
 		return { ok: false, why: `it could not be asked (${describeRedacted(error)})` };
 	}
 	if (!isRecord(answer) || answer.protocol !== MAIL_BUDGET_PROTOCOL) {
-		return { ok: false, why: `it answered in protocol ${JSON.stringify(isRecord(answer) ? (answer.protocol ?? null) : null)}, not ${MAIL_BUDGET_PROTOCOL}` };
+		return {
+			ok: false,
+			why: `it answered in protocol ${JSON.stringify(isRecord(answer) ? (answer.protocol ?? null) : null)}, not ${MAIL_BUDGET_PROTOCOL}`,
+		};
 	}
 	if (answer.ok !== true) {
-		return { ok: false, why: `it refused this site's token (${typeof answer.refused === "string" ? redactAddresses(answer.refused) : "no reason given"})` };
+		return {
+			ok: false,
+			why: `it refused this site's token (${typeof answer.refused === "string" ? redactAddresses(answer.refused) : "no reason given"})`,
+		};
 	}
 	// The tenant and the lane are the token's registration, derived by the
 	// service from its hash: a deployment checks that this site's Worker holds
