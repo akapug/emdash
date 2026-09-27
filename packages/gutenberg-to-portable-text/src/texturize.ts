@@ -23,7 +23,9 @@
  *
  * What it never changes, as WordPress does not: markup (tags, attributes and
  * comments, so a block's JSON is safe), text inside pre, code, kbd, tt, style
- * and script, shortcode tags and the content of [code]. And, where this port
+ * and script, shortcode tags, the content of [code], and the content of a
+ * code highlighter's shortcodes, which WordPress drew before it texturized
+ * (HIGHLIGHTER_SHORTCODES). And, where this port
  * is more careful than WordPress, a bare URL: WordPress embeds or links one
  * before it would texturize it, and this converter finds its embeds in the
  * text after this ran.
@@ -211,8 +213,33 @@ function texturizeText(text: string): string {
 
 /** The elements whose text WordPress never texturizes. */
 const NO_TEXTURIZE_TAGS = new Set(["pre", "code", "kbd", "style", "script", "tt"]);
-/** The shortcodes whose content WordPress never texturizes. */
-const NO_TEXTURIZE_SHORTCODES = new Set(["code"]);
+/** The shortcodes whose content WordPress never texturizes (core's no_texturize_shortcodes). */
+const NO_TEXTURIZE_SHORTCODES = ["code"];
+/**
+ * A code highlighter's shortcodes, whose content its visitor read as typed:
+ * SyntaxHighlighter Evolved draws `[php]…[/php]` as a `<pre>` at the_content
+ * priority 7, before wptexturize (10) sees it. Its tags, from
+ * syntaxhighlighter.php: sourcecode, source, code and every brush alias but
+ * latex and r.
+ */
+const HIGHLIGHTER_SHORTCODES = `sourcecode source as3 actionscript3 arduino bash shell coldfusion cf
+	clojure clj cpp c c-sharp csharp css delphi pas pascal diff patch erl erlang fsharp go golang groovy
+	haskell java jfx javafx js jscript javascript tex matlab matlabkey objc obj-c perl pl php plain text
+	ps powershell py python splus rails rb ror ruby scala sql swift vb vbnet xml xhtml xslt html yaml
+	yml`.split(/\s+/);
+
+/**
+ * The shortcodes whose content stays as written in `html`: core's, and a
+ * highlighter's that the post also closes, so a bracketed word that only
+ * looks like one (`[text]`) does not stop the rest of the post.
+ */
+function noTexturizeShortcodes(html: string): ReadonlySet<string> {
+	const lower = html.toLowerCase();
+	return new Set([
+		...NO_TEXTURIZE_SHORTCODES,
+		...HIGHLIGHTER_SHORTCODES.filter((n) => lower.includes(`[/${n}]`)),
+	]);
+}
 
 /**
  * A comment (to its end, or to the end of the text), a tag (to its `>`, or to
@@ -248,6 +275,7 @@ export function wptexturize(html: string): string {
 	if (!html) return html;
 	const tags: string[] = [];
 	const shortcodes: string[] = [];
+	const disabled = noTexturizeShortcodes(html);
 	let out = "";
 	let last = 0;
 	const text = (run: string) =>
@@ -257,7 +285,7 @@ export function wptexturize(html: string): string {
 		const d = m[0];
 		if (d.startsWith("<") && !d.startsWith("<!--")) pushPop(d, tags, NO_TEXTURIZE_TAGS);
 		else if (d.startsWith("[") && !d.startsWith("[[") && !d.endsWith("]]"))
-			pushPop(d, shortcodes, NO_TEXTURIZE_SHORTCODES);
+			pushPop(d, shortcodes, disabled);
 		out += d;
 		last = m.index + d.length;
 	}

@@ -83,6 +83,18 @@ describe("wptexturize: the rules WordPress documents", () => {
 		expect(wptexturize(`[[gallery ids="1,2"]]`)).toBe(`[[gallery ids="1,2"]]`);
 	});
 
+	it("leaves a code highlighter's shortcode content as it was, where the post closes one", () => {
+		// SyntaxHighlighter Evolved draws these as a <pre> before WordPress texturizes
+		expect(wptexturize(`[php]echo "a" . 'b'; // x -- y...[/php] "after"`)).toBe(
+			`[php]echo "a" . 'b'; // x -- y...[/php] “after”`,
+		);
+		expect(wptexturize(`[sourcecode language="js"]x = "y" -- 1[/sourcecode] it's`)).toBe(
+			`[sourcecode language="js"]x = "y" -- 1[/sourcecode] it’s`,
+		);
+		// a bracketed word that is never closed does not stop the rest of the post
+		expect(wptexturize(`Reply [text] "here" -- now`)).toBe("Reply [text] “here” — now");
+	});
+
 	it("leaves a bare URL as it is, for the embed it may be", () => {
 		expect(wptexturize("see https://example.org/a--b...c 'now'")).toBe(
 			"see https://example.org/a--b...c ‘now’",
