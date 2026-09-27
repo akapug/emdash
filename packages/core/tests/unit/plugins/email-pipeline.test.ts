@@ -29,6 +29,7 @@ import {
 	EmailNotConfiguredError,
 	EmailPipeline,
 	EmailRecursionError,
+	ReservedEmailSourceError,
 } from "../../../src/plugins/email.js";
 import { HookPipeline } from "../../../src/plugins/hooks.js";
 import { PluginManager } from "../../../src/plugins/manager.js";
@@ -1064,6 +1065,53 @@ describe("ctx.email gating", () => {
 		await ctx.email!.send(createTestMessage());
 
 		expect(receivedSource).toBe("forms-plugin");
+	});
+
+	it("a plugin whose id is \"system\" cannot send as the reserved source, natively or through a sandbox bridge", async () => {
+		// Built without definePlugin (which refuses the id), as a sandboxed
+		// manifest that skipped the schema would be.
+		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
+		const beforeSend = vi.fn(async (event: EmailBeforeSendEvent) => event.message);
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", deliverHandler, { exclusive: true }),
+			},
+		});
+		const watcher = createTestPlugin({
+			id: "watcher",
+			capabilities: ["hooks.email-events:register"],
+			hooks: {
+				"email:beforeSend": createTestHook("watcher", beforeSend as EmailBeforeSendHandler),
+			},
+		});
+		const impostor = createTestPlugin({ id: "system", capabilities: ["email:send"] });
+		const hookPipeline = new HookPipeline([provider, watcher], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		const emailPipeline = new EmailPipeline(hookPipeline);
+		const ctx = new PluginContextFactory({ db, emailPipeline }).createContext(impostor);
+
+		// Native: ctx.email.send.
+		await expect(ctx.email!.send(createTestMessage())).rejects.toBeInstanceOf(
+			ReservedEmailSourceError,
+		);
+		// The sandbox bridges' send (the runtime wires them to sendAsPlugin with the manifest id).
+		await expect(emailPipeline.sendAsPlugin(createTestMessage(), "system")).rejects.toBeInstanceOf(
+			ReservedEmailSourceError,
+		);
+		expect(deliverHandler).not.toHaveBeenCalled();
+		expect(beforeSend).not.toHaveBeenCalled();
+
+		// THE CONTROL: EmDash's own auth mail still sends as "system", hooks bypassed,
+		// and any other plugin id sends as itself, through the hooks.
+		expect(await emailPipeline.send(createTestMessage(), "system")).toEqual({ status: "sent" });
+		expect(beforeSend).not.toHaveBeenCalled();
+		expect(await emailPipeline.sendAsPlugin(createTestMessage(), "forms")).toEqual({
+			status: "sent",
+		});
+		expect(beforeSend).toHaveBeenCalledOnce();
+		expect(deliverHandler).toHaveBeenCalledTimes(2);
 	});
 
 	it("ctx.email.send() tells the plugin what its send came to: sent, or cancelled and by whom, with nothing delivered", async () => {

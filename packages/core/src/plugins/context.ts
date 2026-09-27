@@ -1843,8 +1843,9 @@ export class PluginContextFactory {
 			const pluginId = plugin.id;
 			// What the send came to ("sent", or "cancelled" by an email:beforeSend
 			// plugin) is the caller's to see: a cancelled send returns normally.
+			// A plugin's source is its id, never the reserved "system".
 			email = {
-				send: (message) => pipeline.send(message, pluginId),
+				send: (message) => pipeline.sendAsPlugin(message, pluginId),
 			};
 		}
 

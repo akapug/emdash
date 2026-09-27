@@ -2044,8 +2044,11 @@ export class EmDashRuntime {
 		// email pipeline since it didn't exist yet)
 		if (sandboxRunner) {
 			// A sandboxed plugin's send resolves to what it came to ("sent", or
-			// "cancelled" by an email:beforeSend plugin), across its bridge.
-			sandboxRunner.setEmailSend((message, pluginId) => emailPipeline.send(message, pluginId));
+			// "cancelled" by an email:beforeSend plugin), across its bridge. Its
+			// source is its manifest id, never the reserved "system".
+			sandboxRunner.setEmailSend((message, pluginId) =>
+				emailPipeline.sendAsPlugin(message, pluginId),
+			);
 		}
 
 		// ── Cron system ──────────────────────────────────────────────────

@@ -24,8 +24,14 @@ export type { EmailSendResult } from "./types.js";
 /** Hook name for the exclusive email delivery hook */
 const EMAIL_DELIVER_HOOK = "email:deliver";
 
-/** Source value used for auth emails (magic links, invites, password resets) */
-const SYSTEM_SOURCE = "system";
+/**
+ * Source value used for auth emails (magic links, invites, password resets).
+ * It is reserved: no plugin may send as it (a plugin's source is its id), so
+ * no plugin gets what "system" mail gets (no email:beforeSend/afterSend hook
+ * sees it, and a provider may keep a reserve for it).
+ */
+export const SYSTEM_EMAIL_SOURCE = "system";
+const SYSTEM_SOURCE = SYSTEM_EMAIL_SOURCE;
 
 /**
  * The domain of a recipient, which a log line names in place of the address:
@@ -59,6 +65,20 @@ export class EmailRecursionError extends Error {
 				"from within the email pipeline, which would cause infinite recursion.",
 		);
 		this.name = "EmailRecursionError";
+	}
+}
+
+/**
+ * Error thrown when a plugin sends as the reserved "system" source: a plugin
+ * whose id is "system" (definePlugin and the manifest schema refuse that id;
+ * this is the send boundary's own check).
+ */
+export class ReservedEmailSourceError extends Error {
+	constructor() {
+		super(
+			`A plugin cannot send email as "${SYSTEM_EMAIL_SOURCE}": that source is EmDash's own auth mail, and a plugin's source is its id.`,
+		);
+		this.name = "ReservedEmailSourceError";
 	}
 }
 
@@ -131,6 +151,18 @@ export class EmailPipeline {
 		}
 		// First call — create new ALS context
 		return emailSendALS.run({ depth: 1 }, run);
+	}
+
+	/**
+	 * Send on behalf of a plugin (ctx.email.send, natively and through the
+	 * sandbox bridges): its source is its id, which may never be the reserved
+	 * "system" source.
+	 *
+	 * @throws ReservedEmailSourceError for a plugin whose id is "system"
+	 */
+	async sendAsPlugin(message: EmailMessage, pluginId: string): Promise<EmailSendResult> {
+		if (pluginId === SYSTEM_EMAIL_SOURCE) throw new ReservedEmailSourceError();
+		return this.send(message, pluginId);
 	}
 
 	/**
