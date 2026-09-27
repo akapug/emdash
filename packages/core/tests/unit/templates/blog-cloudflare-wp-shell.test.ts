@@ -707,13 +707,19 @@ describe("wp-shell route", () => {
 describe("the tripwire reads the writer's form", () => {
 	it("accepts what Embark's writer produces, hostile source included", () => {
 		for (const r of writerRecords) expect(wpShellProblem(r)).toBeNull();
-		// the toggles, the listing and its thumbnail are among them
+		// the toggles, the sub-menu toggles, the listing, its thumbnail and its lanes, a page cut on
+		// its own and a form's skin are among them
 		const all = JSON.stringify(writerRecords);
 		for (const shape of [
 			'<details class=\\"wp-shell-toggle',
 			'href=\\"#wp-shell-menu-0\\"',
+			"wp-shell-sub",
 			'"listings"',
 			'"thumb"',
+			'"lanes"',
+			'"pages"',
+			'"forms"',
+			'{"s":"control","field":0',
 		])
 			expect(all).toContain(shape);
 	});
