@@ -10,6 +10,7 @@ import {
 	extractDisplaySize,
 	extractSrc,
 	extractText,
+	parseInlineSegments,
 } from "../inline.js";
 import type {
 	GutenbergBlock,
@@ -57,31 +58,53 @@ export const paragraph: BlockTransformer = (block, _options, context) => {
 		return [autoembedBlock(autoembed, context.generateKey)];
 	}
 
-	const { children, markDefs } = context.parseInlineContent(block.innerHTML);
+	// The block editor's inline image sits in the paragraph's text; it is an image block of its own
+	return textAndImages(block.innerHTML, context, (children, markDefs) => {
+		// Skip empty paragraphs
+		if (children.length === 1 && children[0]?.text === "") {
+			return undefined;
+		}
 
-	// Skip empty paragraphs
-	if (children.length === 1 && children[0]?.text === "") {
-		return [];
-	}
+		const result: PortableTextTextBlock = {
+			_type: "block",
+			_key: context.generateKey(),
+			style: "normal",
+			children,
+		};
 
-	const result: PortableTextTextBlock = {
-		_type: "block",
-		_key: context.generateKey(),
-		style: "normal",
-		children,
-	};
+		const textAlign = blockTextAlign(block);
+		if (textAlign) {
+			result.textAlign = textAlign;
+		}
 
-	const textAlign = blockTextAlign(block);
-	if (textAlign) {
-		result.textAlign = textAlign;
-	}
+		if (markDefs.length > 0) {
+			result.markDefs = markDefs;
+		}
 
-	if (markDefs.length > 0) {
-		result.markDefs = markDefs;
-	}
-
-	return [result];
+		return result;
+	});
 };
+
+/**
+ * An element's text as the blocks `textBlock` makes of each run of it, and
+ * each image it holds (the block editor's inline image, which WordPress draws
+ * in the text) as an image block of its own, in the order WordPress draws
+ * them (parseInlineSegments). `textBlock` gives nothing for a run it skips.
+ */
+function textAndImages(
+	html: string,
+	context: TransformContext,
+	textBlock: (
+		children: PortableTextTextBlock["children"],
+		markDefs: NonNullable<PortableTextTextBlock["markDefs"]>,
+	) => PortableTextTextBlock | undefined,
+): PortableTextBlock[] {
+	return parseInlineSegments(html, context.generateKey).flatMap((s): PortableTextBlock[] => {
+		if ("_type" in s) return [s];
+		const text = textBlock(s.children, s.markDefs);
+		return text ? [text] : [];
+	});
+}
 
 /**
  * A paragraph's or heading's text alignment: the saved markup first (what
@@ -96,25 +119,25 @@ function blockTextAlign(block: GutenbergBlock): PortableTextTextBlock["textAlign
  */
 export const heading: BlockTransformer = (block, _options, context) => {
 	const level = attrNumber(block.attrs, "level") ?? 2;
-	const { children, markDefs } = context.parseInlineContent(block.innerHTML);
+	return textAndImages(block.innerHTML, context, (children, markDefs) => {
+		const result: PortableTextTextBlock = {
+			_type: "block",
+			_key: context.generateKey(),
+			style: toHeadingStyle(level),
+			children,
+		};
 
-	const result: PortableTextTextBlock = {
-		_type: "block",
-		_key: context.generateKey(),
-		style: toHeadingStyle(level),
-		children,
-	};
+		const textAlign = blockTextAlign(block);
+		if (textAlign) {
+			result.textAlign = textAlign;
+		}
 
-	const textAlign = blockTextAlign(block);
-	if (textAlign) {
-		result.textAlign = textAlign;
-	}
+		if (markDefs.length > 0) {
+			result.markDefs = markDefs;
+		}
 
-	if (markDefs.length > 0) {
-		result.markDefs = markDefs;
-	}
-
-	return [result];
+		return result;
+	});
 };
 
 /**
@@ -146,8 +169,8 @@ function parseListItemBlocks(
 	listItem: "bullet" | "number",
 	level: number,
 	context: TransformContext,
-): PortableTextTextBlock[] {
-	const blocks: PortableTextTextBlock[] = [];
+): PortableTextBlock[] {
+	const blocks: PortableTextBlock[] = [];
 
 	for (const itemBlock of innerBlocks) {
 		if (itemBlock.blockName !== "core/list-item") continue;
@@ -157,22 +180,7 @@ function parseListItemBlocks(
 		const textContent = textMatch?.[1]?.trim() || "";
 
 		if (textContent) {
-			const { children, markDefs } = context.parseInlineContent(textContent);
-
-			const block: PortableTextTextBlock = {
-				_type: "block",
-				_key: context.generateKey(),
-				style: "normal",
-				listItem,
-				level,
-				children,
-			};
-
-			if (markDefs.length > 0) {
-				block.markDefs = markDefs;
-			}
-
-			blocks.push(block);
+			blocks.push(...listItemBlocks(textContent, listItem, level, context));
 		}
 
 		// Handle nested lists in innerBlocks
@@ -200,8 +208,8 @@ function parseListItems(
 	listItem: "bullet" | "number",
 	level: number,
 	context: TransformContext,
-): PortableTextTextBlock[] {
-	const blocks: PortableTextTextBlock[] = [];
+): PortableTextBlock[] {
+	const blocks: PortableTextBlock[] = [];
 
 	// Match <li> elements - need to handle nested lists carefully
 	// Find each top-level <li> by tracking tag depth
@@ -216,22 +224,7 @@ function parseListItems(
 		let textContent = liContent.replace(NESTED_LIST_PATTERN, "").trim();
 
 		if (textContent) {
-			const { children, markDefs } = context.parseInlineContent(textContent);
-
-			const block: PortableTextTextBlock = {
-				_type: "block",
-				_key: context.generateKey(),
-				style: "normal",
-				listItem,
-				level,
-				children,
-			};
-
-			if (markDefs.length > 0) {
-				block.markDefs = markDefs;
-			}
-
-			blocks.push(block);
+			blocks.push(...listItemBlocks(textContent, listItem, level, context));
 		}
 
 		// Process nested lists
@@ -244,6 +237,34 @@ function parseListItems(
 	}
 
 	return blocks;
+}
+
+/**
+ * A list item's text as list-item blocks, and each image in it as an image
+ * block of its own after the text before it: a text block holds no image.
+ */
+function listItemBlocks(
+	html: string,
+	listItem: "bullet" | "number",
+	level: number,
+	context: TransformContext,
+): PortableTextBlock[] {
+	return textAndImages(html, context, (children, markDefs) => {
+		const block: PortableTextTextBlock = {
+			_type: "block",
+			_key: context.generateKey(),
+			style: "normal",
+			listItem,
+			level,
+			children,
+		};
+
+		if (markDefs.length > 0) {
+			block.markDefs = markDefs;
+		}
+
+		return block;
+	});
 }
 
 /**
@@ -342,39 +363,12 @@ export const quote: BlockTransformer = (block, _options, context) => {
 	let match;
 
 	while ((match = P_TAG_PATTERN.exec(block.innerHTML)) !== null) {
-		const content = match[1] || "";
-		const { children, markDefs } = context.parseInlineContent(content);
-
-		const quoteBlock: PortableTextTextBlock = {
-			_type: "block",
-			_key: context.generateKey(),
-			style: "blockquote",
-			children,
-		};
-
-		if (markDefs.length > 0) {
-			quoteBlock.markDefs = markDefs;
-		}
-
-		blocks.push(quoteBlock);
+		blocks.push(...quoteBlocks(match[1] || "", context));
 	}
 
 	// If no paragraphs found, treat entire content as quote
 	if (blocks.length === 0) {
-		const { children, markDefs } = context.parseInlineContent(block.innerHTML);
-
-		const quoteBlock: PortableTextTextBlock = {
-			_type: "block",
-			_key: context.generateKey(),
-			style: "blockquote",
-			children,
-		};
-
-		if (markDefs.length > 0) {
-			quoteBlock.markDefs = markDefs;
-		}
-
-		blocks.push(quoteBlock);
+		blocks.push(...quoteBlocks(block.innerHTML, context));
 	}
 
 	// Handle citation if present
@@ -405,6 +399,24 @@ export const quote: BlockTransformer = (block, _options, context) => {
 
 	return blocks;
 };
+
+/** A quote's paragraph as blockquote blocks, and each image in it as an image block of its own. */
+function quoteBlocks(html: string, context: TransformContext): PortableTextBlock[] {
+	return textAndImages(html, context, (children, markDefs) => {
+		const quoteBlock: PortableTextTextBlock = {
+			_type: "block",
+			_key: context.generateKey(),
+			style: "blockquote",
+			children,
+		};
+
+		if (markDefs.length > 0) {
+			quoteBlock.markDefs = markDefs;
+		}
+
+		return quoteBlock;
+	});
+}
 
 /**
  * core/image → image block

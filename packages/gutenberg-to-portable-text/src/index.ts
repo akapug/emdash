@@ -11,12 +11,19 @@ import { parse } from "@wordpress/block-serialization-default-parser";
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
-import { extractDisplaySize, parseInlineContent } from "./inline.js";
+import {
+	drawsLine,
+	extractDisplaySize,
+	imageAlignment,
+	parseInlineContent,
+	parseInlineSegments,
+} from "./inline.js";
 import { wptexturize } from "./texturize.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
 	PortableTextBlock,
+	PortableTextTextBlock,
 	ConvertOptions,
 	TransformContext,
 } from "./types.js";
@@ -43,14 +50,6 @@ const HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const NBSP_ENTITY_PATTERN = /&nbsp;/g;
 /** A block-level element inside a `<div>`: its paragraphs are the div's content, one block each. */
 const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|hr)\b/i;
-
-/**
- * Whether a paragraph's spans draw anything: text, or a no-break space alone.
- * WordPress draws `<p>&nbsp;</p>` (the classic editor's spacer) as a line of
- * its own, one line tall; dropped, every line after it sat that much higher.
- */
-const drawsLine = (children: ReadonlyArray<{ text: string }>) =>
-	children.some((c) => c.text.trim() !== "") || children.some((c) => c.text.includes("\u00a0"));
 
 // Re-export types
 export type {
@@ -218,12 +217,6 @@ function classicParagraphs(html: string): string {
 }
 
 const IMG_CLASS_ATTR = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
-const CLASS_SEPARATOR = /\s+/;
-const IMG_ALIGNMENTS: ReadonlyMap<string, "left" | "right" | "center"> = new Map([
-	["alignleft", "left"],
-	["alignright", "right"],
-	["aligncenter", "center"],
-]);
 
 /**
  * The `alignment` field for an image block from its `<img>` tag's WordPress
@@ -231,11 +224,7 @@ const IMG_ALIGNMENTS: ReadonlyMap<string, "left" | "right" | "center"> = new Map
  */
 function imageAligned(img: string): { alignment?: "left" | "right" | "center" } {
 	const m = IMG_CLASS_ATTR.exec(img);
-	for (const c of (m?.[1] ?? m?.[2] ?? "").toLowerCase().split(CLASS_SEPARATOR)) {
-		const alignment = IMG_ALIGNMENTS.get(c);
-		if (alignment) return { alignment };
-	}
-	return {};
+	return imageAlignment(m?.[1] ?? m?.[2]);
 }
 
 /** The `textAlign` field for a text block from the element `html` opens with, or nothing. */
@@ -254,6 +243,30 @@ export function htmlToPortableText(
 	const generateKey = options.keyGenerator || createKeyGenerator();
 	const blocks: PortableTextBlock[] = [];
 	const autoembeds = findAutoembeds(html);
+
+	/**
+	 * An element's text as blocks shaped like `shape`, and each image it holds
+	 * as an image block of its own where WordPress draws it: before, between
+	 * or after that text (parseInlineSegments).
+	 */
+	const pushInline = (
+		inner: string,
+		shape: Pick<PortableTextTextBlock, "style" | "listItem" | "level" | "textAlign">,
+	) => {
+		for (const s of parseInlineSegments(inner, generateKey)) {
+			blocks.push(
+				"_type" in s
+					? s
+					: {
+							_type: "block",
+							_key: generateKey(),
+							...shape,
+							children: s.children,
+							markDefs: s.markDefs.length > 0 ? s.markDefs : undefined,
+						},
+			);
+		}
+	};
 
 	const pushParagraph = (text: string) => {
 		if (!text) return;
@@ -428,28 +441,15 @@ export function htmlToPortableText(
 			case "h4":
 			case "h5":
 			case "h6": {
-				const { children, markDefs } = parseInlineContent(content, generateKey);
-				blocks.push({
-					_type: "block",
-					_key: generateKey(),
-					style: tag,
-					...aligned(fullMatch),
-					children,
-					markDefs: markDefs.length > 0 ? markDefs : undefined,
-				});
+				// A heading that holds an image is drawn with it inside: an image the
+				// classic editor centred stands on a line of its own above the words
+				// after it, and one it floated floats beside what follows.
+				pushInline(content, { style: tag, ...aligned(fullMatch) });
 				break;
 			}
 
 			case "blockquote": {
-				const { children, markDefs } = parseInlineContent(content, generateKey);
-				blocks.push({
-					_type: "block",
-					_key: generateKey(),
-					style: "blockquote",
-					...aligned(fullMatch),
-					children,
-					markDefs: markDefs.length > 0 ? markDefs : undefined,
-				});
+				pushInline(content, { style: "blockquote", ...aligned(fullMatch) });
 				break;
 			}
 
@@ -470,17 +470,7 @@ export function htmlToPortableText(
 				const listItem = tag === "ol" ? "number" : "bullet";
 				let liMatch;
 				while ((liMatch = LIST_ITEM_PATTERN.exec(content)) !== null) {
-					const liContent = liMatch[1] || "";
-					const { children, markDefs } = parseInlineContent(liContent, generateKey);
-					blocks.push({
-						_type: "block",
-						_key: generateKey(),
-						style: "normal",
-						listItem,
-						level: 1,
-						children,
-						markDefs: markDefs.length > 0 ? markDefs : undefined,
-					});
+					pushInline(liMatch[1] || "", { style: "normal", listItem, level: 1 });
 				}
 				break;
 			}
