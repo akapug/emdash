@@ -401,6 +401,20 @@ describe("gutenbergToPortableText", () => {
 				"normal: — B. Person",
 			]);
 		});
+
+		it("reads a <cite> inside a quote's paragraph as the paragraph's words, not the citation", () => {
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>As <cite>A Play</cite> has it</p><cite>A. Playwright</cite></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(content))).toEqual([
+				"blockquote: As A Play has it",
+				"normal: — A. Playwright",
+			]);
+			const uncited = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>As <cite>A Play</cite> has it</p></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(uncited))).toEqual(["blockquote: As A Play has it"]);
+		});
 	});
 
 	describe("image blocks", () => {

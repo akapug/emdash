@@ -358,8 +358,9 @@ function extractTopLevelListItems(html: string): string[] {
  */
 export const quote: BlockTransformer = (block, _options, context) => {
 	const blocks: PortableTextBlock[] = [];
-	// The citation WordPress draws is the <cite> it saved; the attribute is read from that markup
-	const cite = block.innerHTML.match(CITE_TAG_PATTERN);
+	// The citation WordPress draws is the <cite> it saves after the quote's text (the
+	// attribute is read from that markup); a <cite> in a paragraph is that paragraph's words
+	const cite = block.innerHTML.replace(P_TAG_PATTERN, "").match(CITE_TAG_PATTERN);
 
 	if (block.innerBlocks.length > 0) {
 		// Since WordPress 6.2 a quote's text is inner blocks (paragraphs, and any
