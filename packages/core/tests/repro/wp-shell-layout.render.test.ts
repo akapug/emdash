@@ -1,14 +1,24 @@
 /**
- * The blog template's WpShell layout draws a form imported from the site's
- * form plugin in that plugin's markup (WpShellForm), and it submits what
- * EmDash's own form submits, where it does. EmDash's reads (the settings that
- * carry the record) are stood in for here; everything else is the template's
- * own code.
+ * The blog template's WpShell layout, drawn as a page is: the /wp-shell/
+ * route, the layout, and the form the layout draws in the site's form
+ * plugin's markup. EmDash's reads (the entry, the settings that carry the
+ * record, the latest posts) are stood in for here; everything else is the
+ * template's own code.
+ *
+ * - The front page's listing draws the site's latest posts: the layout asks
+ *   EmDash for as many as WordPress listed, newest first, and maps each to
+ *   what the listing draws (its title, path, excerpt, date and image).
+ * - The document title is the entry's own SEO title, carried from WordPress,
+ *   as written: the route passes it to the layout.
+ * - A form imported from the site's form plugin is drawn in that plugin's
+ *   markup, and submits what EmDash's own form submits, where it does.
  */
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import WpShellForm from "../../../../templates/blog-cloudflare/src/components/WpShellForm.astro";
+import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.astro";
+import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/[...path].astro";
 import FormEmbed from "../../../plugins/forms/src/astro/FormEmbed.astro";
 import type { PublicFormDefinition } from "../../../plugins/forms/src/public-definition.js";
 
@@ -284,5 +294,124 @@ describe("WpShellForm: a form in its plugin's markup", () => {
 			expect(html, what).toContain('class="ec-form"');
 			expect(html, what).not.toContain("gform_wrapper");
 		}
+	});
+});
+
+describe("WpShell: the front page's listing draws the site's latest posts", () => {
+	it("asks EmDash for as many posts as WordPress listed, newest first, and draws each in the theme's item", async () => {
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: [
+				{
+					id: "first-post",
+					data: {
+						title: "First & best",
+						excerpt: "",
+						content: [
+							{
+								_type: "block",
+								children: [{ _type: "span", text: "One two three four five six seven" }],
+							},
+						],
+						publishedAt: new Date("2023-07-12T05:00:00Z"),
+						featured_image: {
+							provider: "local",
+							id: "01ABC.png",
+							src: "/_emdash/api/media/file/01ABC.png",
+							width: 300,
+							height: 200,
+						},
+					},
+				},
+				{
+					id: "second",
+					data: {
+						title: "Second",
+						excerpt: "Its own.",
+						content: [],
+						publishedAt: new Date("2022-12-18T20:00:00Z"),
+					},
+				},
+			],
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShell, {
+			props: {
+				shell: record(),
+				kind: "home",
+				path: "/",
+				title: "Home",
+				entry: { title: "Home", body: [], edit: { title: {}, content: {} } },
+			},
+		});
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			orderBy: { published_at: "desc" },
+			limit: 2,
+		});
+		expect(html).toContain(
+			'<div class="items"><div class="item"><h3 class="item-title"><a href="/posts/first-post">First &amp; best</a></h3>' +
+				'<p class="excerpt">One two three four five […]</p><span class="date">July 11, 2023</span>' +
+				'<img class="wp-post-image" src="/_emdash/api/media/file/01ABC.png"></div>' +
+				'<div class="item"><h3 class="item-title"><a href="/posts/second">Second</a></h3>' +
+				'<p class="excerpt">Its own.</p><span class="date">December 18, 2022</span></div></div>',
+		);
+	});
+
+	it("asks for no posts where the layout lists none", async () => {
+		const c = await AstroContainer.create();
+		await c.renderToString(WpShell, {
+			props: {
+				shell: record(),
+				kind: "page",
+				path: "/pages/about",
+				title: "About",
+				entry: { title: "About", body: [], edit: { title: {}, content: {} } },
+			},
+		});
+		expect(reads.getEmDashCollection).not.toHaveBeenCalled();
+	});
+});
+
+describe("the /wp-shell/ route: the document title", () => {
+	async function page(seo: Record<string, unknown> | undefined) {
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "contact",
+				data: {
+					id: "01PAGE",
+					title: "Contact",
+					content: [],
+					translationGroup: "01PAGE",
+					updatedAt: new Date("2026-09-01T00:00:00Z"),
+					publishedAt: null,
+					...(seo ? { seo } : {}),
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: "pages/contact" },
+			request: new Request("https://example.org/pages/contact"),
+		});
+	}
+	const seo = (title: string | null) => ({
+		title,
+		description: null,
+		image: null,
+		canonical: null,
+		noIndex: false,
+	});
+
+	it("is the entry's own SEO title, carried from WordPress, as written", async () => {
+		const html = await page(seo("Write to us"));
+		expect(reads.getEmDashEntry).toHaveBeenCalledWith("pages", "contact");
+		expect(html).toContain("<title>Write to us</title>");
+	});
+
+	it("is EmDash's title and the site's name for an entry with none", async () => {
+		expect(await page(seo(null))).toContain("<title>Contact | Example</title>");
+		expect(await page(undefined)).toContain("<title>Contact | Example</title>");
 	});
 });
