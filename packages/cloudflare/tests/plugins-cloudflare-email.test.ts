@@ -1319,12 +1319,54 @@ describe("createCloudflareEmailStatus()", () => {
 				cancellation: "reported",
 				redaction: "addresses",
 			},
-			accountBudget: { protocol: 2, ready: true, live: { ok: true, lane: "plugin", limits: caps } },
+			accountBudget: {
+				protocol: 2,
+				ready: true,
+				live: { ok: true, tenant: "acme", lane: "plugin", limits: caps },
+			},
 		});
 		expect(report).toHaveBeenCalledWith({ protocol: 2, token: TOKEN });
 		expect(budget.takes).toEqual([]);
 		expect(budget.refunds).toEqual([]);
 		expect(JSON.stringify(answer)).not.toContain(TOKEN);
+	});
+
+	it("attests the tenant the token is registered to, whichever Worker holds it: a token swapped in from another tenant names that tenant", async () => {
+		const caps = {
+			accountPerDay: 200,
+			accountSystemReserve: 50,
+			tenantPerDay: 100,
+			tenantSystemReserve: 10,
+			systemPerRecipient: 10,
+		};
+		// The service derives the tenant from the token: bravo's Worker holding alpha's token is alpha to it.
+		const byToken: Record<string, string> = { [TOKEN]: "alpha", tok_bravo_0123456789abcdef0123456789abcdef0: "bravo" };
+		const service = {
+			...fakeBudget().service,
+			report: vi.fn(async (req: { protocol: number; token: string }) =>
+				byToken[req.token]
+					? { ok: true, protocol: 2, tenant: byToken[req.token], lane: "plugin", caps }
+					: { ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" },
+			),
+		};
+		const attested = async (token: string) =>
+			(
+				await createCloudflareEmailStatus(
+					{ from: "notify@mail.example.org", accountBudget: {} },
+					async () => ({ ...fakeEnv().env, MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: token }),
+				)(fakeCtx())
+			).attestation.accountBudget?.live;
+		expect(await attested("tok_bravo_0123456789abcdef0123456789abcdef0")).toMatchObject({
+			ok: true,
+			tenant: "bravo",
+		});
+		// Swapped: bravo's Worker with alpha's still-valid token attests alpha.
+		expect(await attested(TOKEN)).toMatchObject({ ok: true, tenant: "alpha" });
+		// A stale secret the service has revoked is not live at all.
+		expect(await attested("tok_stale_0123456789abcdef0123456789abcdef0")).toMatchObject({
+			ok: false,
+			why: expect.stringMatching(/refused this site's token/),
+		});
 	});
 
 	it("attests the account's budget NOT live, and why, for every answer short of a report in its protocol with the limits", async () => {
@@ -1353,19 +1395,21 @@ describe("createCloudflareEmailStatus()", () => {
 		for (const [report, why, opts] of [
 			[undefined, /has no report/, {}],
 			[async () => ({ ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" }), /refused this site's token \(unknown or revoked\)/, {}],
-			[async () => ({ ok: true, protocol: 1, lane: "plugin", caps }), /answered in protocol 1, not 2/, {}],
-			[async () => ({ ok: true, lane: "plugin", caps }), /answered in protocol null, not 2/, {}],
-			[async () => ({ ok: true, protocol: 2, caps }), /does not say which lane this site's token holds/, {}],
-			[async () => ({ ok: true, protocol: 2, lane: "plugin" }), /does not say the limits/, {}],
+			[async () => ({ ok: true, protocol: 1, tenant: "acme", lane: "plugin", caps }), /answered in protocol 1, not 2/, {}],
+			[async () => ({ ok: true, tenant: "acme", lane: "plugin", caps }), /answered in protocol null, not 2/, {}],
+			[async () => ({ ok: true, protocol: 2, lane: "plugin", caps }), /does not say which tenant this site's token belongs to/, {}],
+			[async () => ({ ok: true, protocol: 2, tenant: "", lane: "plugin", caps }), /does not say which tenant/, {}],
+			[async () => ({ ok: true, protocol: 2, tenant: "acme", caps }), /does not say which lane this site's token holds/, {}],
+			[async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin" }), /does not say the limits/, {}],
 			[
-				async () => ({ ok: true, protocol: 2, lane: "plugin", caps: { ...caps, tenantPerDay: "100" } }),
+				async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps: { ...caps, tenantPerDay: "100" } }),
 				/does not say the limits/,
 				{},
 			],
 			[
 				async () => {
 					const { tenantSystemReserve: _, ...protocol1Caps } = caps;
-					return { ok: true, protocol: 2, lane: "plugin", caps: protocol1Caps };
+					return { ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps: protocol1Caps };
 				},
 				/does not say the limits/,
 				{},
@@ -1378,7 +1422,7 @@ describe("createCloudflareEmailStatus()", () => {
 				{},
 			],
 			[() => new Promise(() => {}), /did not answer within 20 ms/, { timeoutMs: 20 }],
-			[async () => ({ ok: true, protocol: 2, lane: "plugin", caps }), /no token: the secret "MAIL_BUDGET_TOKEN" is not set/, { token: "" }],
+			[async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps }), /no token: the secret "MAIL_BUDGET_TOKEN" is not set/, { token: "" }],
 		] as const) {
 			const live = await at(report, opts);
 			expect(live?.live, String(why)).toMatchObject({ ok: false, why: expect.stringMatching(why) });

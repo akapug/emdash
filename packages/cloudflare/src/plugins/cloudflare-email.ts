@@ -849,9 +849,11 @@ export function withoutAddresses(text: string, addresses: readonly string[]): st
  * cancelled, addresses redacted from what is logged), and, with
  * `accountBudget`, the mail-budget protocol this provider speaks and the
  * service's LIVE answer to this site's token: its report, read-only, which
- * proves the service is there and knows the token, and says the limits it
- * holds this site to. It never carries the token or a recipient, and takes
- * and refunds nothing.
+ * proves the service is there and knows the token, and says the tenant and
+ * lane the token is registered to (the service derives both from the
+ * token's hash, so a deployment can check the Worker holds its own tenant's
+ * plugin token and not another's) and the limits it holds this site to. It
+ * never carries the token or a recipient, and takes and refunds nothing.
  *
  * @internal
  */
@@ -918,7 +920,9 @@ export function createCloudflareEmailStatus(
 async function liveAccountBudget(
 	budget: AccountBudget | { missing: string },
 ): Promise<
-	{ ok: true; lane: string; limits: Record<string, number> } | { ok: false; why: string } | null
+	| { ok: true; tenant: string; lane: string; limits: Record<string, number> }
+	| { ok: false; why: string }
+	| null
 > {
 	if ("missing" in budget) return null;
 	const { service, token, timeoutMs } = budget;
@@ -939,8 +943,13 @@ async function liveAccountBudget(
 	if (answer.ok !== true) {
 		return { ok: false, why: `it refused this site's token (${typeof answer.refused === "string" ? redactAddresses(answer.refused) : "no reason given"})` };
 	}
-	// The lane is the token's registration: a tenant's Worker should hold a
-	// plugin-lane token, and a deployment checks that it does.
+	// The tenant and the lane are the token's registration, derived by the
+	// service from its hash: a deployment checks that this site's Worker holds
+	// ITS OWN token (a token of another tenant still reports ready, and every
+	// send would be charged to that tenant) and a plugin-lane one.
+	if (typeof answer.tenant !== "string" || !answer.tenant) {
+		return { ok: false, why: "its report does not say which tenant this site's token belongs to" };
+	}
 	if (typeof answer.lane !== "string") {
 		return { ok: false, why: "its report does not say which lane this site's token holds" };
 	}
@@ -953,7 +962,7 @@ async function liveAccountBudget(
 		}
 		limits[name] = cap;
 	}
-	return { ok: true, lane: answer.lane, limits };
+	return { ok: true, tenant: answer.tenant, lane: answer.lane, limits };
 }
 
 /** The caps the mail-budget service holds a site to (Embark's packages/mail-budget DEFAULT_CAPS), which the attestation says. */
