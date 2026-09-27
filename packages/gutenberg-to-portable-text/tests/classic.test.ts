@@ -140,6 +140,11 @@ describe("an image keeps the size WordPress drew it at", () => {
 <figure class="wp-block-image size-large is-resized"><img src="https://example.org/e-1024x640.jpg" alt="E" class="wp-image-5" width="320" height="200"/></figure>
 <!-- /wp:image -->`;
 		expect(size(gutenbergToPortableText(content)[0])).toEqual([320, 200]);
+		// since WordPress 6.3 a resized image's size is in its style, its height left to its proportions
+		const styled = `<!-- wp:image {"id":6,"width":"320px","sizeSlug":"large"} -->
+<figure class="wp-block-image size-large is-resized"><img src="https://example.org/f-1024x640.jpg" alt="F" class="wp-image-6" style="width:320px;height:auto"/></figure>
+<!-- /wp:image -->`;
+		expect(size(gutenbergToPortableText(styled)[0])).toEqual([320, undefined]);
 	});
 
 	it("reads the size of an image that stands outside any paragraph", () => {
@@ -163,6 +168,28 @@ describe("an image keeps the size WordPress drew it at", () => {
 			expect(image).toMatchObject({ _type: "image" });
 			expect(image).not.toHaveProperty("displayWidth");
 			expect(image).not.toHaveProperty("displayHeight");
+		}
+		// an inline style's width in pixels beats the attribute, as in the browser, and
+		// the height is then the style's own; a width in other units is no size
+		for (const [img, drawn] of [
+			[
+				`<img src="https://example.org/s.png" style="width: 120px" width="600" height="400" />`,
+				[120, undefined],
+			],
+			[
+				`<img src="https://example.org/s.png" style="max-width: 100%; width:80px;height: 60px" />`,
+				[80, 60],
+			],
+			[
+				`<img src="https://example.org/s.png" style="max-width: 90px" width="300" height="200" />`,
+				[300, 200],
+			],
+			[
+				`<img src="https://example.org/s.png" style="width: 50%" width="300" height="200" />`,
+				[300, 200],
+			],
+		] as const) {
+			expect(size(gutenbergToPortableText(`<p>${img}</p>`)[0])).toEqual(drawn);
 		}
 		// the first of a repeated attribute counts, and a width alone is kept alone
 		const [first] = gutenbergToPortableText(

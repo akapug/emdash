@@ -164,6 +164,15 @@ describe("block editor content: an inline image", () => {
 		]);
 	});
 
+	it("draws an inline image at the width its style gives, the size the block editor writes", () => {
+		// the block editor inserts an inline image at most 150 pixels wide, in its style alone
+		const styled = `<img class="wp-image-8" style="width: 150px;" src="https://example.org/wp-content/uploads/logo.png" alt="">`;
+		const blocks = gutenbergToPortableText(`<!-- wp:heading -->
+<h2 class="wp-block-heading">${styled} Partners</h2>
+<!-- /wp:heading -->`);
+		expect(shape(blocks)).toEqual(["[image logo.png - 150x-]", "h2: Partners"]);
+	});
+
 	it("keeps an empty paragraph out, as before, and an image alone in a paragraph as the image", () => {
 		const blocks = gutenbergToPortableText(`<!-- wp:paragraph -->
 <p></p>

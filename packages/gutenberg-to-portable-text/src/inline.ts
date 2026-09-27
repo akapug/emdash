@@ -34,6 +34,8 @@ const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']*)["']/i;
 /** One attribute of a tag: its name, and its value quoted either way or bare. A quoted value is read whole, so no attribute is found inside one. */
 const TAG_ATTRIBUTE_PATTERN = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 const WHOLE_PIXELS_PATTERN = /^\d+$/;
+/** A `width` or `height` declaration of an inline style in whole pixels; `max-width` and the like are other properties. */
+const STYLE_PIXELS_PATTERN = /(?:^|;)\s*(width|height)\s*:\s*(\d+)px\s*(?:!important\s*)?(?=;|$)/gi;
 const URL_AMP_ENTITY_PATTERN = /&amp;/g;
 const URL_NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const URL_HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
@@ -178,7 +180,7 @@ function imageBlock(
 		alt: getAttr(img, "alt"),
 		...(link ? { link } : {}),
 		...imageAlignment(getAttr(img, "class")),
-		...displaySize(getAttr(img, "width"), getAttr(img, "height")),
+		...displaySize(getAttr(img, "width"), getAttr(img, "height"), getAttr(img, "style")),
 	};
 }
 
@@ -443,26 +445,39 @@ export function extractCaption(html: string): string | undefined {
  * which is the only copy it imports. A value that is not a whole number of
  * pixels (`100%`) is no size, and the first of a repeated attribute counts, as
  * in HTML.
+ *
+ * The block editor's inline image carries its size in its inline style
+ * instead (`style="width: 150px;"`, which it writes on every one it inserts,
+ * at most 150 pixels wide). An inline style's width beats the attribute, as in
+ * the browser, and the height is then only the style's own: a theme's
+ * `height: auto` beats a height attribute, so the image is drawn at its own
+ * proportions at that width.
  */
 export function extractDisplaySize(img: string): { displayWidth?: number; displayHeight?: number } {
 	const first = new Map<string, string>();
 	for (const m of img.matchAll(TAG_ATTRIBUTE_PATTERN)) {
 		const name = m[1]!.toLowerCase();
-		if ((name === "width" || name === "height") && !first.has(name)) {
+		if ((name === "width" || name === "height" || name === "style") && !first.has(name)) {
 			first.set(name, m[2] ?? m[3] ?? m[4] ?? "");
 		}
 	}
-	return displaySize(first.get("width"), first.get("height"));
+	return displaySize(first.get("width"), first.get("height"), first.get("style"));
 }
 
-/** The display size a tag's `width` and `height` values give, each only in whole pixels. */
+/** The display size a tag's `width`, `height` and `style` values give, each only in whole pixels. */
 function displaySize(
 	width: string | undefined,
 	height: string | undefined,
+	style: string | undefined,
 ): { displayWidth?: number; displayHeight?: number } {
+	const declared = new Map<string, string>();
+	for (const m of (style ?? "").matchAll(STYLE_PIXELS_PATTERN)) {
+		declared.set(m[1]!.toLowerCase(), m[2]!);
+	}
 	const size: { displayWidth?: number; displayHeight?: number } = {};
-	const w = pixels(width);
-	const h = pixels(height);
+	const styled = pixels(declared.get("width"));
+	const w = styled ?? pixels(width);
+	const h = styled ? pixels(declared.get("height")) : pixels(height);
 	if (w) size.displayWidth = w;
 	if (h) size.displayHeight = h;
 	return size;
