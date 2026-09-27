@@ -287,4 +287,21 @@ Words after.
 			),
 		).toEqual(["[image k.png https://example.org/k/]"]);
 	});
+
+	it("keeps no link with an unsafe scheme, and reads a link as the browser follows it", () => {
+		// a paragraph's image, one outside any paragraph, and a figure's: as a text link, an unsafe scheme is no link
+		const unsafe = `<p><a href="javascript:alert(1)"><img src="https://example.org/p.png" alt="" /></a></p><a href="data:text/html,x"><img src="https://example.org/t.png" alt="" /></a><figure><a href="javascript:alert(1)"><img src="https://example.org/f.png" alt="" /></a></figure>`;
+		expect(linked(htmlToPortableText(unsafe))).toEqual([
+			"[image p.png -]",
+			"[image t.png -]",
+			"[image f.png -]",
+		]);
+		// the white space around an href is not part of it: WordPress draws both links
+		const spaced = `<a href=" https://example.org/s/ " rel="attachment"><img src="https://example.org/s.png" alt="" /></a>
+
+A <a href=" https://example.org/t/">text link</a>.`;
+		const blocks = gutenbergToPortableText(spaced);
+		expect(linked(blocks)).toEqual(["[image s.png https://example.org/s/]", "A text link."]);
+		expect(blocks[1]).toMatchObject({ markDefs: [{ href: "https://example.org/t/" }] });
+	});
 });

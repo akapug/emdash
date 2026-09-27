@@ -29,6 +29,7 @@ import type {
 	ConvertOptions,
 	TransformContext,
 } from "./types.js";
+import { sanitizeHref } from "./url.js";
 
 // Regex patterns for HTML parsing and conversion
 /**
@@ -243,7 +244,8 @@ function imageAligned(img: string): { alignment?: "left" | "right" | "center" } 
 /**
  * An image block for an `<img>` tag (or the attributes after `<img`): its
  * `src`, `alt`, alignment and size, and the link around it when there is one.
- * An image with no `src` draws nothing, and is none.
+ * An image with no `src` draws nothing, and is none. A link with an unsafe
+ * scheme is none, as for a text link or a block-editor image's.
  */
 function imageOfTag(
 	img: string,
@@ -253,12 +255,13 @@ function imageOfTag(
 	const src = img.match(SRC_ATTR_PATTERN)?.[1];
 	if (!src) return undefined;
 	const url = decodeUrlEntities(src);
+	const link = href === undefined ? "" : sanitizeHref(decodeUrlEntities(href));
 	return {
 		_type: "image",
 		_key: generateKey(),
 		asset: { _type: "reference", _ref: url, url },
 		alt: img.match(ALT_ATTR_PATTERN)?.[1],
-		...(href === undefined ? {} : { link: decodeUrlEntities(href) }),
+		...(link ? { link } : {}),
 		...imageAligned(img),
 		...extractDisplaySize(img),
 	};
@@ -486,6 +489,9 @@ export function htmlToPortableText(
 					const imgUrl = srcMatch?.[1] ? decodeUrlEntities(srcMatch[1]) : "";
 					// the link around the figure's image, as WordPress draws it
 					const linked = content.match(LINKED_IMAGE_ONE);
+					const link = linked?.[0].includes(imgMatch[0])
+						? sanitizeHref(decodeUrlEntities(linked[1]!))
+						: "";
 
 					blocks.push({
 						_type: "image",
@@ -497,7 +503,7 @@ export function htmlToPortableText(
 						},
 						alt: altMatch?.[1],
 						caption: captionMatch?.[1]?.replace(HTML_TAG_PATTERN, "").trim(),
-						...(linked?.[0].includes(imgMatch[0]) ? { link: decodeUrlEntities(linked[1]!) } : {}),
+						...(link ? { link } : {}),
 						...extractDisplaySize(imgMatch[0]),
 					});
 				}
