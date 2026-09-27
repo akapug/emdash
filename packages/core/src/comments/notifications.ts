@@ -68,7 +68,9 @@ export function buildCommentNotificationEmail(
  * 3. Email provider is configured
  * 4. Commenter is not the content author (no self-notifications)
  *
- * Returns true if the email was sent, false if skipped.
+ * Returns true only when the email pipeline reports the send "sent"; false
+ * when it was skipped, or when an email:beforeSend plugin cancelled it (the
+ * pipeline then returns normally and nothing went out).
  */
 export async function sendCommentNotification(params: {
 	email: EmailPipeline;
@@ -98,8 +100,8 @@ export async function sendCommentNotification(params: {
 		adminBaseUrl,
 	});
 
-	await email.send(message, NOTIFICATION_SOURCE);
-	return true;
+	const outcome = await email.send(message, NOTIFICATION_SOURCE);
+	return outcome.status === "sent";
 }
 
 /**
