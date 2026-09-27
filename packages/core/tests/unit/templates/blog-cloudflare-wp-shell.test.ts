@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
 	bodyClassFor,
+	classicVideoEmbed,
 	composeWpShell,
 	formatWpDate,
 	formSkin,
@@ -1386,4 +1387,37 @@ describe("wp-shell: a listing's masonry drawn in lanes, with no script", () => {
 			expect(wpShellProblem(record)).not.toBeNull();
 		});
 	}
+});
+
+describe("wp-shell: a video embedded from a link in classic content", () => {
+	it("is WordPress's player for a YouTube or Vimeo link that carries no block markup", () => {
+		expect(
+			classicVideoEmbed({ _type: "embed", url: "https://vimeo.com/58376079", provider: "vimeo" }),
+		).toEqual({
+			src: "https://player.vimeo.com/video/58376079",
+			title: "Vimeo video",
+			allow: "autoplay; fullscreen; picture-in-picture",
+		});
+		for (const url of [
+			"https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+			"https://youtu.be/dQw4w9WgXcQ",
+		])
+			expect(classicVideoEmbed({ _type: "embed", url })?.src).toBe(
+				"https://www.youtube.com/embed/dQw4w9WgXcQ",
+			);
+	});
+
+	it("is EmDash's own embed for anything else", () => {
+		for (const node of [
+			// a Gutenberg embed block carries its markup
+			{ url: "https://vimeo.com/1", html: '<figure class="wp-block-embed"></figure>' },
+			{ url: "https://example.org/v.mp4", provider: "video" },
+			{ url: "https://vimeo.com/1", provider: "audio" },
+			{ url: "https://twitter.com/x/status/1" },
+			{ url: "javascript:alert(1)//vimeo.com/1" },
+			{ url: 7 },
+			null,
+		])
+			expect(classicVideoEmbed(node), JSON.stringify(node)).toBeNull();
+	});
 });

@@ -1179,6 +1179,41 @@ export function ownImagePath(image: unknown): string | null {
 	return path && ownFile(path) && MEDIA_SRC.test(path) ? path : null;
 }
 
+const YOUTUBE_ID = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+const VIMEO_ID = /vimeo\.com\/(\d+)/;
+const HTTP_URL = /^https?:\/\//i;
+
+/**
+ * The player WordPress draws for a video link alone on its line in classic
+ * content (components/WpShellEmbed.astro): a YouTube or Vimeo embed that
+ * carries no block markup (a Gutenberg embed block's `html`), as the player
+ * EmDash's own Embed draws for it. Null for any other embed.
+ */
+export function classicVideoEmbed(
+	node: unknown,
+): { src: string; title: string; allow: string } | null {
+	if (!isObject(node) || !isText(node.url) || !HTTP_URL.test(node.url.trim())) return null;
+	const blockMarkup = isText(node.html) && node.html.trim() !== "";
+	if (blockMarkup || node.provider === "video" || node.provider === "audio") return null;
+	const url = node.url.trim();
+	const youtube = YOUTUBE_ID.exec(url)?.[1];
+	if (youtube)
+		return {
+			src: `https://www.youtube.com/embed/${youtube}`,
+			title: "YouTube video",
+			allow:
+				"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture",
+		};
+	const vimeo = VIMEO_ID.exec(url)?.[1];
+	return vimeo
+		? {
+				src: `https://player.vimeo.com/video/${vimeo}`,
+				title: "Vimeo video",
+				allow: "autoplay; fullscreen; picture-in-picture",
+			}
+		: null;
+}
+
 /** A featured image's height over its width, when its media value says its size (WpShellPost.imageRatio). */
 export function imageRatio(image: unknown): number | null {
 	if (!isObject(image)) return null;

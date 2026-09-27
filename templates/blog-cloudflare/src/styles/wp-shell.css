@@ -21,3 +21,17 @@
 :root .has-text-align-justify {
 	text-align: justify;
 }
+
+/*
+ * A video WordPress embedded from a link in classic content, drawn as its
+ * paragraph and player (../components/WpShellEmbed.astro): as wide as the
+ * theme's column and 16:9, which is what a theme's script (Twenty Twenty's
+ * intrinsicRatioVideos) makes of the player's width and height.
+ */
+iframe.wp-shell-embed {
+	display: block;
+	width: 100%;
+	height: auto;
+	aspect-ratio: 16 / 9;
+	border: 0;
+}

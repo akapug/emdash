@@ -29,6 +29,7 @@ import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
 import WpShellBlock from "../components/WpShellBlock.astro";
 import WpShellImage from "../components/WpShellImage.astro";
+import WpShellEmbed from "../components/WpShellEmbed.astro";
 import WpShellForm from "../components/WpShellForm.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
@@ -141,11 +142,12 @@ const pieces = composeWpShell(shell, {
 	posts,
 });
 
-// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, and a
-// form imported from the site's form plugin, in that plugin's markup (EmDash's form, its submit path).
+// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
+// video embedded from a link in classic content, and a form imported from the site's form plugin,
+// in that plugin's markup (EmDash's form, its submit path).
 const components = {
 	block: WpShellBlock,
-	type: { image: WpShellImage, "emdash-form": WpShellForm },
+	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
 };
 
 const pageCtx = createPublicPageContext({
