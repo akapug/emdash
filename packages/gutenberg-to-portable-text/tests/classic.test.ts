@@ -226,3 +226,65 @@ describe("classic content: what WordPress draws that a converter would drop or j
 		).toEqual(["A note, and its end."]);
 	});
 });
+
+describe("classic content: a linked image keeps its link", () => {
+	/** Each image block as its file and link; each text block as its text. */
+	const linked = (blocks: PortableTextBlock[]) =>
+		blocks.map((b) =>
+			b._type === "image"
+				? `[image ${b.asset.url?.split("/").pop()} ${typeof b.link === "string" ? b.link : "-"}]`
+				: b._type === "block"
+					? b.children.map((c) => c.text).join("")
+					: b._type,
+		);
+
+	it("keeps the link around an image when a newline stands inside it, which wpautop makes a line break", () => {
+		// wpautop draws <a href="…"><br />\n<img … /></a>: WordPress still draws the image linked
+		const content = `<a href="https://example.org/full.jpg">
+<img class="alignnone size-medium" src="https://example.org/full-300x200.jpg" alt="A" width="300" height="200" /></a>
+
+Words after.
+
+<a href="https://example.org/b.jpg">
+<img src="https://example.org/b-150x150.jpg" alt="B" />
+</a> A line beside it.`;
+		expect(linked(gutenbergToPortableText(content))).toEqual([
+			"[image full-300x200.jpg https://example.org/full.jpg]",
+			"Words after.",
+			"[image b-150x150.jpg https://example.org/b.jpg]",
+			"A line beside it.",
+		]);
+	});
+
+	it("keeps the link of a captioned image, in the shape the caption stage reads", () => {
+		// the classic editor's own shape, on one line: shortcode_unautop leaves the linked image outside any paragraph
+		const img = `<img class="size-medium wp-image-4" src="https://example.org/c-300x200.jpg" alt="" width="300" height="200" />`;
+		for (const gap of ["", "\n"]) {
+			const content = `[caption id="attachment_4" align="aligncenter" width="300"]<a href="https://example.org/c.jpg">${gap}${img}</a> A caption[/caption]`;
+			expect(linked(gutenbergToPortableText(content))).toEqual([
+				'[caption id="attachment_4" align="aligncenter" width="300"]',
+				"[image c-300x200.jpg https://example.org/c.jpg]",
+				"A caption[/caption]",
+			]);
+		}
+	});
+
+	it("keeps the link around an image that stands outside any paragraph", () => {
+		// wpautop leaves a div's last paragraph open when the div closes after it
+		const content = `<div><p>Words.</p>
+<a href="https://example.org/d.jpg"><img src="https://example.org/d-300x200.jpg" alt="D" /></a>
+</div>`;
+		expect(linked(gutenbergToPortableText(content))).toEqual([
+			"Words.",
+			"[image d-300x200.jpg https://example.org/d.jpg]",
+		]);
+		// and the HTML converter's own entry, which wpautop never ran over
+		expect(
+			linked(
+				htmlToPortableText(
+					`<a href="https://example.org/k/"><br /><img src="https://example.org/k.png" alt="K" /></a>`,
+				),
+			),
+		).toEqual(["[image k.png https://example.org/k/]"]);
+	});
+});

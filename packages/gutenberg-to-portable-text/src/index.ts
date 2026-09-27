@@ -24,15 +24,26 @@ import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
 	PortableTextBlock,
+	PortableTextImageBlock,
 	PortableTextTextBlock,
 	ConvertOptions,
 	TransformContext,
 } from "./types.js";
 
 // Regex patterns for HTML parsing and conversion
-const BLOCK_ELEMENT_PATTERN =
-	/<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|<img\s+[^>]+\/?>/gu;
-const LINKED_IMAGE_PATTERN = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>\s*<img\s+([^>]+)\/?>\s*<\/a>/gu;
+/**
+ * A link around an image: its `href`, and the image tag's attributes. wpautop
+ * makes a newline inside the link a line break (`<a href="…"><br />\n<img …></a>`),
+ * and WordPress draws the image linked all the same, so white space and line
+ * breaks may stand on either side of the image.
+ */
+const LINKED_IMAGE = String.raw`<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:\s|<br\s*\/?>)*<img\s+([^>]+)\/?>(?:\s|<br\s*\/?>)*<\/a>`;
+/** A block element, a rule or line break, or an image outside any (the link around it too: groups 4 and 5). */
+const BLOCK_ELEMENT_PATTERN = new RegExp(
+	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
+	"gu",
+);
+const LINKED_IMAGE_PATTERN = new RegExp(LINKED_IMAGE, "gu");
 const STANDALONE_IMAGE_PATTERN = /<img\s+[^>]+\/?>/gu;
 const IMG_TAG_PATTERN = /<img[^>]+>/i;
 const SRC_ATTR_PATTERN = /src=["']([^"']+)["']/i;
@@ -228,6 +239,30 @@ function imageAligned(img: string): { alignment?: "left" | "right" | "center" } 
 	return imageAlignment(m?.[1] ?? m?.[2]);
 }
 
+/**
+ * An image block for an `<img>` tag (or the attributes after `<img`): its
+ * `src`, `alt`, alignment and size, and the link around it when there is one.
+ * An image with no `src` draws nothing, and is none.
+ */
+function imageOfTag(
+	img: string,
+	generateKey: () => string,
+	href?: string,
+): PortableTextImageBlock | undefined {
+	const src = img.match(SRC_ATTR_PATTERN)?.[1];
+	if (!src) return undefined;
+	const url = decodeUrlEntities(src);
+	return {
+		_type: "image",
+		_key: generateKey(),
+		asset: { _type: "reference", _ref: url, url },
+		alt: img.match(ALT_ATTR_PATTERN)?.[1],
+		...(href === undefined ? {} : { link: decodeUrlEntities(href) }),
+		...imageAligned(img),
+		...extractDisplaySize(img),
+	};
+}
+
 /** The `textAlign` field for a text block from the element `html` opens with, or nothing. */
 function aligned(html: string): { textAlign?: "left" | "center" | "right" | "justify" } {
 	const textAlign = textAlignOfTag(html);
@@ -318,25 +353,11 @@ export function htmlToPortableText(
 			continue;
 		}
 
-		// Check for standalone <img> tag (not wrapped in figure/p)
-		if (fullMatch.toLowerCase().startsWith("<img")) {
-			const srcMatch = fullMatch.match(SRC_ATTR_PATTERN);
-			const altMatch = fullMatch.match(ALT_ATTR_PATTERN);
-			if (srcMatch?.[1]) {
-				const imgUrl = decodeUrlEntities(srcMatch[1]);
-				blocks.push({
-					_type: "image",
-					_key: generateKey(),
-					asset: {
-						_type: "reference",
-						_ref: imgUrl,
-						url: imgUrl,
-					},
-					alt: altMatch?.[1],
-					...imageAligned(fullMatch),
-					...extractDisplaySize(fullMatch),
-				});
-			}
+		// An image outside any paragraph (not wrapped in figure/p), and the link around it
+		const linkedImg = match[5];
+		if (linkedImg !== undefined || fullMatch.toLowerCase().startsWith("<img")) {
+			const image = imageOfTag(linkedImg ?? fullMatch, generateKey, match[4]);
+			if (image) blocks.push(image);
 			continue;
 		}
 
@@ -363,26 +384,8 @@ export function htmlToPortableText(
 				// First extract linked images
 				let linkedMatch;
 				while ((linkedMatch = LINKED_IMAGE_PATTERN.exec(content)) !== null) {
-					const linkUrl = decodeUrlEntities(linkedMatch[1]!);
-					const imgAttrs = linkedMatch[2]!;
-					const srcMatch = imgAttrs.match(SRC_ATTR_PATTERN);
-					const altMatch = imgAttrs.match(ALT_ATTR_PATTERN);
-					if (srcMatch?.[1]) {
-						const imgUrl = decodeUrlEntities(srcMatch[1]);
-						blocks.push({
-							_type: "image",
-							_key: generateKey(),
-							asset: {
-								_type: "reference",
-								_ref: imgUrl,
-								url: imgUrl,
-							},
-							alt: altMatch?.[1],
-							link: linkUrl,
-							...imageAligned(imgAttrs),
-							...extractDisplaySize(imgAttrs),
-						});
-					}
+					const image = imageOfTag(linkedMatch[2]!, generateKey, linkedMatch[1]);
+					if (image) blocks.push(image);
 					linkedImgPositions.push({
 						start: linkedMatch.index,
 						end: linkedMatch.index + linkedMatch[0].length,
@@ -398,23 +401,8 @@ export function htmlToPortableText(
 					);
 					if (isLinked) continue;
 
-					const srcMatch = imgMatch[0].match(SRC_ATTR_PATTERN);
-					const altMatch = imgMatch[0].match(ALT_ATTR_PATTERN);
-					if (srcMatch?.[1]) {
-						const imgUrl = decodeUrlEntities(srcMatch[1]);
-						blocks.push({
-							_type: "image",
-							_key: generateKey(),
-							asset: {
-								_type: "reference",
-								_ref: imgUrl,
-								url: imgUrl,
-							},
-							alt: altMatch?.[1],
-							...imageAligned(imgMatch[0]),
-							...extractDisplaySize(imgMatch[0]),
-						});
-					}
+					const image = imageOfTag(imgMatch[0], generateKey);
+					if (image) blocks.push(image);
 				}
 
 				// Then handle the text content (with images and image links stripped)
