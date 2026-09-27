@@ -1,0 +1,5 @@
+---
+/** EmDash's comment list, stood in for: which entry's comments it lists. */
+const { collection, contentId } = Astro.props as { collection: string; contentId: string };
+---
+<section class="ec-comments" data-for={`${collection}/${contentId}`}>EMDASH COMMENTS</section>

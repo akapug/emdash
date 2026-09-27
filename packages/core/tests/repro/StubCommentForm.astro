@@ -1,0 +1,5 @@
+---
+/** EmDash's comment form, stood in for: which entry it comments on. */
+const { collection, contentId } = Astro.props as { collection: string; contentId: string };
+---
+<form class="ec-comment-form" data-for={`${collection}/${contentId}`}></form>

@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import WpShellForm from "../../../../templates/blog-cloudflare/src/components/WpShellForm.astro";
 import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.astro";
 import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/[...path].astro";
+import { wpShellProblem } from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
 import FormEmbed from "../../../plugins/forms/src/astro/FormEmbed.astro";
 import type { PublicFormDefinition } from "../../../plugins/forms/src/public-definition.js";
 
@@ -32,6 +33,7 @@ const reads = vi.hoisted(() => ({
 	shell: null as unknown,
 	getEmDashCollection: vi.fn(),
 	getEmDashEntry: vi.fn(),
+	getCommentCount: vi.fn(),
 }));
 
 /** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own. */
@@ -44,6 +46,7 @@ async function emdashReads() {
 		decodeSlug: slug.decodeSlug,
 		getEmDashCollection: reads.getEmDashCollection,
 		getEmDashEntry: reads.getEmDashEntry,
+		getCommentCount: reads.getCommentCount,
 		getHomepage: async () => ({ entry: null, collection: "pages", cacheHint: {} }),
 		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
 		getSiteSettings: async () => ({ title: "Example" }),
@@ -56,6 +59,16 @@ async function emdashReads() {
 // The template resolves "emdash" to the package's built entry.
 vi.mock("emdash", emdashReads);
 vi.mock("../../dist/index.mjs", emdashReads);
+
+/** EmDash's comment list and form, stood in for: they read the database. */
+async function commentComponents() {
+	return {
+		Comments: (await import("./StubComments.astro")).default,
+		CommentForm: (await import("./StubCommentForm.astro")).default,
+	};
+}
+vi.mock("emdash/ui/comments", commentComponents);
+vi.mock("../../src/ui-comments.ts", commentComponents);
 
 const HOLE = (s: string) => ({ s });
 
@@ -248,6 +261,7 @@ beforeEach(() => {
 	reads.shell = record();
 	reads.getEmDashCollection.mockReset();
 	reads.getEmDashEntry.mockReset();
+	reads.getCommentCount.mockReset();
 });
 
 describe("WpShellForm: a form in its plugin's markup", () => {
@@ -513,6 +527,137 @@ describe("WpShell: a single post in the record's post layout", () => {
 			/<div class="entry-content"[^>]*><\/div><section class="ec-comments">EMDASH COMMENTS<\/section><\/main>/,
 		);
 		expect(html).not.toContain("entry-meta");
+	});
+});
+
+describe("the /wp-shell/ route: a single post in the record's post layout", () => {
+	const KEY = "01KEXAMPLEHERO0000000000000.png";
+	/** The record with a post layout: the featured image, the post's meta, the theme's comment element. */
+	const withPost = () => ({
+		...record(),
+		post: {
+			body: { class: "single single-post" },
+			styles: ["/_emdash/api/media/file/wp-shell/post.css"],
+			parts: [
+				{ html: '<main id="site-content"><div class="post hentry">' },
+				{ slot: "featured" },
+				{ slot: "title", tag: "h1", class: "entry-title" },
+				{ slot: "postMeta", meta: 0 },
+				{ slot: "content", tag: "div", class: "entry-content" },
+				{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
+				{ html: "</div></main>" },
+			],
+			date: "F j, Y",
+			utcOffset: -480,
+			meta: [
+				[
+					'<p class="entry-meta"><a href="',
+					HOLE("href"),
+					'">',
+					HOLE("date"),
+					"</a> by ",
+					HOLE("author"),
+					HOLE("comments"),
+					"</p>",
+				],
+			],
+			comments: {
+				item: [' <a class="count" href="', HOLE("href"), '#respond">', HOLE("count"), "</a>"],
+				zero: "No replies",
+				one: "One reply",
+				many: "%d replies",
+			},
+			featured: {
+				item: [
+					'<div class="featured-image"><img alt="',
+					HOLE("alt"),
+					'" src="',
+					HOLE("src"),
+					'" class="wp-post-image"></div>',
+				],
+				minWidth: 850,
+			},
+		},
+	});
+	/**
+	 * A post's featured image as the WordPress import stores it
+	 * (tests/integration/wordpress-import/wxr-featured-image.test.ts): the
+	 * file's URL with no size, as it was before the import resolved it to
+	 * its media item, and that item, with the size read from the file.
+	 */
+	const IMPORTED = {
+		unresolved: { provider: "external", id: "", src: `/_emdash/api/media/file/${KEY}` },
+		resolved: {
+			provider: "local",
+			id: "01KEXAMPLEITEM0000000000000",
+			filename: "hero.png",
+			mimeType: "image/png",
+			width: 1237,
+			height: 906,
+			alt: "A pond at dawn",
+			meta: { storageKey: KEY, caption: null, blurhash: null, dominantColor: null },
+		},
+	};
+	async function post(featured: unknown) {
+		reads.shell = withPost();
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getCommentCount.mockResolvedValue(2);
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "the-pond",
+				data: {
+					id: "01POST",
+					title: "The Pond",
+					content: [],
+					translationGroup: "01POST",
+					updatedAt: new Date("2026-02-01T00:00:00Z"),
+					publishedAt: new Date("2026-01-15T08:30:00Z"),
+					bylines: [{ byline: { displayName: "Pat Author" }, sortOrder: 0 }],
+					featured_image: featured,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: "posts/the-pond" },
+			request: new Request("https://example.org/posts/the-pond"),
+		});
+	}
+	const META =
+		'<p class="entry-meta"><a href="/posts/the-pond">January 15, 2026</a> by Pat Author' +
+		' <a class="count" href="/posts/the-pond#respond">2 replies</a></p>';
+	/** EmDash's comment list and form for this post, and nothing else, inside the theme's comment element. */
+	const COMMENTS =
+		/<div class="comment-respond" id="respond">\s*<section class="ec-comments" data-for="posts\/01POST">EMDASH COMMENTS<\/section>\s*<form class="ec-comment-form" data-for="posts\/01POST"><\/form>\s*<\/div>/;
+	const OG_IMAGE = `<meta property="og:image" content="https://example.org/_emdash/api/media/file/${KEY}"`;
+
+	it("fills the layout from the post: its featured image at the file's own size, its meta and its comment count", async () => {
+		const html = await post(IMPORTED.resolved);
+		expect(reads.getEmDashEntry).toHaveBeenCalledWith("posts", "the-pond");
+		expect(reads.getCommentCount).toHaveBeenCalledWith("posts", "01POST");
+		expect(html).toContain('<body class="single single-post">');
+		expect(html).toContain(
+			`<div class="post hentry"><div class="featured-image"><img alt="A pond at dawn" src="/_emdash/api/media/file/${KEY}" class="wp-post-image"></div>`,
+		);
+		expect(html).toContain(META);
+		expect(html).toContain(OG_IMAGE);
+	});
+
+	it("draws EmDash's comments inside the theme's comment element, once, and no wrapper of its own", async () => {
+		const html = await post(IMPORTED.resolved);
+		expect(html).toMatch(COMMENTS);
+		expect(html.match(/EMDASH COMMENTS/g)).toHaveLength(1);
+		expect(html).not.toContain("comments-wrapper");
+	});
+
+	it("draws no featured image of no known size where the theme draws one only that wide, and the post's meta still", async () => {
+		const html = await post(IMPORTED.unresolved);
+		expect(html).not.toContain("featured-image");
+		expect(html).toContain(META);
+		expect(html).toMatch(COMMENTS);
+		expect(html).toContain(OG_IMAGE);
 	});
 });
 
