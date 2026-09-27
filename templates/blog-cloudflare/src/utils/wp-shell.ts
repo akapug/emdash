@@ -158,6 +158,77 @@ export interface WpShellPostLayout extends WpShellLayout {
 	author?: { item: WpShellPostPart[]; avatar?: WpShellPostPart[] };
 	/** The links to the posts before and after: each side drawn for a post that has one. */
 	adjacent?: { item: WpShellPostPart[]; prev: WpShellPostPart[]; next: WpShellPostPart[] };
+	/** The theme's comment area, EmDash's comments and comment form drawn in it (renderWpShellComments). */
+	commentArea?: WpShellCommentArea;
+}
+
+/** The fields of EmDash's comment form a theme's reply form has a box for. */
+export const WP_SHELL_COMMENT_FIELDS = ["body", "authorName", "authorEmail"] as const;
+export type WpShellCommentField = (typeof WP_SHELL_COMMENT_FIELDS)[number];
+
+/**
+ * A hole in a comment area's templates. The area: where the count heading,
+ * the list and the reply block go. The heading: its phrase. A list: its
+ * comments (`items`). One comment: its classes and id (each inside its
+ * attribute), its author, date (and time) and words, its replies. The reply block:
+ * EmDash's form element, a field's box and label (`field`, from the area's
+ * `fields`), the submit control, or EmDash's own CommentForm (`emdash`).
+ */
+export type WpShellCommentHole =
+	| { s: "heading" }
+	| { s: "list" }
+	| { s: "respond" }
+	| { s: "count" }
+	| { s: "items" }
+	| { s: "cls" }
+	| { s: "id" }
+	| { s: "author" }
+	| { s: "date" }
+	| { s: "time" }
+	| { s: "text" }
+	| { s: "replies" }
+	| { s: "form"; id?: string; class?: string }
+	| { s: "/form" }
+	| { s: "field"; field: WpShellCommentField }
+	| {
+			s: "control";
+			id?: string;
+			class?: string;
+			rows?: number;
+			cols?: number;
+			size?: number;
+			placeholder?: string;
+	  }
+	| { s: "label"; for?: string; class?: string }
+	| { s: "/label" }
+	| { s: "submit"; tag: "input" | "button"; id?: string; class?: string; label: string }
+	| { s: "emdash" };
+export type WpShellCommentPart = string | WpShellCommentHole;
+
+/**
+ * A post's comment area as the theme drew it (comments.php), with holes for
+ * EmDash's comments: the count heading, the list in the theme's markup for
+ * one comment, and the reply block with its form in the theme's markup for
+ * each box. Filled from EmDash's own approved comments, posting to EmDash's
+ * own comment API with EmDash's own fields and spam check.
+ */
+export interface WpShellCommentArea {
+	parts: WpShellCommentPart[];
+	/** The count heading, drawn at each count whose phrase the record knows: `%d` the count, `%t` the title. */
+	heading?: { item: WpShellCommentPart[]; zero?: string; one?: string; many?: string };
+	/** The list, one comment, its replies' list, the comment's own classes and how it prints its date and time. */
+	list?: {
+		item: WpShellCommentPart[];
+		comment: WpShellCommentPart[];
+		replies: WpShellCommentPart[];
+		classes: string;
+		date?: string;
+		time?: string;
+	};
+	/** The reply block: its title, and the form's element, boxes and submit control as holes. */
+	respond: WpShellCommentPart[];
+	/** Each field's box and label, as the theme wraps it. */
+	fields?: Record<WpShellCommentField, WpShellCommentPart[]>;
 }
 
 /** A piece of a menu item template: captured markup, or a hole this file fills. */
@@ -610,7 +681,67 @@ function postMarkupForCheck(post: WpShellPostLayout): string[] {
 			fill(post.adjacent.prev),
 			fill(post.adjacent.next),
 		);
+	if (post.commentArea) out.push(...commentMarkupForCheck(post.commentArea));
 	return out;
+}
+
+/** A comment area's holes filled for the check: each template filled with the ones it draws, text holes with markup that only fits between tags. */
+const COMMENT_FILL: Record<WpShellCommentHole["s"], string> = {
+	heading: "<b></b>",
+	list: "<b></b>",
+	respond: "<b></b>",
+	count: "<b></b>",
+	items: "<b></b>",
+	cls: "",
+	id: "x",
+	author: "<b></b>",
+	date: "<b></b>",
+	time: "<b></b>",
+	text: "<b></b>",
+	replies: "<b></b>",
+	form: "<div>",
+	"/form": "</div>",
+	field: "<b></b>",
+	control: "<b></b>",
+	label: "<b>",
+	"/label": "</b>",
+	submit: "<b></b>",
+	emdash: "<b></b>",
+};
+
+function commentMarkupForCheck(a: WpShellCommentArea): string[] {
+	const fill = (t: readonly WpShellCommentPart[], holes: Partial<Record<string, string>> = {}) =>
+		t.map((x) => (isText(x) ? x : (holes[x.s] ?? COMMENT_FILL[x.s]))).join("");
+	const fields = a.fields;
+	const respond = a.respond
+		.map((x) =>
+			isText(x) ? x : x.s === "field" && fields ? fill(fields[x.field]) : COMMENT_FILL[x.s],
+		)
+		.join("");
+	const heading = a.heading ? fill(a.heading.item) : "";
+	const comment = a.list ? fill(a.list.comment, { replies: fill(a.list.replies) }) : "";
+	const list = a.list ? fill(a.list.item, { items: comment + comment }) : "";
+	return [
+		fill(a.parts, { heading, list, respond }),
+		respond,
+		heading,
+		list,
+		comment,
+		...(a.list ? [fill(a.list.replies)] : []),
+		...(fields ? WP_SHELL_COMMENT_FIELDS.map((f) => fill(fields[f])) : []),
+	];
+}
+
+/** Every template of a comment area. */
+function commentTemplatesOf(a: WpShellCommentArea): WpShellCommentPart[][] {
+	const { fields } = a;
+	return [
+		a.parts,
+		a.respond,
+		...(a.heading ? [a.heading.item] : []),
+		...(a.list ? [a.list.item, a.list.comment, a.list.replies] : []),
+		...(fields ? WP_SHELL_COMMENT_FIELDS.map((f) => fields[f]) : []),
+	];
 }
 
 /** Every template of a post layout. */
@@ -859,6 +990,9 @@ function markupOf(s: WpShell): string[] {
 	if (s.post) {
 		for (const t of postTemplatesOf(s.post))
 			for (const x of t) if (typeof x === "string") out.push(x);
+		if (s.post.commentArea)
+			for (const t of commentTemplatesOf(s.post.commentArea))
+				for (const x of t) if (typeof x === "string") out.push(x);
 		for (const t of [s.post.terms?.category, s.post.terms?.tag]) if (t) out.push(t.sep);
 	}
 	return out;
@@ -1021,6 +1155,156 @@ function checkTerms(t: unknown): boolean {
 	);
 }
 
+/** How a comment's time is printed, in PHP date() letters (g G h H i a A). */
+const TIME_FORMAT = /^[gGhHiaA :.]{1,12}$/;
+/** An id or `for` a comment hole writes: the theme's own token, never one EmDash's toolbar looks itself up by. */
+const COMMENT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const optionalId = (v: unknown) =>
+	v === undefined || (isText(v) && COMMENT_ID.test(v) && !EMDASH_ID.test(v));
+/** Words a hole writes as text (a submit label, a placeholder): short, no markup. */
+const checkWords = (v: unknown, max: number) =>
+	isText(v) && v.length <= max && !v.includes("<") && !v.includes(">");
+const optionalSize = (v: unknown) => v === undefined || (isIndex(v, 1000) && v !== 0);
+
+/** The holes each comment area template may hold. */
+const COMMENT_TEMPLATE_HOLES = {
+	parts: new Set(["heading", "list", "respond"]),
+	heading: new Set(["count"]),
+	list: new Set(["items"]),
+	comment: new Set(["cls", "id", "author", "date", "time", "text", "replies"]),
+	respond: new Set(["form", "/form", "field", "label", "/label", "submit", "emdash"]),
+	field: new Set(["control", "label", "/label"]),
+} as const;
+
+/**
+ * A comment area template: markup and holes of `allowed` kinds, each hole's
+ * own values tokens or short words, `cls` inside a class attribute, `id`
+ * inside an id or a `#` link, every other hole between tags, labels closed.
+ */
+function checkCommentTemplate(t: unknown, allowed: ReadonlySet<string>): t is WpShellCommentPart[] {
+	if (!Array.isArray(t)) return false;
+	let depth = 0;
+	const ok = t.every((x, i) => {
+		if (isText(x)) return true;
+		if (!isObject(x) || !isText(x.s) || !allowed.has(x.s)) return false;
+		if (!optionalToken(x.class) || !optionalId(x.id) || !optionalId(x.for)) return false;
+		if (x.s === "field" && !(WP_SHELL_COMMENT_FIELDS as readonly unknown[]).includes(x.field))
+			return false;
+		if (
+			x.s === "control" &&
+			(!optionalSize(x.rows) ||
+				!optionalSize(x.cols) ||
+				!optionalSize(x.size) ||
+				(x.placeholder !== undefined && !checkWords(x.placeholder, 200)))
+		)
+			return false;
+		if (
+			x.s === "submit" &&
+			((x.tag !== "input" && x.tag !== "button") || !checkWords(x.label, 80) || x.label === "")
+		)
+			return false;
+		if (x.s === "label") depth++;
+		if (x.s === "/label" && --depth < 0) return false;
+		const before = t
+			.slice(0, i)
+			.map((y) => (isText(y) ? y : "X"))
+			.join("");
+		if (x.s === "cls") return before.endsWith('class="');
+		if (x.s === "id") return COMMENT_ID_AT.test(before);
+		return before.lastIndexOf("<") <= before.lastIndexOf(">");
+	});
+	return ok && depth === 0;
+}
+/** Where an `id` hole is written: at the end of an id's value, or of a link to a place on the page. */
+const COMMENT_ID_AT = /(?:id="|href="#)[A-Za-z0-9_-]*$/;
+
+const holesIn = (t: readonly WpShellCommentPart[], s: string) =>
+	t.filter((x) => !isText(x) && x.s === s).length;
+const phraseTitles = (v: unknown) => !isText(v) || v.split("%t").length <= 2;
+
+/** Why a comment area is not one this layout fills, or null. */
+function checkCommentArea(a: unknown): string | null {
+	if (!isObject(a)) return "not an object";
+	const { parts, heading, list, respond, fields } = a;
+	const H = COMMENT_TEMPLATE_HOLES;
+	if (!checkCommentTemplate(parts, H.parts)) return "its parts are malformed";
+	if (
+		holesIn(parts, "respond") !== 1 ||
+		holesIn(parts, "list") !== 1 ||
+		holesIn(parts, "heading") !== (heading === undefined ? 0 : 1)
+	)
+		return "its parts need one reply block, one list and a heading only where it has one";
+	if (
+		heading !== undefined &&
+		(!isObject(heading) ||
+			!checkCommentTemplate(heading.item, H.heading) ||
+			holesIn(heading.item, "count") !== 1 ||
+			![heading.zero, heading.one, heading.many].every((p) => checkPhrase(p) && phraseTitles(p)))
+	)
+		return "its count heading is malformed";
+	if (list !== undefined) {
+		if (
+			!isObject(list) ||
+			!checkCommentTemplate(list.item, H.list) ||
+			!checkCommentTemplate(list.replies, H.list) ||
+			holesIn(list.item, "items") !== 1 ||
+			holesIn(list.replies, "items") !== 1 ||
+			!checkCommentTemplate(list.comment, H.comment) ||
+			!isText(list.classes) ||
+			!TOKENS.test(list.classes) ||
+			(list.date !== undefined && (!isText(list.date) || !DATE_FORMAT.test(list.date))) ||
+			(list.time !== undefined && (!isText(list.time) || !TIME_FORMAT.test(list.time)))
+		)
+			return "its list is malformed";
+		const c = list.comment;
+		if (
+			holesIn(c, "cls") !== 1 ||
+			holesIn(c, "author") !== 1 ||
+			holesIn(c, "text") !== 1 ||
+			holesIn(c, "replies") !== 1 ||
+			holesIn(c, "date") > (list.date === undefined ? 0 : 1) ||
+			holesIn(c, "time") > (list.time === undefined ? 0 : 1)
+		)
+			return "its comment is malformed";
+	}
+	if (!checkCommentTemplate(respond, H.respond)) return "its reply block is malformed";
+	if (fields === undefined) {
+		if (
+			holesIn(respond, "emdash") !== 1 ||
+			["form", "/form", "field", "submit"].some((h) => holesIn(respond, h) > 0)
+		)
+			return "its reply block has no form of its own and not EmDash's once";
+		return null;
+	}
+	if (!isObject(fields) || Object.keys(fields).length !== WP_SHELL_COMMENT_FIELDS.length)
+		return "its fields are malformed";
+	for (const f of WP_SHELL_COMMENT_FIELDS) {
+		const t = fields[f];
+		if (!checkCommentTemplate(t, H.field) || holesIn(t, "control") !== 1)
+			return `its ${f} box is malformed`;
+	}
+	// The form's element around every box and the submit control, once each.
+	const at = (pred: (x: WpShellCommentHole) => boolean) =>
+		respond.flatMap((x, i) => (!isText(x) && pred(x) ? [i] : []));
+	const [open] = at((x) => x.s === "form");
+	const [close] = at((x) => x.s === "/form");
+	const inside = at((x) => x.s === "field" || x.s === "submit");
+	if (
+		holesIn(respond, "form") !== 1 ||
+		holesIn(respond, "/form") !== 1 ||
+		holesIn(respond, "submit") !== 1 ||
+		holesIn(respond, "emdash") !== 0 ||
+		!WP_SHELL_COMMENT_FIELDS.every(
+			(f) => at((x) => x.s === "field" && x.field === f).length === 1,
+		) ||
+		open === undefined ||
+		close === undefined ||
+		!inside.every((i) => i > open && i < close)
+	)
+		return "its form needs one element around each box and one submit control";
+	return null;
+}
+
 /** Why a post layout's own templates are not ones this layout fills, or null (its layout is checkLayout's). */
 function checkPost(v: Record<string, unknown>): string | null {
 	const {
@@ -1035,6 +1319,7 @@ function checkPost(v: Record<string, unknown>): string | null {
 		share,
 		author,
 		adjacent,
+		commentArea,
 	} = v;
 	if (date !== undefined && (typeof date !== "string" || !DATE_FORMAT.test(date)))
 		return "the post layout's date format is not one";
@@ -1091,6 +1376,10 @@ function checkPost(v: Record<string, unknown>): string | null {
 			!checkPostTemplate(adjacent.next, new Set(["adjHref", "adjTitle"])))
 	)
 		return "the post layout's adjacent posts are malformed";
+	if (commentArea !== undefined) {
+		const why = checkCommentArea(commentArea);
+		if (why) return `the post layout's comment area: ${why}`;
+	}
 	return null;
 }
 
@@ -1395,6 +1684,49 @@ export function formatWpDate(
 		m: String(m).padStart(2, "0"),
 		Y: String(y),
 		S: ordinal(d),
+	};
+	return Array.from(format, (ch) => letters[ch] ?? ch).join("");
+}
+
+/** The hour and minute `date` falls on in the site's time zone (UTC when it has none, or an unknown one). */
+function clockIn(
+	date: Date,
+	zone: { timeZone?: string; utcOffset?: number },
+): { h: number; i: number } {
+	if (zone.timeZone) {
+		try {
+			const parts = new Intl.DateTimeFormat("en-US", {
+				timeZone: zone.timeZone,
+				hour: "numeric",
+				minute: "numeric",
+				hourCycle: "h23",
+			}).formatToParts(date);
+			const part = (type: string) => Number(parts.find((x) => x.type === type)?.value);
+			return { h: part("hour") % 24, i: part("minute") };
+		} catch {
+			// An unknown zone: UTC, below.
+		}
+	}
+	const t = new Date(date.getTime() + (zone.utcOffset ?? 0) * 60_000);
+	return { h: t.getUTCHours(), i: t.getUTCMinutes() };
+}
+
+/** A time as PHP's date() prints it with `format`'s letters (g G h H i a A); anything else is literal. */
+export function formatWpTime(
+	date: Date,
+	format: string,
+	zone: { timeZone?: string; utcOffset?: number } = {},
+): string {
+	const { h, i } = clockIn(date, zone);
+	const twelve = h % 12 === 0 ? 12 : h % 12;
+	const letters: Record<string, string> = {
+		g: String(twelve),
+		G: String(h),
+		h: String(twelve).padStart(2, "0"),
+		H: String(h).padStart(2, "0"),
+		i: String(i).padStart(2, "0"),
+		a: h < 12 ? "am" : "pm",
+		A: h < 12 ? "AM" : "PM",
 	};
 	return Array.from(format, (ch) => letters[ch] ?? ch).join("");
 }
@@ -1749,6 +2081,219 @@ export function renderWpShellForm(
 				x.tag === "input"
 					? `<input type="submit"${attr("class", cls)}${attr("value", label)}>`
 					: `<button type="submit"${attr("class", cls)}>${escapeHtml(label)}</button>`;
+		}
+	}
+	return out;
+}
+
+// --- a post's comments, in the theme's comment area -------------------------------
+
+/** An approved comment, as EmDash's getComments() gives it (its PublicComment). */
+export interface WpShellComment {
+	id: string;
+	authorName: string;
+	body: string;
+	createdAt: string;
+	replies?: readonly WpShellComment[];
+}
+
+/**
+ * What a comment area draws: markup, or one of EmDash's own components where
+ * the record has none of the theme's (its list of comments, its form).
+ */
+export type WpShellCommentsPiece = { html: string } | { emdash: "list" | "form" };
+
+/** What EmDash's comment form says of the signed-in user it pre-fills (its locals.user). */
+export interface WpShellCommentUser {
+	name?: string | null;
+	email?: string | null;
+}
+
+/** EmDash's comment form's honeypot and status line, as its CommentForm draws them. */
+const COMMENT_HONEYPOT =
+	'<div aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;"><label>Don\'t fill this out<input type="text" name="website_url" tabindex="-1" autocomplete="off"></label></div>';
+const COMMENT_STATUS =
+	'<div class="ec-comment-form-status" role="status" aria-live="polite"></div>';
+/** A link in a comment's words, as EmDash's Comments links one. */
+const COMMENT_URL = /https?:\/\/[^\s<>"')\]]+/g;
+const COMMENT_PARAGRAPH = /\n\s*\n/;
+const COMMENT_LINE = /\n/g;
+
+/** A comment's words as WordPress prints them: a paragraph for each blank-line run, a line break for each line, links as EmDash's Comments links them. */
+function commentText(body: string): string {
+	return body
+		.split(COMMENT_PARAGRAPH)
+		.map((p) => p.trim())
+		.filter(Boolean)
+		.map(
+			(p) =>
+				`<p>${escapeHtml(p)
+					.replace(
+						COMMENT_URL,
+						(url) => `<a href="${url}" rel="nofollow ugc noopener" target="_blank">${url}</a>`,
+					)
+					.replace(COMMENT_LINE, "<br>")}</p>`,
+		)
+		.join("");
+}
+
+/** The count heading's words for `n` comments: the theme's where the record knows them, else EmDash's own (none at zero). */
+function commentHeading(area: WpShellCommentArea, n: number, title: string): string {
+	const h = area.heading;
+	if (!h) return "";
+	const known = n === 0 ? h.zero : n === 1 ? h.one : h.many;
+	const words =
+		known !== undefined
+			? known.replace("%d", String(n)).replace("%t", () => title)
+			: n === 0
+				? null
+				: n === 1
+					? "1 Comment"
+					: `${n} Comments`;
+	return words === null ? "" : h.item.map((x) => (isText(x) ? x : escapeHtml(words))).join("");
+}
+
+/**
+ * The comments in the theme's markup for one comment, and their replies in
+ * the list the theme nests them in, each with the classes WordPress's
+ * comment_class() gives it (its place, its thread's, its depth).
+ */
+function commentList(
+	list: NonNullable<WpShellCommentArea["list"]>,
+	items: readonly WpShellComment[],
+	zone: { timeZone?: string; utcOffset?: number },
+): string {
+	let alt = 0;
+	let thread = 0;
+	const around = (t: readonly WpShellCommentPart[], inner: string) =>
+		t.map((x) => (isText(x) ? x : inner)).join("");
+	const one = (c: WpShellComment, depth: number): string => {
+		const replies = c.replies ?? [];
+		const cls = [
+			list.classes,
+			alt % 2 ? "odd alt" : "even",
+			depth === 1 ? (thread % 2 ? "thread-odd thread-alt" : "thread-even") : "",
+			`depth-${depth}`,
+			replies.length > 0 ? "parent" : "",
+		]
+			.filter(Boolean)
+			.join(" ");
+		alt++;
+		if (depth === 1) thread++;
+		const date = new Date(c.createdAt);
+		let out = "";
+		for (const x of list.comment) {
+			if (isText(x)) out += x;
+			else if (x.s === "cls") out += escapeAttr(cls);
+			else if (x.s === "id") out += escapeAttr(c.id);
+			else if (x.s === "author") out += escapeHtml(c.authorName);
+			else if (x.s === "date")
+				out +=
+					list.date && !Number.isNaN(date.getTime())
+						? escapeHtml(formatWpDate(date, list.date, zone))
+						: "";
+			else if (x.s === "time")
+				out +=
+					list.time && !Number.isNaN(date.getTime())
+						? escapeHtml(formatWpTime(date, list.time, zone))
+						: "";
+			else if (x.s === "text") out += commentText(c.body);
+			else if (x.s === "replies" && replies.length > 0)
+				out += around(list.replies, replies.map((r) => one(r, depth + 1)).join(""));
+		}
+		return out;
+	};
+	return around(list.item, items.map((c) => one(c, 1)).join(""));
+}
+
+/** A reply form box, as EmDash's CommentForm draws it, with the theme's id, classes and size. */
+function commentControl(
+	field: WpShellCommentField,
+	x: Extract<WpShellCommentHole, { s: "control" }>,
+): string {
+	const own = `${attr("id", x.id)}${attr("class", x.class)}`;
+	const hint = attr("placeholder", x.placeholder);
+	if (field === "body")
+		return `<textarea${own} name="body" required maxlength="5000"${attr("rows", x.rows ?? 4)}${attr("cols", x.cols)}${hint}></textarea>`;
+	if (field === "authorName")
+		return `<input type="text"${own} name="authorName" required maxlength="100"${attr("size", x.size)}${hint}>`;
+	return `<input type="email"${own} name="authorEmail" required${attr("size", x.size)}${hint}>`;
+}
+
+/**
+ * A post's comments drawn in the theme's comment area (the record's post
+ * layout's `commentArea`): the count heading in the theme's words, the
+ * approved comments in its markup for one, and the reply block with EmDash's
+ * comment form in its markup for each box. It is EmDash's CommentForm's own
+ * form: the same element attributes its client finds it by, the same
+ * endpoint, field names, types and limits, the same honeypot and status
+ * line; for a signed-in user, its name and email in place of those two boxes,
+ * as CommentForm draws them. What the record has none of the theme's for is
+ * EmDash's own component (`emdash`). Every value is escaped here.
+ */
+export function renderWpShellComments(
+	post: WpShellPostLayout,
+	o: {
+		endpoint: string;
+		total: number;
+		items: readonly WpShellComment[];
+		title: string;
+		user?: WpShellCommentUser | null;
+	},
+): WpShellCommentsPiece[] {
+	const area = post.commentArea;
+	if (!area) return [];
+	const out: WpShellCommentsPiece[] = [];
+	const push = (html: string) => {
+		const last = out.at(-1);
+		if (last && "html" in last) last.html += html;
+		else out.push({ html });
+	};
+	const { user } = o;
+	let signedIn = false;
+	for (const p of area.parts) {
+		if (isText(p)) push(p);
+		else if (p.s === "heading") push(commentHeading(area, o.total, o.title));
+		else if (p.s === "list") {
+			if (o.items.length === 0) continue;
+			if (area.list) push(commentList(area.list, o.items, post));
+			else out.push({ emdash: "list" });
+		} else if (p.s === "respond") {
+			for (const x of area.respond) {
+				if (isText(x)) push(x);
+				else if (x.s === "emdash") out.push({ emdash: "form" });
+				else if (x.s === "form")
+					push(
+						`<form${attr("id", x.id)}${attr("class", x.class)} data-ec-comment-form${attr("data-endpoint", o.endpoint)}${attr("data-user-name", user?.name ?? "")}${attr("data-user-email", user?.email ?? "")}>`,
+					);
+				else if (x.s === "/form") push(`${COMMENT_HONEYPOT}${COMMENT_STATUS}</form>`);
+				else if (x.s === "field") {
+					// A signed-in user's name and email, as CommentForm shows them, where the theme's boxes for them go.
+					if (user && x.field !== "body") {
+						if (!signedIn)
+							push(
+								`<div class="ec-comment-user-info"><span class="ec-comment-user-name">${escapeHtml(user.name ?? "")}</span><span class="ec-comment-user-email">${escapeHtml(user.email ?? "")}</span></div>`,
+							);
+						signedIn = true;
+						continue;
+					}
+					for (const y of area.fields?.[x.field] ?? []) {
+						if (isText(y)) push(y);
+						else if (y.s === "control") push(commentControl(x.field, y));
+						else if (y.s === "label") push(`<label${attr("for", y.for)}${attr("class", y.class)}>`);
+						else if (y.s === "/label") push("</label>");
+					}
+				} else if (x.s === "label") push(`<label${attr("for", x.for)}${attr("class", x.class)}>`);
+				else if (x.s === "/label") push("</label>");
+				else if (x.s === "submit") {
+					const cls = [x.class, "ec-comment-form-submit"].filter(Boolean).join(" ");
+					push(
+						x.tag === "input"
+							? `<input type="submit"${attr("id", x.id)}${attr("class", cls)}${attr("value", x.label)}>`
+							: `<button type="submit"${attr("id", x.id)}${attr("class", cls)}>${escapeHtml(x.label)}</button>`,
+					);
+				}
+			}
 		}
 	}
 	return out;

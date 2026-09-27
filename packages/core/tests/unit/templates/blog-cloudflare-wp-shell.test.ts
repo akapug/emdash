@@ -6,6 +6,7 @@ import {
 	composeWpShell,
 	featuredDrawn,
 	formatWpDate,
+	formatWpTime,
 	formSkin,
 	imageRatio,
 	isCurrent,
@@ -18,6 +19,7 @@ import {
 	plainText,
 	renderListing,
 	renderMenu,
+	renderWpShellComments,
 	renderWpShellForm,
 	safeHref,
 	wpShellDocumentTitle,
@@ -25,6 +27,8 @@ import {
 	wpShellProblem,
 	wpShellRoute,
 	type WpShell,
+	type WpShellComment,
+	type WpShellCommentArea,
 	type WpShellForm,
 	type WpShellFormDefinition,
 	type WpShellListing,
@@ -745,6 +749,17 @@ describe("the tripwire reads the writer's form", () => {
 			'class=\\"search-trigger wp-shell-control\\" href=\\"/search\\"',
 			'id=\\"older-nav\\"',
 			'"many":"%d"',
+			// A post's comment area: Kleo's count heading and form in its boxes, Franz Josef's reply block alone
+			// with EmDash's form, Twenty Twenty's comments in the walker's div style with their time.
+			'"commentArea"',
+			'"zero":"%d Comments"',
+			'{"s":"field","field":"authorName"}',
+			'{"s":"submit","tag":"input","id":"submit","class":"submit","label":"Post comment"}',
+			'"parts":[{"s":"list"},{"s":"respond"}]',
+			'{"s":"emdash"}',
+			'"replies":[{"s":"items"}]',
+			'"time":"g:i a"',
+			'"many":"%d replies on \u201c%t\u201d"',
 		])
 			expect(all).toContain(shape);
 	});
@@ -1938,6 +1953,406 @@ describe("wp-shell: a single post in its own layout", () => {
 			})),
 		],
 		["an author slot with no author template", posted((p) => ({ ...p, author: undefined }))],
+	])("refuses the record whole for %s", (_, record) => {
+		expect(wpShellProblem(record)).not.toBeNull();
+	});
+});
+
+/**
+ * A post's comment area as Embark's writer cuts it from a Kleo donor: the
+ * count heading in the theme's words, a comment in its markup for one, and
+ * the reply form in its markup for each box.
+ */
+function areaOf(): WpShellCommentArea {
+	return {
+		parts: [
+			{ s: "heading" },
+			'<div id="comments-list">',
+			{ s: "list" },
+			'</div><div id="respond-wrap">',
+			{ s: "respond" },
+			"</div>",
+		],
+		heading: {
+			item: ['<div class="hr-title hr-long"><abbr>', { s: "count" }, "</abbr></div>"],
+			zero: "%d Comments",
+		},
+		list: {
+			item: ["<ol>", { s: "items" }, "</ol>"],
+			comment: [
+				'<li id="comment-',
+				{ s: "id" },
+				'" class="',
+				{ s: "cls" },
+				'"><div class="comment-meta"><span class="comment-author">',
+				{ s: "author" },
+				'</span> <a href="#comment-',
+				{ s: "id" },
+				'"><time>',
+				{ s: "date" },
+				" at ",
+				{ s: "time" },
+				'</time></a></div><div class="comment-body">',
+				{ s: "text" },
+				"</div>",
+				{ s: "replies" },
+				"</li>",
+			],
+			replies: ['<ol class="children">', { s: "items" }, "</ol>"],
+			classes: "comment clearfix",
+			date: "F j, Y",
+			time: "g:i a",
+		},
+		respond: [
+			'<div id="respond" class="comment-respond"><h3 id="reply-title" class="comment-reply-title">Leave a reply</h3>',
+			{ s: "form", id: "commentform", class: "comment-form" },
+			'<p class="comment-notes">Your email address will not be published.</p>',
+			{ s: "field", field: "body" },
+			'<div class="row">',
+			{ s: "field", field: "authorName" },
+			{ s: "field", field: "authorEmail" },
+			'</div><p class="form-submit">',
+			{ s: "submit", tag: "input", id: "submit", class: "submit", label: "Post comment" },
+			"</p>",
+			{ s: "/form" },
+			"</div>",
+		],
+		fields: {
+			body: [
+				'<p class="comment-form-comment">',
+				{ s: "label", for: "comment" },
+				"Comment",
+				{ s: "/label" },
+				{ s: "control", id: "comment", class: "form-control", rows: 8, cols: 45 },
+				"</p>",
+			],
+			authorName: [
+				'<p class="comment-form-author col-sm-4">',
+				{ s: "label", for: "author" },
+				"Name",
+				{ s: "/label" },
+				' <span class="required">*</span>',
+				{ s: "control", id: "author", class: "form-control", size: 30 },
+				"</p>",
+			],
+			authorEmail: [
+				'<p class="comment-form-email col-sm-4">',
+				{ s: "label", for: "email" },
+				"Email",
+				{ s: "/label" },
+				' <span class="required">*</span>',
+				{ s: "control", id: "email", class: "form-control", size: 30 },
+				"</p>",
+			],
+		},
+	};
+}
+const withArea = (area: WpShellCommentArea = areaOf()) =>
+	withPost({ ...postOf(), commentArea: area });
+const ENDPOINT = "/_emdash/api/comments/posts/01POST";
+const aComment = (o: Partial<WpShellComment> = {}): WpShellComment => ({
+	id: "01JCOMMENT0",
+	authorName: "Ann Reader",
+	body: "The first words.",
+	createdAt: "2014-05-01T17:05:00.000Z",
+	...o,
+});
+const drawComments = (
+	o: Partial<Parameters<typeof renderWpShellComments>[1]> = {},
+	post: WpShellPostLayout = withArea().post!,
+) =>
+	renderWpShellComments(post, { endpoint: ENDPOINT, total: 0, items: [], title: "A Post", ...o })
+		.map((p) => ("html" in p ? p.html : `[EMDASH ${p.emdash}]`))
+		.join("");
+
+describe("wp-shell: a post's comments in the theme's comment area", () => {
+	it("accepts a post layout with a comment area", () => {
+		expect(wpShellProblem(withArea())).toBeNull();
+		expect(JSON.stringify(writerRecords)).toContain('"commentArea"');
+	});
+
+	it("draws the count heading in the theme's words where the record knows them, else EmDash's, and none at zero unless known", () => {
+		expect(drawComments({ total: 0 })).toContain(
+			'<div class="hr-title hr-long"><abbr>0 Comments</abbr></div>',
+		);
+		expect(drawComments({ total: 1, items: [aComment()] })).toContain("<abbr>1 Comment</abbr>");
+		expect(drawComments({ total: 3, items: [aComment()] })).toContain("<abbr>3 Comments</abbr>");
+		const many = areaOf();
+		many.heading = { ...many.heading!, zero: undefined, many: "%d replies on “%t”" };
+		const post = withArea(many).post!;
+		expect(drawComments({ total: 0 }, post)).not.toContain("hr-title");
+		expect(
+			drawComments({ total: 2, items: [aComment()], title: "Tom & <b>$&</b>" }, post),
+		).toContain("<abbr>2 replies on “Tom &amp; &lt;b&gt;$&amp;&lt;/b&gt;”</abbr>");
+	});
+
+	it("draws the comments in the theme's markup for one, each with WordPress's classes, its replies in the theme's reply list", () => {
+		const html = drawComments({
+			total: 3,
+			items: [
+				aComment({
+					replies: [
+						aComment({ id: "01JREPLY", authorName: "Bo", createdAt: "2014-05-02T04:30:00.000Z" }),
+					],
+				}),
+				aComment({ id: "01JSECOND", authorName: "Cy" }),
+			],
+		});
+		expect(html).toContain(
+			'<ol><li id="comment-01JCOMMENT0" class="comment clearfix even thread-even depth-1 parent"><div class="comment-meta"><span class="comment-author">Ann Reader</span> <a href="#comment-01JCOMMENT0"><time>May 1, 2014 at 9:05 am</time></a></div><div class="comment-body"><p>The first words.</p></div><ol class="children"><li id="comment-01JREPLY" class="comment clearfix odd alt depth-2">',
+		);
+		// the reply's day and time in the site's zone: 04:30 UTC on May 2 is 8:30 pm on May 1 at UTC-8
+		expect(html).toContain(
+			'<span class="comment-author">Bo</span> <a href="#comment-01JREPLY"><time>May 1, 2014 at 8:30 pm</time></a>',
+		);
+		expect(html).toContain(
+			'<li id="comment-01JSECOND" class="comment clearfix even thread-odd thread-alt depth-1">',
+		);
+		expect(html).toMatch(
+			/<\/li><\/ol><\/li><li id="comment-01JSECOND"[\s\S]*<\/li><\/ol><\/div><div id="respond-wrap">/,
+		);
+	});
+
+	it("writes a comment's author and words escaped, its paragraphs and lines as WordPress prints them, its links as EmDash's Comments does", () => {
+		const html = drawComments({
+			total: 1,
+			items: [
+				aComment({
+					authorName: '<img src=x onerror="1">',
+					body: 'One <b>two</b> "q"\nnext https://example.org/a?b=1&c=2 end\n\n\nSecond para',
+				}),
+			],
+		});
+		expect(html).toContain('<span class="comment-author">&lt;img src=x onerror="1"&gt;</span>');
+		expect(html).toContain(
+			'<div class="comment-body"><p>One &lt;b&gt;two&lt;/b&gt; "q"<br>next <a href="https://example.org/a?b=1&amp;c=2" rel="nofollow ugc noopener" target="_blank">https://example.org/a?b=1&amp;c=2</a> end</p><p>Second para</p></div>',
+		);
+		expect(html).not.toContain("<img");
+	});
+
+	it("draws no list at no comments, and EmDash's own list where the record has no comment of the theme's", () => {
+		expect(drawComments({ total: 0 })).not.toMatch(/<ol>|\[EMDASH list\]/);
+		const bare = { ...areaOf(), list: undefined };
+		expect(drawComments({ total: 1, items: [aComment()] }, withArea(bare).post!)).toContain(
+			'<div id="comments-list">[EMDASH list]</div>',
+		);
+	});
+
+	it("draws EmDash's comment form in the theme's markup: CommentForm's element attributes, boxes, limits, honeypot and status line", () => {
+		const html = drawComments();
+		expect(html).toContain(
+			'<form id="commentform" class="comment-form" data-ec-comment-form data-endpoint="/_emdash/api/comments/posts/01POST" data-user-name="" data-user-email=""><p class="comment-notes">',
+		);
+		expect(html).toContain(
+			'<p class="comment-form-comment"><label for="comment">Comment</label><textarea id="comment" class="form-control" name="body" required maxlength="5000" rows="8" cols="45"></textarea></p>',
+		);
+		expect(html).toContain(
+			'<input type="text" id="author" class="form-control" name="authorName" required maxlength="100" size="30">',
+		);
+		expect(html).toContain(
+			'<input type="email" id="email" class="form-control" name="authorEmail" required size="30">',
+		);
+		expect(html).toContain(
+			'<p class="form-submit"><input type="submit" id="submit" class="submit ec-comment-form-submit" value="Post comment"></p><div aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;"><label>Don\'t fill this out<input type="text" name="website_url" tabindex="-1" autocomplete="off"></label></div><div class="ec-comment-form-status" role="status" aria-live="polite"></div></form>',
+		);
+	});
+
+	it("draws a signed-in user's name and email in place of the theme's boxes for them, as CommentForm does", () => {
+		const html = drawComments({ user: { name: 'Ed "E" <b>', email: "ed@example.org" } });
+		expect(html).toContain(
+			'data-user-name="Ed &quot;E&quot; &lt;b&gt;" data-user-email="ed@example.org"',
+		);
+		expect(html).toContain(
+			'<div class="row"><div class="ec-comment-user-info"><span class="ec-comment-user-name">Ed "E" &lt;b&gt;</span><span class="ec-comment-user-email">ed@example.org</span></div></div>',
+		);
+		expect(html).not.toMatch(/name="author(Name|Email)"/);
+		expect(html).toContain('name="body"');
+	});
+
+	it("draws EmDash's own form where the record has none of the theme's, and a theme's button with its words", () => {
+		const jetpack = areaOf();
+		jetpack.respond = [
+			'<div id="respond"><h3 id="reply-title">Leave a Reply</h3>',
+			{ s: "emdash" },
+			"</div>",
+		];
+		delete jetpack.fields;
+		expect(wpShellProblem(withArea(jetpack))).toBeNull();
+		expect(drawComments({}, withArea(jetpack).post!)).toContain(
+			'<h3 id="reply-title">Leave a Reply</h3>[EMDASH form]</div>',
+		);
+		const button = areaOf();
+		button.respond = button.respond.map((x) =>
+			typeof x !== "string" && x.s === "submit"
+				? { s: "submit", tag: "button", class: "btn", label: "Send it" }
+				: x,
+		);
+		expect(drawComments({}, withArea(button).post!)).toContain(
+			'<button type="submit" class="btn ec-comment-form-submit">Send it</button>',
+		);
+	});
+
+	it("prints a comment's time as PHP's date() does, in the site's zone", () => {
+		const at = new Date("2014-05-01T17:05:00Z");
+		expect(formatWpTime(at, "g:i a", { utcOffset: -480 })).toBe("9:05 am");
+		expect(formatWpTime(at, "g:i A", { timeZone: "America/Denver" })).toBe("11:05 AM");
+		expect(formatWpTime(at, "H:i")).toBe("17:05");
+		expect(formatWpTime(new Date("2014-05-01T00:07:00Z"), "g:i a h G")).toBe("12:07 am 12 0");
+	});
+
+	const area = (change: (a: WpShellCommentArea) => void) => {
+		const a = areaOf();
+		change(a);
+		return withArea(a);
+	};
+	it.each<[string, WpShell]>([
+		["a hole of another template's in the area's parts", area((a) => a.parts.push({ s: "count" }))],
+		["a second reply block", area((a) => a.parts.push({ s: "respond" }))],
+		["a heading hole with no heading", area((a) => delete a.heading)],
+		["a heading phrase with markup", area((a) => (a.heading!.zero = "<b>%d</b>"))],
+		["a heading phrase with the title twice", area((a) => (a.heading!.zero = "%t %t"))],
+		[
+			"a class hole outside its attribute",
+			area(
+				(a) =>
+					(a.list!.comment = [
+						"<li>",
+						{ s: "cls" },
+						{ s: "author" },
+						{ s: "text" },
+						{ s: "replies" },
+						"</li>",
+					]),
+			),
+		],
+		[
+			"an id hole outside an id or a link to the page",
+			area(
+				(a) =>
+					(a.list!.comment = [
+						'<li class="',
+						{ s: "cls" },
+						'" title="',
+						{ s: "id" },
+						'">',
+						{ s: "author" },
+						{ s: "text" },
+						{ s: "replies" },
+						"</li>",
+					]),
+			),
+		],
+		[
+			"a comment with no words",
+			area(
+				(a) =>
+					(a.list!.comment = a.list!.comment.filter(
+						(x) => typeof x === "string" || x.s !== "text",
+					)),
+			),
+		],
+		["a date hole with no date format", area((a) => delete a.list!.date)],
+		["a time format that is not one", area((a) => (a.list!.time = "g:i <b>"))],
+		["list classes that are not tokens", area((a) => (a.list!.classes = 'comment" onclick="x'))],
+		["a list with no items hole", area((a) => (a.list!.item = ["<ol></ol>"]))],
+		[
+			"a box id that claims to be EmDash's",
+			area((a) => (a.fields!.body = [{ s: "control", id: "emdash-toolbar" }])),
+		],
+		[
+			"a label for an id that is not a token",
+			area(
+				(a) =>
+					(a.fields!.body = [
+						{ s: "label", for: 'x" onclick="y' },
+						{ s: "/label" },
+						{ s: "control" },
+					]),
+			),
+		],
+		["a label left open", area((a) => (a.fields!.body = [{ s: "label" }, { s: "control" }]))],
+		["a box of no size", area((a) => (a.fields!.body = [{ s: "control", rows: 0 }]))],
+		[
+			"a placeholder with markup",
+			area((a) => (a.fields!.body = [{ s: "control", placeholder: "<b>x</b>" }])),
+		],
+		[
+			"a submit label with markup",
+			area(
+				(a) =>
+					(a.respond = a.respond.map((x) =>
+						typeof x !== "string" && x.s === "submit" ? { ...x, label: "<i>Go</i>" } : x,
+					)),
+			),
+		],
+		[
+			"a submit control of another tag",
+			area(
+				(a) =>
+					(a.respond = a.respond.map((x) =>
+						typeof x !== "string" && x.s === "submit"
+							? ({ ...x, tag: "a" } as unknown as typeof x)
+							: x,
+					)),
+			),
+		],
+		[
+			"a box outside the form element",
+			area((a) => (a.respond = [{ s: "field", field: "body" }, ...a.respond])),
+		],
+		[
+			"a field of no EmDash field's",
+			area(
+				(a) =>
+					(a.respond = a.respond.map((x) =>
+						typeof x !== "string" && x.s === "field" && x.field === "body"
+							? ({ s: "field", field: "website" } as unknown as typeof x)
+							: x,
+					)),
+			),
+		],
+		[
+			"a form with a box missing",
+			area(
+				(a) =>
+					(a.respond = a.respond.filter(
+						(x) => typeof x === "string" || x.s !== "field" || x.field !== "authorEmail",
+					)),
+			),
+		],
+		["EmDash's own form beside the theme's", area((a) => a.respond.push({ s: "emdash" }))],
+		[
+			"no form of the theme's and no EmDash form",
+			area((a) => {
+				a.respond = ["<div></div>"];
+				delete a.fields;
+			}),
+		],
+		[
+			"a script in a template",
+			area((a) => (a.list!.item = ["<ol><script>x()</script>", { s: "items" }, "</ol>"])),
+		],
+		[
+			"a form element in a template",
+			area((a) => (a.fields!.body = ["<form>", { s: "control" }, "</form>"])),
+		],
+		[
+			"an event handler in a template",
+			area(
+				(a) =>
+					(a.parts = [
+						'<div onclick="x()">',
+						{ s: "heading" },
+						{ s: "list" },
+						{ s: "respond" },
+						"</div>",
+					]),
+			),
+		],
+		[
+			"a hole inside a tag",
+			area((a) => (a.heading!.item = ["<abbr ", { s: "count" }, "></abbr>"])),
+		],
 	])("refuses the record whole for %s", (_, record) => {
 		expect(wpShellProblem(record)).not.toBeNull();
 	});

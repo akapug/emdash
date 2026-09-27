@@ -1,0 +1,13 @@
+---
+/**
+ * EmDash's comment form's own client (CommentForm's), for its form drawn in
+ * a theme's markup (WpShellComments.astro): started as CommentForm starts
+ * it. A component of its own, so a page carries it only where that form is
+ * drawn; where EmDash's CommentForm is drawn instead, it brings its own.
+ */
+---
+
+<script>
+	import { initCommentForms } from "emdash/ui/comments/client";
+	initCommentForms();
+</script>

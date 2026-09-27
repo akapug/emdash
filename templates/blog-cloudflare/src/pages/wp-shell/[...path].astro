@@ -14,6 +14,7 @@
  */
 import {
 	decodeSlug,
+	getCollectionInfo,
 	getCommentCount,
 	getContentSeo,
 	getEmDashCollection,
@@ -24,6 +25,7 @@ import {
 	type InferCollectionData,
 } from "emdash";
 import { Comments, CommentForm } from "emdash/ui/comments";
+import WpShellComments from "../../components/WpShellComments.astro";
 import WpShell from "../../layouts/WpShell.astro";
 import { featuredImageUrl } from "../../utils/og-image";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
@@ -107,8 +109,12 @@ const post =
 				...(await adjacent(data.publishedAt)),
 			})
 		: null;
-// The post layout's comment element holds EmDash's comments itself.
+// The post layout's comment element holds EmDash's comments itself: in the theme's comment area where
+// the record carries one. With comments off, the element is not drawn either: WordPress draws no comment
+// area for a post that takes none.
 const layoutComments = Boolean(post && shell.post?.parts.some((p) => "slot" in p && p.slot === "comments"));
+const commentsOn = isPost && ((await getCollectionInfo("posts"))?.commentsEnabled ?? false);
+const area = layoutComments && shell.post?.commentArea ? shell.post : null;
 ---
 
 <WpShell
@@ -129,10 +135,13 @@ const layoutComments = Boolean(post && shell.post?.parts.some((p) => "slot" in p
 	content={{ collection, id: data.id, slug: entry.id }}
 	entry={{ title: data.title, body: data.content, edit: entry.edit }}
 	post={post}
+	comments={commentsOn}
 >
 	{
-		isPost &&
-			(layoutComments ? (
+		commentsOn &&
+			(area ? (
+				<WpShellComments post={area} contentId={data.id} title={data.title} />
+			) : layoutComments ? (
 				<Fragment>
 					<Comments collection="posts" contentId={data.id} threaded />
 					<CommentForm collection="posts" contentId={data.id} />

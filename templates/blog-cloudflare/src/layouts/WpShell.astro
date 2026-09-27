@@ -73,6 +73,8 @@ interface Props {
 	entry: { title: string; body?: PortableTextBlock[]; edit: EditProxy };
 	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
 	post?: WpShellPostFill | null;
+	/** Whether the page takes comments: without, the theme's comment element is not drawn. */
+	comments?: boolean;
 }
 
 const {
@@ -94,6 +96,7 @@ const {
 	content,
 	entry,
 	post,
+	comments = true,
 } = Astro.props;
 
 const locations = [...new Set(shell.menus.map((m) => m.location))];
@@ -199,6 +202,7 @@ const pageCtx = createPublicPageContext({
 			pieces.map((piece) => {
 				if ("html" in piece) return <Fragment set:html={piece.html} />;
 				if ("comments" in piece) {
+					if (!comments) return null;
 					const Comments = piece.comments.tag as HTMLTag;
 					return (
 						<Comments class={piece.comments.class} id={piece.comments.id}>
