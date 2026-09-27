@@ -598,8 +598,8 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 			meta: { storageKey: KEY, caption: null, blurhash: null, dominantColor: null },
 		},
 	};
-	async function post(featured: unknown) {
-		reads.shell = withPost();
+	async function post(featured: unknown, shell: unknown = withPost()) {
+		reads.shell = shell;
 		expect(wpShellProblem(reads.shell)).toBeNull();
 		reads.getCommentCount.mockResolvedValue(2);
 		reads.getEmDashEntry.mockResolvedValue({
@@ -658,6 +658,58 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 		expect(html).toContain(META);
 		expect(html).toMatch(COMMENTS);
 		expect(html).toContain(OG_IMAGE);
+	});
+
+	it("links the posts published just before and just after it, read around its own date", async () => {
+		const layout = withPost();
+		const parts = layout.post.parts;
+		const side = (label: string) => [
+			`<h3>${label}</h3><h4>`,
+			HOLE("adjTitle"),
+			'</h4><a href="',
+			HOLE("adjHref"),
+			'" class="post-link">Read</a>',
+		];
+		const withAdjacent = {
+			...layout,
+			post: {
+				...layout.post,
+				parts: [...parts.slice(0, -1), { slot: "adjacent" }, ...parts.slice(-1)],
+				adjacent: {
+					item: ['<div class="prev-next">', HOLE("prev"), HOLE("next"), "</div>"],
+					prev: side("Previous"),
+					next: side("Next"),
+				},
+			},
+		};
+		// Only the side the query asks for has a post: the one before is found only by `lt`, the one after only by `gt`.
+		reads.getEmDashCollection.mockImplementation(
+			async (_c: string, o: { where?: { published_at?: { lt?: string; gt?: string } } }) => {
+				const at = o.where?.published_at;
+				const e = at?.lt
+					? { id: "the-reeds", data: { title: "The Reeds" } }
+					: at?.gt
+						? { id: "the-heron", data: { title: "The Heron" } }
+						: null;
+				return { entries: e ? [e] : [], cacheHint: {} };
+			},
+		);
+		const html = await post(IMPORTED.resolved, withAdjacent);
+		const at = "2026-01-15T08:30:00.000Z";
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			where: { published_at: { lt: at } },
+			orderBy: { published_at: "desc" },
+			limit: 1,
+		});
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			where: { published_at: { gt: at } },
+			orderBy: { published_at: "asc" },
+			limit: 1,
+		});
+		expect(html).toContain(
+			'<div class="prev-next"><h3>Previous</h3><h4>The Reeds</h4><a href="/posts/the-reeds" class="post-link">Read</a>' +
+				'<h3>Next</h3><h4>The Heron</h4><a href="/posts/the-heron" class="post-link">Read</a></div>',
+		);
 	});
 });
 
