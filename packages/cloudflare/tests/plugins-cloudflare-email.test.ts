@@ -572,6 +572,62 @@ describe("the sending budget", () => {
 		await expect(sendAt("2026-01-01T11:30:00Z")).rejects.toThrow(/"x" this hour has reached 1/);
 	});
 
+	it("no send lists or deletes a count, on any path: sent, refused, contended or refunded", async () => {
+		// Counts of every kind from earlier windows, which any cleanup on the send path would find.
+		const seeded = {
+			"budget:h:2026-01-01T08:x": 1,
+			"budget:h:2026-01-01T09:x": 1,
+			"budget:d:2025-12-30:x": 1,
+			"budget:t:2025-12-30": 1,
+			"budget:r:2025-12-30:0123456789abcdef0123456789abcdef": 1,
+		};
+		const run = async (
+			limits: CloudflareEmailConfig["limits"],
+			{ sendImpl, contended = false }: { sendImpl?: () => Promise<never>; contended?: boolean } = {},
+		) => {
+			const kv = memoryKv(seeded);
+			const calls: string[] = [];
+			const watched = {
+				...kv,
+				list: async (prefix?: string) => (calls.push(`list ${prefix}`), kv.list(prefix)),
+				delete: async (key: string) => (calls.push(`delete ${key}`), kv.delete(key)),
+				compareAndDelete: async (key: string, rev: string) => (
+					calls.push(`compareAndDelete ${key}`), kv.compareAndDelete(key, rev)
+				),
+				// Every compare-and-set loses: the take is contended, and refused.
+				...(contended ? { compareAndSet: async () => ({ applied: false as const }) } : {}),
+			};
+			const outcome = await createCloudflareEmailDeliver(
+				{ from: "notify@mail.example.org", limits },
+				async () => fakeEnv(sendImpl).env,
+				at("2026-01-01T10:00:01Z"),
+			)({ message, source: "system" }, fakeCtx({ kv: watched as typeof kv })).then(
+				() => "sent",
+				(e: Error) => e.message,
+			);
+			for (const key of Object.keys(seeded)) expect(kv.rows.has(key), key).toBe(true);
+			return { outcome, calls };
+		};
+
+		expect(await run({ perHour: 5, perDay: 5 })).toEqual({ outcome: "sent", calls: [] });
+		const refused = await run({ perHour: 0, perDay: 5 });
+		expect(refused.outcome).toMatch(/"system" this hour has reached 0/);
+		expect(refused.calls).toEqual([]);
+		const contended = await run({ perHour: 5, perDay: 5 }, { contended: true });
+		expect(contended.outcome).toMatch(/kept changing under concurrent sends/);
+		expect(contended.calls).toEqual([]);
+		const refunded = await run(
+			{ perHour: 5, perDay: 5 },
+			{
+				sendImpl: async () => {
+					throw new Error("E_RECIPIENT_NOT_ALLOWED");
+				},
+			},
+		);
+		expect(refunded.outcome).toMatch(/E_RECIPIENT_NOT_ALLOWED/);
+		expect(refunded.calls).toEqual([]);
+	});
+
 	it("a message the day refuses spends nothing of the hour", async () => {
 		const { env } = fakeEnv();
 		const kv = memoryKv();
