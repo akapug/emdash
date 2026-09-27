@@ -358,21 +358,35 @@ function extractTopLevelListItems(html: string): string[] {
  */
 export const quote: BlockTransformer = (block, _options, context) => {
 	const blocks: PortableTextBlock[] = [];
+	// The citation WordPress draws is the <cite> it saved; the attribute is read from that markup
+	const cite = block.innerHTML.match(CITE_TAG_PATTERN);
 
-	// Extract paragraphs from the blockquote
-	let match;
+	if (block.innerBlocks.length > 0) {
+		// Since WordPress 6.2 a quote's text is inner blocks (paragraphs, and any
+		// other block), and its saved markup is the <blockquote> and <cite> alone
+		for (const inner of context.transformBlocks(block.innerBlocks)) {
+			blocks.push(
+				inner._type === "block" && inner.style === "normal" && !inner.listItem
+					? { ...inner, style: "blockquote" }
+					: inner,
+			);
+		}
+	} else {
+		// Extract paragraphs from the blockquote
+		let match;
 
-	while ((match = P_TAG_PATTERN.exec(block.innerHTML)) !== null) {
-		blocks.push(...quoteBlocks(match[1] || "", context));
-	}
+		while ((match = P_TAG_PATTERN.exec(block.innerHTML)) !== null) {
+			blocks.push(...quoteBlocks(match[1] || "", context));
+		}
 
-	// If no paragraphs found, treat entire content as quote
-	if (blocks.length === 0) {
-		blocks.push(...quoteBlocks(block.innerHTML, context));
+		// If no paragraphs found, treat entire content (its citation apart) as quote
+		if (blocks.length === 0) {
+			blocks.push(...quoteBlocks(block.innerHTML.replace(CITE_TAG_PATTERN, ""), context));
+		}
 	}
 
 	// Handle citation if present
-	const citation = attrString(block.attrs, "citation");
+	const citation = cite?.[1]?.trim() || attrString(block.attrs, "citation");
 	if (citation) {
 		const { children, markDefs } = context.parseInlineContent(citation);
 

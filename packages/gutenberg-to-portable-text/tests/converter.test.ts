@@ -350,6 +350,57 @@ describe("gutenbergToPortableText", () => {
 			const quoteBlocks = result.filter((b) => (b as PortableTextTextBlock).style === "blockquote");
 			expect(quoteBlocks).toHaveLength(2);
 		});
+
+		// Since WordPress 6.2 the block editor saves a quote's text as inner blocks, and
+		// its citation as the <cite> WordPress draws; before, both were dropped
+		const text = (blocks: PortableTextBlock[]) =>
+			blocks.map((b) =>
+				b._type === "block"
+					? `${b.style}: ${b.children.map((c) => c.text).join("")}`
+					: `[${b._type}]`,
+			);
+
+		it("keeps a quote whose paragraphs are inner blocks, and its citation", () => {
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><!-- wp:paragraph -->
+<p>The first line of the quote.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>A second, with <a href="https://example.org/">a link</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:image {"id":4} -->
+<figure class="wp-block-image"><img src="https://example.org/q.jpg" alt="" class="wp-image-4"/></figure>
+<!-- /wp:image --><cite>A. Author</cite></blockquote>
+<!-- /wp:quote -->`;
+			const result = gutenbergToPortableText(content);
+			expect(text(result)).toEqual([
+				"blockquote: The first line of the quote.",
+				"blockquote: A second, with a link.",
+				"[image]",
+				"normal: — A. Author",
+			]);
+			expect(result[1]).toMatchObject({ markDefs: [{ href: "https://example.org/" }] });
+		});
+
+		it("keeps the citation of a quote saved before inner blocks", () => {
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>To be or not to be</p><cite>A. Playwright</cite></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(content))).toEqual([
+				"blockquote: To be or not to be",
+				"normal: — A. Playwright",
+			]);
+			// a quote with no paragraph is its text, its citation apart
+			const bare = `<!-- wp:quote -->
+<blockquote class="wp-block-quote">Brief.<cite>B. Person</cite></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(bare))).toEqual([
+				"blockquote: Brief.",
+				"normal: — B. Person",
+			]);
+		});
 	});
 
 	describe("image blocks", () => {
