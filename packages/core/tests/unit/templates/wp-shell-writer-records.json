@@ -1489,7 +1489,7 @@
 	},
 	{
 		"version": 1,
-		"id": "6f2e7c24697e961835c4aa6a",
+		"id": "7c8084970741ddb77a16310c",
 		"source": {
 			"url": "https://www.example.org/team/",
 			"capturedAt": "2026-09-26T00:00:00.000Z"
@@ -1674,6 +1674,18 @@
 					"html": "\n    "
 				},
 				{
+					"slot": "authorBio"
+				},
+				{
+					"html": "\n    "
+				},
+				{
+					"slot": "adjacent"
+				},
+				{
+					"html": "\n    "
+				},
+				{
 					"slot": "comments",
 					"tag": "div",
 					"class": "comment-respond",
@@ -1814,7 +1826,66 @@
 					"s": "share-facebook"
 				},
 				"\" rel=\"noopener noreferrer\" class=\"share-facebook sd-button share-icon no-text\" target=\"_blank\"><span>Facebook</span></a></li><li class=\"share-end\"></li></ul></div></div></div>"
-			]
+			],
+			"author": {
+				"item": [
+					"<div class=\"entry-author\">\n        <div class=\"row\">\n            <div class=\"author-avatar col-sm-2\"><a rel=\"author\">",
+					{
+						"s": "avatar"
+					},
+					"</a></div>\n            <div class=\"author-bio col-sm-10\">\n                <h3 class=\"section-title-sm\">",
+					{
+						"s": "name"
+					},
+					"</h3>\n                ",
+					{
+						"s": "bio"
+					},
+					"\n    \n            </div>\n        </div>\n    </div>"
+				],
+				"avatar": [
+					"<img alt=\"\" src=\"",
+					{
+						"s": "src"
+					},
+					"\" class=\"avatar avatar-125 photo\" height=\"125\" width=\"125\">"
+				]
+			},
+			"adjacent": {
+				"item": [
+					"<div class=\"prev-next-posts well\"><div class=\"row\">\n            <div class=\"col-sm-6 prev-post\">",
+					{
+						"s": "prev"
+					},
+					"</div>\n            <div class=\"col-sm-6 next-post\">",
+					{
+						"s": "next"
+					},
+					"</div>\n        </div></div>"
+				],
+				"prev": [
+					"<h3 class=\"section-title-sm\"><i class=\"fa fa-chevron-circle-left\"></i> Previous</h3><h4>",
+					{
+						"s": "adjTitle"
+					},
+					"</h4><a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" class=\"post-link\">&#160;</a>"
+				],
+				"next": [
+					"<h3 class=\"section-title-sm\">Next <i class=\"fa fa-chevron-circle-right\"></i></h3><h4>",
+					{
+						"s": "adjTitle"
+					},
+					"</h4><a href=\"",
+					{
+						"s": "adjHref"
+					},
+					"\" class=\"post-link\">&#160;</a>"
+				]
+			}
 		}
 	},
 	{
