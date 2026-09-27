@@ -88,6 +88,37 @@ describe("the WpShell layout's content components", () => {
 			"emdash-image--align-left",
 		);
 	});
+
+	it("draws an aligned image at the size WordPress drew it, not the size of the file an import holds", async () => {
+		// An import moves a -300x256 size onto the upload it was cut from, the one file it holds.
+		const upload = "/_emdash/api/media/file/01KUPLOAD.png";
+		const sized = image("l", {
+			alignment: "left",
+			asset: { _ref: upload, url: upload },
+			displayWidth: 300,
+			displayHeight: 256,
+		});
+		const imgTag = (html: string) => html.match(/<img\b[^>]*>/)?.[0] ?? "";
+		const attr = (tag: string, name: string) => tag.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1];
+
+		const shell = imgTag(await render([sized]));
+		expect(shell).toMatch(
+			/^<img class="alignleft" src="\/_emdash\/api\/media\/file\/01KUPLOAD\.png"/,
+		);
+		expect([attr(shell, "width"), attr(shell, "height")]).toEqual(["300", "256"]);
+		// EmDash's own renderer draws the same size
+		const own = imgTag(await render([sized], false));
+		expect([attr(own, "width"), attr(own, "height")]).toEqual(["300", "256"]);
+		// no size recorded, or none in whole pixels, and none is drawn
+		for (const unsized of [
+			image("n", { alignment: "left" }),
+			image("o", { alignment: "left", displayWidth: "300", displayHeight: 1.5 }),
+		]) {
+			const tag = imgTag(await render([unsized]));
+			expect(tag).toMatch(/^<img class="alignleft"/);
+			expect(tag).not.toMatch(/\s(width|height)=/);
+		}
+	});
 });
 
 describe("the WpShell layout's embeds", () => {

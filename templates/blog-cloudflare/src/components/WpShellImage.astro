@@ -9,7 +9,11 @@
  * width than the theme's and every line after the image moves. Here an
  * image aligned left or right, with no link and no caption, is the element
  * WordPress draws: an `<img>` with the theme's alignment class, from its own
- * URL. Every other image is EmDash's own.
+ * URL, at the size WordPress drew it (the block's `displayWidth` and
+ * `displayHeight`, the `width` and `height` of WordPress's own tag). Without
+ * that size the file's own size is drawn, and the file an import holds for a
+ * `-300x256` size is the upload it was cut from. Every other image is
+ * EmDash's own.
  */
 import type { ComponentProps } from "astro/types";
 import { PTImage } from "emdash/ui";
@@ -17,6 +21,8 @@ import { PTImage } from "emdash/ui";
 type Props = ComponentProps<typeof PTImage>;
 
 const HTTP_URL = /^https?:\/\//i;
+/** A size in whole pixels, or nothing. */
+const pixels = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
 
 const { node } = Astro.props;
 const align = node?.alignment === "left" || node?.alignment === "right" ? node.alignment : null;
@@ -27,11 +33,21 @@ const src =
 		? url
 		: null;
 const wordpress = align !== null && src !== null && !node?.link && !node?.caption;
+const width = pixels(node?.displayWidth);
+const height = pixels(node?.displayHeight);
 ---
 
 {
 	wordpress ? (
-		<img class={`align${align}`} src={src} alt={node.alt ?? ""} loading="lazy" decoding="async" />
+		<img
+			class={`align${align}`}
+			src={src}
+			alt={node.alt ?? ""}
+			width={width}
+			height={height}
+			loading="lazy"
+			decoding="async"
+		/>
 	) : (
 		<PTImage {...Astro.props} />
 	)
