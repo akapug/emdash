@@ -10,6 +10,8 @@
  * - Dev console provider captures emails
  */
 
+import { inspect } from "node:util";
+
 import Database from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -621,6 +623,44 @@ describe("EmailPipeline", () => {
 			'rejected "<an address at example.com>" (cc <an address at example.com>)',
 		);
 
+		errorSpy.mockRestore();
+	});
+
+	it("redacts what a provider throws whatever its shape: a string, or an error carrying a response body", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		for (const thrown of [
+			"bounced Admin@Example.com",
+			Object.assign(new Error("refused"), {
+				code: "E_RECIPIENT_NOT_ALLOWED",
+				response: { rejected: ["ADMIN@example.com", "Team@Example.com"], status: 403 },
+			}),
+		]) {
+			errorSpy.mockClear();
+			const provider = createTestPlugin({
+				id: "cloudflare-email",
+				capabilities: ["hooks.email-transport:register"],
+				hooks: {
+					"email:deliver": createTestHook(
+						"cloudflare-email",
+						(async () => {
+							throw thrown;
+						}) as EmailDeliverHandler,
+						{ exclusive: true },
+					),
+				},
+			});
+			const hookPipeline = new HookPipeline([provider], { db });
+			hookPipeline.setExclusiveSelection("email:deliver", "cloudflare-email");
+			const error = await new EmailPipeline(hookPipeline)
+				.send(createTestMessage({ to: "admin@example.com", cc: ["team@example.com"] }), "forms")
+				.catch((e: unknown) => e as Error);
+			const told = [error, ...errorSpy.mock.calls.flat()]
+				.map((v) => inspect(v, { depth: 20 }))
+				.join("\n")
+				.toLowerCase();
+			expect(told).not.toMatch(/admin@|team@/);
+			expect(error).toBeInstanceOf(Error);
+		}
 		errorSpy.mockRestore();
 	});
 

@@ -190,7 +190,12 @@ export { after } from "./after.js";
 export type { WaitUntilFn } from "./after.js";
 
 // Email addresses out of what is logged (the email pipeline, plugins, providers)
-export { describeRedacted, redactAddresses, scrubAddresses } from "./plugins/redact-addresses.js";
+export {
+	describeRedacted,
+	redactAddresses,
+	redactPayload,
+	scrubAddresses,
+} from "./plugins/redact-addresses.js";
 
 // i18n configuration (from Astro config)
 export {

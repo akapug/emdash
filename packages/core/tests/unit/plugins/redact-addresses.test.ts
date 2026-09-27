@@ -5,11 +5,14 @@
  * string properties and causes.
  */
 
+import { inspect } from "node:util";
+
 import { describe, expect, it } from "vitest";
 
 import {
 	describeRedacted,
 	redactAddresses,
+	redactPayload,
 	scrubAddresses,
 } from "../../../src/plugins/redact-addresses.js";
 
@@ -100,6 +103,27 @@ describe("scrubAddresses", () => {
 		}
 	});
 
+	it("redacts a structured error's data in place (a response body, a list, a nested error), keeping its codes", () => {
+		const error = Object.assign(new Error("refused"), {
+			code: "E_RECIPIENT_NOT_ALLOWED",
+			response: {
+				to: "Owner@Example.org",
+				errors: [{ address: "TEAM@example.org", code: "E1" }],
+				meta: { status: 403 },
+			},
+			original: new Error("upstream said owner@EXAMPLE.org"),
+		});
+		// A cycle through its own data ends.
+		Object.assign(error, { self: error, loop: { back: error } });
+		const scrubbed = scrubAddresses(error, ["owner@example.org"]);
+		expect(scrubbed).toBe(error);
+		expect(leaks(inspect(scrubbed, { depth: 20 }), ["owner", "team"])).toEqual([]);
+		expect(scrubbed).toMatchObject({
+			code: "E_RECIPIENT_NOT_ALLOWED",
+			response: { errors: [{ code: "E1" }], meta: { status: 403 } },
+		});
+	});
+
 	it("replaces an error that will not take the change, and a thrown value that is not an Error", () => {
 		// A message with a getter and no setter, as some host errors have.
 		const original = Object.defineProperty(Object.assign(new Error(), { code: 42 }), "message", {
@@ -117,5 +141,25 @@ describe("scrubAddresses", () => {
 
 		const withStringCause = scrubAddresses(new Error("x", { cause: "owner@Example.org" }));
 		expect(withStringCause.cause).toBe("<an address at Example.org>");
+	});
+});
+
+describe("redactPayload", () => {
+	it("redacts a structured log payload as a copy, its keys and values, however it nests", () => {
+		const payload = {
+			to: "Owner@Example.org",
+			list: ["a@x.example.org", { deep: { deeper: "B@x.example.org" } }],
+			"c@x.example.org": 1,
+			error: new Error("bounced D@x.example.org"),
+			count: 3,
+		};
+		const out = redactPayload(payload, ["owner@example.org"]);
+		expect(leaks(inspect(out, { depth: 20 }), ["owner", "a", "b", "c", "d"])).toEqual([]);
+		expect(out).toMatchObject({ to: "<an address at example.org>", count: 3 });
+		expect(payload.to).toBe("Owner@Example.org");
+		// Deeper than the redaction follows is replaced, never kept.
+		let deep: Record<string, unknown> = { v: "E@x.example.org" };
+		for (let i = 0; i < 12; i++) deep = { deep };
+		expect(leaks(JSON.stringify(redactPayload(deep)), ["e"])).toEqual([]);
 	});
 });

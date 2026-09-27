@@ -7,8 +7,10 @@
  * first each address the caller names (a message's recipients and reply-to), in
  * any letter case and URL-encoded as well, then anything else that has the
  * shape of an address, a quoted local part included. An error is redacted
- * whole: its message, its stack (which repeats the message), its own string
- * properties, and each of its causes.
+ * whole: its message, its stack (which repeats the message), its own
+ * properties (strings, and the plain objects and arrays a structured error
+ * carries, e.g. a provider's response body), and each of its causes. A
+ * structured log payload is redacted the same way (redactPayload).
  *
  * The email pipeline, the forms plugin and the Cloudflare Email Sending
  * provider all redact through here, so none of them keeps an address another
@@ -17,6 +19,9 @@
 
 /** How many causes deep an error is followed. */
 const MAX_CAUSES = 5;
+/** How deep a structured payload is followed; what lies deeper is replaced, never kept. */
+const MAX_DEPTH = 8;
+const TOO_DEEP = "[deeper than the address redaction follows]";
 /** The characters of an unquoted local part (RFC 5322 atext, and the dot). */
 const LOCAL_CHAR = /[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]/;
 /** The characters of a domain name. */
@@ -101,14 +106,75 @@ export function describeRedacted(error: unknown, known: readonly string[] = []):
 	return redactAddresses(text, known);
 }
 
-/** Redact one error's own text in place; false when some of it would not take the change. */
+/** Plain data: an array, or an object whose prototype is Object's or none. */
+const isPlain = (v: object): boolean =>
+	Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null;
+
+function redactValue(
+	value: unknown,
+	known: readonly string[],
+	depth: number,
+	seen: WeakMap<object, unknown>,
+): unknown {
+	if (typeof value === "string") return redactAddresses(value, known);
+	if (typeof value !== "object" || value === null) return value;
+	if (value instanceof Error) return scrubAddresses(value, known);
+	if (!isPlain(value)) return value;
+	if (depth >= MAX_DEPTH) return TOO_DEEP;
+	const again = seen.get(value);
+	if (again !== undefined) return again;
+	if (Array.isArray(value)) {
+		const out: unknown[] = [];
+		seen.set(value, out);
+		for (const v of value) out.push(redactValue(v, known, depth + 1, seen));
+		return out;
+	}
+	const out: Record<string, unknown> = {};
+	seen.set(value, out);
+	for (const [k, v] of Object.entries(value)) {
+		out[redactAddresses(k, known)] = redactValue(v, known, depth + 1, seen);
+	}
+	return out;
+}
+
+/**
+ * A structured log payload with every address in it redacted, in any letter
+ * case: strings, the keys and values of plain objects and arrays (a copy;
+ * the value given is not changed), and Errors (scrubAddresses), eight levels
+ * deep, what lies deeper replaced. Anything else (a Map, a class instance) is
+ * kept as it is.
+ */
+export function redactPayload<T>(value: T, known: readonly string[] = []): T {
+	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the same shape, its strings redacted
+	return redactValue(value, known, 0, new WeakMap()) as T;
+}
+
+/** The errors rewrite is part-way through, so a cycle through an error's own data ends. */
+const rewriting = new WeakSet<Error>();
+
+/** Redact one error's own properties in place; false when some of it would not take the change. */
 function rewrite(error: Error, known: readonly string[]): boolean {
+	if (rewriting.has(error)) return true;
+	rewriting.add(error);
+	try {
+		return rewriteOnce(error, known);
+	} finally {
+		rewriting.delete(error);
+	}
+}
+
+function rewriteOnce(error: Error, known: readonly string[]): boolean {
 	const clean = (v: string) => redactAddresses(v, known);
 	try {
 		for (const key of ["message", "stack", ...Object.keys(error)]) {
 			const v: unknown = Reflect.get(error, key);
-			if (typeof v === "string" && clean(v) !== v && !Reflect.set(error, key, clean(v)))
-				return false;
+			if (typeof v === "string") {
+				if (clean(v) !== v && !Reflect.set(error, key, clean(v))) return false;
+			} else if (typeof v === "object" && v !== null && (v instanceof Error || isPlain(v))) {
+				// A structured error's data (a response body, a list of rejected recipients).
+				const r = redactPayload(v, known);
+				if (r !== v && !Reflect.set(error, key, r)) return false;
+			}
 		}
 	} catch {
 		return false;
@@ -131,8 +197,8 @@ function replacement(error: unknown, known: readonly string[]): Error {
 }
 
 /**
- * An error whose message, stack, own string properties and causes (five deep)
- * carry no address: `error` itself, redacted in place (so its identity, name
+ * An error whose message, stack, own properties (strings, and plain data
+ * such as a response body) and causes (five deep) carry no address: `error` itself, redacted in place (so its identity, name
  * and code survive for whoever catches it), or, when it is not an Error or
  * will not take the change, a new Error that says the same, redacted. Throw
  * and log what this returns.
