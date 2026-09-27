@@ -16,6 +16,7 @@ import {
 	decodeSlug,
 	getCommentCount,
 	getContentSeo,
+	getEmDashCollection,
 	getEmDashEntry,
 	getHomepage,
 	getSeoMeta,
@@ -82,13 +83,28 @@ const seo = getSeoMeta(entry, {
 });
 
 // A post drawn in the record's post layout: its own values for the layout's holes. The comment
-// count is read only where the layout prints one.
+// count, and the posts published before and after it, are read only where the layout prints them.
+async function adjacent(published: Date | null | undefined) {
+	if (!isPost || !shell?.post?.adjacent || !published) return { prev: null, next: null };
+	const at = published.toISOString();
+	const [before, after] = await Promise.all([
+		getEmDashCollection("posts", { where: { published_at: { lt: at } }, orderBy: { published_at: "desc" }, limit: 1 }),
+		getEmDashCollection("posts", { where: { published_at: { gt: at } }, orderBy: { published_at: "asc" }, limit: 1 }),
+	]);
+	if (Astro.cache?.enabled) for (const r of [before, after]) Astro.cache.set(r.cacheHint);
+	const side = (r: typeof before) => {
+		const e = r.entries[0];
+		return e ? { title: e.data.title, url: `/posts/${e.id}` } : null;
+	};
+	return { prev: side(before), next: side(after) };
+}
 const post =
 	isPost && shell.post
 		? wpShellPostFill(data, {
 				url: path,
 				origin: Astro.url.origin,
 				comments: shell.post.comments ? await getCommentCount("posts", data.id) : null,
+				...(await adjacent(data.publishedAt)),
 			})
 		: null;
 // The post layout's comment element holds EmDash's comments itself.

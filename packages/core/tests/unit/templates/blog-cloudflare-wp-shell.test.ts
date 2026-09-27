@@ -730,6 +730,9 @@ describe("the tripwire reads the writer's form", () => {
 			'{"slot":"featured"}',
 			'{"slot":"comments","tag":"div","class":"comment-respond","id":"respond"}',
 			'{"s":"share-x"}',
+			'{"slot":"authorBio"}',
+			'{"slot":"adjacent"}',
+			'{"s":"adjTitle"}',
 			'"many":"%d Comments"',
 		])
 			expect(all).toContain(shape);
@@ -1453,6 +1456,8 @@ function postOf(): WpShellPostLayout {
 			{ slot: "postMeta", meta: 0 },
 			{ slot: "featured" },
 			{ slot: "content", tag: "div", class: "entry-content clearfix" },
+			{ slot: "authorBio" },
+			{ slot: "adjacent" },
 			{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
 			{ html: "</div>" },
 		],
@@ -1513,6 +1518,41 @@ function postOf(): WpShellPostLayout {
 			{ s: "label" },
 			"</a></span> &gt; ",
 		],
+		author: {
+			item: [
+				'<div class="entry-author"><div class="author-avatar"><a rel="author">',
+				{ s: "avatar" },
+				'</a></div><div class="author-bio"><h3>',
+				{ s: "name" },
+				"</h3>",
+				{ s: "bio" },
+				"</div></div>",
+			],
+			avatar: ['<img class="avatar" width="125" height="125" src="', { s: "src" }, '" alt="">'],
+		},
+		adjacent: {
+			item: [
+				'<div class="prev-next-posts"><div class="prev-post">',
+				{ s: "prev" },
+				'</div><div class="next-post">',
+				{ s: "next" },
+				"</div></div>",
+			],
+			prev: [
+				"<h3>Previous</h3><h4>",
+				{ s: "adjTitle" },
+				'</h4><a href="',
+				{ s: "adjHref" },
+				'" class="post-link">\u00a0</a>',
+			],
+			next: [
+				"<h3>Next</h3><h4>",
+				{ s: "adjTitle" },
+				'</h4><a href="',
+				{ s: "adjHref" },
+				'" class="post-link">\u00a0</a>',
+			],
+		},
 		share: [
 			'<div class="sharedaddy"><ul><li><a href="',
 			{ s: "share-x" },
@@ -1653,7 +1693,7 @@ describe("wp-shell: a single post in its own layout", () => {
 		expect(none).toContain("&gt; A Post");
 		expect(none).not.toContain("taxonomy category");
 		// no address to share: no share links
-		expect(drawPost(aPost({ absoluteUrl: null }))).toContain("[CONTENT][COMMENTS");
+		expect(drawPost(aPost({ absoluteUrl: null }))).toContain('[CONTENT]<div class="entry-author">');
 	});
 
 	it("draws the site time zone's day, by name", () => {
@@ -1712,10 +1752,69 @@ describe("wp-shell: a single post in its own layout", () => {
 			image: "/_emdash/api/media/file/01ABC.png",
 			imageWidth: 1237,
 			alt: "A photo",
+			bio: null,
+			avatar: null,
+			prev: null,
+			next: null,
 		});
+		// the byline's bio and its avatar (a file of the site's), and the posts beside it as the route read them
+		const byline = wpShellPostFill(
+			{
+				bylines: [
+					{ byline: { displayName: "Pat", bio: "Pat writes.", avatarStorageKey: "01AV.jpg" } },
+				],
+			},
+			{
+				url: "/posts/b",
+				origin: "https://example.org",
+				comments: null,
+				prev: { title: "Older", url: "/posts/older" },
+				next: null,
+			},
+		);
+		expect(byline).toMatchObject({
+			author: "Pat",
+			bio: "Pat writes.",
+			avatar: "/_emdash/api/media/file/01AV.jpg",
+			prev: { title: "Older", url: "/posts/older" },
+			next: null,
+		});
+		expect(
+			wpShellPostFill(
+				{ bylines: [{ byline: { displayName: "Pat", avatarStorageKey: "../../x" } }] },
+				{ url: "/posts/b", origin: "https://example.org", comments: null },
+			).avatar,
+		).toBeNull();
 		expect(
 			wpShellPostFill({}, { url: "/posts/x", origin: "https://example.org", comments: null }),
 		).toMatchObject({ author: null, date: null, image: null, categories: [], tags: [] });
+	});
+
+	it("draws the author's bio, their avatar where it is one of the site's files, and the posts beside it", () => {
+		const html = drawPost(
+			aPost({
+				bio: "First <line>.\n\nSecond & last.",
+				avatar: "/_emdash/api/media/file/01AV.jpg",
+				prev: { title: "Older <one>", url: "/posts/older" },
+				next: null,
+			}),
+		);
+		expect(html).toContain(
+			'<div class="entry-author"><div class="author-avatar"><a rel="author"><img class="avatar" width="125" height="125" src="/_emdash/api/media/file/01AV.jpg" alt=""></a></div><div class="author-bio"><h3>Pat Author</h3><p>First &lt;line&gt;.</p><p>Second &amp; last.</p></div></div>',
+		);
+		expect(html).toContain(
+			'<div class="prev-next-posts"><div class="prev-post"><h3>Previous</h3><h4>Older &lt;one&gt;</h4><a href="/posts/older" class="post-link">\u00a0</a></div><div class="next-post"></div></div>',
+		);
+		// an avatar from elsewhere is not drawn; no bio, no paragraphs; no post beside it, no block
+		const bare = drawPost(aPost({ avatar: "https://gravatar.example/a.jpg", bio: null }));
+		expect(bare).toContain(
+			'<a rel="author"></a></div><div class="author-bio"><h3>Pat Author</h3></div>',
+		);
+		expect(bare).not.toContain("prev-next-posts");
+		expect(drawPost(aPost({ author: null }))).not.toContain("entry-author");
+		expect(drawPost(aPost({ next: { title: "N", url: "javascript:alert(1)" } }))).toContain(
+			'<h4>N</h4><a href="#"',
+		);
 	});
 
 	/** The post layout with one field replaced. */
@@ -1816,6 +1915,18 @@ describe("wp-shell: a single post in its own layout", () => {
 			"an image from elsewhere in a template",
 			posted({ meta: [['<img src="https://tracker.example/p.gif">', { s: "date" }]] }),
 		],
+		[
+			"an avatar src hole outside its attribute",
+			posted((p) => ({ ...p, author: { ...p.author!, avatar: ["<img>", { s: "src" }] } })),
+		],
+		[
+			"an adjacent side's link hole outside its attribute",
+			posted((p) => ({
+				...p,
+				adjacent: { ...p.adjacent!, next: ["<h4>", { s: "adjHref" }, "</h4>"] },
+			})),
+		],
+		["an author slot with no author template", posted((p) => ({ ...p, author: undefined }))],
 	])("refuses the record whole for %s", (_, record) => {
 		expect(wpShellProblem(record)).not.toBeNull();
 	});

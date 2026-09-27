@@ -93,10 +93,11 @@ export type WpShellPart =
 /**
  * A hole in a post layout's templates, filled here for each post. Text
  * (escaped): date, author, title, label, count, name, adjTitle. Each inside
- * its own attribute: href, src, alt, avatar, adjHref, and the share links
- * (this file's own share page for the network, for the post). Markup, drawn
- * only from the record's own sub-templates: categories, tags, comments,
- * terms, bio, prev, next.
+ * its own attribute: href, src, alt, adjHref, and the share links (this
+ * file's own share page for the network, for the post). Markup, drawn only
+ * from the record's own sub-templates: categories, tags, comments, terms,
+ * avatar, prev, next; and bio, the byline's paragraphs, each in a `<p>`
+ * written here.
  */
 export type WpShellPostHole =
 	| "href"
@@ -564,7 +565,7 @@ const POST_FILL: Record<WpShellPostHole, string> = {
 	"share-linkedin": "#",
 	"share-email": "#",
 	src: "/_emdash/api/media/file/a.png",
-	avatar: "/_emdash/api/media/file/a.png",
+	avatar: "<b></b>",
 	alt: "",
 	date: "<b></b>",
 	author: "<b></b>",
@@ -978,7 +979,6 @@ const POST_IN_ATTRIBUTE: Record<string, string> = {
 	href: 'href="',
 	adjHref: 'href="',
 	src: 'src="',
-	avatar: 'src="',
 	alt: 'alt="',
 	...Object.fromEntries(SHARE_HOLES.map((h) => [h, 'href="'])),
 };
@@ -1080,8 +1080,7 @@ function checkPost(v: Record<string, unknown>): string | null {
 		author !== undefined &&
 		(!isObject(author) ||
 			!checkPostTemplate(author.item, new Set(["name", "bio", "avatar"])) ||
-			(author.avatar !== undefined &&
-				!checkPostTemplate(author.avatar, new Set(["avatar", "name"]))))
+			(author.avatar !== undefined && !checkPostTemplate(author.avatar, new Set(["src"]))))
 	)
 		return "the post layout's author bio is malformed";
 	if (
@@ -1813,6 +1812,12 @@ export interface WpShellPostFill {
 	image?: string | null;
 	imageWidth?: number | null;
 	alt?: string | null;
+	/** The byline's bio, a blank line between its paragraphs, and its avatar's path when it is one of the site's own files. */
+	bio?: string | null;
+	avatar?: string | null;
+	/** The posts published before and after it. */
+	prev?: { title: string; url: string } | null;
+	next?: { title: string; url: string } | null;
 }
 
 /** The layout a kind of page is drawn with: a page of a slug cut on its own draws its own. */
@@ -1893,7 +1898,13 @@ function fillPost(
 	t: readonly WpShellPostPart[],
 	post: WpShellPostLayout,
 	p: WpShellPostFill,
-	term?: { href: string; label: string; terms?: string },
+	term?: {
+		href: string;
+		label: string;
+		terms?: string;
+		src?: string;
+		adj?: { title: string; url: string };
+	},
 ): string | null {
 	let out = "";
 	for (const x of t) {
@@ -1931,8 +1942,28 @@ function fillPost(
 			out += fillPost(shape.item, post, p, { href: "#", label: "", terms }) ?? "";
 		} else if (h === "comments") {
 			out += post.comments ? (fillPost(post.comments.item, post, p) ?? "") : "";
-		} else if (h === "src") out += escapeAttr(p.image ?? "");
+		} else if (h === "src") out += escapeAttr(term?.src ?? p.image ?? "");
 		else if (h === "alt") out += escapeAttr(p.alt ?? "");
+		else if (h === "name") {
+			if (!p.author) return null;
+			out += escapeHtml(p.author);
+		} else if (h === "bio") {
+			out += (p.bio ?? "")
+				.split(PARAGRAPHS)
+				.map((para) => para.trim())
+				.filter(Boolean)
+				.map((para) => `<p>${escapeHtml(para)}</p>`)
+				.join("");
+		} else if (h === "avatar") {
+			const own = p.avatar && ownFile(p.avatar) && MEDIA_SRC.test(p.avatar) ? p.avatar : null;
+			if (own && post.author?.avatar)
+				out += fillPost(post.author.avatar, post, p, { href: "#", label: "", src: own }) ?? "";
+		} else if (h === "prev" || h === "next") {
+			const adj = p[h];
+			const side = post.adjacent?.[h];
+			if (adj && side) out += fillPost(side, post, p, { href: "#", label: "", adj }) ?? "";
+		} else if (h === "adjHref") out += escapeAttr(safeHref(term?.adj?.url ?? "#"));
+		else if (h === "adjTitle") out += escapeHtml(term?.adj?.title ?? "");
 		else if (isShareHole(h)) {
 			if (!p.absoluteUrl) return null;
 			out += escapeAttr(SHARE_PAGE[h](p.absoluteUrl, p.title));
@@ -1949,7 +1980,13 @@ function fillPost(
  */
 export function wpShellPostFill(
 	data: unknown,
-	o: { url: string; origin: string; comments: number | null },
+	o: {
+		url: string;
+		origin: string;
+		comments: number | null;
+		prev?: { title: string; url: string } | null;
+		next?: { title: string; url: string } | null;
+	},
 ): WpShellPostFill {
 	const d = isObject(data) ? data : {};
 	const credit: unknown = Array.isArray(d.bylines) ? d.bylines[0] : undefined;
@@ -1972,6 +2009,8 @@ export function wpShellPostFill(
 	};
 	const image = d.featured_image;
 	const media = isObject(image) ? image : null;
+	const key = byline && isText(byline.avatarStorageKey) ? byline.avatarStorageKey : "";
+	const avatar = key ? `${MEDIA_PATH}${key}` : null;
 	return {
 		url: o.url,
 		absoluteUrl: URL.parse(o.url, o.origin)?.href ?? null,
@@ -1984,6 +2023,10 @@ export function wpShellPostFill(
 		image: ownImagePath(image),
 		imageWidth: media && typeof media.width === "number" ? media.width : null,
 		alt: media && isText(media.alt) ? media.alt : "",
+		bio: byline && isText(byline.bio) ? byline.bio : null,
+		avatar: avatar && ownFile(avatar) && MEDIA_SRC.test(avatar) ? avatar : null,
+		prev: o.prev ?? null,
+		next: o.next ?? null,
 	};
 }
 
@@ -2026,8 +2069,9 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 			if (post && fill.post && featuredDrawn(post, fill.post)) push(postHtml(post.featured?.item));
 		} else if (p.slot === "trailTerm") {
 			if (post && fill.post) push(trailTermHtml(post, fill.post));
-		} else if (p.slot === "authorBio" || p.slot === "adjacent") {
-			// Drawn by the post's own fill (phase 2); nothing without one.
+		} else if (p.slot === "authorBio") push(postHtml(post?.author?.item));
+		else if (p.slot === "adjacent") {
+			if (fill.post?.prev || fill.post?.next) push(postHtml(post?.adjacent?.item));
 		} else if (p.slot === "siteTitle") push(escapeHtml(fill.siteTitle ?? p.fallback));
 		else if (p.slot === "tagline") push(escapeHtml(fill.tagline ?? p.fallback));
 		else if (p.slot === "logo") push(logoHtml(p, fill.logoUrl));
