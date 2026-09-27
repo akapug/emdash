@@ -11,7 +11,7 @@ import { parse } from "@wordpress/block-serialization-default-parser";
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
-import { parseInlineContent } from "./inline.js";
+import { extractDisplaySize, parseInlineContent } from "./inline.js";
 import { wptexturize } from "./texturize.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
@@ -318,6 +318,7 @@ export function htmlToPortableText(
 					},
 					alt: altMatch?.[1],
 					...imageAligned(fullMatch),
+					...extractDisplaySize(fullMatch),
 				});
 			}
 			continue;
@@ -363,6 +364,7 @@ export function htmlToPortableText(
 							alt: altMatch?.[1],
 							link: linkUrl,
 							...imageAligned(imgAttrs),
+							...extractDisplaySize(imgAttrs),
 						});
 					}
 					linkedImgPositions.push({
@@ -394,6 +396,7 @@ export function htmlToPortableText(
 							},
 							alt: altMatch?.[1],
 							...imageAligned(imgMatch[0]),
+							...extractDisplaySize(imgMatch[0]),
 						});
 					}
 				}
@@ -510,6 +513,7 @@ export function htmlToPortableText(
 						},
 						alt: altMatch?.[1],
 						caption: captionMatch?.[1]?.replace(HTML_TAG_PATTERN, "").trim(),
+						...extractDisplaySize(imgMatch[0]),
 					});
 				}
 				break;

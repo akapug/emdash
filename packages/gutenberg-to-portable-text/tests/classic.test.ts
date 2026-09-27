@@ -112,6 +112,57 @@ describe("classic content: an aligned image", () => {
 	});
 });
 
+describe("an image keeps the size WordPress drew it at", () => {
+	const size = (b: PortableTextBlock | undefined) =>
+		b?._type === "image" ? [b.displayWidth, b.displayHeight] : b?._type;
+
+	it("reads the classic editor's width and height on every image it converts", () => {
+		// the classic editor's medium size: a -300x256 file, drawn 300 by 256
+		const content = `<p><img class="alignleft wp-image-15 size-medium" src="https://example.org/wp-content/uploads/a-300x256.png" alt="" width="300" height="256" />Words beside the picture.</p>
+<p><a href="https://example.org/b/"><img class="alignright" src="https://example.org/b.png" alt="B" width='120' height='90' /></a></p>
+<img class="aligncenter" src="https://example.org/c.png" alt="C" width=640 height=480>
+<figure><img src="https://example.org/d.png" alt="D" width="200" height="100" /><figcaption>D</figcaption></figure>`;
+		const blocks = gutenbergToPortableText(content);
+		expect(blocks.filter((b) => b._type === "image").map(size)).toEqual([
+			[300, 256],
+			[120, 90],
+			[640, 480],
+			[200, 100],
+		]);
+		expect(blocks[0]).toMatchObject({
+			alignment: "left",
+			asset: { url: "https://example.org/wp-content/uploads/a-300x256.png" },
+		});
+	});
+
+	it("reads a block editor image's width and height, which it writes when the image was resized", () => {
+		const content = `<!-- wp:image {"id":5,"width":320,"height":200,"sizeSlug":"large"} -->
+<figure class="wp-block-image size-large is-resized"><img src="https://example.org/e-1024x640.jpg" alt="E" class="wp-image-5" width="320" height="200"/></figure>
+<!-- /wp:image -->`;
+		expect(size(gutenbergToPortableText(content)[0])).toEqual([320, 200]);
+	});
+
+	it("records no size where the tag gives none, or none in whole pixels", () => {
+		for (const img of [
+			`<img src="https://example.org/f.png" alt="F" />`,
+			`<img src="https://example.org/f.png" alt="F" width="100%" height="auto" />`,
+			`<img src="https://example.org/f.png" alt="width=300 height=200" />`,
+			`<img src="https://example.org/f.png" data-width="300" data-height="200" />`,
+			`<img src="https://example.org/f.png" width="0" height="-4" />`,
+		]) {
+			const [image] = gutenbergToPortableText(`<p>${img}</p>`);
+			expect(image).toMatchObject({ _type: "image" });
+			expect(image).not.toHaveProperty("displayWidth");
+			expect(image).not.toHaveProperty("displayHeight");
+		}
+		// the first of a repeated attribute counts, and a width alone is kept alone
+		const [first] = gutenbergToPortableText(
+			`<p><img src="https://example.org/g.png" width="100%" width="300" height="200" /></p>`,
+		);
+		expect(size(first)).toEqual([undefined, 200]);
+	});
+});
+
 describe("classic content: what WordPress draws that a converter would drop or join", () => {
 	it("keeps a paragraph that holds a no-break space alone, as the line WordPress draws for it", () => {
 		const content = `Via a newsletter: a short note on the week.\n\n&nbsp;\n\nThe second paragraph.\n\n&nbsp;`;

@@ -4,7 +4,13 @@
 
 import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
-import { extractAlt, extractCaption, extractSrc, extractText } from "../inline.js";
+import {
+	extractAlt,
+	extractCaption,
+	extractDisplaySize,
+	extractSrc,
+	extractText,
+} from "../inline.js";
 import type {
 	GutenbergBlock,
 	PortableTextBlock,
@@ -29,6 +35,7 @@ const CODE_TAG_PATTERN_SINGLE = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const TABLE_TAG_PATTERN = /<table[^>]*>([\s\S]*?)<\/table>/i;
 const THEAD_TAG_PATTERN = /<thead[^>]*>([\s\S]*?)<\/thead>/i;
 const IMG_TAG_GLOBAL = /<img[^>]+>/gi;
+const IMG_TAG_SINGLE = /<img[^>]+>/i;
 const TABLE_ROW_PATTERN = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
 const TABLE_CELL_PATTERN = /<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi;
 const TBODY_TAG_PATTERN = /<tbody[^>]*>([\s\S]*?)<\/tbody>/i;
@@ -424,6 +431,7 @@ export const image: BlockTransformer = (block, options, context) => {
 			alt,
 			caption,
 			alignment: mapAlignment(align),
+			...extractDisplaySize(block.innerHTML.match(IMG_TAG_SINGLE)?.[0] ?? ""),
 		},
 	];
 };

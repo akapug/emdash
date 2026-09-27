@@ -249,3 +249,45 @@ describe("WordPress import URL rewriting reaches links, not only images", () => 
 		expect(JSON.stringify(blocks)).not.toContain("example.com");
 	});
 });
+
+describe("an image the rewrite moves onto its upload keeps the size WordPress drew it at", () => {
+	// The classic editor's medium size of an upload: the -300x256 file, drawn 300 by 256.
+	const upload = "https://example.org/wp-content/uploads/2015/04/storefront.png";
+	const medium = "https://example.org/wp-content/uploads/2015/04/storefront-300x256.png";
+	const local = "/_emdash/api/media/file/01KSTOREFRONT.png";
+	const content = (src: string) =>
+		`<p><img class="alignleft wp-image-15 size-medium" src="${src}" alt="" width="300" height="256" />Words beside the picture.</p>`;
+	const convert = (html: string): PortableTextBlock[] =>
+		gutenbergToPortableText(html) as PortableTextBlock[];
+
+	it("keeps it where the map names the upload, which the size's URL is matched to", () => {
+		const blocks = convert(content(medium));
+		const urlMap = { [upload]: local };
+
+		expect(rewritePortableTextUrls(blocks, urlMap, buildBaseUrlMap(urlMap))).toEqual({
+			changed: true,
+			urlsRewritten: 1,
+		});
+		// the file is the upload itself, however large; the size is the one WordPress drew
+		expect(blocks[0]).toMatchObject({
+			_type: "image",
+			asset: { _ref: local, url: local },
+			alignment: "left",
+			displayWidth: 300,
+			displayHeight: 256,
+		});
+	});
+
+	it("keeps it where the map names the size itself (another spelling of it, mapped onto the upload)", () => {
+		const http = medium.replace("https:", "http:");
+		const blocks = convert(content(http));
+		const urlMap = { [upload]: local, [http]: local };
+
+		rewritePortableTextUrls(blocks, urlMap, buildBaseUrlMap(urlMap));
+		expect(blocks[0]).toMatchObject({
+			asset: { url: local },
+			displayWidth: 300,
+			displayHeight: 256,
+		});
+	});
+});

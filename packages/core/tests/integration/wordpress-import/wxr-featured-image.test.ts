@@ -5,6 +5,11 @@
  * file's local one, and the rewrite step points the post at it. The post
  * ends holding the local media item, with the size read from the file, so a
  * template can draw it at its own size.
+ *
+ * The same upload drawn in the post's text at a size WordPress cut from it
+ * (`hero-300x4.png`, the classic editor's `width="300" height="4"`) moves
+ * onto the one file the import holds, the upload itself, and keeps the size
+ * WordPress drew it at.
  */
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -81,6 +86,7 @@ import { createTestRuntime, handlersFromRuntime } from "../../utils/mcp-runtime.
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
 const IMAGE = "https://example.org/wp-content/uploads/2026/01/hero.png";
+const MEDIUM = "https://example.org/wp-content/uploads/2026/01/hero-300x4.png";
 
 const WXR = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -103,7 +109,7 @@ const WXR = `<?xml version="1.0" encoding="UTF-8"?>
       <wp:post_name><![CDATA[the-pond]]></wp:post_name>
       <wp:status><![CDATA[publish]]></wp:status>
       <wp:post_type><![CDATA[post]]></wp:post_type>
-      <content:encoded><![CDATA[<p>Still water.</p>]]></content:encoded>
+      <content:encoded><![CDATA[<p><img class="alignleft wp-image-100 size-medium" src="${MEDIUM}" alt="" width="300" height="4" />Still water.</p>]]></content:encoded>
       <wp:postmeta><wp:meta_key>_thumbnail_id</wp:meta_key><wp:meta_value><![CDATA[100]]></wp:meta_value></wp:postmeta>
     </item>
   </channel>
@@ -153,16 +159,17 @@ describe("WXR import: a post's featured image", () => {
 		await teardownTestDatabase(db);
 	});
 
-	const featured = async () => {
+	const stored = async (field: "featured_image" | "content") => {
 		const row = await db
 			.selectFrom("ec_posts" as keyof Database)
-			.select("featured_image" as never)
+			.select(field as never)
 			.where("slug" as never, "=", "the-pond" as never)
 			.executeTakeFirstOrThrow();
-		return JSON.parse((row as { featured_image: string }).featured_image) as unknown;
+		return JSON.parse((row as Record<string, string>)[field]!) as unknown;
 	};
+	const featured = () => stored("featured_image");
 
-	it("ends holding the local media item: its id, the file's size and its storage key", async () => {
+	it("ends holding the local media item at the file's size, and the text's image at WordPress's", async () => {
 		const wxr = await parseWxrString(WXR);
 		const plan = await preImportWxrTaxonomies(db, wxr.posts, wxr.categories, wxr.tags, wxr.terms);
 		const attachments = new Map(
@@ -202,6 +209,17 @@ describe("WXR import: a post's featured image", () => {
 		const rewrite = await rewriteUrls(db, media.urlMap, (id) => emdash.getMediaProvider(id));
 		expect(rewrite.errors).toEqual([]);
 		expect(rewrite.updated).toBe(1);
+
+		// The text's image is the same file, at the size WordPress drew it.
+		expect(await stored("content")).toContainEqual(
+			expect.objectContaining({
+				_type: "image",
+				asset: expect.objectContaining({ url: media.urlMap[IMAGE] }),
+				alignment: "left",
+				displayWidth: 300,
+				displayHeight: 4,
+			}),
+		);
 
 		expect(await featured()).toEqual({
 			provider: "local",

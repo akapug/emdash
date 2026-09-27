@@ -31,6 +31,9 @@ const BLOCK_TAG_PATTERNS: Record<string, { open: RegExp; close: RegExp }> = {
 const IMG_ALT_PATTERN = /<img[^>]+alt=["']([^"']*)["']/i;
 const FIGCAPTION_PATTERN = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i;
 const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']*)["']/i;
+/** One attribute of a tag: its name, and its value quoted either way or bare. A quoted value is read whole, so no attribute is found inside one. */
+const TAG_ATTRIBUTE_PATTERN = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const WHOLE_PIXELS_PATTERN = /^\d+$/;
 const URL_AMP_ENTITY_PATTERN = /&amp;/g;
 const URL_NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const URL_HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
@@ -310,6 +313,31 @@ export function extractCaption(html: string): string | undefined {
 		return extractText(match[1]);
 	}
 	return undefined;
+}
+
+/**
+ * The size WordPress draws an image at: the `width` and `height` attributes of
+ * its `<img>` tag (the tag, or the attributes after `<img`), as the image
+ * block's `displayWidth` and `displayHeight`. The classic editor writes them on
+ * every image it inserts (`size-medium` is `width="300" height="256"`), and the
+ * block editor on an image it resized. The file the tag names can be larger:
+ * the importer moves a `-300x256` size of an upload onto the upload itself,
+ * which is the only copy it imports. A value that is not a whole number of
+ * pixels (`100%`) is no size, and the first of a repeated attribute counts, as
+ * in HTML.
+ */
+export function extractDisplaySize(img: string): { displayWidth?: number; displayHeight?: number } {
+	const size: { displayWidth?: number; displayHeight?: number } = {};
+	const seen = new Set<string>();
+	for (const m of img.matchAll(TAG_ATTRIBUTE_PATTERN)) {
+		const name = m[1]!.toLowerCase();
+		if ((name !== "width" && name !== "height") || seen.has(name)) continue;
+		seen.add(name);
+		const value = (m[2] ?? m[3] ?? m[4] ?? "").trim();
+		const px = WHOLE_PIXELS_PATTERN.test(value) ? Number(value) : 0;
+		if (px > 0) size[name === "width" ? "displayWidth" : "displayHeight"] = px;
+	}
+	return size;
 }
 
 /**

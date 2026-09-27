@@ -67,6 +67,9 @@ export interface PortableTextImageBlock {
 	caption?: string;
 	alignment?: "left" | "center" | "right" | "wide" | "full";
 	link?: string | { href: string; blank?: boolean };
+	/** The size WordPress drew this image at (its `<img>` tag's `width` and `height`), whatever the file's own size */
+	displayWidth?: number;
+	displayHeight?: number;
 }
 
 /**
