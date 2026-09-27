@@ -99,10 +99,10 @@ describe("the WpShell layout's embeds", () => {
 
 	it("draws a video embedded from a link in classic content as WordPress's paragraph and player", async () => {
 		const html = await render([
-			embed("v", { url: "https://vimeo.com/58376079", provider: "vimeo" }),
+			embed("v", { url: "https://vimeo.com/100000001", provider: "vimeo" }),
 		]);
 		expect(html).toMatch(
-			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/58376079" title="Vimeo video" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen[^>]*><\/iframe>\s*<\/p>/,
+			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/100000001" title="Vimeo video" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen[^>]*><\/iframe>\s*<\/p>/,
 		);
 		expect(html).not.toContain("<figure");
 		expect(await render([embed("y", { url: "https://youtu.be/dQw4w9WgXcQ" })])).toContain(
@@ -121,7 +121,7 @@ describe("the WpShell layout's embeds", () => {
 			expect(html).not.toContain("wp-shell-embed");
 		}
 		// EmDash's own renderer draws its figure for the classic video too
-		expect(await render([embed("v", { url: "https://vimeo.com/58376079" })], false)).toContain(
+		expect(await render([embed("v", { url: "https://vimeo.com/100000001" })], false)).toContain(
 			'<figure class="emdash-embed',
 		);
 	});

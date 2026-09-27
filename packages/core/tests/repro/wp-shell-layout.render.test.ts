@@ -12,7 +12,13 @@
  *   as written: the route passes it to the layout.
  * - A form imported from the site's form plugin is drawn in that plugin's
  *   markup, and submits what EmDash's own form submits, where it does.
+ * - What the layout draws through its own components, as a page is drawn:
+ *   a page the record cut on its own in its own layout, the entry's form in
+ *   its plugin's markup and a classic video as WordPress's player, and a
+ *   listing's lanes by the shape EmDash stores for each post's image.
  */
+import { readFileSync } from "node:fs";
+
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -278,6 +284,22 @@ describe("WpShellForm: a form in its plugin's markup", () => {
 		expect(skinned).toMatch(/<script\b/);
 	});
 
+	it("runs the forms plugin's own client exactly as EmDash's own form runs it", () => {
+		// The client makes the form submit where EmDash's does, with its checks (Turnstile, validation):
+		// a skin that loaded it and did not start it would post the browser's own way.
+		const script = (file: string) =>
+			/<script>([\s\S]*?)<\/script>/
+				.exec(readFileSync(new URL(file, import.meta.url), "utf8"))?.[1]
+				?.replace(/\/\/.*$/gm, "")
+				.replace(/\s+/g, " ")
+				.trim();
+		const own = script("../../../plugins/forms/src/astro/FormEmbed.astro");
+		expect(own).toBe('import { initForms } from "@emdash-cms/plugin-forms/client"; initForms();');
+		expect(script("../../../../templates/blog-cloudflare/src/components/WpShellForm.astro")).toBe(
+			own,
+		);
+	});
+
 	it("draws a form an admin has changed, or one of no skin, in EmDash's own markup", async () => {
 		const changed = definition();
 		changed.pages[0]!.fields[1]!.label = "Email address";
@@ -491,5 +513,168 @@ describe("WpShell: a single post in the record's post layout", () => {
 			/<div class="entry-content"[^>]*><\/div><section class="ec-comments">EMDASH COMMENTS<\/section><\/main>/,
 		);
 		expect(html).not.toContain("entry-meta");
+	});
+});
+
+/** A page the record cut on its own (Embark's --pages): the contact page, on a template of its own. */
+function contactLayout() {
+	return {
+		slug: "contact",
+		body: { class: "page page-template-full-width contact-own" },
+		styles: ["/_emdash/api/media/file/wp-shell/contact.css"],
+		parts: [
+			{ html: '<main class="contact-own-layout">' },
+			{ slot: "title", tag: "h1", class: "entry-title" },
+			{ slot: "content", tag: "div", class: "entry-content" },
+			{ html: "</main>" },
+		],
+	};
+}
+
+describe("the /wp-shell/ route: a page the record cut on its own", () => {
+	async function page(slug: string) {
+		reads.shell = { ...record(), pages: [contactLayout()] };
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: slug,
+				data: {
+					id: "01PAGE",
+					title: "A page",
+					content: [],
+					translationGroup: "01PAGE",
+					updatedAt: new Date("2026-09-01T00:00:00Z"),
+					publishedAt: null,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: `pages/${slug}` },
+			request: new Request(`https://example.org/pages/${slug}`),
+		});
+	}
+
+	it("draws the page of that slug in its own layout: its body classes, its stylesheet and its parts", async () => {
+		const html = await page("contact");
+		expect(html).toMatch(/<body class="page page-template-full-width contact-own"/);
+		expect(html).toMatch(
+			/<link rel="stylesheet" href="\/_emdash\/api\/media\/file\/wp-shell\/contact\.css"/,
+		);
+		expect(html).toContain('<main class="contact-own-layout">');
+		expect(html).not.toContain("/_emdash/api/media/file/wp-shell/abc.css");
+		expect(html).not.toContain('<header id="site-header">');
+	});
+
+	it("draws every other page in the record's own layout", async () => {
+		const html = await page("about");
+		expect(html).toMatch(
+			/<link rel="stylesheet" href="\/_emdash\/api\/media\/file\/wp-shell\/abc\.css"/,
+		);
+		expect(html).toContain('<header id="site-header">');
+		expect(html).not.toMatch(/contact-own|contact\.css/);
+	});
+});
+
+describe("WpShell: what the layout draws through its own components", () => {
+	it("draws the entry's imported form in its plugin's markup and a classic video as WordPress's player", async () => {
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShell, {
+			props: {
+				shell: record(),
+				kind: "page",
+				path: "/pages/contact",
+				slug: "contact",
+				title: "Contact",
+				entry: {
+					title: "Contact",
+					body: [
+						{ _type: "emdash-form", _key: "f", formId: "01FORM" },
+						{ _type: "embed", _key: "v", url: "https://vimeo.com/100000001", provider: "vimeo" },
+					],
+					edit: { title: {}, content: {} },
+				},
+			},
+			locals: answering(definition()),
+		});
+		expect(html).toContain('<div class="gform_wrapper">');
+		expect(html).toContain('data-ec-skin="gravityforms"');
+		expect(html).not.toContain('class="ec-form"');
+		expect(html).toMatch(
+			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/100000001"/,
+		);
+		expect(html).not.toContain("emdash-embed");
+	});
+
+	it("puts each post of a listing's lanes by the shape EmDash stores for its image", async () => {
+		const base = record();
+		const shell = {
+			...base,
+			listings: [
+				{
+					...base.listings[0]!,
+					count: 3,
+					// Heights: an image 100px wide, a line of text for each letter, 10px a line.
+					lanes: {
+						columns: 2,
+						from: 0,
+						min: 992,
+						estimate: {
+							titleChars: 100,
+							titleLine: 10,
+							textChars: 1,
+							textLine: 10,
+							paragraph: 0,
+							base: 0,
+							thumbWidth: 100,
+						},
+					},
+				},
+			],
+		};
+		const post = (id: string, excerpt: string, image?: { width: number; height: number }) => ({
+			id,
+			data: {
+				title: id,
+				excerpt,
+				content: [],
+				publishedAt: new Date("2023-07-12T05:00:00Z"),
+				...(image
+					? {
+							featured_image: {
+								provider: "local",
+								id: "01ABC.png",
+								src: "/_emdash/api/media/file/01ABC.png",
+								...image,
+							},
+						}
+					: {}),
+			},
+		});
+		// wide: 10 + 10 + 100 x 0.5 = 70 (95 at the 0.75 taken for an image of no known size); long: 10 + 70 = 80
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: [
+				post("wide", "a", { width: 200, height: 100 }),
+				post("long", "abcdefg"),
+				post("third", "b"),
+			],
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShell, {
+			props: {
+				shell,
+				kind: "home",
+				path: "/",
+				title: "Home",
+				entry: { title: "Home", body: [], edit: { title: {}, content: {} } },
+			},
+		});
+		const lanes = html
+			.split('<div class="wp-shell-lane">')
+			.slice(1)
+			.map((lane) => Array.from(lane.matchAll(/href="\/posts\/([a-z]+)"/g), (m) => m[1]));
+		expect(lanes).toEqual([["wide", "third"], ["long"]]);
 	});
 });
