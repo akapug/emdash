@@ -165,13 +165,27 @@ export interface AccountBudgetConfig {
 export const ACCOUNT_BUDGET_TIMEOUT_MS = 5_000;
 
 /**
+ * The version of the mail-budget service's RPC this provider speaks. Every
+ * request names it, and an answer that does not name the same one is a
+ * refusal: a service that changed what a take or a refusal means is never
+ * read as the one this provider knows.
+ */
+export const MAIL_BUDGET_PROTOCOL = 1;
+
+/**
  * The mail-budget service as its service binding exposes it (RPC). `take`
- * answers `{ ok: true, takeId }` or `{ ok: false, refused }`; the service
- * derives the tenant from the token, never from anything else sent.
+ * answers `{ ok: true, protocol, takeId }` or `{ ok: false, protocol,
+ * refused }`; the service derives the tenant from the token, never from
+ * anything else sent.
  */
 interface MailBudgetService {
-	take(request: { token: string; system: boolean; recipients: string[] }): Promise<unknown>;
-	refund(request: { token: string; takeId: string }): Promise<unknown>;
+	take(request: {
+		protocol: number;
+		token: string;
+		system: boolean;
+		recipients: string[];
+	}): Promise<unknown>;
+	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
 }
 
 /** How many recipients the site may reach (see {@link CloudflareEmailConfig.limits}). */
@@ -561,6 +575,7 @@ export async function takeAccountBudget(
 	let answer: unknown;
 	try {
 		const call = budget.service.take({
+			protocol: MAIL_BUDGET_PROTOCOL,
 			token: budget.token,
 			system: source === "system",
 			recipients: await Promise.all(recipients.map(recipientHash)),
@@ -571,7 +586,11 @@ export async function takeAccountBudget(
 			void call
 				.then((late) =>
 					isRecord(late) && late.ok === true && typeof late.takeId === "string"
-						? budget.service.refund({ token: budget.token, takeId: late.takeId })
+						? budget.service.refund({
+								protocol: MAIL_BUDGET_PROTOCOL,
+								token: budget.token,
+								takeId: late.takeId,
+							})
 						: undefined,
 				)
 				.catch(() => undefined);
@@ -585,10 +604,28 @@ export async function takeAccountBudget(
 			refused: `the account's mail budget could not be asked (${describeRedacted(error, recipients)}), so nothing is sent`,
 		};
 	}
-	if (isRecord(answer) && answer.ok === true && typeof answer.takeId === "string") {
+	if (!isRecord(answer) || answer.protocol !== MAIL_BUDGET_PROTOCOL) {
+		// A take in a protocol this provider does not know is given back, best effort.
+		if (isRecord(answer) && answer.ok === true && typeof answer.takeId === "string") {
+			void Promise.resolve()
+				.then(() =>
+					budget.service.refund({
+						protocol: MAIL_BUDGET_PROTOCOL,
+						token: budget.token,
+						takeId: String(answer.takeId),
+					}),
+				)
+				.catch(() => undefined);
+		}
+		const spoke = isRecord(answer) ? JSON.stringify(answer.protocol ?? null) : "nothing";
+		return {
+			refused: `the account's mail budget answered in protocol ${spoke}, and this provider speaks ${MAIL_BUDGET_PROTOCOL}, so nothing is sent`,
+		};
+	}
+	if (answer.ok === true && typeof answer.takeId === "string") {
 		return { takeId: answer.takeId };
 	}
-	if (isRecord(answer) && answer.ok === false && typeof answer.refused === "string") {
+	if (answer.ok === false && typeof answer.refused === "string") {
 		return {
 			refused: `the account's mail budget refused it: ${redactAddresses(answer.refused, recipients)}`,
 		};
@@ -610,7 +647,7 @@ async function refundAccountBudget(
 ): Promise<void> {
 	try {
 		const got = await within(
-			budget.service.refund({ token: budget.token, takeId }),
+			budget.service.refund({ protocol: MAIL_BUDGET_PROTOCOL, token: budget.token, takeId }),
 			budget.timeoutMs,
 		);
 		if ("late" in got) {

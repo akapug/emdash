@@ -870,19 +870,22 @@ const TOKEN = "tok_0123456789abcdef0123456789abcdef0123456";
 function fakeBudget(
 	answer: (req: { system: boolean; recipients: string[] }) => unknown = () => ({
 		ok: true,
+		protocol: 1,
 		takeId: "take-1",
 	}),
 ) {
-	const takes: Array<{ token: string; system: boolean; recipients: string[] }> = [];
-	const refunds: Array<{ token: string; takeId: string }> = [];
+	type Take = { protocol: number; token: string; system: boolean; recipients: string[] };
+	type Refund = { protocol: number; token: string; takeId: string };
+	const takes: Take[] = [];
+	const refunds: Refund[] = [];
 	const service = {
-		take: vi.fn(async (req: { token: string; system: boolean; recipients: string[] }) => {
+		take: vi.fn(async (req: Take) => {
 			takes.push(req);
 			return answer(req);
 		}),
-		refund: vi.fn(async (req: { token: string; takeId: string }) => {
+		refund: vi.fn(async (req: Refund) => {
 			refunds.push(req);
-			return { ok: true };
+			return { ok: true, protocol: 1, refunded: 1 };
 		}),
 	};
 	return { service, takes, refunds, env: { MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: TOKEN } };
@@ -909,7 +912,7 @@ describe("the account's budget", () => {
 		expect(mail.send).toHaveBeenCalledOnce();
 		expect(budget.takes).toHaveLength(1);
 		const [take] = budget.takes;
-		expect(take).toMatchObject({ token: TOKEN, system: true });
+		expect(take).toMatchObject({ protocol: 1, token: TOKEN, system: true });
 		expect(take!.recipients).toHaveLength(2);
 		for (const h of take!.recipients) expect(h).toMatch(/^[0-9a-f]{64}$/);
 		expect(JSON.stringify(budget.takes)).not.toContain("@");
@@ -956,6 +959,7 @@ describe("the account's budget", () => {
 		const kv = memoryKv();
 		const budget = fakeBudget(() => ({
 			ok: false,
+			protocol: 1,
 			refused: "the account has sent 200 of its 200 today",
 		}));
 		await expect(
@@ -978,8 +982,8 @@ describe("the account's budget", () => {
 				},
 				/could not be asked \(Error: service unavailable for <an address at example\.com>\), so nothing is sent/,
 			],
-			[() => ({}), /answered neither a take nor a refusal/],
-			[() => ({ ok: true }), /answered neither a take nor a refusal/],
+			[() => ({ protocol: 1 }), /answered neither a take nor a refusal/],
+			[() => ({ ok: true, protocol: 1 }), /answered neither a take nor a refusal/],
 		] as const) {
 			const mail = fakeEnv();
 			const budget = fakeBudget(answer);
@@ -1011,8 +1015,10 @@ describe("the account's budget", () => {
 		expect(mail.send).not.toHaveBeenCalled();
 		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
 		// The take arrives after all: it is given back.
-		answer({ ok: true, takeId: "take-late" });
-		await vi.waitFor(() => expect(budget.refunds).toEqual([{ token: TOKEN, takeId: "take-late" }]));
+		answer({ ok: true, protocol: 1, takeId: "take-late" });
+		await vi.waitFor(() =>
+			expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-late" }]),
+		);
 	});
 
 	it("a refund that does not answer in time is not waited for: the binding's error still reaches the caller", async () => {
@@ -1034,15 +1040,42 @@ describe("the account's budget", () => {
 		);
 	});
 
+	it("an answer in another protocol, or in none, sends nothing, and a take in it is given back", async () => {
+		for (const [answer, spoke] of [
+			[{ ok: true, protocol: 2, takeId: "take-v2" }, "2"],
+			[{ ok: true, takeId: "take-v0" }, "null"],
+			[{ ok: false, protocol: "1", refused: "no" }, '"1"'],
+		] as const) {
+			const mail = fakeEnv();
+			const kv = memoryKv();
+			const budget = fakeBudget(() => answer);
+			await expect(
+				withBudget({ ...mail.env, ...budget.env })(
+					{ message, source: "emdash-forms" },
+					fakeCtx({ kv }),
+				),
+			).rejects.toThrow(
+				`the account's mail budget answered in protocol ${spoke}, and this provider speaks 1, so nothing is sent`,
+			);
+			expect(mail.send).not.toHaveBeenCalled();
+			expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
+			if (answer.ok) {
+				await vi.waitFor(() =>
+					expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: answer.takeId }]),
+				);
+			}
+		}
+	});
+
 	it("a message the binding refuses gives its place back to the account's budget too", async () => {
 		const mail = fakeEnv(async () => {
 			throw new Error("E_RECIPIENT_NOT_ALLOWED");
 		});
-		const budget = fakeBudget(() => ({ ok: true, takeId: "take-7" }));
+		const budget = fakeBudget(() => ({ ok: true, protocol: 1, takeId: "take-7" }));
 		await expect(
 			withBudget({ ...mail.env, ...budget.env })({ message, source: "system" }, fakeCtx()),
 		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
-		expect(budget.refunds).toEqual([{ token: TOKEN, takeId: "take-7" }]);
+		expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-7" }]);
 	});
 
 	it("a site that has spent its own day asks the account nothing", async () => {
