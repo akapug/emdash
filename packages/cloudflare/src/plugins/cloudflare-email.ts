@@ -37,6 +37,13 @@
  *   A send moves its own counts and deletes none: the counts of windows that
  *   are over go in a daily cron task ({@link pruneBudgets}), a bounded number
  *   at a time, and never the current window's or the one before it.
+ * - With `accountBudget`, every message also takes its place in the account's
+ *   budget (Embark's mail-budget service, one Durable Object per Cloudflare
+ *   account, through a service binding and this site's token): the tenant's
+ *   day, the account's day less a reserve only "system" mail may take, and
+ *   "system" mail to one recipient's hash. A missing binding or token, a
+ *   refusal or any error sends nothing; a message the binding refuses gives
+ *   its place back there too.
  * - A log names a recipient's domain, never the address, and an error the
  *   binding throws has every address replaced by its domain, in any letter
  *   case, in its message, its stack and its causes (EmDash's scrubAddresses).
@@ -76,7 +83,7 @@
  */
 
 import type { PluginContext, PluginDescriptor, ResolvedPlugin } from "emdash";
-import { definePlugin, redactAddresses, scrubAddresses } from "emdash";
+import { definePlugin, describeRedacted, redactAddresses, scrubAddresses } from "emdash";
 import type { EmailDeliverEvent } from "emdash/plugin";
 
 /**
@@ -120,6 +127,41 @@ export interface CloudflareEmailConfig {
 	 * @default false
 	 */
 	allowCc?: boolean;
+
+	/**
+	 * An account-wide budget beside the site's own: the mail-budget service
+	 * (Embark's packages/mail-budget, one Durable Object per Cloudflare
+	 * account) through a service binding, and this site's capability token for
+	 * it, both read from the Worker's env. When it is set, every message takes
+	 * its place there as well, before the binding sends it, and gives it back
+	 * when the binding refuses it. A missing service binding or token, a
+	 * refusal, or any error sends nothing, and the error says why.
+	 */
+	accountBudget?: AccountBudgetConfig;
+}
+
+/** Where the account-wide budget is (see {@link CloudflareEmailConfig.accountBudget}). */
+export interface AccountBudgetConfig {
+	/**
+	 * Name of the service binding to the mail-budget Worker.
+	 * @default "MAIL_BUDGET"
+	 */
+	binding?: string;
+	/**
+	 * Name of the secret that holds this site's capability token.
+	 * @default "MAIL_BUDGET_TOKEN"
+	 */
+	token?: string;
+}
+
+/**
+ * The mail-budget service as its service binding exposes it (RPC). `take`
+ * answers `{ ok: true, takeId }` or `{ ok: false, refused }`; the service
+ * derives the tenant from the token, never from anything else sent.
+ */
+interface MailBudgetService {
+	take(request: { token: string; system: boolean; recipients: string[] }): Promise<unknown>;
+	refund(request: { token: string; takeId: string }): Promise<unknown>;
 }
 
 /** How many recipients the site may reach (see {@link CloudflareEmailConfig.limits}). */
@@ -415,6 +457,104 @@ async function loadWorkerEnv(): Promise<Record<string, unknown>> {
 	}
 }
 
+/** The account budget's binding and token names, or null when the config sets none. */
+function accountBudgetOf(config: CloudflareEmailConfig): Required<AccountBudgetConfig> | null {
+	if (!config.accountBudget) return null;
+	return {
+		binding: config.accountBudget.binding ?? "MAIL_BUDGET",
+		token: config.accountBudget.token ?? "MAIL_BUDGET_TOKEN",
+	};
+}
+
+/** The mail-budget service and this site's token from the env, or why either is missing. */
+function accountBudgetIn(
+	env: Record<string, unknown>,
+	names: Required<AccountBudgetConfig>,
+): { service: MailBudgetService; token: string } | { missing: string } {
+	const service = env[names.binding];
+	const token = env[names.token];
+	const callable =
+		(typeof service === "object" || typeof service === "function") &&
+		service !== null &&
+		typeof Reflect.get(service, "take") === "function" &&
+		typeof Reflect.get(service, "refund") === "function";
+	if (!callable) {
+		return {
+			missing: `the account's mail budget has no service binding "${names.binding}" in this Worker, so nothing is sent (bind the mail-budget Worker as a service)`,
+		};
+	}
+	if (typeof token !== "string" || !token.trim()) {
+		return {
+			missing: `the account's mail budget has no token: the secret "${names.token}" is not set in this Worker, so nothing is sent`,
+		};
+	}
+	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: take and refund are callable
+	return { service: service as MailBudgetService, token: token.trim() };
+}
+
+/** SHA-256 of an address, lowercased, in hex: all the account budget ever learns of a recipient. */
+async function recipientHash(address: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(address.toLowerCase()),
+	);
+	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/**
+ * Take a message's places from the account's budget: `recipients` counted
+ * against the tenant's day, the account's day (all of it for "system" mail,
+ * all but the system reserve for any other source) and, for "system" mail,
+ * each recipient's day, in one step the service makes atomic. Only the
+ * recipients' hashes leave the Worker. Any answer but a take is a refusal.
+ */
+export async function takeAccountBudget(
+	budget: { service: MailBudgetService; token: string },
+	source: string,
+	recipients: readonly string[],
+): Promise<{ takeId: string } | { refused: string }> {
+	let answer: unknown;
+	try {
+		answer = await budget.service.take({
+			token: budget.token,
+			system: source === "system",
+			recipients: await Promise.all(recipients.map(recipientHash)),
+		});
+	} catch (error) {
+		return {
+			refused: `the account's mail budget could not be asked (${describeRedacted(error, recipients)}), so nothing is sent`,
+		};
+	}
+	if (isRecord(answer) && answer.ok === true && typeof answer.takeId === "string") {
+		return { takeId: answer.takeId };
+	}
+	if (isRecord(answer) && answer.ok === false && typeof answer.refused === "string") {
+		return {
+			refused: `the account's mail budget refused it: ${redactAddresses(answer.refused, recipients)}`,
+		};
+	}
+	return {
+		refused: "the account's mail budget answered neither a take nor a refusal, so nothing is sent",
+	};
+}
+
+/** Give a take back to the account's budget. Best effort: a count left high refuses sooner, never later. */
+async function refundAccountBudget(
+	budget: { service: MailBudgetService; token: string },
+	takeId: string,
+	ctx: PluginContext,
+): Promise<void> {
+	try {
+		await budget.service.refund({ token: budget.token, takeId });
+	} catch (error) {
+		ctx.log.warn("the account's mail budget did not take a refund back", {
+			error: describeRedacted(error),
+		});
+	}
+}
+
 function bindingOf(env: Record<string, unknown>, name: string): SendEmailBinding | undefined {
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Worker binding accessed from untyped env object; the send() check validates the shape
 	const b = env[name] as SendEmailBinding | undefined;
@@ -441,6 +581,7 @@ export function createCloudflareEmailDeliver(
 	const bindingName = config.binding ?? "EMAIL";
 	const from = typeof config.from === "string" ? { email: config.from } : config.from;
 	const limits = limitsOf(config);
+	const account = accountBudgetOf(config);
 
 	return async (event, ctx) => {
 		const { message, source } = event;
@@ -472,6 +613,11 @@ export function createCloudflareEmailDeliver(
 					`declare it in the wrangler config ("send_email": [{ "name": "${bindingName}" }]).`,
 			);
 		}
+		const accountBudget = account ? accountBudgetIn(env, account) : null;
+		if (accountBudget && "missing" in accountBudget) {
+			ctx.log.warn("email refused: no account budget", { source, why: accountBudget.missing });
+			throw new Error(`[cloudflare-email] refusing to send: ${accountBudget.missing}`);
+		}
 
 		if (message.replyTo !== undefined && !mailbox(message.replyTo)) {
 			ctx.log.warn("reply-to dropped: it is not one plain address", { source });
@@ -482,6 +628,18 @@ export function createCloudflareEmailDeliver(
 		if ("refused" in budget) {
 			ctx.log.warn("email refused: sending budget spent", { source, why: budget.refused });
 			throw new Error(`[cloudflare-email] refusing to send: ${budget.refused}`);
+		}
+		// The account's budget after the site's own: a site that has spent its
+		// day asks the account nothing, and a refusal here gives the site's back.
+		let accountTake: string | null = null;
+		if (accountBudget) {
+			const taken = await takeAccountBudget(accountBudget, source, [to, ...cc]);
+			if ("refused" in taken) {
+				await refundBudget(ctx.kv, budget.taken);
+				ctx.log.warn("email refused: account budget", { source, why: taken.refused });
+				throw new Error(`[cloudflare-email] refusing to send: ${taken.refused}`);
+			}
+			accountTake = taken.takeId;
 		}
 
 		const name = displayName(from.name ?? ctx.site?.name);
@@ -499,6 +657,7 @@ export function createCloudflareEmailDeliver(
 		} catch (error) {
 			// Only a send Cloudflare accepts spends the budget.
 			await refundBudget(ctx.kv, budget.taken);
+			if (accountBudget && accountTake) await refundAccountBudget(accountBudget, accountTake, ctx);
 			throw scrubAddresses(error, [to, ...cc, ...(replyTo ? [replyTo] : [])]);
 		}
 
@@ -535,9 +694,11 @@ export function createCloudflareEmailStatus(
 ) {
 	const bindingName = config.binding ?? "EMAIL";
 	const from = typeof config.from === "string" ? { email: config.from } : config.from;
+	const account = accountBudgetOf(config);
 	return async (ctx: PluginContext) => {
 		const env = await loadEnv().catch((): Record<string, unknown> => ({}));
 		const site = await siteReplyTo(ctx);
+		const budget = account ? accountBudgetIn(env, account) : null;
 		return {
 			provider: "cloudflare-email",
 			from: from.email,
@@ -545,6 +706,16 @@ export function createCloudflareEmailStatus(
 			binding: { name: bindingName, present: Boolean(bindingOf(env, bindingName)) },
 			replyTo: site ? "site" : mailbox(config.replyTo) ? "configured" : null,
 			limits: limitsOf(config),
+			// Whether sends take a place in the account's budget, and whether this
+			// Worker has what that needs; never the token.
+			accountBudget: account
+				? {
+						binding: account.binding,
+						token: account.token,
+						ready: Boolean(budget && !("missing" in budget)),
+						...(budget && "missing" in budget ? { why: budget.missing } : {}),
+					}
+				: null,
 		};
 	};
 }

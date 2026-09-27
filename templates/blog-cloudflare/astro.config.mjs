@@ -9,9 +9,12 @@ import emdash from "emdash/astro";
 // Email through Cloudflare Email Sending when the build names a sender:
 // `EMDASH_EMAIL_FROM=notifications@mail.example.org astro build`. The sender's
 // domain must be onboarded for Email Sending, and the Worker needs a
-// `send_email` binding named EMAIL that allows the sender. The sender's name
-// is the site's title. Without it the site has no email provider, and forms
-// store submissions without mailing anyone.
+// `send_email` binding named EMAIL that allows the sender. Every message also
+// takes its place in the account's mail budget (Embark's mail-budget Worker):
+// the Worker needs a service binding to it named MAIL_BUDGET and this site's
+// token in the secret MAIL_BUDGET_TOKEN, and without either it sends nothing.
+// The sender's name is the site's title. Without EMDASH_EMAIL_FROM the site
+// has no email provider, and forms store submissions without mailing anyone.
 const emailFrom = process.env.EMDASH_EMAIL_FROM?.trim();
 
 export default defineConfig({
@@ -26,7 +29,10 @@ export default defineConfig({
 		emdash({
 			database: d1({ binding: "DB", session: "auto" }),
 			storage: r2({ binding: "MEDIA" }),
-			plugins: [formsPlugin(), ...(emailFrom ? [cloudflareEmail({ from: emailFrom })] : [])],
+			plugins: [
+				formsPlugin(),
+				...(emailFrom ? [cloudflareEmail({ from: emailFrom, accountBudget: {} })] : []),
+			],
 		}),
 	],
 	fonts: [

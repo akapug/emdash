@@ -804,6 +804,187 @@ describe("what a log carries", () => {
 	});
 });
 
+const TOKEN = "tok_0123456789abcdef0123456789abcdef0123456";
+
+/**
+ * The mail-budget service as its service binding exposes it: `take` answers a
+ * take or a refusal from `answer` (default: a take), and every call is kept.
+ */
+function fakeBudget(
+	answer: (req: { system: boolean; recipients: string[] }) => unknown = () => ({
+		ok: true,
+		takeId: "take-1",
+	}),
+) {
+	const takes: Array<{ token: string; system: boolean; recipients: string[] }> = [];
+	const refunds: Array<{ token: string; takeId: string }> = [];
+	const service = {
+		take: vi.fn(async (req: { token: string; system: boolean; recipients: string[] }) => {
+			takes.push(req);
+			return answer(req);
+		}),
+		refund: vi.fn(async (req: { token: string; takeId: string }) => {
+			refunds.push(req);
+			return { ok: true };
+		}),
+	};
+	return { service, takes, refunds, env: { MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: TOKEN } };
+}
+
+describe("the account's budget", () => {
+	const withBudget = (env: Record<string, unknown>) =>
+		createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", accountBudget: {}, allowCc: true },
+			async () => env,
+		);
+
+	it("every message takes its place there too, and only the recipients' hashes leave the Worker", async () => {
+		const mail = fakeEnv();
+		const budget = fakeBudget();
+		await withBudget({ ...mail.env, ...budget.env })(
+			{
+				message: { ...message, to: "User@Example.com", cc: ["team@example.com"] },
+				source: "system",
+			},
+			fakeCtx(),
+		);
+
+		expect(mail.send).toHaveBeenCalledOnce();
+		expect(budget.takes).toHaveLength(1);
+		const [take] = budget.takes;
+		expect(take).toMatchObject({ token: TOKEN, system: true });
+		expect(take!.recipients).toHaveLength(2);
+		for (const h of take!.recipients) expect(h).toMatch(/^[0-9a-f]{64}$/);
+		expect(JSON.stringify(budget.takes)).not.toContain("@");
+		// The hash is of the address in lower case: one recipient, whatever its case.
+		const again = fakeBudget();
+		await withBudget({ ...fakeEnv().env, ...again.env })(
+			{ message: { ...message, to: "user@example.com" }, source: "system" },
+			fakeCtx(),
+		);
+		expect(again.takes[0]!.recipients[0]).toBe(take!.recipients[0]);
+		// A form's mail is not "system" mail.
+		await withBudget({ ...fakeEnv().env, ...again.env })(
+			{ message, source: "emdash-forms" },
+			fakeCtx(),
+		);
+		expect(again.takes[1]).toMatchObject({ system: false });
+	});
+
+	it("a Worker without the service binding or the token sends nothing, spends nothing of the site's, and says why", async () => {
+		for (const [env, why] of [
+			[{ MAIL_BUDGET_TOKEN: TOKEN }, /no service binding "MAIL_BUDGET" in this Worker/],
+			[
+				{ MAIL_BUDGET: { take: async () => ({}) }, MAIL_BUDGET_TOKEN: TOKEN },
+				/no service binding "MAIL_BUDGET"/,
+			],
+			[
+				{ MAIL_BUDGET: fakeBudget().service },
+				/no token: the secret "MAIL_BUDGET_TOKEN" is not set/,
+			],
+			[{ MAIL_BUDGET: fakeBudget().service, MAIL_BUDGET_TOKEN: "  " }, /no token/],
+		] as const) {
+			const mail = fakeEnv();
+			const kv = memoryKv();
+			await expect(
+				withBudget({ ...mail.env, ...env })({ message, source: "emdash-forms" }, fakeCtx({ kv })),
+			).rejects.toThrow(why);
+			expect(mail.send).not.toHaveBeenCalled();
+			expect([...kv.rows.keys()]).toEqual([]);
+		}
+	});
+
+	it("a refusal there sends nothing and gives the site's places back", async () => {
+		const mail = fakeEnv();
+		const kv = memoryKv();
+		const budget = fakeBudget(() => ({
+			ok: false,
+			refused: "the account has sent 200 of its 200 today",
+		}));
+		await expect(
+			withBudget({ ...mail.env, ...budget.env })(
+				{ message, source: "emdash-forms" },
+				fakeCtx({ kv }),
+			),
+		).rejects.toThrow(
+			/the account's mail budget refused it: the account has sent 200 of its 200 today/,
+		);
+		expect(mail.send).not.toHaveBeenCalled();
+		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
+	});
+
+	it("an error asking it, or an answer that is neither a take nor a refusal, sends nothing", async () => {
+		for (const [answer, why] of [
+			[
+				() => {
+					throw new Error("service unavailable for User@Example.com");
+				},
+				/could not be asked \(Error: service unavailable for <an address at example\.com>\), so nothing is sent/,
+			],
+			[() => ({}), /answered neither a take nor a refusal/],
+			[() => ({ ok: true }), /answered neither a take nor a refusal/],
+		] as const) {
+			const mail = fakeEnv();
+			const budget = fakeBudget(answer);
+			const error = (await withBudget({ ...mail.env, ...budget.env })(
+				{ message: { ...message, to: "user@example.com" }, source: "system" },
+				fakeCtx(),
+			).catch((e: unknown) => e)) as Error;
+			expect(error.message).toMatch(why);
+			expect(error.message.toLowerCase()).not.toContain("user@");
+			expect(mail.send).not.toHaveBeenCalled();
+		}
+	});
+
+	it("a message the binding refuses gives its place back to the account's budget too", async () => {
+		const mail = fakeEnv(async () => {
+			throw new Error("E_RECIPIENT_NOT_ALLOWED");
+		});
+		const budget = fakeBudget(() => ({ ok: true, takeId: "take-7" }));
+		await expect(
+			withBudget({ ...mail.env, ...budget.env })({ message, source: "system" }, fakeCtx()),
+		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
+		expect(budget.refunds).toEqual([{ token: TOKEN, takeId: "take-7" }]);
+	});
+
+	it("a site that has spent its own day asks the account nothing", async () => {
+		const budget = fakeBudget();
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", accountBudget: {}, limits: { perDay: 1 } },
+			async () => ({ ...fakeEnv().env, ...budget.env }),
+			() => new Date("2026-01-01T10:00:00Z"),
+		);
+		const kv = memoryKv();
+		await deliver({ message, source: "x" }, fakeCtx({ kv }));
+		await expect(deliver({ message, source: "x" }, fakeCtx({ kv }))).rejects.toThrow(
+			/"x" this day/,
+		);
+		expect(budget.takes).toHaveLength(1);
+	});
+
+	it("without accountBudget in the config, no account budget is asked, whatever the env holds", async () => {
+		const budget = fakeBudget();
+		await createCloudflareEmailDeliver({ from: "notify@mail.example.org" }, async () => ({
+			...fakeEnv().env,
+			...budget.env,
+		}))(event, fakeCtx());
+		expect(budget.takes).toEqual([]);
+	});
+
+	it("names other bindings when the config does", async () => {
+		const budget = fakeBudget();
+		const mail = fakeEnv();
+		await createCloudflareEmailDeliver(
+			{
+				from: "notify@mail.example.org",
+				accountBudget: { binding: "BUDGET2", token: "BUDGET2_TOKEN" },
+			},
+			async () => ({ ...mail.env, BUDGET2: budget.service, BUDGET2_TOKEN: TOKEN }),
+		)(event, fakeCtx());
+		expect(budget.takes).toHaveLength(1);
+	});
+});
+
 describe("pruning the counts of windows that are over", () => {
 	const seeded = () =>
 		memoryKv({
@@ -907,6 +1088,30 @@ describe("createCloudflareEmailStatus()", () => {
 				systemReserve: 50,
 				systemPerRecipient: 10,
 			},
+			accountBudget: null,
+		});
+	});
+
+	it("says whether the Worker has what the account budget needs, and never the token", async () => {
+		const ready = createCloudflareEmailStatus(
+			{ from: "notify@mail.example.org", accountBudget: {} },
+			async () => ({ ...fakeEnv().env, ...fakeBudget().env }),
+		);
+		const noToken = createCloudflareEmailStatus(
+			{ from: "notify@mail.example.org", accountBudget: {} },
+			async () => ({ MAIL_BUDGET: fakeBudget().service }),
+		);
+
+		const on = await ready(fakeCtx());
+		expect(on.accountBudget).toEqual({
+			binding: "MAIL_BUDGET",
+			token: "MAIL_BUDGET_TOKEN",
+			ready: true,
+		});
+		expect(JSON.stringify(on)).not.toContain(TOKEN);
+		expect((await noToken(fakeCtx())).accountBudget).toMatchObject({
+			ready: false,
+			why: expect.stringMatching(/no token: the secret "MAIL_BUDGET_TOKEN" is not set/),
 		});
 	});
 
