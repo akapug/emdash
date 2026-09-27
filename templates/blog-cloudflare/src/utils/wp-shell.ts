@@ -1292,8 +1292,8 @@ export function formSkin(shell: WpShell, def: WpShellFormDefinition): WpShellFor
 				(sf.options === undefined || (f.options?.length ?? 0) === sf.options);
 			return same ? f : null;
 		});
-		const fields = matched.filter((f) => f !== null);
-		if (fields.length === matched.length) return { form, fields };
+		const found = matched.filter((f) => f !== null);
+		if (found.length === matched.length) return { form, fields: found };
 	}
 	return null;
 }
