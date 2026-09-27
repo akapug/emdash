@@ -34,6 +34,14 @@ function recipientDomain(address: string): string {
 }
 
 /**
+ * What a send came to: handed to the provider, which delivered it without
+ * error ("sent"), or stopped by a plugin's email:beforeSend ("cancelled", with
+ * the plugin that did). A caller that reports a send as made checks it: a
+ * cancelled send returns normally, and nothing went out.
+ */
+export type EmailSendResult = { status: "sent" } | { status: "cancelled"; by: string };
+
+/**
  * Error thrown when ctx.email.send() is called but no provider is configured.
  */
 export class EmailNotConfiguredError extends Error {
@@ -101,11 +109,12 @@ export class EmailPipeline {
 	 *
 	 * @param message - The email to send
 	 * @param source - Where the email originated ("system" for auth, plugin ID for plugins)
+	 * @returns "sent", or "cancelled" by the email:beforeSend plugin that stopped it
 	 * @throws EmailNotConfiguredError if no provider is selected
 	 * @throws EmailRecursionError if called re-entrantly from within a hook
 	 * @throws Error if the provider handler throws
 	 */
-	async send(message: EmailMessage, source: string): Promise<void> {
+	async send(message: EmailMessage, source: string): Promise<EmailSendResult> {
 		// Recursion guard: a plugin with email:send + email:intercept calling
 		// ctx.email.send() from an email hook would loop forever.
 		// Uses AsyncLocalStorage so concurrent requests don't interfere —
@@ -120,20 +129,19 @@ export class EmailPipeline {
 			// Already inside an ALS context (e.g. nested call) — increment depth
 			store.depth++;
 			try {
-				await run();
+				return await run();
 			} finally {
 				store.depth--;
 			}
-		} else {
-			// First call — create new ALS context
-			await emailSendALS.run({ depth: 1 }, run);
 		}
+		// First call — create new ALS context
+		return emailSendALS.run({ depth: 1 }, run);
 	}
 
 	/**
 	 * Inner send implementation, separated from the recursion guard.
 	 */
-	private async sendInner(message: EmailMessage, source: string): Promise<void> {
+	private async sendInner(message: EmailMessage, source: string): Promise<EmailSendResult> {
 		// Validate message fields at the pipeline boundary. TypeScript enforces
 		// this at compile time, but sandboxed plugins cross an RPC boundary
 		// where runtime types aren't guaranteed.
@@ -181,7 +189,7 @@ export class EmailPipeline {
 				console.info(
 					`[email] Email to an address at ${recipientDomain(message.to)} cancelled by plugin "${cancelledBy}"`,
 				);
-				return;
+				return { status: "cancelled", by: cancelledBy };
 			}
 
 			finalMessage = beforeResult.message;
@@ -221,6 +229,7 @@ export class EmailPipeline {
 					),
 				);
 		}
+		return { status: "sent" };
 	}
 
 	/**

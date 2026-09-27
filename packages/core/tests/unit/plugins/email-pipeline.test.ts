@@ -414,7 +414,9 @@ describe("EmailPipeline", () => {
 
 		const emailPipeline = new EmailPipeline(hookPipeline);
 		// Use non-system source so beforeSend hooks run
-		await emailPipeline.send(createTestMessage(), "some-plugin");
+		expect(await emailPipeline.send(createTestMessage(), "some-plugin")).toEqual({
+			status: "sent",
+		});
 
 		// afterSend is fire-and-forget, give it a tick
 		await new Promise((resolve) => setTimeout(resolve, 10));
@@ -462,8 +464,12 @@ describe("EmailPipeline", () => {
 		hookPipeline.setExclusiveSelection("email:deliver", "provider");
 
 		const emailPipeline = new EmailPipeline(hookPipeline);
-		// Use non-system source so beforeSend hooks run (and can cancel)
-		await emailPipeline.send(createTestMessage(), "some-plugin");
+		// Use non-system source so beforeSend hooks run (and can cancel).
+		// A cancelled send returns normally, so it says it was cancelled, and by whom.
+		expect(await emailPipeline.send(createTestMessage(), "some-plugin")).toEqual({
+			status: "cancelled",
+			by: "canceller",
+		});
 
 		// Give fire-and-forget a tick
 		await new Promise((resolve) => setTimeout(resolve, 10));

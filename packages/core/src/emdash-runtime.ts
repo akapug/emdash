@@ -2043,7 +2043,11 @@ export class EmDashRuntime {
 		// Wire email send into sandbox runner (created earlier but without
 		// email pipeline since it didn't exist yet)
 		if (sandboxRunner) {
-			sandboxRunner.setEmailSend((message, pluginId) => emailPipeline.send(message, pluginId));
+			// A sandboxed plugin's send resolves when the pipeline is done with it; what it
+			// came to ("sent" or "cancelled") is the pipeline's to report, not the plugin's.
+			sandboxRunner.setEmailSend(async (message, pluginId) => {
+				await emailPipeline.send(message, pluginId);
+			});
 		}
 
 		// ── Cron system ──────────────────────────────────────────────────

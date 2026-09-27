@@ -78,7 +78,9 @@ export const GET: APIRoute = async ({ locals }) => {
  * POST /_emdash/api/settings/email/test
  *
  * Send a test email through the full pipeline.
- * Validates the pipeline is configured and the provider works.
+ * Validates the pipeline is configured and the provider works. A test email
+ * an email:beforeSend plugin cancels was not sent, and the answer says so
+ * (422 EMAIL_CANCELLED, naming the plugin) rather than reporting it sent.
  */
 const testEmailBody = z.object({
 	to: z.email(),
@@ -110,7 +112,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		const siteName = (await optionsRepo.get<string>("emdash:site_title")) ?? "EmDash";
 		const safeName = escapeHtml(siteName);
 
-		await emdash.email.send(
+		const outcome = await emdash.email.send(
 			{
 				to: body.to,
 				subject: `Test email from ${siteName}`,
@@ -134,6 +136,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			},
 			"admin",
 		);
+
+		if (outcome.status === "cancelled") {
+			return apiError(
+				"EMAIL_CANCELLED",
+				`The test email was not sent: the plugin "${outcome.by}" cancelled it`,
+				422,
+			);
+		}
 
 		return apiSuccess({
 			success: true,

@@ -1842,7 +1842,9 @@ export class PluginContextFactory {
 			const pipeline = this.emailPipeline;
 			const pluginId = plugin.id;
 			email = {
-				send: (message) => pipeline.send(message, pluginId),
+				send: async (message) => {
+					await pipeline.send(message, pluginId);
+				},
 			};
 		}
 
