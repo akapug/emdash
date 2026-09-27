@@ -31,6 +31,11 @@ const REGEXP_SPECIAL = /[.*+?^${}()|[\]\\]/g;
 /** The longest quoted local part looked for (RFC 5321 allows 64 octets; escapes double that). */
 const MAX_QUOTED = 130;
 
+/** Every address a message names, which an error about it may repeat. */
+export function messageAddresses(message: { to: string; cc?: string[]; replyTo?: string }): string[] {
+	return [message.to, ...(message.cc ?? []), ...(message.replyTo ? [message.replyTo] : [])];
+}
+
 const stand = (domain: string) => `<an address at ${domain}>`;
 const domainOf = (address: string) => address.slice(address.lastIndexOf("@") + 1);
 

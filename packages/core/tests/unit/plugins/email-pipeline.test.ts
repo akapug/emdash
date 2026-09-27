@@ -664,6 +664,44 @@ describe("EmailPipeline", () => {
 		errorSpy.mockRestore();
 	});
 
+	it("redacts an afterSend error before it is logged", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", (async () => {}) as EmailDeliverHandler, {
+					exclusive: true,
+				}),
+			},
+		});
+		const metrics = createTestPlugin({
+			id: "metrics",
+			capabilities: ["hooks.email-events:register"],
+			hooks: {
+				"email:afterSend": createTestHook("metrics", (async () => {
+					throw new Error("could not record Admin@Example.com", {
+						cause: new Error("ADMIN@example.com unknown"),
+					});
+				}) as EmailAfterSendHandler),
+			},
+		});
+		const hookPipeline = new HookPipeline([provider, metrics], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		await new EmailPipeline(hookPipeline).send(
+			createTestMessage({ to: "admin@example.com" }),
+			"forms",
+		);
+		await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
+		const told = errorSpy.mock.calls
+			.flat()
+			.map((v) => inspect(v, { depth: 20 }))
+			.join("\n");
+		expect(told.toLowerCase()).not.toContain("admin@");
+		expect(told).toContain("<an address at example.com>");
+		errorSpy.mockRestore();
+	});
+
 	it("afterSend errors do not propagate to caller", async () => {
 		const deliverHandler: EmailDeliverHandler = async () => {};
 		const afterSendHandler: EmailAfterSendHandler = async () => {

@@ -16,7 +16,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { HookPipeline } from "./hooks.js";
-import { describeRedacted, scrubAddresses } from "./redact-addresses.js";
+import { describeRedacted, messageAddresses as addressesOf, scrubAddresses } from "./redact-addresses.js";
 import type { EmailDeliverEvent, EmailMessage, EmailSendResult } from "./types.js";
 
 export type { EmailSendResult } from "./types.js";
@@ -34,11 +34,6 @@ const SYSTEM_SOURCE = "system";
  */
 function recipientDomain(address: string): string {
 	return address.slice(address.lastIndexOf("@") + 1);
-}
-
-/** Every address a message names, which an error about it may repeat. */
-function addressesOf(message: EmailMessage): string[] {
-	return [message.to, ...(message.cc ?? []), ...(message.replyTo ? [message.replyTo] : [])];
 }
 
 /**
