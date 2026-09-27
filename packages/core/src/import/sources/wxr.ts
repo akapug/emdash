@@ -5,7 +5,12 @@
  * This wraps the existing WXR parsing and analysis logic.
  */
 
-import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
+import {
+	gutenbergToPortableText,
+	texturizeNote,
+	texturizes,
+	wptexturize,
+} from "@emdash-cms/gutenberg-to-portable-text";
 
 import { parseWxrString, type WxrData, type WxrPost } from "../../cli/wxr/parser.js";
 import type {
@@ -93,7 +98,7 @@ export const wxrSource: ImportSource = {
 			}
 
 			// Convert to normalized item
-			yield wxrPostToNormalizedItem(post, attachmentMap, wxr.site.link || "");
+			yield wxrPostToNormalizedItem(post, attachmentMap, wxr.site.link || "", wxr.site.language);
 
 			count++;
 			if (options.limit && count >= options.limit) {
@@ -255,6 +260,11 @@ function analyzeWxrData(
 			title: wxr.site.title || "WordPress Site",
 			url: wxr.site.link || "",
 		},
+		typography: {
+			language: wxr.site.language?.trim() || null,
+			texturized: texturizes(wxr.site.language),
+			note: texturizeNote(wxr.site.language),
+		},
 		postTypes,
 		attachments: {
 			count: wxr.attachments.length,
@@ -283,8 +293,12 @@ function wxrPostToNormalizedItem(
 	post: WxrPost,
 	attachmentMap: Map<string, string>,
 	siteUrl: string,
+	siteLanguage?: string,
 ): NormalizedItem {
-	const content = post.content ? gutenbergToPortableText(post.content) : [];
+	// As WordPress printed it, in English (texturizes); a post's own locale decides for it.
+	const texturize = texturizes(post.locale ?? siteLanguage);
+	const typed = (text: string) => (texturize ? wptexturize(text) : text);
+	const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
 	if (siteUrl) relativizeContentLinks(content, siteUrl);
 
 	// Resolve featured image: _thumbnail_id is the attachment ID, look up the URL
@@ -312,9 +326,9 @@ function wxrPostToNormalizedItem(
 		status: mapWpStatus(post.status),
 		slug: post.postName || slugify(post.title || `post-${post.id || Date.now()}`),
 		// As WordPress printed them, like the content (wptexturize); the slug is the stored title's.
-		title: wptexturize(post.title || "Untitled"),
+		title: typed(post.title || "Untitled"),
 		content,
-		excerpt: post.excerpt ? wptexturize(post.excerpt) : post.excerpt,
+		excerpt: post.excerpt ? typed(post.excerpt) : post.excerpt,
 		date: parseWxrDate(post.postDateGmt, post.pubDate, post.postDate) ?? new Date(),
 		modified: parseWxrDate(post.postModifiedGmt, undefined, post.postModified),
 		author: post.creator,

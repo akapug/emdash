@@ -6,7 +6,12 @@
  * Accepts WXR file and import configuration, imports content into the database.
  */
 
-import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
+import {
+	gutenbergToPortableText,
+	texturizeNote,
+	texturizes,
+	wptexturize,
+} from "@emdash-cms/gutenberg-to-portable-text";
 import type { APIRoute } from "astro";
 import {
 	parseWxrString,
@@ -98,6 +103,13 @@ export interface ImportResult {
 	};
 	/** Per-post SEO carried into the SEO fields, and what could not be (when `importSeo` is on). */
 	seo?: WxrSeoTally;
+	/**
+	 * The typography the text was stored in: as WordPress printed it
+	 * (wptexturize, English quote marks) for a site in English or one whose
+	 * export names no language, as written otherwise. A post's own locale
+	 * (WPML, Polylang) decides for that post.
+	 */
+	typography?: { language: string | null; texturized: boolean; note: string };
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -204,6 +216,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			authorDisplayNames,
 			taxonomyPlan,
 			seoSite,
+			wxr.site.language,
 		);
 
 		// Import reusable blocks as sections (if enabled)
@@ -236,6 +249,7 @@ export async function importContent(
 	authorDisplayNames: Map<string, string> | undefined,
 	taxonomyPlan: TaxonomyImportPlan,
 	seoSite?: WxrSeoSite,
+	siteLanguage?: string,
 ): Promise<ImportResult> {
 	const result: ImportResult = {
 		success: true,
@@ -243,6 +257,11 @@ export async function importContent(
 		skipped: 0,
 		errors: [],
 		byCollection: {},
+		typography: {
+			language: siteLanguage?.trim() || null,
+			texturized: texturizes(siteLanguage),
+			note: texturizeNote(siteLanguage),
+		},
 		taxonomies: {
 			termsCreated: taxonomyPlan.termsCreated,
 			termsReused: taxonomyPlan.termsReused,
@@ -289,8 +308,11 @@ export async function importContent(
 		}
 
 		try {
+			// The text as WordPress printed it, in English (texturizes); a post's own locale decides for it.
+			const texturize = texturizes(post.locale ?? siteLanguage);
+
 			// Convert content to Portable Text
-			const content = post.content ? gutenbergToPortableText(post.content) : [];
+			const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
 
 			// Generate slug from post name or title
 			const slug = post.postName || slugify(post.title || `post-${post.id || Date.now()}`);
@@ -353,10 +375,11 @@ export async function importContent(
 			// Build data object with required fields. The title and excerpt as
 			// WordPress printed them (the_title and the_excerpt run wptexturize),
 			// like the content; the slug above is the stored title's.
+			const typed = (text: string) => (texturize ? wptexturize(text) : text);
 			const data: Record<string, unknown> = {
-				title: wptexturize(post.title || "Untitled"),
+				title: typed(post.title || "Untitled"),
 				content,
-				excerpt: post.excerpt ? wptexturize(post.excerpt) : undefined,
+				excerpt: post.excerpt ? typed(post.excerpt) : undefined,
 			};
 
 			// Only add featured_image if the collection has this field and we have a value

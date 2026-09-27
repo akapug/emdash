@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { gutenbergToPortableText, wptexturize } from "../src/index.js";
+import { gutenbergToPortableText, texturizeNote, texturizes, wptexturize } from "../src/index.js";
 import type { PortableTextBlock } from "../src/types.js";
 
 const text = (blocks: PortableTextBlock[]) =>
@@ -138,5 +138,26 @@ describe("gutenbergToPortableText stores the text as WordPress showed it", () =>
 		expect(text(gutenbergToPortableText(`It's "here"`, { texturize: false }))).toEqual([
 			`It's "here"`,
 		]);
+	});
+});
+
+describe("texturizes: WordPress's English quote marks are a site in English's, or one that names no language", () => {
+	it("says yes for English and for no language, and no for any other", () => {
+		for (const l of [undefined, null, "", "  ", "en", "en-US", "en_GB", "EN-au"])
+			expect(texturizes(l), String(l)).toBe(true);
+		for (const l of ["fr-FR", "de_DE", "es", "eng", "enx", "nl-BE"])
+			expect(texturizes(l), l).toBe(false);
+	});
+
+	it("says which in a sentence", () => {
+		expect(texturizeNote("fr-FR")).toBe(
+			"the site's language is fr-FR: the text is stored as written, since WordPress curls its quotes with fr-FR's own marks, which are not ported",
+		);
+		expect(texturizeNote("en-US")).toBe(
+			"the site's language is en-US: the text is stored as WordPress printed it (wptexturize)",
+		);
+		expect(texturizeNote(undefined)).toBe(
+			"the export names no language: the text is stored as WordPress printed it in English (wptexturize)",
+		);
 	});
 });

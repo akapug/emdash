@@ -1,6 +1,8 @@
 /**
  * The CLI's WordPress import stores a post's title and excerpt as WordPress
- * printed them (the_title and the_excerpt run wptexturize), like its content.
+ * printed them, like its content (wptexturize), for a site in English or one
+ * whose export names no language; a site in another language keeps its text
+ * as written, and the result says which.
  */
 
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -70,12 +72,26 @@ describe("WordPress CLI import: the text as WordPress printed it", () => {
 		};
 	}
 
-	it("curls the title and the excerpt like the content", async () => {
-		const { said } = await run(null);
+	it("curls the title and the excerpt like the content, for English and for no language", async () => {
+		for (const language of [null, "en-US"]) {
+			const { result, said } = await run(language);
+			expect(said, String(language)).toEqual([
+				"Tom’s “Big” Day — Live…",
+				"It’s “short” – really.",
+				"It’s “here” – now…",
+			]);
+			expect(result.typography).toMatchObject({ language, texturized: true });
+		}
+	});
+
+	it("keeps a site in another language as written, and says so", async () => {
+		const { result, said } = await run("fr-FR");
 		expect(said).toEqual([
-			"Tom’s “Big” Day — Live…",
-			"It’s “short” – really.",
-			"It’s “here” – now…",
+			`Tom's "Big" Day -- Live...`,
+			`It's "short" - really.`,
+			`It's "here" - now...`,
 		]);
+		expect(result.typography).toMatchObject({ language: "fr-FR", texturized: false });
+		expect(result.typography!.note).toContain("stored as written");
 	});
 });

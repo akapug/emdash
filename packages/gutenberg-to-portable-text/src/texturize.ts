@@ -299,3 +299,28 @@ export function wptexturize(html: string): string {
 	}
 	return out + text(html.slice(last));
 }
+
+/**
+ * Whether a site's text is stored as WordPress printed it (wptexturize): a
+ * site in English (`en`, `en-US`, `en_GB`), or one whose language is not
+ * named. WordPress curls quotes with the marks its locale's translation gives
+ * (`« »` in French, `„ “` in German), and those are not ported here, so the
+ * text of a site in any other language is stored as written: straight quotes
+ * and all, which is what its author typed.
+ */
+const ENGLISH = /^en(?:[-_]|$)/i;
+
+export function texturizes(language: string | null | undefined): boolean {
+	const l = (language ?? "").trim();
+	return l === "" || ENGLISH.test(l);
+}
+
+/** What an importer says it did with a site's typography, and why. */
+export function texturizeNote(language: string | null | undefined): string {
+	const l = (language ?? "").trim();
+	if (l === "")
+		return "the export names no language: the text is stored as WordPress printed it in English (wptexturize)";
+	return texturizes(l)
+		? `the site's language is ${l}: the text is stored as WordPress printed it (wptexturize)`
+		: `the site's language is ${l}: the text is stored as written, since WordPress curls its quotes with ${l}'s own marks, which are not ported`;
+}

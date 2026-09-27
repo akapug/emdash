@@ -5,7 +5,11 @@
  * Provides full access to all content including drafts, custom post types, and ACF fields.
  */
 
-import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
+import {
+	gutenbergToPortableText,
+	texturizes,
+	wptexturize,
+} from "@emdash-cms/gutenberg-to-portable-text";
 
 import { encodeBase64 } from "../../utils/base64.js";
 import type { PluginComment } from "../comments.js";
@@ -676,7 +680,11 @@ function getRequestConfig(input: SourceInput): {
  * Convert plugin post to normalized item
  */
 function pluginPostToNormalizedItem(post: PluginPost, siteUrl: string): NormalizedItem {
-	const content = post.content ? gutenbergToPortableText(post.content) : [];
+	// As WordPress printed it, in English (texturizes): the title and excerpt like the content.
+	// A post in another locale (WPML, Polylang) keeps its text as written.
+	const texturize = texturizes(post.locale);
+	const typed = (text: string) => (texturize ? wptexturize(text) : text);
+	const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
 	relativizeContentLinks(content, siteUrl);
 
 	// Extract categories and tags from taxonomies
@@ -719,10 +727,9 @@ function pluginPostToNormalizedItem(post: PluginPost, siteUrl: string): Normaliz
 		postType: post.post_type,
 		status: mapWpStatus(post.status),
 		slug: post.slug,
-		// As WordPress printed them (the_title and the_excerpt run wptexturize), like the content.
-		title: wptexturize(post.title),
+		title: typed(post.title),
 		content,
-		excerpt: post.excerpt ? wptexturize(post.excerpt) : undefined,
+		excerpt: post.excerpt ? typed(post.excerpt) : undefined,
 		date: new Date(post.date_gmt || post.date),
 		modified: post.modified_gmt ? new Date(post.modified_gmt) : new Date(post.modified),
 		author: post.author?.login,

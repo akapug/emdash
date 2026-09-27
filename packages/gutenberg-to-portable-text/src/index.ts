@@ -72,7 +72,7 @@ export * as coreTransformers from "./transformers/core.js";
 export * as embedTransformers from "./transformers/embed.js";
 
 // WordPress's typography, for the text an importer stores beside the content (a title, an excerpt).
-export { wptexturize } from "./texturize.js";
+export { texturizeNote, texturizes, wptexturize } from "./texturize.js";
 
 // Re-export inline utilities
 export {

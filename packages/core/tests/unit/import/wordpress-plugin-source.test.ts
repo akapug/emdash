@@ -98,13 +98,18 @@ function mediaPage(page: number, pages: number, ids: number[]) {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("WordPress Plugin Source — fetch behaviour", () => {
-	it("stores the title and excerpt as WordPress printed them, like the content", async () => {
+	it("stores the title and excerpt as WordPress printed them, like the content, and a post in another language as written", async () => {
 		const typed = {
 			title: `Tom's "Big" Day -- Live...`,
 			excerpt: `It's "short" - really.`,
 			content: `<p>It's "here"</p>`,
 		};
-		mockFetch.mockResolvedValueOnce(contentResponse([makePost(typed)]));
+		mockFetch.mockResolvedValueOnce(
+			contentResponse([
+				makePost(typed),
+				makePost({ ...typed, id: 2, slug: "fr", locale: "fr-FR" }),
+			]),
+		);
 		const items = [];
 		for await (const item of wordpressPluginSource.fetchContent(
 			{ type: "url", url: "https://example.com", token: "test-token" },
@@ -118,6 +123,7 @@ describe("WordPress Plugin Source — fetch behaviour", () => {
 			(items[i]!.content[0] as { children: Array<{ text: string }> }).children[0]!.text,
 		];
 		expect(said(0)).toEqual(["Tom’s “Big” Day — Live…", "It’s “short” – really.", "It’s “here”"]);
+		expect(said(1)).toEqual([typed.title, typed.excerpt, `It's "here"`]);
 	});
 
 	it("maps non-category/tag taxonomies to customTaxonomies", async () => {
