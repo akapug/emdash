@@ -15,6 +15,12 @@ import emdash from "emdash/astro";
 // token in the secret MAIL_BUDGET_TOKEN, and without either it sends nothing.
 // The sender's name is the site's title. Without EMDASH_EMAIL_FROM the site
 // has no email provider, and forms store submissions without mailing anyone.
+//
+// With a sender, the site's own sign-in mail (magic links, invites, recovery)
+// goes through its auth-mail mediator instead: a Worker of its own, bound here
+// as the service SYSTEM_MAIL, which alone holds the mail budget's system lane
+// and the send_email binding that mail goes out through. This Worker never
+// builds or sends it, and without SYSTEM_MAIL sends none of it.
 const emailFrom = process.env.EMDASH_EMAIL_FROM?.trim();
 
 export default defineConfig({
@@ -33,6 +39,7 @@ export default defineConfig({
 				formsPlugin(),
 				...(emailFrom ? [cloudflareEmail({ from: emailFrom, accountBudget: {} })] : []),
 			],
+			...(emailFrom ? { systemMail: { binding: "SYSTEM_MAIL" } } : {}),
 		}),
 	],
 	fonts: [

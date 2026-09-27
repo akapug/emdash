@@ -1,0 +1,423 @@
+/**
+ * Sign-in mail through an auth-mail mediator (the config's `systemMail`).
+ *
+ * With `systemMail: { binding }`, the magic-link, sign-up, invite and recovery
+ * routes hand the mediator the operation and the request's own credential and
+ * build nothing themselves: this Worker's email pipeline (and so every plugin
+ * hook on it) never sees the message, and no auth token is minted here. With
+ * the binding missing they send nothing, and never fall back to the pipeline.
+ */
+
+import { Role } from "@emdash-cms/auth";
+import { createKyselyAdapter } from "@emdash-cms/auth/adapters/kysely";
+import type { Kysely } from "kysely";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+	SYSTEM_MAIL_PROTOCOL,
+	askMediator,
+	mediatorIp,
+	mediatorStatus,
+	systemMailOf,
+} from "../../../src/auth/system-mail.js";
+import type { Database } from "../../../src/database/types.js";
+import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
+
+const CONFIG = { siteUrl: "https://example.com", systemMail: { binding: "SYSTEM_MAIL" } };
+
+type Call = { op: string; request: Record<string, unknown> };
+
+/** A mediator stand-in: records each call, answers `reply`. */
+function mediator(reply: unknown = { protocol: SYSTEM_MAIL_PROTOCOL, status: "sent" }) {
+	const calls: Call[] = [];
+	const op =
+		(name: string) =>
+		async (request: Record<string, unknown>): Promise<unknown> => (
+			calls.push({ op: name, request }),
+			reply
+		);
+	return {
+		calls,
+		binding: {
+			requestMagicLink: op("requestMagicLink"),
+			requestSignup: op("requestSignup"),
+			createInvite: op("createInvite"),
+			sendRecovery: op("sendRecovery"),
+			status: op("status"),
+		},
+	};
+}
+
+/** This Worker's own email pipeline: every message a plugin hook could see passes through `send`. */
+function pipeline() {
+	const sent: unknown[] = [];
+	return {
+		sent,
+		email: {
+			isAvailable: () => true,
+			send: async (message: unknown) => (sent.push(message), { status: "sent" }),
+		},
+	};
+}
+
+/** The routes with the Worker env `env` (`virtual:emdash/env`). */
+async function routesWith(env: Record<string, unknown>) {
+	vi.resetModules();
+	vi.doMock("virtual:emdash/env", () => ({ env }), { virtual: true });
+	return {
+		magicLink: (await import("../../../src/astro/routes/api/auth/magic-link/send.js")).POST,
+		signup: (await import("../../../src/astro/routes/api/auth/signup/request.js")).POST,
+		invite: (await import("../../../src/astro/routes/api/auth/invite/index.js")).POST,
+		recovery: (await import("../../../src/astro/routes/api/admin/users/[id]/send-recovery.js"))
+			.POST,
+		settings: (await import("../../../src/astro/routes/api/settings/email.js")).GET,
+	};
+}
+
+function post(path: string, body: unknown, headers: Record<string, string> = {}): Request {
+	const request = new Request(`http://test.local/_emdash/api/${path}`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "cf-connecting-ip": "198.51.100.7", ...headers },
+		body: JSON.stringify(body),
+	});
+	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- test harness: a Cloudflare request
+	(request as unknown as { cf: Record<string, unknown> }).cf = { country: "US" };
+	return request;
+}
+
+type Route = (context: never) => Response | Promise<Response>;
+
+async function call(route: Route, context: Record<string, unknown>) {
+	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- minimal APIContext for a route handler
+	const res = await route(context as never);
+	return { status: res.status, body: await res.json() };
+}
+
+describe("sign-in mail through the auth-mail mediator", () => {
+	let db: Kysely<Database>;
+	let admin: { id: string; role: number };
+	let target: { id: string; email: string };
+
+	beforeEach(async () => {
+		db = await setupTestDatabase();
+		const adapter = createKyselyAdapter(db);
+		const a = await adapter.createUser({
+			email: "admin@example.com",
+			name: "Admin",
+			role: Role.ADMIN,
+			emailVerified: true,
+		});
+		admin = { id: a.id, role: a.role };
+		const t = await adapter.createUser({
+			email: "writer@example.com",
+			name: "Writer",
+			role: Role.AUTHOR,
+			emailVerified: true,
+		});
+		target = { id: t.id, email: t.email };
+		await adapter.createAllowedDomain("example.com", Role.AUTHOR);
+	});
+
+	afterEach(async () => {
+		vi.doUnmock("virtual:emdash/env");
+		vi.resetModules();
+		await teardownTestDatabase(db);
+	});
+
+	const tokens = async () => (await db.selectFrom("auth_tokens").selectAll().execute()).length;
+
+	it("magic link: the mediator is asked, the pipeline never sees a message, no token is minted here", async () => {
+		const m = mediator();
+		const p = pipeline();
+		const { magicLink } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { status, body } = await call(magicLink, {
+			request: post("auth/magic-link/send", { email: "Writer@Example.com" }),
+			locals: { emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(status).toBe(200);
+		expect(body.data.success).toBe(true);
+		expect(m.calls).toEqual([
+			{
+				op: "requestMagicLink",
+				request: {
+					protocol: SYSTEM_MAIL_PROTOCOL,
+					email: "writer@example.com",
+					ip: "198.51.100.7",
+				},
+			},
+		]);
+		expect(p.sent).toEqual([]);
+		expect(await tokens()).toBe(0);
+	});
+
+	it("magic link: without the binding nothing is sent, and the pipeline is never the fallback", async () => {
+		const p = pipeline();
+		const { magicLink } = await routesWith({});
+		const { status, body } = await call(magicLink, {
+			request: post("auth/magic-link/send", { email: "writer@example.com" }),
+			locals: { emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(status).toBe(200);
+		expect(body.data.success).toBe(true);
+		expect(p.sent).toEqual([]);
+		expect(await tokens()).toBe(0);
+	});
+
+	it("magic link, control: not mediated, the pipeline sends it", async () => {
+		const p = pipeline();
+		const { magicLink } = await routesWith({});
+		await call(magicLink, {
+			request: post("auth/magic-link/send", { email: "writer@example.com" }),
+			locals: { emdash: { db, config: { siteUrl: "https://example.com" }, email: p.email } },
+		});
+		expect(p.sent).toHaveLength(1);
+		expect(await tokens()).toBe(1);
+	});
+
+	it("sign-up: the mediator is asked, with no email pipeline needed here and none used", async () => {
+		const m = mediator();
+		const p = pipeline();
+		const { signup } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { status } = await call(signup, {
+			request: post("auth/signup/request", { email: "New@example.com" }),
+			locals: { emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(status).toBe(200);
+		expect(m.calls.map((c) => c.op)).toEqual(["requestSignup"]);
+		expect(m.calls[0]?.request).toMatchObject({ email: "new@example.com" });
+		expect(p.sent).toEqual([]);
+		expect(await tokens()).toBe(0);
+
+		const none = await call(signup, {
+			request: post("auth/signup/request", { email: "another@example.com" }),
+			locals: { emdash: { db, config: CONFIG } },
+		});
+		expect(none.status).toBe(200);
+	});
+
+	it("sign-up: without the binding nothing is sent", async () => {
+		const p = pipeline();
+		const { signup } = await routesWith({});
+		const { status } = await call(signup, {
+			request: post("auth/signup/request", { email: "new@example.com" }),
+			locals: { emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(status).toBe(200);
+		expect(p.sent).toEqual([]);
+		expect(await tokens()).toBe(0);
+	});
+
+	it("invite: the mediator gets the request's own credential and sends it; the pipeline never sees it", async () => {
+		const m = mediator();
+		const p = pipeline();
+		const { invite } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { body } = await call(invite, {
+			request: post(
+				"auth/invite",
+				{ email: "invitee@example.com", role: Role.EDITOR },
+				{ authorization: "Bearer ec_pat_synthetic", cookie: "astro-session=synthetic" },
+			),
+			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(body.data).toMatchObject({ success: true, emailed: true });
+		expect(body.data).not.toHaveProperty("inviteUrl");
+		expect(m.calls).toEqual([
+			{
+				op: "createInvite",
+				request: {
+					protocol: SYSTEM_MAIL_PROTOCOL,
+					email: "invitee@example.com",
+					role: Role.EDITOR,
+					authorization: "Bearer ec_pat_synthetic",
+					cookie: "astro-session=synthetic",
+				},
+			},
+		]);
+		expect(p.sent).toEqual([]);
+		expect(await tokens()).toBe(0);
+	});
+
+	it("invite: a refusal makes it here with no email and returns the link; the pipeline never sends it", async () => {
+		const m = mediator({ protocol: SYSTEM_MAIL_PROTOCOL, status: "refused", why: "budget" });
+		const p = pipeline();
+		const { invite } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { body } = await call(invite, {
+			request: post("auth/invite", { email: "invitee@example.com" }),
+			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(body.data).toMatchObject({ success: true, emailed: false });
+		expect(body.data.inviteUrl).toContain("/invite/accept?token=");
+		expect(p.sent).toEqual([]);
+	});
+
+	it("invite: without the binding the link comes back and nothing is sent", async () => {
+		const p = pipeline();
+		const { invite } = await routesWith({});
+		const { body } = await call(invite, {
+			request: post("auth/invite", { email: "invitee@example.com" }),
+			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(body.data).toMatchObject({ success: true, emailed: false });
+		expect(typeof body.data.inviteUrl).toBe("string");
+		expect(p.sent).toEqual([]);
+	});
+
+	it("recovery: the mediator gets the target and the credential; a refusal is an error, never a pipeline send", async () => {
+		const m = mediator();
+		const p = pipeline();
+		const { recovery } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const sent = await call(recovery, {
+			request: post(
+				`admin/users/${target.id}/send-recovery`,
+				{},
+				{ cookie: "astro-session=synthetic" },
+			),
+			params: { id: target.id },
+			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(sent.status).toBe(200);
+		expect(m.calls).toEqual([
+			{
+				op: "sendRecovery",
+				request: {
+					protocol: SYSTEM_MAIL_PROTOCOL,
+					userId: target.id,
+					authorization: null,
+					cookie: "astro-session=synthetic",
+				},
+			},
+		]);
+
+		const refusing = mediator({
+			protocol: SYSTEM_MAIL_PROTOCOL,
+			status: "refused",
+			why: "rate limited",
+		});
+		const again = await routesWith({ SYSTEM_MAIL: refusing.binding });
+		const refused = await call(again.recovery, {
+			request: post(`admin/users/${target.id}/send-recovery`, {}),
+			params: { id: target.id },
+			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(refused.status).toBe(502);
+		expect(refused.body.error.code).toBe("RECOVERY_NOT_SENT");
+
+		const missing = await routesWith({});
+		const none = await call(missing.recovery, {
+			request: post(`admin/users/${target.id}/send-recovery`, {}),
+			params: { id: target.id },
+			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+		});
+		expect(none.status).toBe(502);
+		expect(p.sent).toEqual([]);
+		expect(await tokens()).toBe(0);
+	});
+
+	it("settings: says whether sign-in mail is mediated, and reads the mediator's status strictly", async () => {
+		const m = mediator({
+			protocol: SYSTEM_MAIL_PROTOCOL,
+			marker: "emdash-auth-mail:mediator;v=1",
+			send: true,
+			site: true,
+			budget: { ok: true, tenant: "demo", lane: "system", token: "must-not-pass" },
+			extra: "must-not-pass",
+		});
+		const hooks = { getExclusiveHookProviders: () => [], getHookProviders: () => [] };
+		const user = { id: admin.id, role: Role.ADMIN };
+		const { settings } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { body } = await call(settings, {
+			locals: { user, emdash: { db, config: CONFIG, hooks, email: pipeline().email } },
+		});
+		expect(body.data.systemMail).toEqual({
+			mediated: true,
+			binding: "SYSTEM_MAIL",
+			present: true,
+			status: {
+				ok: true,
+				marker: "emdash-auth-mail:mediator;v=1",
+				send: true,
+				site: true,
+				budget: { ok: true, tenant: "demo", lane: "system" },
+			},
+		});
+
+		const missing = await routesWith({});
+		const none = await call(missing.settings, {
+			locals: { user, emdash: { db, config: CONFIG, hooks } },
+		});
+		expect(none.body.data.systemMail).toMatchObject({ mediated: true, present: false });
+		const plain = await call(missing.settings, {
+			locals: { user, emdash: { db, config: {}, hooks } },
+		});
+		expect(plain.body.data.systemMail).toEqual({ mediated: false });
+	});
+});
+
+describe("systemMailOf / askMediator", () => {
+	const env = (e: Record<string, unknown>) => async () => e;
+
+	it("is not mediated without systemMail, and never reads the env", async () => {
+		const loadEnv = vi.fn(env({}));
+		expect(await systemMailOf({}, loadEnv)).toEqual({ mediated: false });
+		expect(await systemMailOf(undefined, loadEnv)).toEqual({ mediated: false });
+		expect(loadEnv).not.toHaveBeenCalled();
+	});
+
+	it("is missing for a binding that is not every operation callable", async () => {
+		const partial = { requestMagicLink: async () => ({}) };
+		const got = await systemMailOf(CONFIG, env({ SYSTEM_MAIL: partial }));
+		expect(got).toMatchObject({ mediated: true, binding: "SYSTEM_MAIL" });
+		expect(got).toHaveProperty("missing");
+		expect(await systemMailOf({ systemMail: { binding: "" } }, env({}))).toHaveProperty("missing");
+		expect(
+			await systemMailOf(CONFIG, async () => Promise.reject(new Error("no env"))),
+		).toHaveProperty("missing");
+		expect(await systemMailOf(CONFIG, env({ SYSTEM_MAIL: mediator().binding }))).toHaveProperty(
+			"mediator",
+		);
+	});
+
+	it("reads only the mediator's own answer as sent", async () => {
+		const ask = (a: unknown) => askMediator(async () => a);
+		expect(await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "sent" })).toEqual({
+			status: "sent",
+		});
+		expect(await ask({ protocol: 2, status: "sent" })).toMatchObject({ status: "refused" });
+		expect(await ask({ status: "sent" })).toMatchObject({ status: "refused" });
+		expect(await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "ok" })).toMatchObject({
+			status: "refused",
+		});
+		expect(await ask("sent")).toMatchObject({ status: "refused" });
+		expect(
+			await askMediator(async () => {
+				throw new Error("RPC failed");
+			}),
+		).toMatchObject({ status: "refused" });
+		expect(
+			await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "skipped", why: "no user" }),
+		).toEqual({
+			status: "skipped",
+			why: "no user",
+		});
+	});
+
+	it("passes only an IP to the mediator", () => {
+		expect(mediatorIp("198.51.100.7")).toBe("198.51.100.7");
+		expect(mediatorIp("2001:db8::1")).toBe("2001:db8::1");
+		expect(mediatorIp(null)).toBeNull();
+		expect(mediatorIp("not an ip; drop")).toBeNull();
+	});
+
+	it("reads a status that throws or answers another protocol as not ok", async () => {
+		const throwing = {
+			...mediator().binding,
+			status: async () => {
+				throw new Error("down");
+			},
+		};
+		expect(await mediatorStatus(throwing)).toMatchObject({ ok: false });
+		expect(await mediatorStatus(mediator({ protocol: 9, marker: "x" }).binding)).toMatchObject({
+			ok: false,
+		});
+	});
+});

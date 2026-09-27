@@ -12,6 +12,7 @@ import { z } from "zod";
 import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
+import { mediatorStatus, systemMailOf } from "#auth/system-mail.js";
 import { OptionsRepository } from "#db/repositories/options.js";
 import { scrubAddresses } from "#plugins/redact-addresses.js";
 
@@ -59,8 +60,23 @@ export const GET: APIRoute = async ({ locals }) => {
 			.getHookProviders(EMAIL_AFTER_SEND_HOOK)
 			.map((p) => p.pluginId);
 
+		// Sign-in mail: sent by this Worker's pipeline, or by an auth-mail
+		// mediator (the config's systemMail), and that mediator's own status.
+		const mail = await systemMailOf(emdash.config);
+		const systemMail = !mail.mediated
+			? { mediated: false }
+			: "missing" in mail
+				? { mediated: true, binding: mail.binding, present: false, why: mail.missing }
+				: {
+						mediated: true,
+						binding: mail.binding,
+						present: true,
+						status: await mediatorStatus(mail.mediator),
+					};
+
 		return apiSuccess({
 			available: emdash.email?.isAvailable() ?? false,
+			systemMail,
 			providers: providers.map((p) => ({
 				pluginId: p.pluginId,
 			})),

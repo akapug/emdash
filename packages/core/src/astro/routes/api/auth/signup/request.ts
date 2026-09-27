@@ -19,6 +19,7 @@ import { isParseError, parseBody } from "#api/parse.js";
 import { signupRequestBody } from "#api/schemas.js";
 import { getSiteBaseUrl } from "#api/site-url.js";
 import { checkRateLimit, getClientIp } from "#auth/rate-limit.js";
+import { SYSTEM_MAIL_PROTOCOL, askMediator, mediatorIp, systemMailOf } from "#auth/system-mail.js";
 import { getTrustedProxyHeaders } from "#auth/trusted-proxy.js";
 import { OptionsRepository } from "#db/repositories/options.js";
 
@@ -37,8 +38,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		return apiError("NOT_CONFIGURED", "EmDash is not initialized", 500);
 	}
 
+	// Mediated (the config's systemMail): the auth-mail mediator sends the
+	// verification itself, so this Worker's email pipeline is not needed.
+	const mail = await systemMailOf(emdash.config);
+
 	// Check if email pipeline is available
-	if (!emdash.email?.isAvailable()) {
+	if (!mail.mediated && !emdash.email?.isAvailable()) {
 		return apiError(
 			"EMAIL_NOT_CONFIGURED",
 			"Email not configured. Self-signup is unavailable.",
@@ -59,6 +64,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		if (!rateLimit.allowed) {
 			// Return success-shaped response to avoid revealing rate limiting
 			// (and by extension, the fact that the caller is probing).
+			return apiSuccess(GENERIC_SUCCESS);
+		}
+
+		// Mediated: nothing about the verification is built or sent here, and
+		// without the mediator's binding nothing is sent at all.
+		if (mail.mediated) {
+			const outcome =
+				"mediator" in mail
+					? await askMediator(() =>
+							mail.mediator.requestSignup({
+								protocol: SYSTEM_MAIL_PROTOCOL,
+								email: body.email.toLowerCase().trim(),
+								ip: mediatorIp(ip),
+							}),
+						)
+					: { status: "refused" as const, why: mail.missing };
+			if (outcome.status === "refused") console.warn(`[signup] not sent: ${outcome.why}`);
 			return apiSuccess(GENERIC_SUCCESS);
 		}
 

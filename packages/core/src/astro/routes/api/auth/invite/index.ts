@@ -23,6 +23,12 @@ import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
 import { inviteCreateBody } from "#api/schemas.js";
 import { getSiteBaseUrl } from "#api/site-url.js";
+import {
+	SYSTEM_MAIL_PROTOCOL,
+	askMediator,
+	credentialOf,
+	systemMailOf,
+} from "#auth/system-mail.js";
 import { OptionsRepository } from "#db/repositories/options.js";
 import type { EmailSendResult } from "#plugins/email.js";
 
@@ -53,6 +59,45 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
 		// Use the configured site URL (stored option as fallback) to prevent Host header spoofing in invite emails
 		const baseUrl = await getSiteBaseUrl(emdash.db, request, emdash.config);
+
+		// Mediated (the config's systemMail): the auth-mail mediator
+		// authenticates the admin itself from this request's own credential,
+		// issues the invite and sends it. Nothing about that message is built or
+		// sent here. When it is not sent (no binding, a refusal), the invite is
+		// made here with no email and its link returned, as for a site with no
+		// email provider: this Worker never mails it.
+		const mail = await systemMailOf(emdash.config);
+		if (mail.mediated) {
+			const outcome =
+				"mediator" in mail
+					? await askMediator(() =>
+							mail.mediator.createInvite({
+								protocol: SYSTEM_MAIL_PROTOCOL,
+								email: body.email,
+								role,
+								...credentialOf(request),
+							}),
+						)
+					: { status: "refused" as const, why: mail.missing };
+			if (outcome.status === "sent") {
+				return apiSuccess({
+					success: true,
+					emailed: true,
+					message: `Invite sent to ${body.email}`,
+				});
+			}
+			console.warn(`[invite] not emailed: ${outcome.why}`);
+			const unsent = await createInvite({ baseUrl, siteName }, adapter, body.email, role, user.id);
+			return apiSuccess(
+				{
+					success: true,
+					emailed: false,
+					message: "Invite created. Its email was not sent — share the link manually.",
+					inviteUrl: unsent.url,
+				},
+				200,
+			);
+		}
 
 		// Build email sender from the plugin pipeline (if available), keeping
 		// what the pipeline says the send came to.

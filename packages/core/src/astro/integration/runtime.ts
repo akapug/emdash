@@ -498,6 +498,19 @@ export interface EmDashConfig {
 	trustedProxyHeaders?: string[];
 
 	/**
+	 * Send EmDash's own sign-in mail (magic links, sign-up verification,
+	 * invites, recovery links) through an auth-mail mediator: a separately
+	 * deployed Worker bound to this one as a service named `binding`
+	 * (`@emdash-cms/cloudflare/auth-mail`), which authenticates, issues the
+	 * token, renders the message and sends it itself. When set, those routes
+	 * never build or send the message in this Worker, so no plugin hook ever
+	 * sees it; without the binding they send nothing (an invite falls back to
+	 * its copy-link), and never fall back to this Worker's own email pipeline.
+	 * Cloudflare only.
+	 */
+	systemMail?: { binding: string };
+
+	/**
 	 * User middleware that wraps the complete EmDash request pipeline.
 	 *
 	 * Before `next()` it runs before EmDash initializes its runtime or database,
