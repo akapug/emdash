@@ -868,13 +868,13 @@ const TOKEN = "tok_0123456789abcdef0123456789abcdef0123456";
  * take or a refusal from `answer` (default: a take), and every call is kept.
  */
 function fakeBudget(
-	answer: (req: { system: boolean; recipients: string[] }) => unknown = () => ({
+	answer: (req: { recipients: string[] }) => unknown = () => ({
 		ok: true,
-		protocol: 1,
+		protocol: 2,
 		takeId: "take-1",
 	}),
 ) {
-	type Take = { protocol: number; token: string; system: boolean; recipients: string[] };
+	type Take = { protocol: number; token: string; recipients: string[] };
 	type Refund = { protocol: number; token: string; takeId: string };
 	const takes: Take[] = [];
 	const refunds: Refund[] = [];
@@ -885,7 +885,7 @@ function fakeBudget(
 		}),
 		refund: vi.fn(async (req: Refund) => {
 			refunds.push(req);
-			return { ok: true, protocol: 1, refunded: 1 };
+			return { ok: true, protocol: 2, refunded: 1 };
 		}),
 	};
 	return { service, takes, refunds, env: { MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: TOKEN } };
@@ -912,7 +912,11 @@ describe("the account's budget", () => {
 		expect(mail.send).toHaveBeenCalledOnce();
 		expect(budget.takes).toHaveLength(1);
 		const [take] = budget.takes;
-		expect(take).toMatchObject({ protocol: 1, token: TOKEN, system: true });
+		// The request carries the token and the hashes only: no source, no lane, no
+		// `system`. The lane is the token's registration, and this Worker's token is
+		// its plugin lane's, so EmDash's own "system" mail from here takes no reserve.
+		expect(Object.keys(take!).sort()).toEqual(["protocol", "recipients", "token"]);
+		expect(take).toMatchObject({ protocol: 2, token: TOKEN });
 		expect(take!.recipients).toHaveLength(2);
 		for (const h of take!.recipients) expect(h).toMatch(/^[0-9a-f]{64}$/);
 		expect(JSON.stringify(budget.takes)).not.toContain("@");
@@ -923,12 +927,13 @@ describe("the account's budget", () => {
 			fakeCtx(),
 		);
 		expect(again.takes[0]!.recipients[0]).toBe(take!.recipients[0]);
-		// A form's mail is not "system" mail.
+		// A form's mail asks the same way: nothing a source says reaches the request.
 		await withBudget({ ...fakeEnv().env, ...again.env })(
 			{ message, source: "emdash-forms" },
 			fakeCtx(),
 		);
-		expect(again.takes[1]).toMatchObject({ system: false });
+		expect(Object.keys(again.takes[1]!).sort()).toEqual(["protocol", "recipients", "token"]);
+		expect(JSON.stringify(again.takes)).not.toMatch(/system|lane|source/);
 	});
 
 	it("a Worker without the service binding or the token sends nothing, spends nothing of the site's, and says why", async () => {
@@ -959,7 +964,7 @@ describe("the account's budget", () => {
 		const kv = memoryKv();
 		const budget = fakeBudget(() => ({
 			ok: false,
-			protocol: 1,
+			protocol: 2,
 			refused: "the account has sent 200 of its 200 today",
 		}));
 		await expect(
@@ -982,8 +987,8 @@ describe("the account's budget", () => {
 				},
 				/could not be asked \(Error: service unavailable for <an address at example\.com>\), so nothing is sent/,
 			],
-			[() => ({ protocol: 1 }), /answered neither a take nor a refusal/],
-			[() => ({ ok: true, protocol: 1 }), /answered neither a take nor a refusal/],
+			[() => ({ protocol: 2 }), /answered neither a take nor a refusal/],
+			[() => ({ ok: true, protocol: 2 }), /answered neither a take nor a refusal/],
 		] as const) {
 			const mail = fakeEnv();
 			const budget = fakeBudget(answer);
@@ -1034,9 +1039,9 @@ describe("the account's budget", () => {
 		expect(budget.refunds).toEqual([]);
 		// The take arrives after all: the work the host holds gives it back, and
 		// settles only once it has.
-		answer({ ok: true, protocol: 1, takeId: "take-late" });
+		answer({ ok: true, protocol: 2, takeId: "take-late" });
 		await Promise.all(host.held);
-		expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-late" }]);
+		expect(budget.refunds).toEqual([{ protocol: 2, token: TOKEN, takeId: "take-late" }]);
 	});
 
 	it("a refund that does not answer in time is not waited for, and is held alive by the host: the binding's error still reaches the caller", async () => {
@@ -1068,16 +1073,16 @@ describe("the account's budget", () => {
 		void Promise.all(host.held).then(() => (settled = true));
 		await Promise.resolve();
 		expect(settled).toBe(false);
-		refunded({ ok: true, protocol: 1, refunded: 1 });
+		refunded({ ok: true, protocol: 2, refunded: 1 });
 		await Promise.all(host.held);
-		expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-1" }]);
+		expect(budget.refunds).toEqual([{ protocol: 2, token: TOKEN, takeId: "take-1" }]);
 	});
 
 	it("an answer in another protocol, or in none, sends nothing, and a take in it is given back before the refusal returns", async () => {
 		for (const [answer, spoke] of [
-			[{ ok: true, protocol: 2, takeId: "take-v2" }, "2"],
+			[{ ok: true, protocol: 1, takeId: "take-v1" }, "1"],
 			[{ ok: true, takeId: "take-v0" }, "null"],
-			[{ ok: false, protocol: "1", refused: "no" }, '"1"'],
+			[{ ok: false, protocol: "2", refused: "no" }, '"2"'],
 		] as const) {
 			const mail = fakeEnv();
 			const kv = memoryKv();
@@ -1089,7 +1094,7 @@ describe("the account's budget", () => {
 				budget.refunds.push(req);
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				settled.push(req.takeId);
-				return { ok: true, protocol: 1, refunded: 1 };
+				return { ok: true, protocol: 2, refunded: 1 };
 			});
 			const host = lifetime();
 			await expect(
@@ -1100,14 +1105,14 @@ describe("the account's budget", () => {
 					host.extend,
 				)({ message, source: "emdash-forms" }, fakeCtx({ kv })),
 			).rejects.toThrow(
-				`the account's mail budget answered in protocol ${spoke}, and this provider speaks 1, so nothing is sent`,
+				`the account's mail budget answered in protocol ${spoke}, and this provider speaks 2, so nothing is sent`,
 			);
 			expect(mail.send).not.toHaveBeenCalled();
 			expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
 			// Given back already, awaited in the request: nothing left for the host.
 			expect(settled).toEqual(answer.ok ? [answer.takeId] : []);
 			expect(budget.refunds).toEqual(
-				answer.ok ? [{ protocol: 1, token: TOKEN, takeId: answer.takeId }] : [],
+				answer.ok ? [{ protocol: 2, token: TOKEN, takeId: answer.takeId }] : [],
 			);
 			expect(host.held).toEqual([]);
 		}
@@ -1117,11 +1122,11 @@ describe("the account's budget", () => {
 		const mail = fakeEnv(async () => {
 			throw new Error("E_RECIPIENT_NOT_ALLOWED");
 		});
-		const budget = fakeBudget(() => ({ ok: true, protocol: 1, takeId: "take-7" }));
+		const budget = fakeBudget(() => ({ ok: true, protocol: 2, takeId: "take-7" }));
 		await expect(
 			withBudget({ ...mail.env, ...budget.env })({ message, source: "system" }, fakeCtx()),
 		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
-		expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-7" }]);
+		expect(budget.refunds).toEqual([{ protocol: 2, token: TOKEN, takeId: "take-7" }]);
 	});
 
 	it("a site that has spent its own day asks the account nothing", async () => {
@@ -1254,7 +1259,7 @@ describe("createCloudflareEmailStatus()", () => {
 			await status(fakeCtx({ kv: memoryKv({ "settings:replyTo": "office@example.org" }) })),
 		).toEqual({
 			provider: "cloudflare-email",
-			capability: "emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1",
+			capability: "emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=2",
 			from: "notify@mail.example.org",
 			senderName: "site title",
 			binding: { name: "EMAIL", present: true },
@@ -1268,7 +1273,7 @@ describe("createCloudflareEmailStatus()", () => {
 			},
 			accountBudget: null,
 			attestation: {
-				v: 1,
+				v: 2,
 				provider: "cloudflare-email",
 				capability: CLOUDFLARE_EMAIL_CAPABILITY,
 				guarantees: {
@@ -1285,11 +1290,17 @@ describe("createCloudflareEmailStatus()", () => {
 
 	it("attests what the build enforces and, live, what the account's budget holds this site to, and never the token; it takes and refunds nothing", async () => {
 		const budget = fakeBudget();
-		const caps = { accountPerDay: 200, systemReserve: 50, tenantPerDay: 100, systemPerRecipient: 10 };
+		const caps = {
+			accountPerDay: 200,
+			accountSystemReserve: 50,
+			tenantPerDay: 100,
+			tenantSystemReserve: 10,
+			systemPerRecipient: 10,
+		};
 		const report = vi.fn(async (req: { protocol: number; token: string }) =>
 			req.token === TOKEN
-				? { ok: true, protocol: 1, tenant: "acme", site: { used: 3, cap: 100 }, caps }
-				: { ok: false, protocol: 1, scope: "token", refused: "unknown" },
+				? { ok: true, protocol: 2, tenant: "acme", lane: "plugin", site: { used: 3, cap: 90 }, caps }
+				: { ok: false, protocol: 2, scope: "token", refused: "unknown" },
 		);
 		const service = { ...budget.service, report };
 		const status = createCloudflareEmailStatus(
@@ -1298,7 +1309,7 @@ describe("createCloudflareEmailStatus()", () => {
 		);
 		const answer = await status(fakeCtx());
 		expect(answer.attestation).toEqual({
-			v: 1,
+			v: 2,
 			provider: "cloudflare-email",
 			capability: CLOUDFLARE_EMAIL_CAPABILITY,
 			guarantees: {
@@ -1308,9 +1319,9 @@ describe("createCloudflareEmailStatus()", () => {
 				cancellation: "reported",
 				redaction: "addresses",
 			},
-			accountBudget: { protocol: 1, ready: true, live: { ok: true, limits: caps } },
+			accountBudget: { protocol: 2, ready: true, live: { ok: true, lane: "plugin", limits: caps } },
 		});
-		expect(report).toHaveBeenCalledWith({ protocol: 1, token: TOKEN });
+		expect(report).toHaveBeenCalledWith({ protocol: 2, token: TOKEN });
 		expect(budget.takes).toEqual([]);
 		expect(budget.refunds).toEqual([]);
 		expect(JSON.stringify(answer)).not.toContain(TOKEN);
@@ -1332,14 +1343,33 @@ describe("createCloudflareEmailStatus()", () => {
 			);
 			return (await status(fakeCtx())).attestation.accountBudget;
 		};
-		const caps = { accountPerDay: 200, systemReserve: 50, tenantPerDay: 100, systemPerRecipient: 10 };
+		const caps = {
+			accountPerDay: 200,
+			accountSystemReserve: 50,
+			tenantPerDay: 100,
+			tenantSystemReserve: 10,
+			systemPerRecipient: 10,
+		};
 		for (const [report, why, opts] of [
 			[undefined, /has no report/, {}],
-			[async () => ({ ok: false, protocol: 1, scope: "token", refused: "unknown or revoked" }), /refused this site's token \(unknown or revoked\)/, {}],
-			[async () => ({ ok: true, protocol: 2, caps }), /answered in protocol 2, not 1/, {}],
-			[async () => ({ ok: true, caps }), /answered in protocol null, not 1/, {}],
-			[async () => ({ ok: true, protocol: 1 }), /does not say the limits/, {}],
-			[async () => ({ ok: true, protocol: 1, caps: { ...caps, tenantPerDay: "100" } }), /does not say the limits/, {}],
+			[async () => ({ ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" }), /refused this site's token \(unknown or revoked\)/, {}],
+			[async () => ({ ok: true, protocol: 1, lane: "plugin", caps }), /answered in protocol 1, not 2/, {}],
+			[async () => ({ ok: true, lane: "plugin", caps }), /answered in protocol null, not 2/, {}],
+			[async () => ({ ok: true, protocol: 2, caps }), /does not say which lane this site's token holds/, {}],
+			[async () => ({ ok: true, protocol: 2, lane: "plugin" }), /does not say the limits/, {}],
+			[
+				async () => ({ ok: true, protocol: 2, lane: "plugin", caps: { ...caps, tenantPerDay: "100" } }),
+				/does not say the limits/,
+				{},
+			],
+			[
+				async () => {
+					const { tenantSystemReserve: _, ...protocol1Caps } = caps;
+					return { ok: true, protocol: 2, lane: "plugin", caps: protocol1Caps };
+				},
+				/does not say the limits/,
+				{},
+			],
 			[
 				async () => {
 					throw new Error("service unavailable for User@Example.com");
@@ -1348,7 +1378,7 @@ describe("createCloudflareEmailStatus()", () => {
 				{},
 			],
 			[() => new Promise(() => {}), /did not answer within 20 ms/, { timeoutMs: 20 }],
-			[async () => ({ ok: true, protocol: 1, caps }), /no token: the secret "MAIL_BUDGET_TOKEN" is not set/, { token: "" }],
+			[async () => ({ ok: true, protocol: 2, lane: "plugin", caps }), /no token: the secret "MAIL_BUDGET_TOKEN" is not set/, { token: "" }],
 		] as const) {
 			const live = await at(report, opts);
 			expect(live?.live, String(why)).toMatchObject({ ok: false, why: expect.stringMatching(why) });
@@ -1380,8 +1410,9 @@ describe("createCloudflareEmailStatus()", () => {
 	});
 
 	it("answers the capability marker through the plugin's own status route, the string a built Worker carries", async () => {
+		// v=2: the account's budget in protocol 2, where this Worker's token is its plugin lane's.
 		expect(CLOUDFLARE_EMAIL_CAPABILITY).toBe(
-			"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1",
+			"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=2",
 		);
 		const plugin = createPlugin({ from: "cms@mails.example.com", accountBudget: {} });
 		const answer = (await plugin.routes.status?.handler(fakeCtx() as never)) as Record<

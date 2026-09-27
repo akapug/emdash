@@ -40,10 +40,13 @@
  * - With `accountBudget`, every message also takes its place in the account's
  *   budget (Embark's mail-budget service, one Durable Object per Cloudflare
  *   account, through a service binding and this site's token): the tenant's
- *   day, the account's day less a reserve only "system" mail may take, and
- *   "system" mail to one recipient's hash. A missing binding or token, a
- *   refusal or any error sends nothing; a message the binding refuses gives
- *   its place back there too.
+ *   day and the account's day, less the reserves kept for sign-in mail. The
+ *   token is this Worker's plugin-lane token (mail-budget protocol 2), so no
+ *   message sent from here, whatever its source, reaches those reserves: only
+ *   the tenant's auth-mail mediator, a Worker of its own holding the system
+ *   lane's token, does. A missing binding or token, a refusal or any error
+ *   sends nothing; a message the binding refuses gives its place back there
+ *   too.
  * - A log names a recipient's domain, never the address, and an error the
  *   binding throws has every address replaced by its domain, in any letter
  *   case, in its message, its stack and its causes (EmDash's scrubAddresses).
@@ -168,23 +171,22 @@ export const ACCOUNT_BUDGET_TIMEOUT_MS = 5_000;
  * The version of the mail-budget service's RPC this provider speaks. Every
  * request names it, and an answer that does not name the same one is a
  * refusal: a service that changed what a take or a refusal means is never
- * read as the one this provider knows.
+ * read as the one this provider knows. 2: the reserve kept for sign-in mail
+ * is a LANE the token is registered to, never a flag a request carries (1
+ * sent `system: true` for "system" mail, which anything in the Worker could
+ * send too).
  */
-export const MAIL_BUDGET_PROTOCOL = 1;
+export const MAIL_BUDGET_PROTOCOL = 2;
 
 /**
  * The mail-budget service as its service binding exposes it (RPC). `take`
- * answers `{ ok: true, protocol, takeId }` or `{ ok: false, protocol,
- * refused }`; the service derives the tenant from the token, never from
- * anything else sent.
+ * answers `{ ok: true, protocol, takeId, lane }` or `{ ok: false, protocol,
+ * refused }`; the service derives the tenant AND the lane from the token,
+ * never from anything else sent. A request carries no source, no lane and
+ * no tenant: this Worker's token is a plugin-lane token, whatever sends.
  */
 interface MailBudgetService {
-	take(request: {
-		protocol: number;
-		token: string;
-		system: boolean;
-		recipients: string[];
-	}): Promise<unknown>;
+	take(request: { protocol: number; token: string; recipients: string[] }): Promise<unknown>;
 	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
 	/** Read-only: this tenant's day and the caps in force. Takes and refunds nothing. */
 	report?(request: { protocol: number; token: string }): Promise<unknown>;
@@ -223,7 +225,7 @@ interface SendEmailBinding {
  * status route for it when it turns email on.
  */
 export const CLOUDFLARE_EMAIL_CAPABILITY =
-	"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1";
+	"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=2";
 
 /**
  * The version of the provider's attestation (the status route's
@@ -231,7 +233,7 @@ export const CLOUDFLARE_EMAIL_CAPABILITY =
  * and what the account's budget holds it to, which a deployment reads before
  * it turns the site's email on. A change to its shape or meaning changes it.
  */
-export const EMAIL_ATTESTATION_VERSION = 1;
+export const EMAIL_ATTESTATION_VERSION = 2;
 
 /** A subject longer than this is cut: Email Sending refuses a header value over 2,048 bytes. */
 const MAX_SUBJECT = 250;
@@ -583,16 +585,18 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 /**
  * Take a message's places from the account's budget: `recipients` counted
- * against the tenant's day, the account's day (all of it for "system" mail,
- * all but the system reserve for any other source) and, for "system" mail,
- * each recipient's day, in one step the service makes atomic. Only the
+ * against the tenant's day and the account's day as the token's lane may
+ * take them, in one step the service makes atomic. The lane is the token's
+ * registration: this Worker's token is its plugin lane's, whatever source
+ * sends (EmDash's own auth mail included), so nothing here reaches the
+ * reserve kept for sign-in mail; only the tenant's auth-mail mediator, a
+ * Worker of its own holding the system lane's token, does. Only the
  * recipients' hashes leave the Worker. Any answer but a take is a refusal,
  * and so is no answer within `budget.timeoutMs`: a take that answers after
  * that is given back.
  */
 export async function takeAccountBudget(
 	budget: AccountBudget,
-	source: string,
 	recipients: readonly string[],
 	extend: ExtendLifetime = extendWithWaitUntil,
 ): Promise<{ takeId: string } | { refused: string }> {
@@ -601,7 +605,6 @@ export async function takeAccountBudget(
 		const call = budget.service.take({
 			protocol: MAIL_BUDGET_PROTOCOL,
 			token: budget.token,
-			system: source === "system",
 			recipients: await Promise.all(recipients.map(recipientHash)),
 		});
 		const got = await within(call, budget.timeoutMs);
@@ -784,7 +787,7 @@ export function createCloudflareEmailDeliver(
 		// day asks the account nothing, and a refusal here gives the site's back.
 		let accountTake: string | null = null;
 		if (accountBudget) {
-			const taken = await takeAccountBudget(accountBudget, source, [to, ...cc], extend);
+			const taken = await takeAccountBudget(accountBudget, [to, ...cc], extend);
 			if ("refused" in taken) {
 				await refundBudget(ctx.kv, budget.taken);
 				ctx.log.warn("email refused: account budget", { source, why: taken.refused });
@@ -914,7 +917,9 @@ export function createCloudflareEmailStatus(
  */
 async function liveAccountBudget(
 	budget: AccountBudget | { missing: string },
-): Promise<{ ok: true; limits: Record<string, number> } | { ok: false; why: string } | null> {
+): Promise<
+	{ ok: true; lane: string; limits: Record<string, number> } | { ok: false; why: string } | null
+> {
 	if ("missing" in budget) return null;
 	const { service, token, timeoutMs } = budget;
 	if (typeof service.report !== "function") {
@@ -934,17 +939,31 @@ async function liveAccountBudget(
 	if (answer.ok !== true) {
 		return { ok: false, why: `it refused this site's token (${typeof answer.refused === "string" ? redactAddresses(answer.refused) : "no reason given"})` };
 	}
+	// The lane is the token's registration: a tenant's Worker should hold a
+	// plugin-lane token, and a deployment checks that it does.
+	if (typeof answer.lane !== "string") {
+		return { ok: false, why: "its report does not say which lane this site's token holds" };
+	}
 	const caps = isRecord(answer.caps) ? answer.caps : {};
 	const limits: Record<string, number> = {};
-	for (const name of ["accountPerDay", "systemReserve", "tenantPerDay", "systemPerRecipient"]) {
+	for (const name of MAIL_BUDGET_CAPS) {
 		const cap = caps[name];
 		if (typeof cap !== "number") {
 			return { ok: false, why: "its report does not say the limits it holds this site to" };
 		}
 		limits[name] = cap;
 	}
-	return { ok: true, limits };
+	return { ok: true, lane: answer.lane, limits };
 }
+
+/** The caps the mail-budget service holds a site to (Embark's packages/mail-budget DEFAULT_CAPS), which the attestation says. */
+const MAIL_BUDGET_CAPS = [
+	"accountPerDay",
+	"accountSystemReserve",
+	"tenantPerDay",
+	"tenantSystemReserve",
+	"systemPerRecipient",
+] as const;
 
 /** Validate the sender address early so misconfiguration fails at config time. */
 function assertValidFrom(config: CloudflareEmailConfig): void {
