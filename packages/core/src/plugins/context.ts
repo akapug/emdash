@@ -1841,10 +1841,10 @@ export class PluginContextFactory {
 		if (capabilities.has("email:send") && this.emailPipeline?.isAvailable()) {
 			const pipeline = this.emailPipeline;
 			const pluginId = plugin.id;
+			// What the send came to ("sent", or "cancelled" by an email:beforeSend
+			// plugin) is the caller's to see: a cancelled send returns normally.
 			email = {
-				send: async (message) => {
-					await pipeline.send(message, pluginId);
-				},
+				send: (message) => pipeline.send(message, pluginId),
 			};
 		}
 

@@ -447,6 +447,7 @@ export type {
 	SandboxOptions,
 	SandboxEmailMessage,
 	SandboxEmailSendCallback,
+	EmailSendResult,
 	SandboxCommentModerateCallback,
 	SandboxContentCreateCallback,
 	SandboxHttpFetchCallback,

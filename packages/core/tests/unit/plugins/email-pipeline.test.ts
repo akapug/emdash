@@ -987,6 +987,40 @@ describe("ctx.email gating", () => {
 
 		expect(receivedSource).toBe("forms-plugin");
 	});
+
+	it("ctx.email.send() tells the plugin what its send came to: sent, or cancelled and by whom, with nothing delivered", async () => {
+		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", deliverHandler, { exclusive: true }),
+			},
+		});
+		let cancel = false;
+		const beforeSend: EmailBeforeSendHandler = async (event) => (cancel ? false : event.message);
+		const quietHours = createTestPlugin({
+			id: "quiet-hours",
+			capabilities: ["hooks.email-events:register"],
+			hooks: { "email:beforeSend": createTestHook("quiet-hours", beforeSend) },
+		});
+		const consumer = createTestPlugin({ id: "forms-plugin", capabilities: ["email:send"] });
+		const hookPipeline = new HookPipeline([provider, quietHours], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		const ctx = new PluginContextFactory({
+			db,
+			emailPipeline: new EmailPipeline(hookPipeline),
+		}).createContext(consumer);
+
+		expect(await ctx.email!.send(createTestMessage())).toEqual({ status: "sent" });
+		expect(deliverHandler).toHaveBeenCalledOnce();
+		cancel = true;
+		expect(await ctx.email!.send(createTestMessage())).toEqual({
+			status: "cancelled",
+			by: "quiet-hours",
+		});
+		expect(deliverHandler).toHaveBeenCalledOnce();
+	});
 });
 
 // ---------------------------------------------------------------------------

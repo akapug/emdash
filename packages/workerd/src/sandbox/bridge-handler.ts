@@ -812,8 +812,8 @@ async function dispatch(
 			const message = requireEmailMessage(body, "message");
 			const emailSend = opts.emailSend();
 			if (!emailSend) throw new Error("Email is not configured. No email provider is available.");
-			await emailSend(message, pluginId);
-			return null;
+			// What the send came to ("sent", or "cancelled" by an email:beforeSend plugin) reaches the plugin.
+			return await emailSend(message, pluginId);
 		}
 
 		// ── Users ───────────────────────────────────────────────────────

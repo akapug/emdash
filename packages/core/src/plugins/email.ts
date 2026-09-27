@@ -17,7 +17,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { HookPipeline } from "./hooks.js";
 import { describeRedacted, scrubAddresses } from "./redact-addresses.js";
-import type { EmailDeliverEvent, EmailMessage } from "./types.js";
+import type { EmailDeliverEvent, EmailMessage, EmailSendResult } from "./types.js";
+
+export type { EmailSendResult } from "./types.js";
 
 /** Hook name for the exclusive email delivery hook */
 const EMAIL_DELIVER_HOOK = "email:deliver";
@@ -38,14 +40,6 @@ function recipientDomain(address: string): string {
 function addressesOf(message: EmailMessage): string[] {
 	return [message.to, ...(message.cc ?? []), ...(message.replyTo ? [message.replyTo] : [])];
 }
-
-/**
- * What a send came to: handed to the provider, which delivered it without
- * error ("sent"), or stopped by a plugin's email:beforeSend ("cancelled", with
- * the plugin that did). A caller that reports a send as made checks it: a
- * cancelled send returns normally, and nothing went out.
- */
-export type EmailSendResult = { status: "sent" } | { status: "cancelled"; by: string };
 
 /**
  * Error thrown when ctx.email.send() is called but no provider is configured.
