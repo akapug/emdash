@@ -83,7 +83,7 @@
  */
 
 import type { PluginContext, PluginDescriptor, ResolvedPlugin } from "emdash";
-import { definePlugin, describeRedacted, redactAddresses, scrubAddresses } from "emdash";
+import { after, definePlugin, describeRedacted, redactAddresses, scrubAddresses } from "emdash";
 import type { EmailDeliverEvent } from "emdash/plugin";
 
 /**
@@ -518,6 +518,19 @@ function accountBudgetOf(config: CloudflareEmailConfig): Required<AccountBudgetC
 /** The account's mail budget as a send uses it: the service, this site's token, how long a call may take. */
 type AccountBudget = { service: MailBudgetService; token: string; timeoutMs: number };
 
+/**
+ * Hands work that must outlive the send (a take that answered too late, a
+ * refund that has not answered yet) to the host's lifetime extender, so the
+ * Worker is not torn down before it runs: EmDash's `after`, which is
+ * Cloudflare's `waitUntil` under workerd.
+ */
+export type ExtendLifetime = (work: Promise<unknown>) => void;
+
+const extendWithWaitUntil: ExtendLifetime = (work) =>
+	after(async () => {
+		await work;
+	});
+
 /** `call`'s answer, or `late` when it has not answered within `ms`. A call that fails rejects as it does. */
 async function within<T>(call: Promise<T>, ms: number): Promise<{ answer: T } | { late: true }> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -581,6 +594,7 @@ export async function takeAccountBudget(
 	budget: AccountBudget,
 	source: string,
 	recipients: readonly string[],
+	extend: ExtendLifetime = extendWithWaitUntil,
 ): Promise<{ takeId: string } | { refused: string }> {
 	let answer: unknown;
 	try {
@@ -592,18 +606,23 @@ export async function takeAccountBudget(
 		});
 		const got = await within(call, budget.timeoutMs);
 		if ("late" in got) {
-			// Nothing is sent: a take that still arrives is given back, best effort.
-			void call
-				.then((late) =>
-					isRecord(late) && late.ok === true && typeof late.takeId === "string"
-						? budget.service.refund({
-								protocol: MAIL_BUDGET_PROTOCOL,
-								token: budget.token,
-								takeId: late.takeId,
-							})
-						: undefined,
-				)
-				.catch(() => undefined);
+			// Nothing is sent: a take that still arrives is given back. The give-back
+			// outlives this send, so it is handed to the host's lifetime extender
+			// (waitUntil) before the refusal returns, never left detached for an
+			// isolate that may be torn down with the response.
+			extend(
+				call
+					.then((late) =>
+						isRecord(late) && late.ok === true && typeof late.takeId === "string"
+							? budget.service.refund({
+									protocol: MAIL_BUDGET_PROTOCOL,
+									token: budget.token,
+									takeId: late.takeId,
+								})
+							: undefined,
+					)
+					.catch(() => undefined),
+			);
 			return {
 				refused: `the account's mail budget did not answer within ${budget.timeoutMs} ms, so nothing is sent`,
 			};
@@ -615,17 +634,11 @@ export async function takeAccountBudget(
 		};
 	}
 	if (!isRecord(answer) || answer.protocol !== MAIL_BUDGET_PROTOCOL) {
-		// A take in a protocol this provider does not know is given back, best effort.
+		// A take in a protocol this provider does not know is given back before
+		// the refusal returns: awaited, within the budget's timeout, and what has
+		// not answered by then handed to the host's lifetime extender.
 		if (isRecord(answer) && answer.ok === true && typeof answer.takeId === "string") {
-			void Promise.resolve()
-				.then(() =>
-					budget.service.refund({
-						protocol: MAIL_BUDGET_PROTOCOL,
-						token: budget.token,
-						takeId: String(answer.takeId),
-					}),
-				)
-				.catch(() => undefined);
+			await giveBack(budget, answer.takeId, extend);
 		}
 		const spoke = isRecord(answer) ? JSON.stringify(answer.protocol ?? null) : "nothing";
 		return {
@@ -646,21 +659,41 @@ export async function takeAccountBudget(
 }
 
 /**
+ * Give one take back: awaited within `budget.timeoutMs`, and a refund that
+ * has not answered by then handed to the host's lifetime extender, so it
+ * still lands after the send returns. Answers "late" for that, and throws
+ * what the service threw.
+ */
+async function giveBack(
+	budget: AccountBudget,
+	takeId: string,
+	extend: ExtendLifetime,
+): Promise<"given" | "late"> {
+	const refund = budget.service.refund({
+		protocol: MAIL_BUDGET_PROTOCOL,
+		token: budget.token,
+		takeId,
+	});
+	const got = await within(refund, budget.timeoutMs);
+	if (!("late" in got)) return "given";
+	extend(refund.catch(() => undefined));
+	return "late";
+}
+
+/**
  * Give a take back to the account's budget. Best effort: a count left high
- * refuses sooner, never later, and a refund that has not answered within
- * `budget.timeoutMs` is not waited for.
+ * refuses sooner, never later. It is awaited within `budget.timeoutMs`, and
+ * a refund still pending then is kept alive by the host (waitUntil) rather
+ * than waited for, so the binding's own error reaches the caller in time.
  */
 async function refundAccountBudget(
 	budget: AccountBudget,
 	takeId: string,
 	ctx: PluginContext,
+	extend: ExtendLifetime,
 ): Promise<void> {
 	try {
-		const got = await within(
-			budget.service.refund({ protocol: MAIL_BUDGET_PROTOCOL, token: budget.token, takeId }),
-			budget.timeoutMs,
-		);
-		if ("late" in got) {
+		if ((await giveBack(budget, takeId, extend)) === "late") {
 			ctx.log.warn("the account's mail budget did not answer a refund in time", {
 				timeoutMs: budget.timeoutMs,
 			});
@@ -694,6 +727,7 @@ export function createCloudflareEmailDeliver(
 	config: CloudflareEmailConfig,
 	loadEnv: () => Promise<Record<string, unknown>> = loadWorkerEnv,
 	now: () => Date = () => new Date(),
+	extend: ExtendLifetime = extendWithWaitUntil,
 ): (event: EmailDeliverEvent, ctx: PluginContext) => Promise<void> {
 	const bindingName = config.binding ?? "EMAIL";
 	const from = typeof config.from === "string" ? { email: config.from } : config.from;
@@ -750,7 +784,7 @@ export function createCloudflareEmailDeliver(
 		// day asks the account nothing, and a refusal here gives the site's back.
 		let accountTake: string | null = null;
 		if (accountBudget) {
-			const taken = await takeAccountBudget(accountBudget, source, [to, ...cc]);
+			const taken = await takeAccountBudget(accountBudget, source, [to, ...cc], extend);
 			if ("refused" in taken) {
 				await refundBudget(ctx.kv, budget.taken);
 				ctx.log.warn("email refused: account budget", { source, why: taken.refused });
@@ -774,7 +808,9 @@ export function createCloudflareEmailDeliver(
 		} catch (error) {
 			// Only a send Cloudflare accepts spends the budget.
 			await refundBudget(ctx.kv, budget.taken);
-			if (accountBudget && accountTake) await refundAccountBudget(accountBudget, accountTake, ctx);
+			if (accountBudget && accountTake) {
+				await refundAccountBudget(accountBudget, accountTake, ctx, extend);
+			}
 			throw scrubAddresses(error, [to, ...cc, ...(replyTo ? [replyTo] : [])]);
 		}
 

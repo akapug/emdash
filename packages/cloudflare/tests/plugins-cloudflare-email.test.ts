@@ -997,7 +997,17 @@ describe("the account's budget", () => {
 		}
 	});
 
-	it("a take that does not answer in time sends nothing, gives the site's places back, and is given back when it answers late", async () => {
+	/**
+	 * The host's lifetime extender as a test sees it: every piece of work the
+	 * provider hands it, kept. Nothing else keeps an isolate alive after the
+	 * response: work that is not handed here is work Cloudflare may never run.
+	 */
+	const lifetime = () => {
+		const held: Promise<unknown>[] = [];
+		return { held, extend: (work: Promise<unknown>) => void held.push(work) };
+	};
+
+	it("a take that does not answer in time sends nothing, gives the site's places back, and its give-back is held alive by the host", async () => {
 		const mail = fakeEnv();
 		const kv = memoryKv();
 		let answer: (v: unknown) => void = () => {};
@@ -1005,42 +1015,65 @@ describe("the account's budget", () => {
 		budget.service.take.mockImplementation(
 			(req) => (budget.takes.push(req), new Promise((resolve) => (answer = resolve))),
 		);
+		const host = lifetime();
 		const deliver = createCloudflareEmailDeliver(
 			{ from: "notify@mail.example.org", accountBudget: { timeoutMs: 20 } },
 			async () => ({ ...mail.env, ...budget.env }),
+			undefined,
+			host.extend,
 		);
 		await expect(deliver({ message, source: "emdash-forms" }, fakeCtx({ kv }))).rejects.toThrow(
 			/the account's mail budget did not answer within 20 ms, so nothing is sent/,
 		);
 		expect(mail.send).not.toHaveBeenCalled();
 		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
-		// The take arrives after all: it is given back.
+		// The request is over, and the give-back is the host's to keep alive, not a
+		// detached promise: exactly one piece of work was handed to it, and it is
+		// still pending (the take has not answered).
+		expect(host.held).toHaveLength(1);
+		expect(budget.refunds).toEqual([]);
+		// The take arrives after all: the work the host holds gives it back, and
+		// settles only once it has.
 		answer({ ok: true, protocol: 1, takeId: "take-late" });
-		await vi.waitFor(() =>
-			expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-late" }]),
-		);
+		await Promise.all(host.held);
+		expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-late" }]);
 	});
 
-	it("a refund that does not answer in time is not waited for: the binding's error still reaches the caller", async () => {
+	it("a refund that does not answer in time is not waited for, and is held alive by the host: the binding's error still reaches the caller", async () => {
 		const mail = fakeEnv(async () => {
 			throw new Error("E_RECIPIENT_NOT_ALLOWED");
 		});
 		const budget = fakeBudget();
-		budget.service.refund.mockImplementation(() => new Promise(() => {}));
+		let refunded: (v: unknown) => void = () => {};
+		budget.service.refund.mockImplementation(
+			(req) => (budget.refunds.push(req), new Promise((resolve) => (refunded = resolve))),
+		);
 		const ctx = fakeCtx();
+		const host = lifetime();
 		await expect(
 			createCloudflareEmailDeliver(
 				{ from: "notify@mail.example.org", accountBudget: { timeoutMs: 20 } },
 				async () => ({ ...mail.env, ...budget.env }),
+				undefined,
+				host.extend,
 			)({ message, source: "system" }, ctx),
 		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
 		expect(ctx.log.warn).toHaveBeenCalledWith(
 			"the account's mail budget did not answer a refund in time",
 			{ timeoutMs: 20 },
 		);
+		// The pending refund is the host's to keep alive, and settles when it answers.
+		expect(host.held).toHaveLength(1);
+		let settled = false;
+		void Promise.all(host.held).then(() => (settled = true));
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		refunded({ ok: true, protocol: 1, refunded: 1 });
+		await Promise.all(host.held);
+		expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: "take-1" }]);
 	});
 
-	it("an answer in another protocol, or in none, sends nothing, and a take in it is given back", async () => {
+	it("an answer in another protocol, or in none, sends nothing, and a take in it is given back before the refusal returns", async () => {
 		for (const [answer, spoke] of [
 			[{ ok: true, protocol: 2, takeId: "take-v2" }, "2"],
 			[{ ok: true, takeId: "take-v0" }, "null"],
@@ -1049,21 +1082,34 @@ describe("the account's budget", () => {
 			const mail = fakeEnv();
 			const kv = memoryKv();
 			const budget = fakeBudget(() => answer);
+			// A refund that takes a moment to answer: only one that was awaited has
+			// settled by the time the refusal returns.
+			const settled: string[] = [];
+			budget.service.refund.mockImplementation(async (req) => {
+				budget.refunds.push(req);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				settled.push(req.takeId);
+				return { ok: true, protocol: 1, refunded: 1 };
+			});
+			const host = lifetime();
 			await expect(
-				withBudget({ ...mail.env, ...budget.env })(
-					{ message, source: "emdash-forms" },
-					fakeCtx({ kv }),
-				),
+				createCloudflareEmailDeliver(
+					{ from: "notify@mail.example.org", accountBudget: {}, allowCc: true },
+					async () => ({ ...mail.env, ...budget.env }),
+					undefined,
+					host.extend,
+				)({ message, source: "emdash-forms" }, fakeCtx({ kv })),
 			).rejects.toThrow(
 				`the account's mail budget answered in protocol ${spoke}, and this provider speaks 1, so nothing is sent`,
 			);
 			expect(mail.send).not.toHaveBeenCalled();
 			expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
-			if (answer.ok) {
-				await vi.waitFor(() =>
-					expect(budget.refunds).toEqual([{ protocol: 1, token: TOKEN, takeId: answer.takeId }]),
-				);
-			}
+			// Given back already, awaited in the request: nothing left for the host.
+			expect(settled).toEqual(answer.ok ? [answer.takeId] : []);
+			expect(budget.refunds).toEqual(
+				answer.ok ? [{ protocol: 1, token: TOKEN, takeId: answer.takeId }] : [],
+			);
+			expect(host.held).toEqual([]);
 		}
 	});
 
