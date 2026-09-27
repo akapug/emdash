@@ -10,7 +10,7 @@ import { createReadStream } from "node:fs";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
+import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
 import pc from "picocolors";
 
 import { slugify } from "#utils/slugify.js";
@@ -885,18 +885,19 @@ function convertPostWithConfig(
 	// Convert content to Portable Text
 	const content = gutenbergToPortableText(post.content || "", { mediaMap });
 
-	// Extract slug
+	// Extract slug (from the title as it was stored)
 	const slug = extractSlug(post.link) || slugify(post.title || "untitled");
 
-	// Build data object
+	// Build data object. The title and excerpt as WordPress printed them (the_title and
+	// the_excerpt run wptexturize), like the content.
 	const data: Record<string, unknown> = {
-		title: post.title,
+		title: post.title === undefined ? post.title : wptexturize(post.title),
 		content,
 		status: mapStatus(post.status),
 		publishedAt: post.pubDate ? new Date(post.pubDate).toISOString() : null,
 		createdAt: post.postDate ? new Date(post.postDate).toISOString() : null,
 		author: post.creator,
-		excerpt: post.excerpt,
+		excerpt: post.excerpt ? wptexturize(post.excerpt) : post.excerpt,
 		categories: post.categories,
 		tags: post.tags,
 	};

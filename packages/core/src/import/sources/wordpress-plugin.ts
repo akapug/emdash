@@ -5,7 +5,7 @@
  * Provides full access to all content including drafts, custom post types, and ACF fields.
  */
 
-import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
+import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
 
 import { encodeBase64 } from "../../utils/base64.js";
 import type { PluginComment } from "../comments.js";
@@ -719,9 +719,10 @@ function pluginPostToNormalizedItem(post: PluginPost, siteUrl: string): Normaliz
 		postType: post.post_type,
 		status: mapWpStatus(post.status),
 		slug: post.slug,
-		title: post.title,
+		// As WordPress printed them (the_title and the_excerpt run wptexturize), like the content.
+		title: wptexturize(post.title),
 		content,
-		excerpt: post.excerpt || undefined,
+		excerpt: post.excerpt ? wptexturize(post.excerpt) : undefined,
 		date: new Date(post.date_gmt || post.date),
 		modified: post.modified_gmt ? new Date(post.modified_gmt) : new Date(post.modified),
 		author: post.author?.login,
