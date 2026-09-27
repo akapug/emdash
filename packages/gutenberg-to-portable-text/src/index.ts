@@ -44,6 +44,7 @@ const BLOCK_ELEMENT_PATTERN = new RegExp(
 	"gu",
 );
 const LINKED_IMAGE_PATTERN = new RegExp(LINKED_IMAGE, "gu");
+const LINKED_IMAGE_ONE = new RegExp(LINKED_IMAGE, "u");
 const STANDALONE_IMAGE_PATTERN = /<img\s+[^>]+\/?>/gu;
 const IMG_TAG_PATTERN = /<img[^>]+>/i;
 const SRC_ATTR_PATTERN = /src=["']([^"']+)["']/i;
@@ -483,6 +484,8 @@ export function htmlToPortableText(
 					const altMatch = imgMatch[0].match(ALT_ATTR_PATTERN);
 					const captionMatch = content.match(FIGCAPTION_TAG_PATTERN);
 					const imgUrl = srcMatch?.[1] ? decodeUrlEntities(srcMatch[1]) : "";
+					// the link around the figure's image, as WordPress draws it
+					const linked = content.match(LINKED_IMAGE_ONE);
 
 					blocks.push({
 						_type: "image",
@@ -494,6 +497,7 @@ export function htmlToPortableText(
 						},
 						alt: altMatch?.[1],
 						caption: captionMatch?.[1]?.replace(HTML_TAG_PATTERN, "").trim(),
+						...(linked?.[0].includes(imgMatch[0]) ? { link: decodeUrlEntities(linked[1]!) } : {}),
 						...extractDisplaySize(imgMatch[0]),
 					});
 				}

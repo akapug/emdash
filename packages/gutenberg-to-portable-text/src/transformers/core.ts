@@ -5,6 +5,7 @@
 import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
 import {
+	decodeUrlEntities,
 	extractAlt,
 	extractCaption,
 	extractDisplaySize,
@@ -31,6 +32,9 @@ const NESTED_LIST_PATTERN = /<[uo]l[^>]*>[\s\S]*<\/[uo]l>/gi;
 const P_TAG_PATTERN = /<p[^>]*>([\s\S]*?)<\/p>/gi;
 const P_TAG_SINGLE_PATTERN = /<p[^>]*>([\s\S]*?)<\/p>/i;
 const HREF_PATTERN = /href="([^"]*)"/i;
+/** The link an image block's image stands in: the attributes of the `<a>` that opens on the `<img>`. */
+const IMAGE_LINK_PATTERN = /<a\s([^>]*)>\s*<img\b/i;
+const TARGET_BLANK_PATTERN = /\btarget=["']_blank["']/i;
 const DATA_ID_PATTERN = /data-id=["'](\d+)["']/i;
 const CODE_TAG_PATTERN_SINGLE = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const TABLE_TAG_PATTERN = /<table[^>]*>([\s\S]*?)<\/table>/i;
@@ -458,10 +462,24 @@ export const image: BlockTransformer = (block, options, context) => {
 			alt,
 			caption,
 			alignment: mapAlignment(align),
+			...imageLink(block.innerHTML),
 			...extractDisplaySize(block.innerHTML.match(IMG_TAG_SINGLE)?.[0] ?? ""),
 		},
 	];
 };
+
+/**
+ * The link of an image block: the block editor saves "Link to" as an `<a>`
+ * around the `<img>` (the file, its attachment page, or a URL), and "Open in
+ * new tab" as its `target`. WordPress draws the image linked; converted, it
+ * was not. A link with an unsafe scheme is none.
+ */
+function imageLink(html: string): { link?: string | { href: string; blank: true } } {
+	const attrs = html.match(IMAGE_LINK_PATTERN)?.[1] ?? "";
+	const href = sanitizeHref(decodeUrlEntities(attrs.match(HREF_PATTERN)?.[1] ?? ""));
+	if (!href) return {};
+	return { link: TARGET_BLANK_PATTERN.test(attrs) ? { href, blank: true } : href };
+}
 
 /**
  * core/code → code block

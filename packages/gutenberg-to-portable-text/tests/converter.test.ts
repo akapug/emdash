@@ -478,6 +478,50 @@ describe("gutenbergToPortableText", () => {
 
 			expect(img.alignment).toBe("center");
 		});
+
+		it("keeps the link the block editor saved around the image, as WordPress draws it", () => {
+			const media = `<!-- wp:image {"id":7,"sizeSlug":"large","linkDestination":"media"} -->
+<figure class="wp-block-image size-large"><a href="https://example.org/wp-content/uploads/full.jpg?a=1&amp;b=2"><img src="https://example.org/wp-content/uploads/full-1024x683.jpg" alt="" class="wp-image-7"/></a></figure>
+<!-- /wp:image -->`;
+			expect(gutenbergToPortableText(media)[0]).toMatchObject({
+				link: "https://example.org/wp-content/uploads/full.jpg?a=1&b=2",
+			});
+			// "Open in new tab" is the link's target
+			const blank = `<!-- wp:image {"id":8,"linkDestination":"custom","linkTarget":"_blank"} -->
+<figure class="wp-block-image"><a href="https://example.org/about/" target="_blank" rel="noreferrer noopener"><img src="https://example.org/e.jpg" alt="" class="wp-image-8"/></a></figure>
+<!-- /wp:image -->`;
+			expect(gutenbergToPortableText(blank)[0]).toMatchObject({
+				link: { href: "https://example.org/about/", blank: true },
+			});
+			// no link, a link in the caption, or a link with an unsafe scheme: the image is not linked
+			for (const figure of [
+				`<figure class="wp-block-image"><img src="https://example.org/g.jpg" alt=""/></figure>`,
+				`<figure class="wp-block-image"><img src="https://example.org/g.jpg" alt=""/><figcaption><a href="https://example.org/credit/">Credit</a></figcaption></figure>`,
+				`<figure class="wp-block-image"><a href="javascript:alert(1)"><img src="https://example.org/g.jpg" alt=""/></a></figure>`,
+			]) {
+				const [image] = gutenbergToPortableText(
+					`<!-- wp:image {"id":9} -->\n${figure}\n<!-- /wp:image -->`,
+				);
+				expect(image).toMatchObject({ _type: "image" });
+				expect(image).not.toHaveProperty("link");
+			}
+		});
+
+		it("keeps the link around a classic figure's image, and only its own image's", () => {
+			const [linked] = gutenbergToPortableText(
+				`<figure><a href="https://example.org/h/"><img src="https://example.org/h.png" alt="H" /></a><figcaption>H</figcaption></figure>`,
+			);
+			expect(linked).toMatchObject({
+				_type: "image",
+				caption: "H",
+				link: "https://example.org/h/",
+			});
+			const [first] = gutenbergToPortableText(
+				`<figure><img src="https://example.org/i.png" alt="I" /><a href="https://example.org/j/"><img src="https://example.org/j.png" alt="J" /></a></figure>`,
+			);
+			expect(first).toMatchObject({ _type: "image", alt: "I" });
+			expect(first).not.toHaveProperty("link");
+		});
 	});
 
 	describe("code blocks", () => {
