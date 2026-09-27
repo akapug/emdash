@@ -152,7 +152,17 @@ export interface AccountBudgetConfig {
 	 * @default "MAIL_BUDGET_TOKEN"
 	 */
 	token?: string;
+	/**
+	 * How long a call to the mail-budget service may take. A take that has not
+	 * answered by then is a refusal and nothing is sent; one that answers
+	 * later is given back.
+	 * @default 5000
+	 */
+	timeoutMs?: number;
 }
+
+/** How long a call to the mail-budget service may take by default (see {@link AccountBudgetConfig.timeoutMs}). */
+export const ACCOUNT_BUDGET_TIMEOUT_MS = 5_000;
 
 /**
  * The mail-budget service as its service binding exposes it (RPC). `take`
@@ -469,20 +479,39 @@ async function loadWorkerEnv(): Promise<Record<string, unknown>> {
 	}
 }
 
-/** The account budget's binding and token names, or null when the config sets none. */
+/** The account budget's binding and token names and its timeout, or null when the config sets none. */
 function accountBudgetOf(config: CloudflareEmailConfig): Required<AccountBudgetConfig> | null {
 	if (!config.accountBudget) return null;
+	const timeoutMs = config.accountBudget.timeoutMs;
 	return {
 		binding: config.accountBudget.binding ?? "MAIL_BUDGET",
 		token: config.accountBudget.token ?? "MAIL_BUDGET_TOKEN",
+		timeoutMs:
+			typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : ACCOUNT_BUDGET_TIMEOUT_MS,
 	};
+}
+
+/** The account's mail budget as a send uses it: the service, this site's token, how long a call may take. */
+type AccountBudget = { service: MailBudgetService; token: string; timeoutMs: number };
+
+/** `call`'s answer, or `late` when it has not answered within `ms`. A call that fails rejects as it does. */
+async function within<T>(call: Promise<T>, ms: number): Promise<{ answer: T } | { late: true }> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<{ late: true }>((resolve) => {
+		timer = setTimeout(resolve, ms, { late: true });
+	});
+	try {
+		return await Promise.race([call.then((answer) => ({ answer })), late]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /** The mail-budget service and this site's token from the env, or why either is missing. */
 function accountBudgetIn(
 	env: Record<string, unknown>,
 	names: Required<AccountBudgetConfig>,
-): { service: MailBudgetService; token: string } | { missing: string } {
+): AccountBudget | { missing: string } {
 	const service = env[names.binding];
 	const token = env[names.token];
 	const callable =
@@ -501,7 +530,7 @@ function accountBudgetIn(
 		};
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: take and refund are callable
-	return { service: service as MailBudgetService, token: token.trim() };
+	return { service: service as MailBudgetService, token: token.trim(), timeoutMs: names.timeoutMs };
 }
 
 /** SHA-256 of an address, lowercased, in hex: all the account budget ever learns of a recipient. */
@@ -520,20 +549,37 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
  * against the tenant's day, the account's day (all of it for "system" mail,
  * all but the system reserve for any other source) and, for "system" mail,
  * each recipient's day, in one step the service makes atomic. Only the
- * recipients' hashes leave the Worker. Any answer but a take is a refusal.
+ * recipients' hashes leave the Worker. Any answer but a take is a refusal,
+ * and so is no answer within `budget.timeoutMs`: a take that answers after
+ * that is given back.
  */
 export async function takeAccountBudget(
-	budget: { service: MailBudgetService; token: string },
+	budget: AccountBudget,
 	source: string,
 	recipients: readonly string[],
 ): Promise<{ takeId: string } | { refused: string }> {
 	let answer: unknown;
 	try {
-		answer = await budget.service.take({
+		const call = budget.service.take({
 			token: budget.token,
 			system: source === "system",
 			recipients: await Promise.all(recipients.map(recipientHash)),
 		});
+		const got = await within(call, budget.timeoutMs);
+		if ("late" in got) {
+			// Nothing is sent: a take that still arrives is given back, best effort.
+			void call
+				.then((late) =>
+					isRecord(late) && late.ok === true && typeof late.takeId === "string"
+						? budget.service.refund({ token: budget.token, takeId: late.takeId })
+						: undefined,
+				)
+				.catch(() => undefined);
+			return {
+				refused: `the account's mail budget did not answer within ${budget.timeoutMs} ms, so nothing is sent`,
+			};
+		}
+		answer = got.answer;
 	} catch (error) {
 		return {
 			refused: `the account's mail budget could not be asked (${describeRedacted(error, recipients)}), so nothing is sent`,
@@ -552,14 +598,26 @@ export async function takeAccountBudget(
 	};
 }
 
-/** Give a take back to the account's budget. Best effort: a count left high refuses sooner, never later. */
+/**
+ * Give a take back to the account's budget. Best effort: a count left high
+ * refuses sooner, never later, and a refund that has not answered within
+ * `budget.timeoutMs` is not waited for.
+ */
 async function refundAccountBudget(
-	budget: { service: MailBudgetService; token: string },
+	budget: AccountBudget,
 	takeId: string,
 	ctx: PluginContext,
 ): Promise<void> {
 	try {
-		await budget.service.refund({ token: budget.token, takeId });
+		const got = await within(
+			budget.service.refund({ token: budget.token, takeId }),
+			budget.timeoutMs,
+		);
+		if ("late" in got) {
+			ctx.log.warn("the account's mail budget did not answer a refund in time", {
+				timeoutMs: budget.timeoutMs,
+			});
+		}
 	} catch (error) {
 		ctx.log.warn("the account's mail budget did not take a refund back", {
 			error: describeRedacted(error),

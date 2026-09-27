@@ -993,6 +993,47 @@ describe("the account's budget", () => {
 		}
 	});
 
+	it("a take that does not answer in time sends nothing, gives the site's places back, and is given back when it answers late", async () => {
+		const mail = fakeEnv();
+		const kv = memoryKv();
+		let answer: (v: unknown) => void = () => {};
+		const budget = fakeBudget();
+		budget.service.take.mockImplementation(
+			(req) => (budget.takes.push(req), new Promise((resolve) => (answer = resolve))),
+		);
+		const deliver = createCloudflareEmailDeliver(
+			{ from: "notify@mail.example.org", accountBudget: { timeoutMs: 20 } },
+			async () => ({ ...mail.env, ...budget.env }),
+		);
+		await expect(deliver({ message, source: "emdash-forms" }, fakeCtx({ kv }))).rejects.toThrow(
+			/the account's mail budget did not answer within 20 ms, so nothing is sent/,
+		);
+		expect(mail.send).not.toHaveBeenCalled();
+		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
+		// The take arrives after all: it is given back.
+		answer({ ok: true, takeId: "take-late" });
+		await vi.waitFor(() => expect(budget.refunds).toEqual([{ token: TOKEN, takeId: "take-late" }]));
+	});
+
+	it("a refund that does not answer in time is not waited for: the binding's error still reaches the caller", async () => {
+		const mail = fakeEnv(async () => {
+			throw new Error("E_RECIPIENT_NOT_ALLOWED");
+		});
+		const budget = fakeBudget();
+		budget.service.refund.mockImplementation(() => new Promise(() => {}));
+		const ctx = fakeCtx();
+		await expect(
+			createCloudflareEmailDeliver(
+				{ from: "notify@mail.example.org", accountBudget: { timeoutMs: 20 } },
+				async () => ({ ...mail.env, ...budget.env }),
+			)({ message, source: "system" }, ctx),
+		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
+		expect(ctx.log.warn).toHaveBeenCalledWith(
+			"the account's mail budget did not answer a refund in time",
+			{ timeoutMs: 20 },
+		);
+	});
+
 	it("a message the binding refuses gives its place back to the account's budget too", async () => {
 		const mail = fakeEnv(async () => {
 			throw new Error("E_RECIPIENT_NOT_ALLOWED");
