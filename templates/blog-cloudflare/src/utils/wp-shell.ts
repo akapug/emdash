@@ -1172,7 +1172,8 @@ const COMMENT_TEMPLATE_HOLES = {
 /**
  * A comment area template: markup and holes of `allowed` kinds, each hole's
  * own values tokens or short words, `cls` inside a class attribute, `id`
- * inside an id or a `#` link, every other hole between tags, labels closed.
+ * inside an id or a `#` link, labels closed. That every other hole is between
+ * tags, the filled markup's check reads (its fill is markup, COMMENT_FILL).
  */
 function checkCommentTemplate(t: unknown, allowed: ReadonlySet<string>): t is WpShellCommentPart[] {
 	if (!Array.isArray(t)) return false;
@@ -1203,8 +1204,7 @@ function checkCommentTemplate(t: unknown, allowed: ReadonlySet<string>): t is Wp
 			.map((y) => (isText(y) ? y : "X"))
 			.join("");
 		if (x.s === "cls") return before.endsWith('class="');
-		if (x.s === "id") return COMMENT_ID_AT.test(before);
-		return before.lastIndexOf("<") <= before.lastIndexOf(">");
+		return x.s !== "id" || COMMENT_ID_AT.test(before);
 	});
 	return ok && depth === 0;
 }

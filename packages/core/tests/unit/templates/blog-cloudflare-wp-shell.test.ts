@@ -2128,6 +2128,11 @@ describe("wp-shell: a post's comments in the theme's comment area", () => {
 			'<div class="comment-body"><p>One &lt;b&gt;two&lt;/b&gt; "q"<br>next <a href="https://example.org/a?b=1&amp;c=2" rel="nofollow ugc noopener" target="_blank">https://example.org/a?b=1&amp;c=2</a> end</p><p>Second para</p></div>',
 		);
 		expect(html).not.toContain("<img");
+		// Its id too, in the id and the link to it: EmDash's ids are its own, but the page never trusts them to be tokens.
+		const odd = drawComments({ total: 1, items: [aComment({ id: `01J"><i x='y'>` })] });
+		expect(odd).toContain(`<li id="comment-01J&quot;&gt;&lt;i x=&#39;y&#39;&gt;" class="comment`);
+		expect(odd).toContain(`<a href="#comment-01J&quot;&gt;&lt;i x=&#39;y&#39;&gt;">`);
+		expect(odd).not.toContain("<i ");
 	});
 
 	it("draws no list at no comments, and EmDash's own list where the record has no comment of the theme's", () => {
@@ -2326,6 +2331,33 @@ describe("wp-shell: a post's comments in the theme's comment area", () => {
 		[
 			"a box outside the form element",
 			area((a) => (a.respond = [{ s: "field", field: "body" }, ...a.respond])),
+		],
+		[
+			"a form's only box for a field moved outside the form element",
+			area(
+				(a) =>
+					(a.respond = [
+						{ s: "field", field: "body" },
+						...a.respond.filter(
+							(x) => typeof x === "string" || x.s !== "field" || x.field !== "body",
+						),
+					]),
+			),
+		],
+		[
+			"a box of no EmDash field's beside the three",
+			area(
+				(a) =>
+					(a.respond = a.respond.flatMap((x) =>
+						typeof x !== "string" && x.s === "submit"
+							? [{ s: "field", field: "website" } as unknown as typeof x, x]
+							: [x],
+					)),
+			),
+		],
+		[
+			"a hole inside an attribute's value",
+			area((a) => (a.heading!.item = ['<abbr title="', { s: "count" }, '"></abbr>'])),
 		],
 		[
 			"a field of no EmDash field's",
