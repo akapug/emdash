@@ -3,6 +3,7 @@ import type { EmailDeliverEvent } from "emdash/plugin";
 import { describe, it, expect, vi } from "vitest";
 
 import {
+	CLOUDFLARE_EMAIL_CAPABILITY,
 	cloudflareEmail,
 	createCloudflareEmailDeliver,
 	createCloudflareEmailStatus,
@@ -1077,6 +1078,7 @@ describe("createCloudflareEmailStatus()", () => {
 			await status(fakeCtx({ kv: memoryKv({ "settings:replyTo": "office@example.org" }) })),
 		).toEqual({
 			provider: "cloudflare-email",
+			capability: "emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1",
 			from: "notify@mail.example.org",
 			senderName: "site title",
 			binding: { name: "EMAIL", present: true },
@@ -1112,6 +1114,21 @@ describe("createCloudflareEmailStatus()", () => {
 		expect((await noToken(fakeCtx())).accountBudget).toMatchObject({
 			ready: false,
 			why: expect.stringMatching(/no token: the secret "MAIL_BUDGET_TOKEN" is not set/),
+		});
+	});
+
+	it("answers the capability marker through the plugin's own status route, the string a built Worker carries", async () => {
+		expect(CLOUDFLARE_EMAIL_CAPABILITY).toBe(
+			"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1",
+		);
+		const plugin = createPlugin({ from: "cms@mails.example.com", accountBudget: {} });
+		const answer = (await plugin.routes.status?.handler(fakeCtx() as never)) as Record<
+			string,
+			unknown
+		>;
+		expect(answer).toMatchObject({
+			capability: CLOUDFLARE_EMAIL_CAPABILITY,
+			accountBudget: { ready: false },
 		});
 	});
 

@@ -187,6 +187,18 @@ interface SendEmailBinding {
 	}): Promise<{ messageId?: string }>;
 }
 
+/**
+ * What this provider enforces, as a marker a deployment can check a build for
+ * before it turns the build's email on: headers checked before the binding,
+ * the site's own budget, and the account-wide budget (`accountBudget`). The
+ * status route answers it, so every Worker bundle that carries this provider
+ * carries it as a string; a change to what the provider enforces changes it.
+ * Embark's tenant tool checks the built dist for it at install and the live
+ * status route for it when it turns email on.
+ */
+export const CLOUDFLARE_EMAIL_CAPABILITY =
+	"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=1";
+
 /** A subject longer than this is cut: Email Sending refuses a header value over 2,048 bytes. */
 const MAX_SUBJECT = 250;
 /** A display name longer than this is cut (RFC 5322's recommended line length). */
@@ -701,6 +713,7 @@ export function createCloudflareEmailStatus(
 		const budget = account ? accountBudgetIn(env, account) : null;
 		return {
 			provider: "cloudflare-email",
+			capability: CLOUDFLARE_EMAIL_CAPABILITY,
 			from: from.email,
 			senderName: from.name ? "configured" : "site title",
 			binding: { name: bindingName, present: Boolean(bindingOf(env, bindingName)) },
