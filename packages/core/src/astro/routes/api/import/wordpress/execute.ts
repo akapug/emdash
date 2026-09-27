@@ -6,7 +6,7 @@
  * Accepts WXR file and import configuration, imports content into the database.
  */
 
-import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
+import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
 import type { APIRoute } from "astro";
 import {
 	parseWxrString,
@@ -23,14 +23,6 @@ import { BylineRepository } from "#db/repositories/byline.js";
 import { SeoRepository } from "#db/repositories/seo.js";
 import { resolveImportByline } from "#import/utils.js";
 import {
-	attachPostTaxonomies,
-	isWxrTaxonomyConflictError,
-	mirrorTermsToLocales,
-	preImportWxrTaxonomies,
-	setPostTermAssignmentsReplacing,
-	type TaxonomyImportPlan,
-} from "#import/wxr-taxonomies.js";
-import {
 	emptyWxrSeoTally,
 	extractWxrSeo,
 	hasWxrSeo,
@@ -41,6 +33,14 @@ import {
 	type WxrSeoSite,
 	type WxrSeoTally,
 } from "#import/wxr-seo.js";
+import {
+	attachPostTaxonomies,
+	isWxrTaxonomyConflictError,
+	mirrorTermsToLocales,
+	preImportWxrTaxonomies,
+	setPostTermAssignmentsReplacing,
+	type TaxonomyImportPlan,
+} from "#import/wxr-taxonomies.js";
 import type { EmDashHandlers, EmDashManifest } from "#types";
 import { slugify } from "#utils/slugify.js";
 
@@ -350,11 +350,13 @@ export async function importContent(
 			// Map WordPress status to EmDash status
 			const status = mapStatus(post.status);
 
-			// Build data object with required fields
+			// Build data object with required fields. The title and excerpt as
+			// WordPress printed them (the_title and the_excerpt run wptexturize),
+			// like the content; the slug above is the stored title's.
 			const data: Record<string, unknown> = {
-				title: post.title || "Untitled",
+				title: wptexturize(post.title || "Untitled"),
 				content,
-				excerpt: post.excerpt || undefined,
+				excerpt: post.excerpt ? wptexturize(post.excerpt) : undefined,
 			};
 
 			// Only add featured_image if the collection has this field and we have a value

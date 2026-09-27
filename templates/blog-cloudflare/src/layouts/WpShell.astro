@@ -18,6 +18,7 @@
  */
 import type { HTMLTag } from "astro/types";
 import {
+	getEmDashCollection,
 	getMenuWithCacheHint,
 	getSiteSettingsWithCacheHint,
 	type EditProxy,
@@ -33,9 +34,13 @@ import {
 	bodyClassFor,
 	composeWpShell,
 	layoutFor,
+	ownImagePath,
+	plainText,
 	type WpShell,
 	type WpShellKind,
 	type WpShellMenuItem,
+	type WpShellPost,
+	wpShellDocumentTitle,
 } from "../utils/wp-shell";
 
 interface Props {
@@ -44,6 +49,8 @@ interface Props {
 	/** The path the visitor asked for (before the rewrite). */
 	path: string;
 	title: string;
+	/** The entry's own SEO title, carried from WordPress: the document title, as written. */
+	seoTitle?: string | null;
 	pageTitle?: string | null;
 	description?: string | null;
 	image?: string | null;
@@ -62,6 +69,7 @@ const {
 	kind,
 	path,
 	title,
+	seoTitle,
 	pageTitle,
 	description,
 	image,
@@ -90,14 +98,31 @@ const menus = new Map<string, readonly WpShellMenuItem[] | null>(
 );
 
 const siteTitle = settings.title ?? shell.parts.flatMap((p) => ("slot" in p && p.slot === "siteTitle" ? [p.fallback] : []))[0] ?? "";
-const titleIncludesSiteName =
-	!siteTitle ||
-	title === siteTitle ||
-	title.endsWith(` | ${siteTitle}`) ||
-	title.endsWith(` — ${siteTitle}`);
-const fullTitle = titleIncludesSiteName ? title : `${title} — ${siteTitle}`;
+const fullTitle = wpShellDocumentTitle(title, siteTitle, seoTitle);
 
 const layout = layoutFor(shell, kind);
+
+// The site's latest posts, where the layout lists them (the front page's highlights).
+const listed = Math.max(
+	0,
+	...layout.parts.map((p) =>
+		"slot" in p && p.slot === "listing" ? (shell.listings?.[p.listing]?.count ?? 0) : 0,
+	),
+);
+const postsResult =
+	listed > 0
+		? await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: listed })
+		: null;
+if (postsResult && Astro.cache?.enabled) Astro.cache.set(postsResult.cacheHint);
+const posts: WpShellPost[] = (postsResult?.entries ?? []).map((post) => ({
+	title: post.data.title,
+	url: `/posts/${post.id}`,
+	excerpt: post.data.excerpt,
+	text: plainText(post.data.content),
+	date: post.data.publishedAt,
+	image: ownImagePath(post.data.featured_image),
+}));
+
 const pieces = composeWpShell(shell, {
 	siteTitle: settings.title,
 	tagline: settings.tagline,
@@ -106,6 +131,7 @@ const pieces = composeWpShell(shell, {
 	currentPath: path,
 	kind,
 	title: entry.title,
+	posts,
 });
 
 // WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image.

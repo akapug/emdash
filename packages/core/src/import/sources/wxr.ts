@@ -5,7 +5,7 @@
  * This wraps the existing WXR parsing and analysis logic.
  */
 
-import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
+import { gutenbergToPortableText, wptexturize } from "@emdash-cms/gutenberg-to-portable-text";
 
 import { parseWxrString, type WxrData, type WxrPost } from "../../cli/wxr/parser.js";
 import type {
@@ -311,9 +311,10 @@ function wxrPostToNormalizedItem(
 		postType: post.postType || "post",
 		status: mapWpStatus(post.status),
 		slug: post.postName || slugify(post.title || `post-${post.id || Date.now()}`),
-		title: post.title || "Untitled",
+		// As WordPress printed them, like the content (wptexturize); the slug is the stored title's.
+		title: wptexturize(post.title || "Untitled"),
 		content,
-		excerpt: post.excerpt,
+		excerpt: post.excerpt ? wptexturize(post.excerpt) : post.excerpt,
 		date: parseWxrDate(post.postDateGmt, post.pubDate, post.postDate) ?? new Date(),
 		modified: parseWxrDate(post.postModifiedGmt, undefined, post.postModified),
 		author: post.creator,

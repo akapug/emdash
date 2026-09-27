@@ -12,6 +12,7 @@ import { parse } from "@wordpress/block-serialization-default-parser";
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
 import { parseInlineContent } from "./inline.js";
+import { wptexturize } from "./texturize.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
@@ -69,6 +70,9 @@ export type {
 export { defaultTransformers, fallbackTransformer } from "./transformers/index.js";
 export * as coreTransformers from "./transformers/core.js";
 export * as embedTransformers from "./transformers/embed.js";
+
+// WordPress's typography, for the text an importer stores beside the content (a title, an excerpt).
+export { wptexturize } from "./texturize.js";
 
 // Re-export inline utilities
 export {
@@ -132,17 +136,19 @@ export function gutenbergToPortableText(
 	if (!content || !content.trim()) {
 		return [];
 	}
+	// The text as WordPress printed it: the_content runs wptexturize before wpautop.
+	const html = options.texturize === false ? content : wptexturize(content);
 
 	// Check if content has Gutenberg blocks
-	const hasBlocks = content.includes("<!-- wp:");
+	const hasBlocks = html.includes("<!-- wp:");
 
 	if (!hasBlocks) {
 		// Classic editor content - treat as HTML, as WordPress draws it
-		return htmlToPortableText(classicParagraphs(content), options);
+		return htmlToPortableText(classicParagraphs(html), options);
 	}
 
 	// Parse Gutenberg blocks
-	const blocks = normalizeBlocks(parse(content));
+	const blocks = normalizeBlocks(parse(html));
 
 	// Create key generator
 	const generateKey = options.keyGenerator || createKeyGenerator();
