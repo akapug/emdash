@@ -309,7 +309,11 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	});
 
 	it("recovery, CURE 4: a link not known to be sent is RECOVERY_SEND_UNKNOWN, never RECOVERY_NOT_SENT", async () => {
-		const m = mediator({ protocol: SYSTEM_MAIL_PROTOCOL, status: "unknown", why: "did not finish" });
+		const m = mediator({
+			protocol: SYSTEM_MAIL_PROTOCOL,
+			status: "unknown",
+			why: "did not finish",
+		});
 		const { recovery } = await routesWith(bound(m.binding));
 		const r = await call(recovery, {
 			request: post(`admin/users/${target.id}/send-recovery`, {}),

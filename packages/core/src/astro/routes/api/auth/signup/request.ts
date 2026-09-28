@@ -82,7 +82,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 						)
 					: { status: "refused" as const, why: mail.missing };
 			if (outcome.status === "refused") console.warn(`[signup] not sent: ${outcome.why}`);
-			if (outcome.status === "unknown") console.warn(`[signup] not known to be sent: ${outcome.why}`);
+			if (outcome.status === "unknown")
+				console.warn(`[signup] not known to be sent: ${outcome.why}`);
 			return apiSuccess(GENERIC_SUCCESS);
 		}
 

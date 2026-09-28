@@ -389,7 +389,9 @@ export function createBudgetClient(deps: {
 	async function giveBack(token: string, requestId: string, takeId: string | null): Promise<void> {
 		owe(token, requestId, takeId);
 		if (!(await settle(owedKey(requestId))))
-			log("mail broker: a give-back to the mail budget is owed, and is asked for again at the next fence");
+			log(
+				"mail broker: a give-back to the mail budget is owed, and is asked for again at the next fence",
+			);
 	}
 
 	/** How many give-backs are owed (counted up to one more than a fence asks for). */
@@ -418,7 +420,8 @@ export function createBudgetClient(deps: {
 			want: { lane: "plugin" | "system"; generation: number },
 		): Promise<{ takeId: string } | { why: string }> {
 			if (!budget) return { why: "the broker has no service binding MAIL_BUDGET" };
-			const ask = () => budget.take({ protocol: MAIL_BUDGET_PROTOCOL, token, recipients, requestId });
+			const ask = () =>
+				budget.take({ protocol: MAIL_BUDGET_PROTOCOL, token, recipients, requestId });
 			let call = ask();
 			let got: { answer: unknown } | { late: true };
 			try {
@@ -550,12 +553,13 @@ export function createMailBroker(deps: BrokerDeps) {
 		const next = waiting.operator.shift() ?? waiting.site.shift() ?? waiting.anonymous.shift();
 		if (!next) return;
 		running = true;
-		void Promise.resolve()
-			.then(next)
-			.finally(() => {
-				running = false;
-				pump();
-			});
+		// `next` never rejects (serial settles its caller's promise itself), so the queue always moves on.
+		void (async () => {
+			await Promise.resolve();
+			await next();
+			running = false;
+			pump();
+		})();
 	}
 	/** Run `work` in its turn among the calls of its class, numbered as it starts. */
 	function serial<T>(cls: CallClass, work: (seq: number) => Promise<T>): Promise<T> {
@@ -576,7 +580,9 @@ export function createMailBroker(deps: BrokerDeps) {
 	const highest = () => Number(store.get("highest") ?? 0);
 
 	/** The SHA-256 of a request's capability, or why it carries none. Nothing is read or written for it. */
-	async function capabilityOf(r: Record<string, unknown>): Promise<{ hash: string } | { why: string }> {
+	async function capabilityOf(
+		r: Record<string, unknown>,
+	): Promise<{ hash: string } | { why: string }> {
 		if (typeof r.capability !== "string" || !SECRET.test(r.capability))
 			return { why: "the request carries no capability" };
 		return { hash: await sha256Hex(r.capability) };

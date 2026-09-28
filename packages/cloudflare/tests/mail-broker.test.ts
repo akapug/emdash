@@ -278,8 +278,7 @@ function rig(
 	const budget = over.budget ?? fakeBudget();
 	const plugin = over.plugin ?? sendBinding();
 	const system = over.system ?? sendBinding();
-	const { sqlite, db } =
-		over.database ?? (over.auth ? authDb() : { sqlite: null, db: null });
+	const { sqlite, db } = over.database ?? (over.auth ? authDb() : { sqlite: null, db: null });
 	const sessions = { get: vi.fn(async () => null) };
 	const b = createMailBroker({
 		store,
@@ -671,9 +670,7 @@ describe("a sign-in operation (CURE 4: its request id)", () => {
 		await bringUp(r, 2, g1, 1);
 		expect(await r.b.requestMagicLink(request)).toMatchObject({ status: "sent", replayed: true });
 		expect(r.system.sent).toHaveLength(1);
-		expect(
-			await r.b.requestMagicLink({ ...request, requestId: randomUUID() }),
-		).toMatchObject({
+		expect(await r.b.requestMagicLink({ ...request, requestId: randomUUID() })).toMatchObject({
 			status: "refused",
 			why: expect.stringMatching(/not this site's active generation's/),
 		});
@@ -683,9 +680,10 @@ describe("a sign-in operation (CURE 4: its request id)", () => {
 		});
 		// Without a request id nothing is run.
 		const { requestId: _id, ...unnamed } = request;
-		expect(
-			await r.b.requestMagicLink({ ...unnamed, capability: g1.capability }),
-		).toMatchObject({ status: "refused", why: expect.stringMatching(/names its request id/) });
+		expect(await r.b.requestMagicLink({ ...unnamed, capability: g1.capability })).toMatchObject({
+			status: "refused",
+			why: expect.stringMatching(/names its request id/),
+		});
 		expect(r.system.sent).toHaveLength(1);
 	});
 });
@@ -1025,8 +1023,14 @@ describe("a give-back (CURE 6: inside the fence)", () => {
 		budget.failRefunds(2);
 		const held = await activate(r, 2, g1, 1);
 		expect(held.status).toBe(503);
-		expect(held.body).toMatchObject({ ok: false, active: { generation: 1 }, staged: { generation: 2 } });
-		expect(held.body.error).toMatch(/give-back\(s\) of places earlier sends took are not yet known to be done/);
+		expect(held.body).toMatchObject({
+			ok: false,
+			active: { generation: 1 },
+			staged: { generation: 2 },
+		});
+		expect(held.body.error).toMatch(
+			/give-back\(s\) of places earlier sends took are not yet known to be done/,
+		);
 		// The object restarts: what it owes is in its storage, and the activation settles it first.
 		const after = rig({ store, budget, auth: true });
 		const acked = await activate(after, 2, g1, 1);
@@ -1034,10 +1038,10 @@ describe("a give-back (CURE 6: inside the fence)", () => {
 		expect(acked.body).toMatchObject({ owedRefunds: 0, active: { generation: 2 } });
 		expect(budget.counted()).toBe(0);
 		// Each by the EXACT token that took it (G0's, retired in the budget by then).
-		expect(budget.refunds.filter((x) => x.token === g0.plugin).at(-1)).toMatchObject({
+		expect(budget.refunds.findLast((x) => x.token === g0.plugin)).toMatchObject({
 			takeId: expect.any(String),
 		});
-		expect(budget.refunds.filter((x) => x.token === g0.system).at(-1)).toMatchObject({
+		expect(budget.refunds.findLast((x) => x.token === g0.system)).toMatchObject({
 			takeId: expect.any(String),
 		});
 		// A retire likewise: retired at once, acknowledged only once nothing is owed.
@@ -1048,7 +1052,12 @@ describe("a give-back (CURE 6: inside the fence)", () => {
 		budget.failRefunds(1);
 		const retiring = await admin(after.b, "retire", { generation: 2 });
 		expect(retiring.status).toBe(503);
-		expect(retiring.body).toMatchObject({ ok: false, retired: ["active"], active: null, owedRefunds: 1 });
+		expect(retiring.body).toMatchObject({
+			ok: false,
+			retired: ["active"],
+			active: null,
+			owedRefunds: 1,
+		});
 		// Nothing of G1 counts from the retire on, acknowledged or not.
 		expect(await sendWith(after.b, g1.capability)).toMatchObject({
 			status: "refused",

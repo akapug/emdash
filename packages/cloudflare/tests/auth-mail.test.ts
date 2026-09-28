@@ -26,6 +26,7 @@ vi.mock("cloudflare:workers", () => {
 	return { WorkerEntrypoint: Base, DurableObject: Base };
 });
 
+import { createBudgetClient, type BrokerStore } from "../src/auth-mail/broker.js";
 import {
 	AUTH_MAIL_PROTOCOL,
 	createAuthMailMediator,
@@ -34,7 +35,6 @@ import {
 	type AuthMailTables,
 } from "../src/auth-mail/mediator.js";
 import MailBrokerEntrypoint from "../src/auth-mail/worker.js";
-import { createBudgetClient, type BrokerStore } from "../src/auth-mail/broker.js";
 
 const SITE = {
 	url: "https://acme.example.org",
