@@ -1,8 +1,10 @@
 /**
- * The auth-mail mediator (src/auth-mail): EmDash's own sign-in mail, issued
- * and sent by a Worker of its own. Over a real SQLite database with EmDash's
- * auth tables and @emdash-cms/auth's own token and template code; the mail
- * budget and EMAIL_SYSTEM stood in by doubles that keep every call.
+ * The auth-mail mediator (src/auth-mail/mediator.ts): EmDash's own sign-in
+ * mail, issued and sent by a Worker of its own (the site's mail broker, which
+ * runs these operations in its queue: tests/mail-broker.test.ts). Over a real
+ * SQLite database with EmDash's auth tables and @emdash-cms/auth's own token
+ * and template code; the mail budget and EMAIL_SYSTEM stood in by doubles that
+ * keep every call.
  */
 
 import { hashPrefixedToken, hashToken } from "@emdash-cms/auth";
@@ -12,16 +14,17 @@ import { stringify } from "devalue";
 import { Kysely, SqliteDialect } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("cloudflare:workers", () => ({
-	WorkerEntrypoint: class {
+vi.mock("cloudflare:workers", () => {
+	class Base {
 		ctx: unknown;
 		env: unknown;
 		constructor(ctx: unknown, env: unknown) {
 			this.ctx = ctx;
 			this.env = env;
 		}
-	},
-}));
+	}
+	return { WorkerEntrypoint: Base, DurableObject: Base };
+});
 
 import {
 	AUTH_MAIL_MARKER,
@@ -32,7 +35,7 @@ import {
 	type AuthMailDeps,
 	type AuthMailTables,
 } from "../src/auth-mail/mediator.js";
-import AuthMail from "../src/auth-mail/worker.js";
+import MailBrokerEntrypoint from "../src/auth-mail/worker.js";
 
 const SITE = {
 	url: "https://acme.example.org",
@@ -109,7 +112,7 @@ function sessionStore() {
 }
 
 /** The mail budget's system lane: every take and refund kept; `answer` decides what a take gets. */
-function systemBudget(answer: () => unknown = () => ({ ok: true, protocol: 2, lane: "system" })) {
+function systemBudget(answer: () => unknown = () => ({ ok: true, protocol: 3, lane: "system" })) {
 	const takes: Array<Record<string, unknown>> = [];
 	const refunds: Array<Record<string, unknown>> = [];
 	let n = 0;
@@ -123,9 +126,9 @@ function systemBudget(answer: () => unknown = () => ({ ok: true, protocol: 2, la
 		}),
 		refund: vi.fn(async (req: Record<string, unknown>) => {
 			refunds.push(req);
-			return { ok: true, protocol: 2, refunded: 1 };
+			return { ok: true, protocol: 3, refunded: 1 };
 		}),
-		report: vi.fn(async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "system" })),
+		report: vi.fn(async () => ({ ok: true, protocol: 3, tenant: "acme", lane: "system" })),
 	};
 	return { service, takes, refunds };
 }
@@ -222,7 +225,7 @@ describe("a request", () => {
 				});
 			}
 			// Another protocol, and none.
-			for (const protocol of [2, "1", undefined]) {
+			for (const protocol of [1, "2", undefined]) {
 				expect(await m[op as keyof typeof base]({ ...request, protocol })).toMatchObject({
 					status: "refused",
 				});
@@ -296,10 +299,15 @@ describe("a magic link", () => {
 				invited_by: null,
 			},
 		]);
-		// Its place in the budget: the system token, the recipient's hash, nothing else.
+		// Its place in the budget: the system token, the recipient's hash and a request id, nothing else.
 		expect(budget.takes).toHaveLength(1);
-		expect(Object.keys(budget.takes[0]!).toSorted()).toEqual(["protocol", "recipients", "token"]);
-		expect(budget.takes[0]).toMatchObject({ protocol: 2, token: "sys-token" });
+		expect(Object.keys(budget.takes[0]!).toSorted()).toEqual([
+			"protocol",
+			"recipients",
+			"requestId",
+			"token",
+		]);
+		expect(budget.takes[0]).toMatchObject({ protocol: 3, token: "sys-token" });
 		expect(JSON.stringify(budget.takes)).not.toContain("@");
 	});
 
@@ -358,7 +366,7 @@ describe("a send that does not go out", () => {
 		});
 		expect(JSON.stringify(a)).not.toContain("admin@");
 		expect(budget.refunds).toEqual([
-			{ protocol: 2, token: "sys-token", takeId: "2026-01-01:take-1" },
+			{ protocol: 3, token: "sys-token", takeId: "2026-01-01:take-1" },
 		]);
 		expect(tokens()).toEqual([]);
 	});
@@ -367,14 +375,14 @@ describe("a send that does not go out", () => {
 		for (const [what, answerIs, why, refunded] of [
 			[
 				"refused",
-				() => ({ ok: false, protocol: 2, scope: "account", refused: "full" }),
+				() => ({ ok: false, protocol: 3, scope: "account", refused: "full" }),
 				/the mail budget refused it \(account\)/,
 				0,
 			],
 			["another protocol", () => ({ ok: true, protocol: 1 }), /answered in another protocol/, 1],
 			[
 				"the plugin lane",
-				() => ({ ok: true, protocol: 2, lane: "plugin" }),
+				() => ({ ok: true, protocol: 3, lane: "plugin" }),
 				/not the system lane's/,
 				1,
 			],
@@ -605,25 +613,36 @@ describe("the mediator's own configuration", () => {
 		expect(await m.status({ protocol: 9 })).toMatchObject({ status: "refused" });
 	});
 
-	it("exports its entrypoint and nothing else, since workerd starts no main module with an export that is not one", async () => {
+	it("exports its entrypoint and its Durable Object and nothing else, since workerd starts no main module with an export that is not one", async () => {
 		const mod: Record<string, unknown> = await import("../src/auth-mail/worker.js");
-		expect(Object.keys(mod)).toEqual(["default"]);
+		expect(Object.keys(mod).toSorted()).toEqual(["MailBroker", "default"]);
 		expect(typeof mod.default).toBe("function");
+		expect(typeof mod.MailBroker).toBe("function");
 	});
 
-	it("is a Worker with no HTTP surface: fetch answers 404, and its RPC methods are the mediator's", async () => {
-		const worker = new AuthMail({ waitUntil: () => {} } as never, {} as never);
-		const r = worker.fetch();
+	it("is a Worker whose HTTP surface is the operator's admin door only: any other path is 404, and without its Durable Object nothing is answered", async () => {
+		const worker = new MailBrokerEntrypoint({ waitUntil: () => {} } as never, {} as never);
+		const r = await worker.fetch(new Request("https://broker.example/"));
 		expect(r.status).toBe(404);
-		expect(await r.text()).toContain(AUTH_MAIL_MARKER);
-		expect(await worker.status({ protocol: P })).toMatchObject({
-			marker: AUTH_MAIL_MARKER,
-			send: false,
-			site: false,
-			budget: { ok: false },
-		});
-		expect(
-			await worker.requestMagicLink({ protocol: P, email: "admin@example.org", ip: null }),
-		).toMatchObject({ status: "refused" });
+		expect(await r.text()).toContain("emdash-auth-mail:broker");
+		expect((await worker.fetch(new Request("https://broker.example/admin/state"))).status).toBe(
+			404,
+		);
+		for (const op of [
+			"send",
+			"status",
+			"requestMagicLink",
+			"requestSignup",
+			"createInvite",
+			"sendRecovery",
+		] as const) {
+			expect(
+				await worker[op]({ protocol: P, email: "admin@example.org", ip: null }),
+				op,
+			).toMatchObject({
+				status: "refused",
+				why: expect.stringMatching(/no Durable Object binding BROKER/),
+			});
+		}
 	});
 });

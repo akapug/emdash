@@ -1,7 +1,10 @@
 /**
  * The auth-mail mediator: EmDash's own sign-in mail (magic links, sign-up
  * verification, invites and recovery links), issued and sent by a Worker of
- * its own, never by the tenant's.
+ * its own, never by the tenant's. It runs inside the site's mail broker
+ * (./broker.ts), which checks the request's capability first and runs each
+ * operation in its queue, with the system lane's token of the ACTIVE
+ * generation and EMAIL_SYSTEM.
  *
  * WHY. The account's mail budget keeps a reserve for sign-in mail, so a
  * site's forms cannot spend the day its login email needs. Whatever runs in
@@ -63,16 +66,22 @@ import { unflatten } from "devalue";
 import { sql, type Kysely } from "kysely";
 
 import { MAX_SUBJECT, displayName, headerText, mailbox } from "../plugins/email-headers.js";
+import { MAIL_BROKER_PROTOCOL } from "../plugins/mail-broker-protocol.js";
 import { MAIL_BUDGET_PROTOCOL } from "../plugins/mail-budget-protocol.js";
 
-/** The version of this mediator's RPC: what an operation asks and answers. */
-export const AUTH_MAIL_PROTOCOL = 1;
+/**
+ * The version of the broker's RPC (./broker.ts), this mediator's operations
+ * among it: what a request asks and an answer says. 2: every request carries
+ * the site's generation capability, which the broker checks before anything
+ * else, and the site's own mail is sent through the broker too.
+ */
+export const AUTH_MAIL_PROTOCOL = MAIL_BROKER_PROTOCOL;
 
 /**
- * What the mediator is, as a marker its status answers and its built module
+ * What the broker is, as a marker its status answers and its built module
  * carries, so a deployment can check both before it relies on it.
  */
-export const AUTH_MAIL_MARKER = "emdash-auth-mail:mediator;v=1";
+export const AUTH_MAIL_MARKER = "emdash-auth-mail:broker;v=2";
 
 /** The session cookie EmDash's admin signs in with (Astro's default). */
 const SESSION_COOKIE = "astro-session";
@@ -102,9 +111,14 @@ export interface SystemSendBinding {
 	}): Promise<unknown>;
 }
 
-/** The mail-budget service as its service binding exposes it (protocol 2). */
+/** The mail-budget service as its service binding exposes it (protocol 3). */
 export interface SystemBudgetService {
-	take(request: { protocol: number; token: string; recipients: string[] }): Promise<unknown>;
+	take(request: {
+		protocol: number;
+		token: string;
+		recipients: string[];
+		requestId: string;
+	}): Promise<unknown>;
 	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
 	report?(request: { protocol: number; token: string }): Promise<unknown>;
 }
@@ -145,6 +159,8 @@ export interface AuthMailDeps {
 	extend?: (work: Promise<unknown>) => void;
 	/** A log line; never given an address or a token. */
 	log?: (line: string) => void;
+	/** A fresh request id for a take (a retry of it names the same one). */
+	id?: () => string;
 }
 
 const answer = {
@@ -377,6 +393,7 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 	const now = deps.now ?? (() => Date.now());
 	const log = deps.log ?? (() => {});
 	const extend = deps.extend ?? ((work: Promise<unknown>) => void work.catch(() => undefined));
+	const newId = deps.id ?? (() => crypto.randomUUID());
 
 	/** Give a take back, awaited within the timeout, and kept alive past it. */
 	async function giveBack(budget: { service: SystemBudgetService; token: string }, takeId: string) {
@@ -411,12 +428,24 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 		if (!subject) throw new Refusal("the message has no subject");
 		let takeId: string;
 		try {
-			const call = budget.service.take({
-				protocol: MAIL_BUDGET_PROTOCOL,
-				token: budget.token,
-				recipients: [await sha256Hex(to.toLowerCase())],
-			});
-			const got = await within(call, BUDGET_TIMEOUT_MS);
+			const recipients = [await sha256Hex(to.toLowerCase())];
+			const requestId = newId();
+			const ask = () =>
+				budget.service.take({
+					protocol: MAIL_BUDGET_PROTOCOL,
+					token: budget.token,
+					recipients,
+					requestId,
+				});
+			let call = ask();
+			let got: { answer: unknown } | { late: true };
+			try {
+				got = await within(call, BUDGET_TIMEOUT_MS);
+			} catch {
+				// The answer was lost (the call threw): the same request id again is the same take.
+				call = ask();
+				got = await within(call, BUDGET_TIMEOUT_MS);
+			}
 			if ("late" in got) {
 				extend(
 					call
