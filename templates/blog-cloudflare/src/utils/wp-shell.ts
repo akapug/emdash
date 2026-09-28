@@ -2212,6 +2212,11 @@ export const WP_SHELL_SUBSCRIBE_MESSAGES: Record<
 		done: true,
 		text: "Thank you! Your subscription is saved. This site cannot send email yet, so no confirmation email was sent. It will send you one when it can, and new posts start once you confirm.",
 	},
+	queued: {
+		ok: true,
+		done: true,
+		text: "Thank you! Your subscription is saved. The confirmation email could not be sent just now: the site will try again in a few minutes, and new posts start once you confirm.",
+	},
 	pending: {
 		ok: false,
 		text: "It seems you already tried to subscribe with this email, but have not confirmed from the email link we sent. Please check your email inbox to confirm.",

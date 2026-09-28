@@ -30,7 +30,8 @@ if (!archive) {
 	return Astro.rewrite("/404");
 }
 if (shell) {
-	return Astro.rewrite(datePath(archive, { front: "/wp-shell/archive/" }));
+	// The query goes along: a rewrite to a path drops it, and the layout reads it (`?subscribe=`).
+	return Astro.rewrite(`${datePath(archive, { front: "/wp-shell/archive/" })}${Astro.url.search}`);
 }
 
 const perPage = Math.min(100, Math.max(1, settings.postsPerPage || 10));

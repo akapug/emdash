@@ -45,6 +45,7 @@ import {
 	type WpShellPostLayout,
 	type WpShellSubscribe,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
+import { SUBSCRIBE_STATUSES } from "../../../../plugins/subscriptions/src/subscriptions";
 import writerRecords from "./wp-shell-writer-records.json";
 
 /** A front page's own layout: its highlights, around the title and content, and the record's menu. */
@@ -2819,6 +2820,14 @@ describe("the sign-up", () => {
 		expect(invalid).toContain('name="email"');
 		// a status the plugin never sends says nothing
 		expect(draw({ status: "<script>" })).toBe(draw());
+	});
+
+	it("has words for every status the sign-up plugin sends back", () => {
+		for (const status of SUBSCRIBE_STATUSES) expect(WP_SHELL_SUBSCRIBE_MESSAGES[status]).toBeTruthy();
+		// a confirmation that failed to send is saved and retried: the visitor is not asked to try again
+		const queued = draw({ status: "queued" });
+		expect(queued.startsWith('<div class="success"><p>Thank you! Your subscription is saved.')).toBe(true);
+		expect(queued).not.toContain('name="email"');
 	});
 
 	it("escapes what it writes into the form", () => {

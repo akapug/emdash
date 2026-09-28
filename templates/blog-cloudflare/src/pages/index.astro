@@ -22,7 +22,7 @@ import { loadWpShell } from "../utils/wp-shell-loader";
 const byQuery = parseDateQuery(Astro.url.searchParams.get("m"), Astro.url.searchParams.get("paged"));
 if (byQuery) {
 	const { shell } = await loadWpShell();
-	return Astro.rewrite(datePath(byQuery, { front: shell ? "/wp-shell/archive/" : "/" }));
+	return Astro.rewrite(`${datePath(byQuery, { front: shell ? "/wp-shell/archive/" : "/" })}${Astro.url.search}`);
 }
 
 // Limit to what we render (1 featured + 6 grid). The DB does the slicing
@@ -39,7 +39,8 @@ const page = homepage.entry;
 // A site migrated from WordPress keeps its own design (layouts/WpShell.astro)
 // for its homepage. The latest-posts listing keeps this template's.
 if (page && (await loadWpShell()).shell) {
-	return Astro.rewrite("/wp-shell/home");
+	// The query goes along: a rewrite to a path drops it, and the layout reads it (`?subscribe=`).
+	return Astro.rewrite(`/wp-shell/home${Astro.url.search}`);
 }
 
 const postsResult = page
