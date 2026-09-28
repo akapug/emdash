@@ -4,8 +4,8 @@
  * mail-budget double that speaks protocol 3 (tokens in generations, a take per
  * request id, a refund only by the token that took), and send bindings the
  * test can pause inside the send. tests/auth-mail.test.ts holds the four auth
- * operations themselves; the broker's own bundle runs in workerd in the
- * artifact build's probe.
+ * operations themselves, and tests/mail-broker-workerd.test.ts runs the
+ * broker's Worker, bundled by wrangler, in workerd.
  */
 
 import { randomUUID } from "node:crypto";
