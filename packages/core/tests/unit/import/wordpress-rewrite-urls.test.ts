@@ -1,3 +1,4 @@
+import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,6 +8,7 @@ import {
 	rewritePortableTextUrls,
 	rewriteStringUrls,
 } from "../../../src/astro/routes/api/import/wordpress/rewrite-url-helpers.js";
+import type { PortableTextBlock } from "../../../src/astro/routes/api/import/wordpress/rewrite-url-helpers.js";
 
 describe("WordPress import URL rewriting", () => {
 	const oldOriginalUrl = "https://example.com/wp-content/uploads/2026/01/hero.jpg";
@@ -139,5 +141,153 @@ describe("WordPress import URL rewriting", () => {
 
 		expect(result).toEqual({ changed: true, urlsRewritten: 1 });
 		expect(blocks[0]?.link).toEqual({ href: newUrl, blank: true });
+	});
+});
+
+describe("WordPress import URL rewriting reaches links, not only images", () => {
+	const brochure = "https://example.com/wp-content/uploads/2016/02/brochure.pdf";
+	const imported = "/_emdash/api/media/file/01KBROCHURE.pdf";
+	const hero = "https://example.com/wp-content/uploads/2016/02/hero-1024x695.jpg";
+	const heroImported = "/_emdash/api/media/file/01KHERO.jpg";
+	const urlMap = {
+		[brochure]: imported,
+		"https://example.com/wp-content/uploads/2016/02/hero.jpg": heroImported,
+	};
+	const baseMap = buildBaseUrlMap(urlMap);
+	const convert = (html: string): PortableTextBlock[] =>
+		gutenbergToPortableText(html) as PortableTextBlock[];
+
+	it("rewrites a hyperlink to an imported attachment, as the importer's converter stores it", () => {
+		const blocks = convert(
+			`<!-- wp:paragraph -->\n<p>Read the <a href="${brochure}">preliminary study</a>.</p>\n<!-- /wp:paragraph -->`,
+		);
+		expect(blocks[0]?.markDefs).toEqual([
+			expect.objectContaining({ _type: "link", href: brochure }),
+		]);
+
+		expect(rewritePortableTextUrls(blocks, urlMap, baseMap)).toEqual({
+			changed: true,
+			urlsRewritten: 1,
+		});
+		expect(blocks[0]?.markDefs).toEqual([
+			expect.objectContaining({ _type: "link", href: imported }),
+		]);
+	});
+
+	it("rewrites a hyperlink in a classic-editor post, and a size of an image", () => {
+		const blocks = convert(
+			`<p><a href="${brochure}">PDF</a> and <a href="${hero}">the picture</a></p>`,
+		);
+
+		expect(rewritePortableTextUrls(blocks, urlMap, baseMap)).toEqual({
+			changed: true,
+			urlsRewritten: 2,
+		});
+		expect(blocks[0]?.markDefs).toEqual([
+			expect.objectContaining({ href: imported }),
+			expect.objectContaining({ href: heroImported }),
+		]);
+	});
+
+	it("leaves a link the import did not bring across", () => {
+		const other = "https://example.com/about/";
+		const blocks = convert(`<p><a href="${other}">About</a></p>`);
+
+		expect(rewritePortableTextUrls(blocks, urlMap, baseMap)).toEqual({
+			changed: false,
+			urlsRewritten: 0,
+		});
+		expect(blocks[0]?.markDefs).toEqual([expect.objectContaining({ href: other })]);
+	});
+
+	it("rewrites a table cell's link, a file block, buttons and a cover's background and content", () => {
+		const blocks: PortableTextBlock[] = [
+			{
+				_type: "table",
+				_key: "t",
+				rows: [
+					{
+						_type: "tableRow",
+						_key: "r",
+						cells: [
+							{
+								_type: "tableCell",
+								_key: "c",
+								content: [],
+								markDefs: [{ _type: "link", _key: "l", href: brochure }],
+							},
+						],
+					},
+				],
+			},
+			{ _type: "file", _key: "f", url: brochure, filename: "brochure.pdf" },
+			{ _type: "button", _key: "b", text: "Download", url: brochure },
+			{
+				_type: "buttons",
+				_key: "bs",
+				buttons: [{ _type: "button", _key: "b1", text: "Get it", url: brochure }],
+			},
+			{
+				_type: "cover",
+				_key: "cv",
+				backgroundImage: hero,
+				content: [
+					{
+						_type: "block",
+						_key: "p",
+						children: [],
+						markDefs: [{ _type: "link", _key: "l2", href: brochure }],
+					},
+				],
+			},
+		];
+
+		expect(rewritePortableTextUrls(blocks, urlMap, baseMap)).toEqual({
+			changed: true,
+			urlsRewritten: 6,
+		});
+		expect(JSON.stringify(blocks)).not.toContain("example.com");
+	});
+});
+
+describe("an image the rewrite moves onto its upload keeps the size WordPress drew it at", () => {
+	// The classic editor's medium size of an upload: the -300x256 file, drawn 300 by 256.
+	const upload = "https://example.org/wp-content/uploads/2015/04/storefront.png";
+	const medium = "https://example.org/wp-content/uploads/2015/04/storefront-300x256.png";
+	const local = "/_emdash/api/media/file/01KSTOREFRONT.png";
+	const content = (src: string) =>
+		`<p><img class="alignleft wp-image-15 size-medium" src="${src}" alt="" width="300" height="256" />Words beside the picture.</p>`;
+	const convert = (html: string): PortableTextBlock[] =>
+		gutenbergToPortableText(html) as PortableTextBlock[];
+
+	it("keeps it where the map names the upload, which the size's URL is matched to", () => {
+		const blocks = convert(content(medium));
+		const urlMap = { [upload]: local };
+
+		expect(rewritePortableTextUrls(blocks, urlMap, buildBaseUrlMap(urlMap))).toEqual({
+			changed: true,
+			urlsRewritten: 1,
+		});
+		// the file is the upload itself, however large; the size is the one WordPress drew
+		expect(blocks[0]).toMatchObject({
+			_type: "image",
+			asset: { _ref: local, url: local },
+			alignment: "left",
+			displayWidth: 300,
+			displayHeight: 256,
+		});
+	});
+
+	it("keeps it where the map names the size itself (another spelling of it, mapped onto the upload)", () => {
+		const http = medium.replace("https:", "http:");
+		const blocks = convert(content(http));
+		const urlMap = { [upload]: local, [http]: local };
+
+		rewritePortableTextUrls(blocks, urlMap, buildBaseUrlMap(urlMap));
+		expect(blocks[0]).toMatchObject({
+			asset: { url: local },
+			displayWidth: 300,
+			displayHeight: 256,
+		});
 	});
 });

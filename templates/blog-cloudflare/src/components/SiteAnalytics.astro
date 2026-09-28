@@ -1,0 +1,24 @@
+---
+/**
+ * The site's own visitor analytics, in <head>: the tags the `site:analyticsTag`
+ * setting names, as each provider's documented snippet (../utils/analytics.ts).
+ * Both layouts render it, so a site keeps counting its visits in its WordPress
+ * design (WpShell.astro, whose captured chrome carries no script) and in the
+ * template's own (Base.astro). A setting that is not exactly the allow-listed
+ * shape renders nothing.
+ */
+import { ANALYTICS_SETTING, analyticsHead, parseAnalyticsSettingCached } from "../utils/analytics";
+
+interface Props {
+	/** The site settings object the layout already read: it carries every `site:*` row, typed or not. */
+	settings: object;
+}
+
+const value: unknown = Reflect.get(Astro.props.settings, ANALYTICS_SETTING);
+const tags = parseAnalyticsSettingCached(value, (why) =>
+	console.warn(JSON.stringify({ event: "site_analytics_refused", why })),
+);
+const html = analyticsHead(tags);
+---
+
+{html && <Fragment set:html={html} />}

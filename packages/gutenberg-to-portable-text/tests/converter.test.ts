@@ -350,6 +350,71 @@ describe("gutenbergToPortableText", () => {
 			const quoteBlocks = result.filter((b) => (b as PortableTextTextBlock).style === "blockquote");
 			expect(quoteBlocks).toHaveLength(2);
 		});
+
+		// Since WordPress 6.2 the block editor saves a quote's text as inner blocks, and
+		// its citation as the <cite> WordPress draws; before, both were dropped
+		const text = (blocks: PortableTextBlock[]) =>
+			blocks.map((b) =>
+				b._type === "block"
+					? `${b.style}: ${b.children.map((c) => c.text).join("")}`
+					: `[${b._type}]`,
+			);
+
+		it("keeps a quote whose paragraphs are inner blocks, and its citation", () => {
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><!-- wp:paragraph -->
+<p>The first line of the quote.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>A second, with <a href="https://example.org/">a link</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:image {"id":4} -->
+<figure class="wp-block-image"><img src="https://example.org/q.jpg" alt="" class="wp-image-4"/></figure>
+<!-- /wp:image --><cite>A. Author</cite></blockquote>
+<!-- /wp:quote -->`;
+			const result = gutenbergToPortableText(content);
+			expect(text(result)).toEqual([
+				"blockquote: The first line of the quote.",
+				"blockquote: A second, with a link.",
+				"[image]",
+				"normal: — A. Author",
+			]);
+			expect(result[1]).toMatchObject({ markDefs: [{ href: "https://example.org/" }] });
+		});
+
+		it("keeps the citation of a quote saved before inner blocks", () => {
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>To be or not to be</p><cite>A. Playwright</cite></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(content))).toEqual([
+				"blockquote: To be or not to be",
+				"normal: — A. Playwright",
+			]);
+			// a quote with no paragraph is its text, its citation apart
+			const bare = `<!-- wp:quote -->
+<blockquote class="wp-block-quote">Brief.<cite>B. Person</cite></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(bare))).toEqual([
+				"blockquote: Brief.",
+				"normal: — B. Person",
+			]);
+		});
+
+		it("reads a <cite> inside a quote's paragraph as the paragraph's words, not the citation", () => {
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>As <cite>A Play</cite> has it</p><cite>A. Playwright</cite></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(content))).toEqual([
+				"blockquote: As A Play has it",
+				"normal: — A. Playwright",
+			]);
+			const uncited = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>As <cite>A Play</cite> has it</p></blockquote>
+<!-- /wp:quote -->`;
+			expect(text(gutenbergToPortableText(uncited))).toEqual(["blockquote: As A Play has it"]);
+		});
 	});
 
 	describe("image blocks", () => {
@@ -412,6 +477,50 @@ describe("gutenbergToPortableText", () => {
 			const img = result[0] as PortableTextImageBlock;
 
 			expect(img.alignment).toBe("center");
+		});
+
+		it("keeps the link the block editor saved around the image, as WordPress draws it", () => {
+			const media = `<!-- wp:image {"id":7,"sizeSlug":"large","linkDestination":"media"} -->
+<figure class="wp-block-image size-large"><a href="https://example.org/wp-content/uploads/full.jpg?a=1&amp;b=2"><img src="https://example.org/wp-content/uploads/full-1024x683.jpg" alt="" class="wp-image-7"/></a></figure>
+<!-- /wp:image -->`;
+			expect(gutenbergToPortableText(media)[0]).toMatchObject({
+				link: "https://example.org/wp-content/uploads/full.jpg?a=1&b=2",
+			});
+			// "Open in new tab" is the link's target
+			const blank = `<!-- wp:image {"id":8,"linkDestination":"custom","linkTarget":"_blank"} -->
+<figure class="wp-block-image"><a href="https://example.org/about/" target="_blank" rel="noreferrer noopener"><img src="https://example.org/e.jpg" alt="" class="wp-image-8"/></a></figure>
+<!-- /wp:image -->`;
+			expect(gutenbergToPortableText(blank)[0]).toMatchObject({
+				link: { href: "https://example.org/about/", blank: true },
+			});
+			// no link, a link in the caption, or a link with an unsafe scheme: the image is not linked
+			for (const figure of [
+				`<figure class="wp-block-image"><img src="https://example.org/g.jpg" alt=""/></figure>`,
+				`<figure class="wp-block-image"><img src="https://example.org/g.jpg" alt=""/><figcaption><a href="https://example.org/credit/">Credit</a></figcaption></figure>`,
+				`<figure class="wp-block-image"><a href="javascript:alert(1)"><img src="https://example.org/g.jpg" alt=""/></a></figure>`,
+			]) {
+				const [image] = gutenbergToPortableText(
+					`<!-- wp:image {"id":9} -->\n${figure}\n<!-- /wp:image -->`,
+				);
+				expect(image).toMatchObject({ _type: "image" });
+				expect(image).not.toHaveProperty("link");
+			}
+		});
+
+		it("keeps the link around a classic figure's image, and only its own image's", () => {
+			const [linked] = gutenbergToPortableText(
+				`<figure><a href="https://example.org/h/"><img src="https://example.org/h.png" alt="H" /></a><figcaption>H</figcaption></figure>`,
+			);
+			expect(linked).toMatchObject({
+				_type: "image",
+				caption: "H",
+				link: "https://example.org/h/",
+			});
+			const [first] = gutenbergToPortableText(
+				`<figure><img src="https://example.org/i.png" alt="I" /><a href="https://example.org/j/"><img src="https://example.org/j.png" alt="J" /></a></figure>`,
+			);
+			expect(first).toMatchObject({ _type: "image", alt: "I" });
+			expect(first).not.toHaveProperty("link");
 		});
 	});
 

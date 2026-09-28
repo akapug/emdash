@@ -139,6 +139,8 @@ async function resolveInternalUrl(
 		return { provider: "external", id: "", src: url };
 	}
 
+	// The URL names the item by its storage key, not its id; the local
+	// provider's get() finds an item by either.
 	let item: MediaProviderItem | null;
 	try {
 		item = await localProvider.get(storageKey);

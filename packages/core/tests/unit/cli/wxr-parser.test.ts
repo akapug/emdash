@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 
 import { describe, it, expect } from "vitest";
 
-import { parseWxr } from "../../../src/cli/wxr/parser.js";
+import { parseWxr, parseWxrString } from "../../../src/cli/wxr/parser.js";
 
 function createStream(content: string): Readable {
 	return Readable.from([content]);
@@ -36,6 +36,35 @@ describe("parseWxr", () => {
 		expect(result.site.link).toBe("https://example.com");
 		expect(result.site.description).toBe("A test WordPress site");
 		expect(result.site.language).toBe("en-US");
+	});
+
+	it("reads the same site metadata from a string, ignoring an item's own title and link", async () => {
+		const wxr = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel>
+    <title>Test Site</title>
+    <link>https://example.com</link>
+    <description>A test WordPress site</description>
+    <image><title>Logo</title><link>https://example.com/logo</link></image>
+    <wp:base_site_url>https://example.com</wp:base_site_url>
+    <wp:base_blog_url>https://example.com/blog</wp:base_blog_url>
+    <item>
+      <title>A post</title>
+      <link>https://example.com/a-post/</link>
+    </item>
+  </channel>
+</rss>`;
+
+		const result = await parseWxrString(wxr);
+
+		expect(result.site).toMatchObject({
+			title: "Test Site",
+			link: "https://example.com",
+			description: "A test WordPress site",
+			baseSiteUrl: "https://example.com",
+			baseBlogUrl: "https://example.com/blog",
+		});
+		expect(result.posts[0]?.title).toBe("A post");
 	});
 
 	it("parses posts", async () => {

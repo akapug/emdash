@@ -11,11 +11,17 @@
  *
  * What is drawn from EmDash, so an admin edit shows: the title and content
  * (with visual-editing markers), the menus (through each menu's own markup in
- * the theme), the site title, tagline and logo. Everything else in the header
- * and footer is the captured markup, sanitized when it was captured.
+ * the theme), the site title, tagline and logo, and the title again where the
+ * chrome prints it as text (a breadcrumb). Everything else in the header and
+ * footer is the captured markup, sanitized when it was captured. The home is
+ * drawn from the record's home layout when it has one (the front page's own),
+ * and a post from its post layout: its meta, featured image and share links
+ * from the post's own values, and EmDash's comments inside the theme's
+ * comment element.
  */
 import type { HTMLTag } from "astro/types";
 import {
+	getEmDashCollection,
 	getMenuWithCacheHint,
 	getSiteSettingsWithCacheHint,
 	type EditProxy,
@@ -24,12 +30,24 @@ import {
 import { EmDashHead, EmDashBodyStart, EmDashBodyEnd, PortableText } from "emdash/ui";
 import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
+import WpShellBlock from "../components/WpShellBlock.astro";
+import WpShellImage from "../components/WpShellImage.astro";
+import WpShellEmbed from "../components/WpShellEmbed.astro";
+import WpShellForm from "../components/WpShellForm.astro";
+import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
 	bodyClassFor,
 	composeWpShell,
+	layoutFor,
+	imageRatio,
+	ownImagePath,
+	plainText,
 	type WpShell,
 	type WpShellKind,
 	type WpShellMenuItem,
+	type WpShellPost,
+	type WpShellPostFill,
+	wpShellDocumentTitle,
 } from "../utils/wp-shell";
 
 interface Props {
@@ -37,7 +55,11 @@ interface Props {
 	kind: WpShellKind;
 	/** The path the visitor asked for (before the rewrite). */
 	path: string;
+	/** A page's slug: a page the record cut on its own is drawn in its own layout. */
+	slug?: string | null;
 	title: string;
+	/** The entry's own SEO title, carried from WordPress: the document title, as written. */
+	seoTitle?: string | null;
 	pageTitle?: string | null;
 	description?: string | null;
 	image?: string | null;
@@ -49,13 +71,19 @@ interface Props {
 	author?: string | null;
 	content?: { collection: string; id: string; slug?: string | null };
 	entry: { title: string; body?: PortableTextBlock[]; edit: EditProxy };
+	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
+	post?: WpShellPostFill | null;
+	/** Whether the page takes comments: without, the theme's comment element is not drawn. */
+	comments?: boolean;
 }
 
 const {
 	shell,
 	kind,
 	path,
+	slug,
 	title,
+	seoTitle,
 	pageTitle,
 	description,
 	image,
@@ -67,6 +95,8 @@ const {
 	author,
 	content,
 	entry,
+	post,
+	comments = true,
 } = Astro.props;
 
 const locations = [...new Set(shell.menus.map((m) => m.location))];
@@ -84,12 +114,31 @@ const menus = new Map<string, readonly WpShellMenuItem[] | null>(
 );
 
 const siteTitle = settings.title ?? shell.parts.flatMap((p) => ("slot" in p && p.slot === "siteTitle" ? [p.fallback] : []))[0] ?? "";
-const titleIncludesSiteName =
-	!siteTitle ||
-	title === siteTitle ||
-	title.endsWith(` | ${siteTitle}`) ||
-	title.endsWith(` — ${siteTitle}`);
-const fullTitle = titleIncludesSiteName ? title : `${title} — ${siteTitle}`;
+const fullTitle = wpShellDocumentTitle(title, siteTitle, seoTitle);
+
+const layout = layoutFor(shell, kind, slug);
+
+// The site's latest posts, where the layout lists them (the front page's highlights).
+const listed = Math.max(
+	0,
+	...layout.parts.map((p) =>
+		"slot" in p && p.slot === "listing" ? (shell.listings?.[p.listing]?.count ?? 0) : 0,
+	),
+);
+const postsResult =
+	listed > 0
+		? await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: listed })
+		: null;
+if (postsResult && Astro.cache?.enabled) Astro.cache.set(postsResult.cacheHint);
+const posts: WpShellPost[] = (postsResult?.entries ?? []).map((e) => ({
+	title: e.data.title,
+	url: `/posts/${e.id}`,
+	excerpt: e.data.excerpt,
+	text: plainText(e.data.content),
+	date: e.data.publishedAt,
+	image: ownImagePath(e.data.featured_image),
+	imageRatio: imageRatio(e.data.featured_image),
+}));
 
 const pieces = composeWpShell(shell, {
 	siteTitle: settings.title,
@@ -97,7 +146,23 @@ const pieces = composeWpShell(shell, {
 	logoUrl: settings.logo?.url,
 	menuItems: (location) => menus.get(location),
 	currentPath: path,
+	kind,
+	slug,
+	title: entry.title,
+	posts,
+	post,
 });
+// EmDash's comments (the route's slot) go inside the theme's comment element where the layout has
+// one (a post), and after the content otherwise.
+const commentsInLayout = pieces.some((piece) => "comments" in piece);
+
+// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
+// video embedded from a link in classic content, and a form imported from the site's form plugin,
+// in that plugin's markup (EmDash's form, its submit path).
+const components = {
+	block: WpShellBlock,
+	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
+};
 
 const pageCtx = createPublicPageContext({
 	url: new URL(path + Astro.url.search, Astro.url.origin),
@@ -126,14 +191,25 @@ const pageCtx = createPublicPageContext({
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>{fullTitle}</title>
-		{shell.styles.map((href) => <link rel="stylesheet" href={href} />)}
+		{layout.styles.map((href) => <link rel="stylesheet" href={href} />)}
 		<EmDashHead page={pageCtx} />
+		{/* The captured chrome carries no script by design: the site's analytics come from its setting. */}
+		<SiteAnalytics settings={settings} />
 	</head>
-	<body class={bodyClassFor(shell, kind)}>
+	<body class={bodyClassFor(shell, kind, slug)}>
 		<EmDashBodyStart page={pageCtx} />
 		{
 			pieces.map((piece) => {
 				if ("html" in piece) return <Fragment set:html={piece.html} />;
+				if ("comments" in piece) {
+					if (!comments) return null;
+					const Comments = piece.comments.tag as HTMLTag;
+					return (
+						<Comments class={piece.comments.class} id={piece.comments.id}>
+							<slot />
+						</Comments>
+					);
+				}
 				if ("title" in piece) {
 					const Title = piece.title.tag as HTMLTag;
 					return (
@@ -146,9 +222,10 @@ const pageCtx = createPublicPageContext({
 				return (
 					<Fragment>
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
-							<PortableText value={entry.body} />
+							<PortableText value={entry.body} components={components} />
+							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>
-						<slot />
+						{!commentsInLayout && <slot />}
 					</Fragment>
 				);
 			})

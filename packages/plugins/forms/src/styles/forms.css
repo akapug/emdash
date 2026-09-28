@@ -122,14 +122,25 @@
 	cursor: pointer;
 }
 
+/* What the client hides stays hidden under a theme's own rules for buttons (`button { display: inline-block }`). */
+.ec-form [hidden] {
+	display: none !important;
+}
+
 .ec-form-nav {
 	display: flex;
 	gap: 0.75rem;
 	align-items: center;
 }
 
-.ec-form-submit,
-.ec-form-next {
+/*
+ * The buttons' own look holds inside an EmDash form's own markup. A form drawn
+ * in another design (a migrated WordPress site's, whose form element is not
+ * .ec-form) keeps .ec-form-submit for the client and takes that design's
+ * button: the variables these read are .ec-form's.
+ */
+:where(.ec-form) .ec-form-submit,
+:where(.ec-form) .ec-form-next {
 	background: var(--ec-form-submit-bg);
 	color: var(--ec-form-submit-color);
 	border: none;
@@ -140,12 +151,12 @@
 	cursor: pointer;
 }
 
-.ec-form-submit:hover,
-.ec-form-next:hover {
+:where(.ec-form) .ec-form-submit:hover,
+:where(.ec-form) .ec-form-next:hover {
 	opacity: 0.9;
 }
 
-.ec-form-submit:disabled {
+:where(.ec-form) .ec-form-submit:disabled {
 	opacity: 0.6;
 	cursor: not-allowed;
 }

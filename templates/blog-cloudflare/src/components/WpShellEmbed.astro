@@ -1,0 +1,44 @@
+---
+/**
+ * An embed in a migrated WordPress design (layouts/WpShell.astro).
+ *
+ * A video link alone on its line in classic content (an autoembed) is drawn
+ * by WordPress as the provider's player inside a paragraph, `<p><iframe>`,
+ * and the theme sets that paragraph in its content column like any other
+ * (Twenty Twenty's `.entry-content > *` width and auto margins), the player
+ * as wide as the column and as high as the video's shape makes it. EmDash's
+ * own embed is a figure with margins of its own (`1.5rem 0`) that beat the
+ * theme's centring, so the player sat against the page's edge at a phone's
+ * width, with more space below it than WordPress left.
+ *
+ * Here such an embed (a YouTube or Vimeo video stored with no block markup
+ * of its own, which a Gutenberg embed block carries) is WordPress's
+ * paragraph and player, 16:9 from its width with no script
+ * (../styles/wp-shell.css). Every other embed is EmDash's own.
+ */
+import type { ComponentProps } from "astro/types";
+import { Embed } from "emdash/ui";
+
+import { classicVideoEmbed } from "../utils/wp-shell";
+
+type Props = ComponentProps<typeof Embed>;
+
+const { node } = Astro.props;
+const video = classicVideoEmbed(node);
+---
+
+{
+	video ? (
+		<p>
+			<iframe
+				class="wp-shell-embed"
+				src={video.src}
+				title={video.title}
+				allow={video.allow}
+				allowfullscreen
+			/>
+		</p>
+	) : (
+		<Embed {...Astro.props} />
+	)
+}

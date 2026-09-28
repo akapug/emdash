@@ -409,6 +409,25 @@ export class MediaRepository {
 	}
 
 	/**
+	 * Find the ready media item whose file is stored under `storageKey`: the
+	 * one `/_emdash/api/media/file/<storageKey>` serves. A storage key is not
+	 * the item's id (every upload path mints the two apart). `storage_key` has
+	 * no unique constraint, so when several ready items share one key the first
+	 * by id answers, the same one every time.
+	 */
+	async findByStorageKey(storageKey: string): Promise<MediaItem | null> {
+		const row = await this.db
+			.selectFrom("media")
+			.selectAll()
+			.where("storage_key", "=", storageKey)
+			.where("status", "=", "ready")
+			.orderBy("id", "asc")
+			.executeTakeFirst();
+
+		return row ? this.rowToItem(row) : null;
+	}
+
+	/**
 	 * Find media by ID
 	 */
 	async findById(id: string): Promise<MediaItem | null> {

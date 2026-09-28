@@ -340,4 +340,56 @@ describe("faithful render of migrated image node", () => {
 		expect(attr(tag, "class")).toBe("hero-image");
 		expect(attr(tag, "data-testid")).toBe("hero");
 	});
+
+	// A post's featured image as the WordPress import stores it: before the
+	// import resolved it to its local media item (the file's URL, no size), and
+	// as that item (its id, its size, its storage key). The template's
+	// `<Image image={post.data.featured_image} />` draws both from the file.
+	test.each([
+		{
+			name: "before it resolved to its media item",
+			value: {
+				provider: "external",
+				id: "",
+				src: "/_emdash/api/media/file/01KEXAMPLEHERO0000000000000.png",
+			},
+			size: { width: undefined, height: undefined, alt: "" },
+		},
+		{
+			name: "as its media item",
+			value: {
+				provider: "local",
+				id: "01KEXAMPLEITEM0000000000000",
+				filename: "hero.png",
+				mimeType: "image/png",
+				width: 1237,
+				height: 906,
+				alt: "A pond at dawn",
+				meta: {
+					storageKey: "01KEXAMPLEHERO0000000000000.png",
+					caption: null,
+					blurhash: null,
+					dominantColor: null,
+				},
+			},
+			size: { width: "1237", height: "906", alt: "A pond at dawn" },
+		},
+	])(
+		"public media components draw an imported featured image $name",
+		async ({ value: mediaValue, size }) => {
+			for (const html of [
+				await renderEmDashImage({ image: mediaValue }),
+				await renderEmDashMedia({ value: mediaValue }),
+			]) {
+				const tag = imgTag(html);
+				expect(attr(tag, "src")).toContain(
+					"/_emdash/api/media/file/01KEXAMPLEHERO0000000000000.png",
+				);
+				expect(attr(tag, "width")).toBe(size.width);
+				expect(attr(tag, "height")).toBe(size.height);
+				// No alt of its own: no text in the attribute, however Astro prints it.
+				expect(attr(tag, "alt") ?? "").toBe(size.alt);
+			}
+		},
+	);
 });

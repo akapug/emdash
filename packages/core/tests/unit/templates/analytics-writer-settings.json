@@ -1,0 +1,98 @@
+[
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "ga4",
+				"id": "G-ABC123DEF4"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "ga4",
+				"id": "GT-ABCD123"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "gtm",
+				"id": "GTM-AB12CD3"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "plausible",
+				"id": "example.org"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "fathom",
+				"id": "ABCDEFG"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "matomo",
+				"id": "3",
+				"url": "https://matomo.example.org/"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "matomo",
+				"id": "1",
+				"url": "https://example.matomo.cloud/"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "clarity",
+				"id": "abcd1234ef"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "cloudflare",
+				"id": "0123456789abcdef0123456789abcdef"
+			}
+		]
+	},
+	{
+		"version": 1,
+		"tags": [
+			{
+				"provider": "ga4",
+				"id": "G-ABC123DEF4"
+			},
+			{
+				"provider": "clarity",
+				"id": "abcd1234ef"
+			}
+		]
+	}
+]

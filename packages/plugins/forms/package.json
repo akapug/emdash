@@ -10,6 +10,7 @@
 		"./astro": "./src/astro/index.ts",
 		"./ui": "./src/astro/ui.ts",
 		"./client": "./src/client/index.ts",
+		"./public-definition": "./src/public-definition.ts",
 		"./styles": "./src/styles/forms.css"
 	},
 	"files": [
@@ -40,7 +41,7 @@
 		"ulidx": "^2.4.1"
 	},
 	"scripts": {
-		"test": "vitest run",
+		"test": "vitest run && vitest run --config vitest.render.config.ts",
 		"typecheck": "tsgo --noEmit"
 	},
 	"repository": {

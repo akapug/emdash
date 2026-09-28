@@ -91,8 +91,12 @@ export const createMediaProvider: CreateMediaProviderFn<LocalMediaRuntimeConfig>
 			};
 		},
 
+		// By the item's id, or by the storage key its file is served under: a bare
+		// internal media URL (`/_emdash/api/media/file/<storageKey>`, what the
+		// WordPress importer's URL map gives) names the item only by its key.
 		async get(id: string) {
-			const item = await repo().findById(id);
+			const r = repo();
+			const item = (await r.findById(id)) ?? (await r.findByStorageKey(id));
 			if (!item) return null;
 
 			return {

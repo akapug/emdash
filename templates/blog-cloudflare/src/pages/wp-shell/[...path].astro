@@ -14,6 +14,10 @@
  */
 import {
 	decodeSlug,
+	getCollectionInfo,
+	getCommentCount,
+	getContentSeo,
+	getEmDashCollection,
 	getEmDashEntry,
 	getHomepage,
 	getSeoMeta,
@@ -21,10 +25,11 @@ import {
 	type InferCollectionData,
 } from "emdash";
 import { Comments, CommentForm } from "emdash/ui/comments";
+import WpShellComments from "../../components/WpShellComments.astro";
 import WpShell from "../../layouts/WpShell.astro";
 import { featuredImageUrl } from "../../utils/og-image";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
-import { wpShellRoute } from "../../utils/wp-shell";
+import { wpShellPostFill, wpShellRoute } from "../../utils/wp-shell";
 import { loadWpShell } from "../../utils/wp-shell-loader";
 
 const origin = Astro.originPathname;
@@ -78,13 +83,47 @@ const seo = getSeoMeta(entry, {
 		? { defaultOgImage: featuredImageUrl(data.featured_image, Astro.url.origin) }
 		: {}),
 });
+
+// A post drawn in the record's post layout: its own values for the layout's holes. The comment
+// count, and the posts published before and after it, are read only where the layout prints them.
+async function adjacent(published: Date | null | undefined) {
+	if (!isPost || !shell?.post?.adjacent || !published) return { prev: null, next: null };
+	const at = published.toISOString();
+	const [before, after] = await Promise.all([
+		getEmDashCollection("posts", { where: { published_at: { lt: at } }, orderBy: { published_at: "desc" }, limit: 1 }),
+		getEmDashCollection("posts", { where: { published_at: { gt: at } }, orderBy: { published_at: "asc" }, limit: 1 }),
+	]);
+	if (Astro.cache?.enabled) for (const r of [before, after]) Astro.cache.set(r.cacheHint);
+	const [prev, next] = [before, after].map((r) => {
+		const e = r.entries[0];
+		return e ? { title: e.data.title, url: `/posts/${e.id}` } : null;
+	});
+	return { prev, next };
+}
+const post =
+	isPost && shell.post
+		? wpShellPostFill(data, {
+				url: path,
+				origin: Astro.url.origin,
+				comments: shell.post.comments ? await getCommentCount("posts", data.id) : null,
+				...(await adjacent(data.publishedAt)),
+			})
+		: null;
+// The post layout's comment element holds EmDash's comments itself: in the theme's comment area where
+// the record carries one. With comments off, the element is not drawn either: WordPress draws no comment
+// area for a post that takes none.
+const layoutComments = Boolean(post && shell.post?.parts.some((p) => "slot" in p && p.slot === "comments"));
+const commentsOn = isPost && ((await getCollectionInfo("posts"))?.commentsEnabled ?? false);
+const area = layoutComments && shell.post?.commentArea ? shell.post : null;
 ---
 
 <WpShell
 	shell={shell}
 	kind={route.kind}
 	path={route.kind === "home" ? "/" : origin}
+	slug={route.kind === "page" ? entry.id : null}
 	title={seo.title}
+	seoTitle={getContentSeo(entry)?.title}
 	pageTitle={seo.ogTitle}
 	description={seo.description}
 	image={seo.ogImage}
@@ -95,13 +134,23 @@ const seo = getSeoMeta(entry, {
 	modifiedTime={isPost ? data.updatedAt.toISOString() : null}
 	content={{ collection, id: data.id, slug: entry.id }}
 	entry={{ title: data.title, body: data.content, edit: entry.edit }}
+	post={post}
+	comments={commentsOn}
 >
 	{
-		isPost && (
-			<div class="comments-wrapper section-inner">
-				<Comments collection="posts" contentId={data.id} threaded />
-				<CommentForm collection="posts" contentId={data.id} />
-			</div>
-		)
+		commentsOn &&
+			(area ? (
+				<WpShellComments post={area} contentId={data.id} title={data.title} />
+			) : layoutComments ? (
+				<Fragment>
+					<Comments collection="posts" contentId={data.id} threaded />
+					<CommentForm collection="posts" contentId={data.id} />
+				</Fragment>
+			) : (
+				<div class="comments-wrapper section-inner">
+					<Comments collection="posts" contentId={data.id} threaded />
+					<CommentForm collection="posts" contentId={data.id} />
+				</div>
+			))
 	}
 </WpShell>

@@ -234,6 +234,13 @@ export interface ImportAnalysis {
 		url: string;
 	};
 
+	/**
+	 * The typography the import stores the text in: as WordPress printed it
+	 * (wptexturize, English quote marks) for a site in English or one whose
+	 * export names no language, as written otherwise.
+	 */
+	typography?: { language: string | null; texturized: boolean; note: string };
+
 	postTypes: PostTypeAnalysis[];
 
 	attachments: {

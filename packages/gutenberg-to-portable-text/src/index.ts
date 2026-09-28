@@ -6,23 +6,46 @@
  * HTML+JSON format that WordPress uses.
  */
 
+import { autop } from "@wordpress/autop";
 import { parse } from "@wordpress/block-serialization-default-parser";
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
-import { parseInlineContent } from "./inline.js";
+import {
+	drawsLine,
+	extractDisplaySize,
+	imageAlignment,
+	parseInlineContent,
+	parseInlineSegments,
+	withoutUndrawn,
+} from "./inline.js";
+import { wptexturize } from "./texturize.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
 	PortableTextBlock,
+	PortableTextImageBlock,
+	PortableTextTextBlock,
 	ConvertOptions,
 	TransformContext,
 } from "./types.js";
+import { sanitizeHref } from "./url.js";
 
 // Regex patterns for HTML parsing and conversion
-const BLOCK_ELEMENT_PATTERN =
-	/<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|<img\s+[^>]+\/?>/gu;
-const LINKED_IMAGE_PATTERN = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>\s*<img\s+([^>]+)\/?>\s*<\/a>/gu;
+/**
+ * A link around an image: its `href`, and the image tag's attributes. wpautop
+ * makes a newline inside the link a line break (`<a href="…"><br />\n<img …></a>`),
+ * and WordPress draws the image linked all the same, so white space and line
+ * breaks may stand on either side of the image.
+ */
+const LINKED_IMAGE = String.raw`<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:\s|<br\s*\/?>)*<img\s+([^>]+)\/?>(?:\s|<br\s*\/?>)*<\/a>`;
+/** A block element, a rule or line break, or an image outside any (the link around it too: groups 4 and 5). */
+const BLOCK_ELEMENT_PATTERN = new RegExp(
+	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
+	"gu",
+);
+const LINKED_IMAGE_PATTERN = new RegExp(LINKED_IMAGE, "gu");
+const LINKED_IMAGE_ONE = new RegExp(LINKED_IMAGE, "u");
 const STANDALONE_IMAGE_PATTERN = /<img\s+[^>]+\/?>/gu;
 const IMG_TAG_PATTERN = /<img[^>]+>/i;
 const SRC_ATTR_PATTERN = /src=["']([^"']+)["']/i;
@@ -39,6 +62,8 @@ const APOS_ENTITY_PATTERN = /&#039;/g;
 const NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const NBSP_ENTITY_PATTERN = /&nbsp;/g;
+/** A block-level element inside a `<div>`: its paragraphs are the div's content, one block each. */
+const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|hr)\b/i;
 
 // Re-export types
 export type {
@@ -68,6 +93,9 @@ export type {
 export { defaultTransformers, fallbackTransformer } from "./transformers/index.js";
 export * as coreTransformers from "./transformers/core.js";
 export * as embedTransformers from "./transformers/embed.js";
+
+// WordPress's typography, for the text an importer stores beside the content (a title, an excerpt).
+export { texturizeNote, texturizes, wptexturize } from "./texturize.js";
 
 // Re-export inline utilities
 export {
@@ -131,17 +159,19 @@ export function gutenbergToPortableText(
 	if (!content || !content.trim()) {
 		return [];
 	}
+	// The text as WordPress printed it: the_content runs wptexturize before wpautop.
+	const html = options.texturize === false ? content : wptexturize(content);
 
 	// Check if content has Gutenberg blocks
-	const hasBlocks = content.includes("<!-- wp:");
+	const hasBlocks = html.includes("<!-- wp:");
 
 	if (!hasBlocks) {
-		// Classic editor content - treat as HTML
-		return htmlToPortableText(content, options);
+		// Classic editor content - treat as HTML, as WordPress draws it
+		return htmlToPortableText(classicParagraphs(html), options);
 	}
 
 	// Parse Gutenberg blocks
-	const blocks = normalizeBlocks(parse(content));
+	const blocks = normalizeBlocks(parse(html));
 
 	// Create key generator
 	const generateKey = options.keyGenerator || createKeyGenerator();
@@ -153,8 +183,92 @@ export function gutenbergToPortableText(
 	return blocks.flatMap((block) => transformBlock(block, options, context));
 }
 
+/**
+ * A paragraph that holds one shortcode and nothing else: its tag, attributes,
+ * and (for an enclosing one) the content up to its own closer, never past
+ * the paragraph's end. The unrolled content loop starts every repeat at a
+ * `[`, so a failed match never rescans what it already read.
+ */
+const SHORTCODE_PARAGRAPH =
+	/<p>\s*(\[([a-z][\w-]*)(?:\s[^[\]\n]*)?\](?:(?:[^[<]|<(?!\/p>))*(?:\[(?!\/\2\])(?:[^[<]|<(?!\/p>))*)*\[\/\2\])?)\s*<\/p>/gi;
+/** Where an autoembed stands while wpautop runs: a block of its own, which autop never wraps. */
+const EMBED_MARK = "data-g2pt-autoembed";
+const EMBED_PLACE = /<div data-g2pt-autoembed="(\d+)"><\/div>/g;
+
+/**
+ * Classic editor content as WordPress draws it. The classic editor saves
+ * plain text between its tags, and WordPress's `the_content` filter runs it
+ * through wpautop: a blank line ends a paragraph, and any other newline is a
+ * line break. Converted as saved, a newline is a hard break and a blank line
+ * two, all in one paragraph: a migrated services page was one block of
+ * run-together lines where WordPress drew a paragraph per service.
+ * WordPress's own port of wpautop (@wordpress/autop) makes the paragraphs.
+ * Content with blocks is not run through it: WordPress does not either.
+ *
+ * WordPress embeds first (WP_Embed runs at priority 8, wpautop at 10), so an
+ * autoembed or an [embed] shortcode found in the content as saved stays a
+ * paragraph of its own, where htmlToPortableText finds it again. And after
+ * wpautop, WordPress's shortcode_unautop takes the paragraph off a shortcode
+ * that stands alone in one, so the shortcode, not a paragraph, is what is
+ * there: `[caption]`'s opener, image and caption land where they did before,
+ * which is the shape the importer's caption handling reads.
+ */
+function classicParagraphs(html: string): string {
+	const embeds = html.includes(EMBED_MARK) ? [] : findAutoembeds(html);
+	let marked = "";
+	let cursor = 0;
+	for (const [i, e] of embeds.entries()) {
+		marked += `${html.slice(cursor, e.start)}\n\n<div ${EMBED_MARK}="${i}"></div>\n\n`;
+		cursor = e.end;
+	}
+	marked += html.slice(cursor);
+	return autop(marked)
+		.replace(SHORTCODE_PARAGRAPH, "$1")
+		.replace(EMBED_PLACE, (_, i: string) => {
+			const e = embeds[Number(i)]!;
+			return html.slice(e.start, e.end);
+		});
+}
+
+const IMG_CLASS_ATTR = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
+/**
+ * The `alignment` field for an image block from its `<img>` tag's WordPress
+ * alignment class (`alignleft`, `alignright`, `aligncenter`), or nothing.
+ */
+function imageAligned(img: string): { alignment?: "left" | "right" | "center" } {
+	const m = IMG_CLASS_ATTR.exec(img);
+	return imageAlignment(m?.[1] ?? m?.[2]);
+}
+
+/**
+ * An image block for an `<img>` tag (or the attributes after `<img`): its
+ * `src`, `alt`, alignment and size, and the link around it when there is one.
+ * An image with no `src` draws nothing, and is none. A link with an unsafe
+ * scheme is none, as for a text link or a block-editor image's.
+ */
+function imageOfTag(
+	img: string,
+	generateKey: () => string,
+	href?: string,
+): PortableTextImageBlock | undefined {
+	const src = img.match(SRC_ATTR_PATTERN)?.[1];
+	if (!src) return undefined;
+	const url = decodeUrlEntities(src);
+	const link = href === undefined ? "" : sanitizeHref(decodeUrlEntities(href));
+	return {
+		_type: "image",
+		_key: generateKey(),
+		asset: { _type: "reference", _ref: url, url },
+		alt: img.match(ALT_ATTR_PATTERN)?.[1],
+		...(link ? { link } : {}),
+		...imageAligned(img),
+		...extractDisplaySize(img),
+	};
+}
+
 /** The `textAlign` field for a text block from the element `html` opens with, or nothing. */
-function aligned(html: string): { textAlign?: "center" | "right" | "justify" } {
+function aligned(html: string): { textAlign?: "left" | "center" | "right" | "justify" } {
 	const textAlign = textAlignOfTag(html);
 	return textAlign ? { textAlign } : {};
 }
@@ -163,17 +277,43 @@ function aligned(html: string): { textAlign?: "center" | "right" | "justify" } {
  * Convert plain HTML (classic editor) to Portable Text
  */
 export function htmlToPortableText(
-	html: string,
+	source: string,
 	options: ConvertOptions = {},
 ): PortableTextBlock[] {
+	// What the reader sees: no stylesheet, script or scripts-off fallback, read as text or split into blocks.
+	const html = withoutUndrawn(source);
 	const generateKey = options.keyGenerator || createKeyGenerator();
 	const blocks: PortableTextBlock[] = [];
 	const autoembeds = findAutoembeds(html);
 
+	/**
+	 * An element's text as blocks shaped like `shape`, and each image it holds
+	 * as an image block of its own where WordPress draws it: before, between
+	 * or after that text (parseInlineSegments).
+	 */
+	const pushInline = (
+		inner: string,
+		shape: Pick<PortableTextTextBlock, "style" | "listItem" | "level" | "textAlign">,
+	) => {
+		for (const s of parseInlineSegments(inner, generateKey)) {
+			blocks.push(
+				"_type" in s
+					? s
+					: {
+							_type: "block",
+							_key: generateKey(),
+							...shape,
+							children: s.children,
+							markDefs: s.markDefs.length > 0 ? s.markDefs : undefined,
+						},
+			);
+		}
+	};
+
 	const pushParagraph = (text: string) => {
 		if (!text) return;
 		const { children, markDefs } = parseInlineContent(text, generateKey);
-		if (children.some((c) => c.text.trim())) {
+		if (drawsLine(children)) {
 			blocks.push({
 				_type: "block",
 				_key: generateKey(),
@@ -217,23 +357,22 @@ export function htmlToPortableText(
 			continue;
 		}
 
-		// Check for standalone <img> tag (not wrapped in figure/p)
-		if (fullMatch.toLowerCase().startsWith("<img")) {
-			const srcMatch = fullMatch.match(SRC_ATTR_PATTERN);
-			const altMatch = fullMatch.match(ALT_ATTR_PATTERN);
-			if (srcMatch?.[1]) {
-				const imgUrl = decodeUrlEntities(srcMatch[1]);
-				blocks.push({
-					_type: "image",
-					_key: generateKey(),
-					asset: {
-						_type: "reference",
-						_ref: imgUrl,
-						url: imgUrl,
-					},
-					alt: altMatch?.[1],
-				});
-			}
+		// An image outside any paragraph (not wrapped in figure/p), and the link around it
+		const linkedImg = match[5];
+		if (linkedImg !== undefined || fullMatch.toLowerCase().startsWith("<img")) {
+			const image = imageOfTag(linkedImg ?? fullMatch, generateKey, match[4]);
+			if (image) blocks.push(image);
+			continue;
+		}
+
+		// A <div> that holds paragraphs (a classic post wrapped whole in one `<div>`):
+		// WordPress draws each of its paragraphs apart, so each is a block, not one run of text.
+		// The block pattern is shared and global, so its place in this content is kept across the call.
+		if (tag === "div" && BLOCK_INSIDE_PATTERN.test(content)) {
+			const at = BLOCK_ELEMENT_PATTERN.lastIndex;
+			BLOCK_ELEMENT_PATTERN.lastIndex = 0;
+			blocks.push(...htmlToPortableText(content, { ...options, keyGenerator: generateKey }));
+			BLOCK_ELEMENT_PATTERN.lastIndex = at;
 			continue;
 		}
 
@@ -249,24 +388,8 @@ export function htmlToPortableText(
 				// First extract linked images
 				let linkedMatch;
 				while ((linkedMatch = LINKED_IMAGE_PATTERN.exec(content)) !== null) {
-					const linkUrl = decodeUrlEntities(linkedMatch[1]!);
-					const imgAttrs = linkedMatch[2]!;
-					const srcMatch = imgAttrs.match(SRC_ATTR_PATTERN);
-					const altMatch = imgAttrs.match(ALT_ATTR_PATTERN);
-					if (srcMatch?.[1]) {
-						const imgUrl = decodeUrlEntities(srcMatch[1]);
-						blocks.push({
-							_type: "image",
-							_key: generateKey(),
-							asset: {
-								_type: "reference",
-								_ref: imgUrl,
-								url: imgUrl,
-							},
-							alt: altMatch?.[1],
-							link: linkUrl,
-						});
-					}
+					const image = imageOfTag(linkedMatch[2]!, generateKey, linkedMatch[1]);
+					if (image) blocks.push(image);
 					linkedImgPositions.push({
 						start: linkedMatch.index,
 						end: linkedMatch.index + linkedMatch[0].length,
@@ -282,21 +405,8 @@ export function htmlToPortableText(
 					);
 					if (isLinked) continue;
 
-					const srcMatch = imgMatch[0].match(SRC_ATTR_PATTERN);
-					const altMatch = imgMatch[0].match(ALT_ATTR_PATTERN);
-					if (srcMatch?.[1]) {
-						const imgUrl = decodeUrlEntities(srcMatch[1]);
-						blocks.push({
-							_type: "image",
-							_key: generateKey(),
-							asset: {
-								_type: "reference",
-								_ref: imgUrl,
-								url: imgUrl,
-							},
-							alt: altMatch?.[1],
-						});
-					}
+					const image = imageOfTag(imgMatch[0], generateKey);
+					if (image) blocks.push(image);
 				}
 
 				// Then handle the text content (with images and image links stripped)
@@ -306,7 +416,7 @@ export function htmlToPortableText(
 					.trim();
 				if (textContent) {
 					const { children, markDefs } = parseInlineContent(textContent, generateKey);
-					if (children.some((c) => c.text.trim())) {
+					if (drawsLine(children)) {
 						blocks.push({
 							_type: "block",
 							_key: generateKey(),
@@ -326,28 +436,15 @@ export function htmlToPortableText(
 			case "h4":
 			case "h5":
 			case "h6": {
-				const { children, markDefs } = parseInlineContent(content, generateKey);
-				blocks.push({
-					_type: "block",
-					_key: generateKey(),
-					style: tag,
-					...aligned(fullMatch),
-					children,
-					markDefs: markDefs.length > 0 ? markDefs : undefined,
-				});
+				// A heading that holds an image is drawn with it inside: an image the
+				// classic editor centred stands on a line of its own above the words
+				// after it, and one it floated floats beside what follows.
+				pushInline(content, { style: tag, ...aligned(fullMatch) });
 				break;
 			}
 
 			case "blockquote": {
-				const { children, markDefs } = parseInlineContent(content, generateKey);
-				blocks.push({
-					_type: "block",
-					_key: generateKey(),
-					style: "blockquote",
-					...aligned(fullMatch),
-					children,
-					markDefs: markDefs.length > 0 ? markDefs : undefined,
-				});
+				pushInline(content, { style: "blockquote", ...aligned(fullMatch) });
 				break;
 			}
 
@@ -368,17 +465,7 @@ export function htmlToPortableText(
 				const listItem = tag === "ol" ? "number" : "bullet";
 				let liMatch;
 				while ((liMatch = LIST_ITEM_PATTERN.exec(content)) !== null) {
-					const liContent = liMatch[1] || "";
-					const { children, markDefs } = parseInlineContent(liContent, generateKey);
-					blocks.push({
-						_type: "block",
-						_key: generateKey(),
-						style: "normal",
-						listItem,
-						level: 1,
-						children,
-						markDefs: markDefs.length > 0 ? markDefs : undefined,
-					});
+					pushInline(liMatch[1] || "", { style: "normal", listItem, level: 1 });
 				}
 				break;
 			}
@@ -400,6 +487,11 @@ export function htmlToPortableText(
 					const altMatch = imgMatch[0].match(ALT_ATTR_PATTERN);
 					const captionMatch = content.match(FIGCAPTION_TAG_PATTERN);
 					const imgUrl = srcMatch?.[1] ? decodeUrlEntities(srcMatch[1]) : "";
+					// the link around the figure's image, as WordPress draws it
+					const linked = content.match(LINKED_IMAGE_ONE);
+					const link = linked?.[0].includes(imgMatch[0])
+						? sanitizeHref(decodeUrlEntities(linked[1]!))
+						: "";
 
 					blocks.push({
 						_type: "image",
@@ -411,6 +503,8 @@ export function htmlToPortableText(
 						},
 						alt: altMatch?.[1],
 						caption: captionMatch?.[1]?.replace(HTML_TAG_PATTERN, "").trim(),
+						...(link ? { link } : {}),
+						...extractDisplaySize(imgMatch[0]),
 					});
 				}
 				break;

@@ -2317,6 +2317,9 @@ importers:
 
   packages/gutenberg-to-portable-text:
     dependencies:
+      '@wordpress/autop':
+        specifier: ^4.56.0
+        version: 4.56.0
       '@wordpress/block-serialization-default-parser':
         specifier: ^5.13.0
         version: 5.38.0
@@ -8759,6 +8762,10 @@ packages:
 
   '@vscode/l10n@0.0.18':
     resolution: {integrity: sha512-KYSIHVmslkaCDyw013pphY+d7x1qV8IZupYfeIfzNA+nsaWHbn5uPuQRvdRFsa9zFzGeudPuoGoZ1Op4jrJXIQ==}
+
+  '@wordpress/autop@4.56.0':
+    resolution: {integrity: sha512-DQ13tf/Jh/CYomv2aVtM1qXBKHrHKFKKhm9kzaIJvkESpU4vuJzg6no/h4zekdUHU2lswNmb5ZzE9ZkXvsWMDw==}
+    engines: {node: '>=18.12.0'}
 
   '@wordpress/block-serialization-default-parser@5.38.0':
     resolution: {integrity: sha512-iHqqlvuPGIz9ycU4Kce/zgti7zvDC+9i1hG5RIiMWAOX1Fwor4CPy9R1jZMXR64cBnW+nntP4mK0+KJeKmusiw==}
@@ -19070,6 +19077,8 @@ snapshots:
       vscode-uri: 3.1.0
 
   '@vscode/l10n@0.0.18': {}
+
+  '@wordpress/autop@4.56.0': {}
 
   '@wordpress/block-serialization-default-parser@5.38.0': {}
 

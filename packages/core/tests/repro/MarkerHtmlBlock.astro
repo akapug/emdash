@@ -1,0 +1,10 @@
+---
+/** A page's own `htmlBlock` override, for the nested-render tests: it prints a marker instead of the HTML. */
+interface Props {
+	node: { _key: string; html?: string };
+}
+
+const { node } = Astro.props;
+---
+
+<div data-override="htmlBlock" data-key={node._key}></div>

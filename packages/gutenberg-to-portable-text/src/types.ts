@@ -46,8 +46,8 @@ export interface PortableTextTextBlock {
 	style?: "normal" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote";
 	listItem?: "bullet" | "number";
 	level?: number;
-	/** WordPress's text alignment, as EmDash stores it (left is the default and never stored). */
-	textAlign?: "center" | "right" | "justify";
+	/** WordPress's text alignment, as EmDash stores it (src/align.ts): only when WordPress set one, left included. */
+	textAlign?: "left" | "center" | "right" | "justify";
 	children: PortableTextSpan[];
 	markDefs?: PortableTextMarkDef[];
 }
@@ -67,6 +67,9 @@ export interface PortableTextImageBlock {
 	caption?: string;
 	alignment?: "left" | "center" | "right" | "wide" | "full";
 	link?: string | { href: string; blank?: boolean };
+	/** The size WordPress drew this image at (its `<img>` tag's `width` and `height`), whatever the file's own size */
+	displayWidth?: number;
+	displayHeight?: number;
 }
 
 /**
@@ -247,6 +250,12 @@ export interface ConvertOptions {
 	generateKeys?: boolean;
 	/** Custom key generator */
 	keyGenerator?: () => string;
+	/**
+	 * Store the text as WordPress showed it: its curly quotes, apostrophes,
+	 * dashes and ellipses (texturize.ts, wptexturize). Default true; false keeps
+	 * the stored text, for a site that turned wptexturize off.
+	 */
+	texturize?: boolean;
 }
 
 /**

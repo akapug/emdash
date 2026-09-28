@@ -157,6 +157,34 @@ function extractPortableTextOccurrences(
 					image.asset,
 				);
 			}
+			continue;
+		}
+
+		// A columns block holds Portable Text in each column's `content`, and a
+		// cover block in its own `content`: an image or a gallery there, or in a
+		// columns block nested in a column, is a use like any other.
+		if (block._type === "columns" && Array.isArray(block.columns)) {
+			for (const [columnIndex, column] of block.columns.entries()) {
+				if (!isRecord(column)) continue;
+				extractPortableTextOccurrences(
+					occurrences,
+					seen,
+					fieldSlug,
+					column.content,
+					`${pathPrefix}[${blockIndex}].columns[${columnIndex}].content`,
+				);
+			}
+			continue;
+		}
+
+		if (block._type === "cover") {
+			extractPortableTextOccurrences(
+				occurrences,
+				seen,
+				fieldSlug,
+				block.content,
+				`${pathPrefix}[${blockIndex}].content`,
+			);
 		}
 	}
 }

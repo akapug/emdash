@@ -25,6 +25,8 @@ interface Props {
 	reactions?: boolean;
 	/** Order of top-level comments: chronological (default) or Wilson-ranked. */
 	sort?: "oldest" | "best";
+	/** Draw the count heading ("2 Comments"); off where the page prints its own. */
+	heading?: boolean;
 	class?: string;
 }
 
@@ -34,6 +36,7 @@ const {
 	threaded = false,
 	reactions = false,
 	sort = "oldest",
+	heading = true,
 	class: className,
 } = Astro.props;
 
@@ -135,13 +138,15 @@ const REACTION_SCRIPT = `
 			data-content-id={contentId}
 			{...(reactions ? { "data-ec-reactions": "" } : {})}
 		>
-			<h3 class="ec-comments-heading">
-				{total === 0
-					? "No comments yet"
-					: total === 1
-						? "1 Comment"
-						: `${total} Comments`}
-			</h3>
+			{heading && (
+				<h3 class="ec-comments-heading">
+					{total === 0
+						? "No comments yet"
+						: total === 1
+							? "1 Comment"
+							: `${total} Comments`}
+				</h3>
+			)}
 
 			{items.length > 0 && (
 				<ol class="ec-comments-list">

@@ -6,12 +6,18 @@
  * Accepts WXR file and import configuration, imports content into the database.
  */
 
-import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
+import {
+	gutenbergToPortableText,
+	texturizeNote,
+	texturizes,
+	wptexturize,
+} from "@emdash-cms/gutenberg-to-portable-text";
 import type { APIRoute } from "astro";
 import {
 	parseWxrString,
 	ContentRepository,
 	importReusableBlocksAsSections,
+	type WxrData,
 	type WxrPost,
 	parseWxrDate,
 } from "emdash";
@@ -19,7 +25,19 @@ import {
 import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { BylineRepository } from "#db/repositories/byline.js";
+import { SeoRepository } from "#db/repositories/seo.js";
 import { resolveImportByline } from "#import/utils.js";
+import {
+	emptyWxrSeoTally,
+	extractWxrSeo,
+	hasWxrSeo,
+	tallyWxrSeo,
+	tallyWxrSeoNoCollection,
+	wxrSeoSite,
+	wxrUrlKey,
+	type WxrSeoSite,
+	type WxrSeoTally,
+} from "#import/wxr-seo.js";
 import {
 	attachPostTaxonomies,
 	isWxrTaxonomyConflictError,
@@ -31,6 +49,7 @@ import {
 import type { EmDashHandlers, EmDashManifest } from "#types";
 import { slugify } from "#utils/slugify.js";
 
+import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
 import { sanitizeSlug } from "./analyze.js";
 
 export const prerender = false;
@@ -52,6 +71,8 @@ export interface ImportConfig {
 	authorMappings?: Record<string, string | null>;
 	/** BCP 47 locale for all imported items. When omitted, defaults to defaultLocale. */
 	locale?: string;
+	/** Carry per-post SEO from Yoast SEO, Rank Math and All in One SEO postmeta. Defaults to true. */
+	importSeo?: boolean;
 }
 
 export interface ImportResult {
@@ -80,6 +101,15 @@ export interface ImportResult {
 		 */
 		missingTaxonomies: string[];
 	};
+	/** Per-post SEO carried into the SEO fields, and what could not be (when `importSeo` is on). */
+	seo?: WxrSeoTally;
+	/**
+	 * The typography the text was stored in: as WordPress printed it
+	 * (wptexturize, English quote marks) for a site in English or one whose
+	 * export names no language, as written otherwise. A post's own locale
+	 * (WPML, Polylang) decides for that post.
+	 */
+	typography?: { language: string | null; texturized: boolean; note: string };
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -173,6 +203,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			}
 		}
 
+		const seoSite = wxrSeoContext(wxr, config, emdashManifest);
+
 		// Import content (locale from config scopes all items)
 		const result = await importContent(
 			wxr.posts,
@@ -183,6 +215,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			config.locale,
 			authorDisplayNames,
 			taxonomyPlan,
+			seoSite,
+			wxr.site.language,
 		);
 
 		// Import reusable blocks as sections (if enabled)
@@ -214,6 +248,8 @@ export async function importContent(
 	locale: string | undefined,
 	authorDisplayNames: Map<string, string> | undefined,
 	taxonomyPlan: TaxonomyImportPlan,
+	seoSite?: WxrSeoSite,
+	siteLanguage?: string,
 ): Promise<ImportResult> {
 	const result: ImportResult = {
 		success: true,
@@ -221,6 +257,11 @@ export async function importContent(
 		skipped: 0,
 		errors: [],
 		byCollection: {},
+		typography: {
+			language: siteLanguage?.trim() || null,
+			texturized: texturizes(siteLanguage),
+			note: texturizeNote(siteLanguage),
+		},
 		taxonomies: {
 			termsCreated: taxonomyPlan.termsCreated,
 			termsReused: taxonomyPlan.termsReused,
@@ -229,8 +270,12 @@ export async function importContent(
 		},
 	};
 
+	const seoTally = seoSite && config.importSeo !== false ? emptyWxrSeoTally() : undefined;
+	if (seoTally) result.seo = seoTally;
+
 	// Create content repository for checking existing items
 	const contentRepo = new ContentRepository(emdash.db);
+	const seoRepo = new SeoRepository(emdash.db);
 	const bylineRepo = new BylineRepository(emdash.db);
 	const bylineCache = new Map<string, string>();
 
@@ -263,11 +308,17 @@ export async function importContent(
 		}
 
 		try {
+			// The text as WordPress printed it, in English (texturizes); a post's own locale decides for it.
+			const texturize = texturizes(post.locale ?? siteLanguage);
+
 			// Convert content to Portable Text
-			const content = post.content ? gutenbergToPortableText(post.content) : [];
+			const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
 
 			// Generate slug from post name or title
 			const slug = post.postName || slugify(post.title || `post-${post.id || Date.now()}`);
+
+			const seo = seoTally && seoSite ? extractWxrSeo(post, seoSite) : undefined;
+			const collectionHasSeo = manifest.collections[collection]?.hasSeo === true;
 
 			// Per-post locale: prefer the value extracted from WPML/Polylang
 			// metadata; fall back to the upload-wide locale. Two translations
@@ -296,6 +347,16 @@ export async function importContent(
 					if (post.translationGroup) {
 						translationGroupMap.set(post.translationGroup, existing.id);
 					}
+					// An entry imported before its SEO was carried gets it now,
+					// unless it already has an SEO row of its own.
+					if (seoTally && seo?.found && collectionHasSeo && hasWxrSeo(seo)) {
+						if (await seoRepo.insertIfAbsent(collection, existing.id, seo.seo)) {
+							seoTally.filledExisting++;
+							tallyWxrSeo(seoTally, seo);
+						} else {
+							seoTally.keptExisting++;
+						}
+					}
 					result.skipped++;
 					continue;
 				}
@@ -311,11 +372,14 @@ export async function importContent(
 			// Map WordPress status to EmDash status
 			const status = mapStatus(post.status);
 
-			// Build data object with required fields
+			// Build data object with required fields. The title and excerpt as
+			// WordPress printed them (the_title and the_excerpt run wptexturize),
+			// like the content; the slug above is the stored title's.
+			const typed = (text: string) => (texturize ? wptexturize(text) : text);
 			const data: Record<string, unknown> = {
-				title: post.title || "Untitled",
+				title: typed(post.title || "Untitled"),
 				content,
-				excerpt: post.excerpt || undefined,
+				excerpt: post.excerpt ? typed(post.excerpt) : undefined,
 			};
 
 			// Only add featured_image if the collection has this field and we have a value
@@ -365,10 +429,15 @@ export async function importContent(
 				translationOf,
 				createdAt,
 				publishedAt,
+				seo: seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined,
 			});
 
 			if (createResult.success) {
 				result.imported++;
+				if (seoTally && seo) {
+					if (collectionHasSeo) tallyWxrSeo(seoTally, seo);
+					else tallyWxrSeoNoCollection(seoTally, seo);
+				}
 				result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
 
 				// `handleContentCreate` returns `data: { item, _rev? }` on
@@ -452,6 +521,39 @@ export async function importContent(
 
 	result.success = result.errors.length === 0;
 	return result;
+}
+
+/**
+ * What the per-post SEO pass reads: the site identity, the export's media and
+ * the path each enabled item will have in EmDash, so a canonical that names
+ * another imported entry can point at its new URL. Items whose collection
+ * pattern needs the row id get no path.
+ */
+export function wxrSeoContext(
+	wxr: Pick<WxrData, "site" | "posts" | "attachments">,
+	config: ImportConfig,
+	manifest: EmDashManifest,
+): WxrSeoSite {
+	const site = wxrSeoSite(wxr.site, wxr.attachments, new Map());
+	const paths = new Map<string, string>();
+	for (const post of wxr.posts) {
+		const mapping = config.postTypeMappings[post.postType || "post"];
+		if (!mapping?.enabled || !post.link) continue;
+		const collection = sanitizeSlug(mapping.collection);
+		const schema = manifest.collections[collection];
+		const slug = post.postName || (post.title ? slugify(post.title) : "");
+		if (!schema || !slug || schema.urlPattern?.includes("{id}")) continue;
+		const path = interpolateUrlPattern({
+			pattern: schema.urlPattern ?? null,
+			collection,
+			slug,
+			id: "",
+			date: parseWxrDate(post.postDateGmt, post.pubDate, post.postDate),
+		});
+		const key = wxrUrlKey(post.link, site.link);
+		if (key && !paths.has(key)) paths.set(key, path);
+	}
+	return { ...site, entryPaths: paths };
 }
 
 function mapStatus(wpStatus: string | undefined): string {

@@ -14,13 +14,33 @@ import type { PortableTextBlock } from "../content/converters/types.js";
  * Each element must have at least a `_type` string property.
  */
 function isPortableTextArray(value: unknown[]): value is PortableTextBlock[] {
-	return value.every(
-		(item) =>
-			typeof item === "object" &&
-			item !== null &&
-			"_type" in item &&
-			typeof item._type === "string",
+	return value.every(isPortableTextBlockLike);
+}
+
+function isPortableTextBlockLike(item: unknown): item is PortableTextBlock {
+	return (
+		typeof item === "object" && item !== null && "_type" in item && typeof item._type === "string"
 	);
+}
+
+/**
+ * The Portable Text a layout block holds: each column's `content` in a columns
+ * block, and a cover block's `content`. Items that are not blocks are skipped.
+ */
+function nestedPortableText(block: PortableTextBlock): PortableTextBlock[][] {
+	const lists: unknown[] =
+		block._type === "columns" && "columns" in block && Array.isArray(block.columns)
+			? block.columns.map((column: unknown) =>
+					typeof column === "object" && column !== null && "content" in column
+						? column.content
+						: null,
+				)
+			: block._type === "cover" && "content" in block
+				? [block.content]
+				: [];
+	return lists
+		.filter((list): list is unknown[] => Array.isArray(list))
+		.map((list) => list.filter(isPortableTextBlockLike));
 }
 
 /**
@@ -44,6 +64,15 @@ function extractCustomBlockText(block: PortableTextBlock): string {
 		return parts.join(" ");
 	}
 
+	// Columns and cover blocks hold Portable Text of their own: the words in a
+	// column are the entry's words.
+	if (block._type === "columns" || block._type === "cover") {
+		return nestedPortableText(block)
+			.map((blocks) => extractPlainText(blocks))
+			.filter((text) => text.length > 0)
+			.join("\n");
+	}
+
 	return "";
 }
 
@@ -51,7 +80,8 @@ function extractCustomBlockText(block: PortableTextBlock): string {
  * Extract plain text from Portable Text blocks
  *
  * Uses @portabletext/toolkit's toPlainText for standard blocks,
- * plus extracts text from custom block types (code, images with alt/caption).
+ * plus extracts text from custom block types (code, images with alt/caption,
+ * and the Portable Text inside columns and cover blocks).
  *
  * @param blocks - Array of Portable Text blocks (or a JSON string)
  * @returns Plain text content

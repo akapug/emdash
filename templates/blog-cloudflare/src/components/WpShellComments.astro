@@ -1,0 +1,60 @@
+---
+/// <reference types="emdash/locals" />
+
+/**
+ * A post's comments in a migrated WordPress design (layouts/WpShell.astro),
+ * drawn in the theme's own comment area: the record's skin of it
+ * (utils/wp-shell.ts renderWpShellComments).
+ *
+ * It is EmDash's comments and EmDash's comment form. The comments are the
+ * approved ones EmDash's Comments lists, read the same way; the form is
+ * CommentForm's form, in the theme's markup: the same endpoint, field names,
+ * limits, honeypot and status line, the same client (WpShellCommentClient,
+ * drawn with it) and, for a signed-in user, the same identity. Where the
+ * theme's form was not in its
+ * page (Jetpack's comment form is an iframe), CommentForm itself is drawn in
+ * the theme's reply block; where the record has no comment of the theme's,
+ * EmDash's Comments lists them. With comments off, nothing is drawn.
+ */
+import { getCollectionInfo, getComments } from "emdash";
+import { CommentForm, Comments } from "emdash/ui/comments";
+import { renderWpShellComments, type WpShellPostLayout } from "../utils/wp-shell";
+import WpShellCommentClient from "./WpShellCommentClient.astro";
+
+interface Props {
+	post: WpShellPostLayout;
+	contentId: string;
+	title: string;
+	collection?: string;
+}
+
+const { post, contentId, title, collection = "posts" } = Astro.props;
+const enabled = (await getCollectionInfo(collection))?.commentsEnabled ?? false;
+const { items, total } = enabled
+	? await getComments({ collection, contentId, threaded: true })
+	: { items: [], total: 0 };
+const pieces = enabled
+	? renderWpShellComments(post, {
+			endpoint: `/_emdash/api/comments/${encodeURIComponent(collection)}/${encodeURIComponent(contentId)}`,
+			total,
+			items,
+			title,
+			user: Astro.locals.user ?? null,
+		})
+	: [];
+// The form drawn is the theme's (its client comes with it), or EmDash's CommentForm, which brings its own.
+const skinForm = pieces.length > 0 && Boolean(post.commentArea?.fields);
+---
+
+{
+	pieces.map((p) =>
+		"html" in p ? (
+			<Fragment set:html={p.html} />
+		) : p.emdash === "form" ? (
+			<CommentForm collection={collection} contentId={contentId} />
+		) : (
+			<Comments collection={collection} contentId={contentId} threaded heading={false} />
+		),
+	)
+}
+{skinForm && <WpShellCommentClient />}

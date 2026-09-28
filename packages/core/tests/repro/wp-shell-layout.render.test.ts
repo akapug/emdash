@@ -1,0 +1,1374 @@
+/**
+ * The blog template's WpShell layout, drawn as a page is: the /wp-shell/
+ * route, the layout, and the form the layout draws in the site's form
+ * plugin's markup. EmDash's reads (the entry, the settings that carry the
+ * record, the latest posts) are stood in for here; everything else is the
+ * template's own code.
+ *
+ * - The front page's listing draws the site's latest posts: the layout asks
+ *   EmDash for as many as WordPress listed, newest first, and maps each to
+ *   what the listing draws (its title, path, excerpt, date and image).
+ * - The document title is the entry's own SEO title, carried from WordPress,
+ *   as written: the route passes it to the layout.
+ * - A form imported from the site's form plugin is drawn in that plugin's
+ *   markup, and submits what EmDash's own form submits, where it does.
+ * - What the layout draws through its own components, as a page is drawn:
+ *   a page the record cut on its own in its own layout, the entry's form in
+ *   its plugin's markup and a classic video as WordPress's player, and a
+ *   listing's lanes by the shape EmDash stores for each post's image.
+ */
+import { readFileSync } from "node:fs";
+
+import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import WpShellComments from "../../../../templates/blog-cloudflare/src/components/WpShellComments.astro";
+import WpShellForm from "../../../../templates/blog-cloudflare/src/components/WpShellForm.astro";
+import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.astro";
+import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/[...path].astro";
+import { wpShellProblem } from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
+import FormEmbed from "../../../plugins/forms/src/astro/FormEmbed.astro";
+import type { PublicFormDefinition } from "../../../plugins/forms/src/public-definition.js";
+import { createCommentBody } from "../../src/api/schemas/comments.js";
+import { initCommentForms } from "../../src/components/comment-form-client.js";
+import CommentForm from "../../src/components/CommentForm.astro";
+import EmDashComments from "../../src/components/Comments.astro";
+
+const reads = vi.hoisted(() => ({
+	shell: null as unknown,
+	getEmDashCollection: vi.fn(),
+	getEmDashEntry: vi.fn(),
+	getCommentCount: vi.fn(),
+	getCollectionInfo: vi.fn(),
+	getComments: vi.fn(),
+}));
+
+/** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own. */
+async function emdashReads() {
+	const seo = await import("../../src/seo/index.js");
+	const slug = await import("../../src/utils/slugify.js");
+	return {
+		getSeoMeta: seo.getSeoMeta,
+		getContentSeo: seo.getContentSeo,
+		decodeSlug: slug.decodeSlug,
+		getEmDashCollection: reads.getEmDashCollection,
+		getEmDashEntry: reads.getEmDashEntry,
+		getCommentCount: reads.getCommentCount,
+		getCollectionInfo: reads.getCollectionInfo,
+		getComments: reads.getComments,
+		getHomepage: async () => ({ entry: null, collection: "pages", cacheHint: {} }),
+		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
+		getSiteSettings: async () => ({ title: "Example" }),
+		getSiteSettingsWithCacheHint: async () => ({
+			data: { title: "Example", wpShell: reads.shell },
+			cacheHint: {},
+		}),
+	};
+}
+// The template resolves "emdash" to the package's built entry.
+vi.mock("emdash", emdashReads);
+vi.mock("../../dist/index.mjs", emdashReads);
+// EmDash's own CommentForm reads whether the collection takes comments from the schema.
+// And its Comments reads the approved comments from the comment queries.
+vi.mock("../../src/comments/query.ts", async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	getComments: reads.getComments,
+}));
+vi.mock("../../src/schema/query.ts", async (importOriginal) => ({
+	...(await importOriginal<Record<string, unknown>>()),
+	getCollectionInfo: reads.getCollectionInfo,
+}));
+
+/** EmDash's comment list and form, stood in for: they read the database. */
+async function commentComponents() {
+	return {
+		Comments: (await import("./StubComments.astro")).default,
+		CommentForm: (await import("./StubCommentForm.astro")).default,
+	};
+}
+vi.mock("emdash/ui/comments", commentComponents);
+vi.mock("../../src/ui-comments.ts", commentComponents);
+
+const HOLE = (s: string) => ({ s });
+
+/** A shell record as Embark's writer produces one: a page layout, a front page with a listing, a form. */
+function record() {
+	return {
+		version: 1,
+		id: "0123456789abcdef01234567",
+		source: { url: "https://example.org/", capturedAt: "2026-09-26T00:00:00.000Z" },
+		html: { lang: "en-US", class: "" },
+		body: { class: "page page-template-default" },
+		styles: ["/_emdash/api/media/file/wp-shell/abc.css"],
+		parts: [
+			{ html: '<header id="site-header"></header><main id="site-content">' },
+			{ slot: "title", tag: "h1", class: "entry-title" },
+			{ slot: "content", tag: "div", class: "entry-content" },
+			{ html: "</main>" },
+		],
+		menus: [],
+		listings: [
+			{
+				count: 2,
+				item: [
+					'<div class="',
+					HOLE("cls"),
+					'"><h3 class="item-title"><a href="',
+					HOLE("href"),
+					'">',
+					HOLE("title"),
+					'</a></h3><p class="excerpt">',
+					HOLE("excerpt"),
+					'</p><span class="date">',
+					HOLE("date"),
+					"</span>",
+					HOLE("thumb"),
+					"</div>",
+				],
+				thumb: ['<img class="wp-post-image" src="', HOLE("src"), '">'],
+				classes: ["item"],
+				date: "F j, Y",
+				utcOffset: -480,
+				excerpt: { words: 5, more: " […]" },
+			},
+		],
+		home: {
+			body: { class: "home" },
+			styles: ["/_emdash/api/media/file/wp-shell/front.css"],
+			parts: [
+				{ html: '<div class="highlights">' },
+				{ slot: "title", tag: "h2" },
+				{ slot: "content", tag: "div" },
+				{ html: '<div class="items">' },
+				{ slot: "listing", listing: 0 },
+				{ html: "</div></div>" },
+			],
+		},
+		forms: [
+			{
+				plugin: "gravityforms",
+				fields: [
+					{ name: "input_2_3", label: "Your Name: First", type: "text", required: true },
+					{
+						name: "input_1",
+						label: "Your Email",
+						type: "email",
+						required: true,
+						help: "We write rarely.",
+					},
+					{ name: "input_6", label: "Keep me up to date", type: "checkbox", required: false },
+					{ name: "input_3", label: "Comments?", type: "textarea", required: false },
+				],
+				parts: [
+					'<div class="gform_wrapper">',
+					{ s: "form" },
+					'<ul class="gform_fields"><li class="gfield"><span class="name_first">',
+					{ s: "control", field: 0 },
+					{ s: "label", field: 0 },
+					"First",
+					{ s: "/label" },
+					'</span></li><li class="gfield">',
+					{ s: "label", field: 1, class: "gfield_label" },
+					"Your Email",
+					{ s: "/label" },
+					{ s: "control", field: 1 },
+					'<div class="gfield_description">We write rarely.</div></li><li class="gfield">',
+					{ s: "control", field: 2 },
+					{ s: "label", field: 2 },
+					"Keep me up to date",
+					{ s: "/label" },
+					'</li><li class="gfield">',
+					{ s: "control", field: 3, class: "textarea medium", rows: 10, cols: 50 },
+					'</li></ul><div class="gform_footer">',
+					{ s: "submit", tag: "input", class: "gform_button button" },
+					"</div>",
+					{ s: "/form" },
+					"</div>",
+				],
+			},
+		],
+	};
+}
+
+/** The EmDash form the importer made of the Gravity Forms form. */
+function definition(): PublicFormDefinition {
+	return {
+		name: "Get in touch",
+		slug: "wp-gf-2",
+		pages: [
+			{
+				fields: [
+					{
+						id: "a",
+						type: "text",
+						label: "Your Name: First",
+						name: "input_2_3",
+						required: true,
+						width: "half",
+					},
+					{
+						id: "b",
+						type: "email",
+						label: "Your Email",
+						name: "input_1",
+						required: true,
+						width: "full",
+						helpText: "We write rarely.",
+					},
+					{
+						id: "c",
+						type: "checkbox",
+						label: "Keep me up to date",
+						name: "input_6",
+						required: false,
+						width: "full",
+					},
+					{
+						id: "d",
+						type: "textarea",
+						label: "Comments?",
+						name: "input_3",
+						required: false,
+						width: "full",
+						validation: { maxLength: 1000 },
+					},
+				],
+			},
+		],
+		settings: { spamProtection: "honeypot", submitLabel: "Get in touch!" },
+		status: "active",
+		_turnstileSiteKey: null,
+	};
+}
+
+const answering = (def: PublicFormDefinition) => ({
+	emdash: { handlePublicPluginApiRoute: async () => ({ success: true, data: def }) },
+});
+
+/**
+ * Each control a form submits: its name, type, value, and the checks a
+ * browser makes before it sends. A control with no name submits nothing.
+ */
+function controls(html: string): string[] {
+	const form = /<form\b[\s\S]*<\/form>/.exec(html)?.[0] ?? "";
+	return [...form.matchAll(/<(input|select|textarea)\b([^>]*)>/g)]
+		.flatMap(([, tag, attrs]) => {
+			const attr = (n: string) => new RegExp(`\\s${n}="([^"]*)"`).exec(attrs!)?.[1] ?? "";
+			const flag = (n: string) => (new RegExp(`\\s${n}(?=[\\s>=]|$)`).test(attrs!) ? n : "");
+			const name = attr("name");
+			const type = tag === "input" ? attr("type") : tag;
+			return name
+				? [
+						[name, type, flag("required"), attr("maxlength"), attr("value")]
+							.filter(Boolean)
+							.join(" "),
+					]
+				: [];
+		})
+		.toSorted();
+}
+
+/** The form element's own attributes: where and how it submits. */
+const formTag = (html: string) => {
+	const tag = /<form\b([^>]*)>/.exec(html)?.[1] ?? "";
+	return ["method", "action", "data-form-id"].map(
+		(n) => new RegExp(`\\s${n}="([^"]*)"`).exec(tag)?.[1],
+	);
+};
+
+beforeEach(() => {
+	reads.shell = record();
+	reads.getEmDashCollection.mockReset();
+	reads.getEmDashEntry.mockReset();
+	reads.getCommentCount.mockReset();
+	reads.getCollectionInfo.mockReset();
+	reads.getCollectionInfo.mockResolvedValue({ slug: "posts", commentsEnabled: true });
+	reads.getComments.mockReset();
+	reads.getComments.mockResolvedValue({ items: [], total: 0 });
+});
+
+describe("WpShellForm: a form in its plugin's markup", () => {
+	async function draw(component: typeof WpShellForm, def = definition()) {
+		const c = await AstroContainer.create();
+		return c.renderToString(component, {
+			props: { node: { formId: "01FORM" } },
+			locals: answering(def),
+		});
+	}
+
+	it("draws the imported form in the plugin's markup, submitting what EmDash's own form submits, where it does", async () => {
+		const skinned = await draw(WpShellForm);
+		const own = await draw(FormEmbed);
+		expect(skinned).toContain('<div class="gform_wrapper">');
+		expect(skinned).toContain('data-ec-skin="gravityforms"');
+		expect(skinned).not.toContain('class="ec-form"');
+		expect(controls(skinned)).toEqual(controls(own));
+		expect(controls(skinned)).toEqual([
+			"_hp text",
+			"formId hidden 01FORM",
+			"input_1 email required",
+			"input_2_3 text required",
+			"input_3 textarea 1000",
+			"input_6 checkbox 1",
+		]);
+		expect(formTag(skinned)).toEqual(formTag(own));
+		expect(formTag(skinned)).toEqual([
+			"POST",
+			"/_emdash/api/plugins/emdash-forms/submit",
+			"01FORM",
+		]);
+		// the forms plugin's own client runs it, as it runs EmDash's own form
+		expect(skinned).toMatch(/<script\b/);
+	});
+
+	it("runs the forms plugin's own client exactly as EmDash's own form runs it", () => {
+		// The client makes the form submit where EmDash's does, with its checks (Turnstile, validation):
+		// a skin that loaded it and did not start it would post the browser's own way.
+		const script = (file: string) =>
+			/<script>([\s\S]*?)<\/script>/
+				.exec(readFileSync(new URL(file, import.meta.url), "utf8"))?.[1]
+				?.replace(/\/\/.*$/gm, "")
+				.replace(/\s+/g, " ")
+				.trim();
+		const own = script("../../../plugins/forms/src/astro/FormEmbed.astro");
+		expect(own).toBe('import { initForms } from "@emdash-cms/plugin-forms/client"; initForms();');
+		expect(script("../../../../templates/blog-cloudflare/src/components/WpShellForm.astro")).toBe(
+			own,
+		);
+	});
+
+	it("draws a form an admin has changed, or one of no skin, in EmDash's own markup", async () => {
+		const changed = definition();
+		changed.pages[0]!.fields[1]!.label = "Email address";
+		for (const [what, html] of [
+			["a changed label", await draw(WpShellForm, changed)],
+			[
+				"a record with no forms",
+				await (async () => {
+					reads.shell = { ...record(), forms: undefined };
+					return draw(WpShellForm);
+				})(),
+			],
+		] as const) {
+			expect(html, what).toContain('class="ec-form"');
+			expect(html, what).not.toContain("gform_wrapper");
+		}
+	});
+});
+
+describe("WpShell: the front page's listing draws the site's latest posts", () => {
+	it("asks EmDash for as many posts as WordPress listed, newest first, and draws each in the theme's item", async () => {
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: [
+				{
+					id: "first-post",
+					data: {
+						title: "First & best",
+						excerpt: "",
+						content: [
+							{
+								_type: "block",
+								children: [{ _type: "span", text: "One two three four five six seven" }],
+							},
+						],
+						publishedAt: new Date("2023-07-12T05:00:00Z"),
+						featured_image: {
+							provider: "local",
+							id: "01ABC.png",
+							src: "/_emdash/api/media/file/01ABC.png",
+							width: 300,
+							height: 200,
+						},
+					},
+				},
+				{
+					id: "second",
+					data: {
+						title: "Second",
+						excerpt: "Its own.",
+						content: [],
+						publishedAt: new Date("2022-12-18T20:00:00Z"),
+					},
+				},
+			],
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShell, {
+			props: {
+				shell: record(),
+				kind: "home",
+				path: "/",
+				title: "Home",
+				entry: { title: "Home", body: [], edit: { title: {}, content: {} } },
+			},
+		});
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			orderBy: { published_at: "desc" },
+			limit: 2,
+		});
+		expect(html).toContain(
+			'<div class="items"><div class="item"><h3 class="item-title"><a href="/posts/first-post">First &amp; best</a></h3>' +
+				'<p class="excerpt">One two three four five […]</p><span class="date">July 11, 2023</span>' +
+				'<img class="wp-post-image" src="/_emdash/api/media/file/01ABC.png"></div>' +
+				'<div class="item"><h3 class="item-title"><a href="/posts/second">Second</a></h3>' +
+				'<p class="excerpt">Its own.</p><span class="date">December 18, 2022</span></div></div>',
+		);
+	});
+
+	it("asks for no posts where the layout lists none", async () => {
+		const c = await AstroContainer.create();
+		await c.renderToString(WpShell, {
+			props: {
+				shell: record(),
+				kind: "page",
+				path: "/pages/about",
+				title: "About",
+				entry: { title: "About", body: [], edit: { title: {}, content: {} } },
+			},
+		});
+		expect(reads.getEmDashCollection).not.toHaveBeenCalled();
+	});
+});
+
+describe("the /wp-shell/ route: the document title", () => {
+	async function page(seo: Record<string, unknown> | undefined) {
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "contact",
+				data: {
+					id: "01PAGE",
+					title: "Contact",
+					content: [],
+					translationGroup: "01PAGE",
+					updatedAt: new Date("2026-09-01T00:00:00Z"),
+					publishedAt: null,
+					...(seo ? { seo } : {}),
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: "pages/contact" },
+			request: new Request("https://example.org/pages/contact"),
+		});
+	}
+	const seo = (title: string | null) => ({
+		title,
+		description: null,
+		image: null,
+		canonical: null,
+		noIndex: false,
+	});
+
+	it("is the entry's own SEO title, carried from WordPress, as written", async () => {
+		const html = await page(seo("Write to us"));
+		expect(reads.getEmDashEntry).toHaveBeenCalledWith("pages", "contact");
+		expect(html).toContain("<title>Write to us</title>");
+	});
+
+	it("is EmDash's title and the site's name for an entry with none", async () => {
+		expect(await page(seo(null))).toContain("<title>Contact | Example</title>");
+		expect(await page(undefined)).toContain("<title>Contact | Example</title>");
+	});
+});
+
+describe("WpShell: a single post in the record's post layout", () => {
+	/** The record with a post layout: its meta, and the theme's comment element. */
+	const withPost = () => ({
+		...record(),
+		post: {
+			body: { class: "single single-post" },
+			styles: ["/_emdash/api/media/file/wp-shell/post.css"],
+			parts: [
+				{ html: '<main id="site-content"><div class="post hentry">' },
+				{ slot: "title", tag: "h1", class: "entry-title" },
+				{ slot: "postMeta", meta: 0 },
+				{ slot: "content", tag: "div", class: "entry-content" },
+				{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
+				{ html: "</div></main>" },
+			],
+			date: "F j, Y",
+			utcOffset: -480,
+			meta: [
+				[
+					'<p class="entry-meta"><a href="',
+					HOLE("href"),
+					'">',
+					HOLE("date"),
+					"</a> by ",
+					HOLE("author"),
+					"</p>",
+				],
+			],
+			share: ['<div class="sharedaddy"><a href="', HOLE("share-x"), '">X</a></div>'],
+		},
+	});
+	async function draw(shell: unknown, post: unknown) {
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShell, {
+			props: {
+				shell,
+				kind: "post",
+				path: "/posts/a-post",
+				title: "A Post",
+				entry: { title: "A Post", body: [], edit: { title: {}, content: {} } },
+				post,
+			},
+			slots: { default: '<section class="ec-comments">EMDASH COMMENTS</section>' },
+		});
+	}
+	const fill = {
+		url: "/posts/a-post",
+		absoluteUrl: "https://example.org/posts/a-post",
+		title: "A Post",
+		date: new Date("2014-05-01T05:57:19Z"),
+		author: "Pat & Co",
+	};
+
+	it("draws EmDash's comments inside the theme's comment element, and the post's meta and share links", async () => {
+		const html = await draw(withPost(), fill);
+		expect(html).toContain(
+			'<div class="comment-respond" id="respond"><section class="ec-comments">EMDASH COMMENTS</section></div>',
+		);
+		expect(html.match(/EMDASH COMMENTS/g)).toHaveLength(1);
+		expect(html).toContain(
+			'<p class="entry-meta"><a href="/posts/a-post">April 30, 2014</a> by Pat &amp; Co</p>',
+		);
+		expect(html).toMatch(
+			/<div class="entry-content"[^>]*><div class="sharedaddy"><a href="https:\/\/x\.com\/intent\/tweet\?url=https%3A%2F%2Fexample\.org%2Fposts%2Fa-post&amp;text=A%20Post">X<\/a><\/div><\/div>/,
+		);
+		expect(html).toContain('<body class="single single-post">');
+		expect(html).toContain('href="/_emdash/api/media/file/wp-shell/post.css"');
+	});
+
+	it("draws a post after its content, in the record's own layout, for a record with no post layout", async () => {
+		const html = await draw(record(), fill);
+		expect(html).toMatch(
+			/<div class="entry-content"[^>]*><\/div><section class="ec-comments">EMDASH COMMENTS<\/section><\/main>/,
+		);
+		expect(html).not.toContain("entry-meta");
+	});
+});
+
+describe("the /wp-shell/ route: a single post in the record's post layout", () => {
+	const KEY = "01KEXAMPLEHERO0000000000000.png";
+	/** The record with a post layout: the featured image, the post's meta, the theme's comment element. */
+	const withPost = () => ({
+		...record(),
+		post: {
+			body: { class: "single single-post" },
+			styles: ["/_emdash/api/media/file/wp-shell/post.css"],
+			parts: [
+				{ html: '<main id="site-content"><div class="post hentry">' },
+				{ slot: "featured" },
+				{ slot: "title", tag: "h1", class: "entry-title" },
+				{ slot: "postMeta", meta: 0 },
+				{ slot: "content", tag: "div", class: "entry-content" },
+				{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
+				{ html: "</div></main>" },
+			],
+			date: "F j, Y",
+			utcOffset: -480,
+			meta: [
+				[
+					'<p class="entry-meta"><a href="',
+					HOLE("href"),
+					'">',
+					HOLE("date"),
+					"</a> by ",
+					HOLE("author"),
+					HOLE("comments"),
+					"</p>",
+				],
+			],
+			comments: {
+				item: [' <a class="count" href="', HOLE("href"), '#respond">', HOLE("count"), "</a>"],
+				zero: "No replies",
+				one: "One reply",
+				many: "%d replies",
+			},
+			featured: {
+				item: [
+					'<div class="featured-image"><img alt="',
+					HOLE("alt"),
+					'" src="',
+					HOLE("src"),
+					'" class="wp-post-image"></div>',
+				],
+				minWidth: 850,
+			},
+		},
+	});
+	/**
+	 * A post's featured image as the WordPress import stores it
+	 * (tests/integration/wordpress-import/wxr-featured-image.test.ts): the
+	 * file's URL with no size, as it was before the import resolved it to
+	 * its media item, and that item, with the size read from the file.
+	 */
+	const IMPORTED = {
+		unresolved: { provider: "external", id: "", src: `/_emdash/api/media/file/${KEY}` },
+		resolved: {
+			provider: "local",
+			id: "01KEXAMPLEITEM0000000000000",
+			filename: "hero.png",
+			mimeType: "image/png",
+			width: 1237,
+			height: 906,
+			alt: "A pond at dawn",
+			meta: { storageKey: KEY, caption: null, blurhash: null, dominantColor: null },
+		},
+	};
+	async function post(featured: unknown, shell: unknown = withPost()) {
+		reads.shell = shell;
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getCommentCount.mockResolvedValue(2);
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "the-pond",
+				data: {
+					id: "01POST",
+					title: "The Pond",
+					content: [],
+					translationGroup: "01POST",
+					updatedAt: new Date("2026-02-01T00:00:00Z"),
+					publishedAt: new Date("2026-01-15T08:30:00Z"),
+					bylines: [{ byline: { displayName: "Pat Author" }, sortOrder: 0 }],
+					featured_image: featured,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: "posts/the-pond" },
+			request: new Request("https://example.org/posts/the-pond"),
+		});
+	}
+	const META =
+		'<p class="entry-meta"><a href="/posts/the-pond">January 15, 2026</a> by Pat Author' +
+		' <a class="count" href="/posts/the-pond#respond">2 replies</a></p>';
+	/** EmDash's comment list and form for this post, and nothing else, inside the theme's comment element. */
+	const COMMENTS =
+		/<div class="comment-respond" id="respond">\s*<section class="ec-comments" data-for="posts\/01POST">EMDASH COMMENTS<\/section>\s*<form class="ec-comment-form" data-for="posts\/01POST"><\/form>\s*<\/div>/;
+	const OG_IMAGE = `<meta property="og:image" content="https://example.org/_emdash/api/media/file/${KEY}"`;
+
+	it("fills the layout from the post: its featured image at the file's own size, its meta and its comment count", async () => {
+		const html = await post(IMPORTED.resolved);
+		expect(reads.getEmDashEntry).toHaveBeenCalledWith("posts", "the-pond");
+		expect(reads.getCommentCount).toHaveBeenCalledWith("posts", "01POST");
+		expect(html).toContain('<body class="single single-post">');
+		expect(html).toContain(
+			`<div class="post hentry"><div class="featured-image"><img alt="A pond at dawn" src="/_emdash/api/media/file/${KEY}" class="wp-post-image"></div>`,
+		);
+		expect(html).toContain(META);
+		expect(html).toContain(OG_IMAGE);
+	});
+
+	it("draws EmDash's comments inside the theme's comment element, once, and no wrapper of its own", async () => {
+		const html = await post(IMPORTED.resolved);
+		expect(html).toMatch(COMMENTS);
+		expect(html.match(/EMDASH COMMENTS/g)).toHaveLength(1);
+		expect(html).not.toContain("comments-wrapper");
+	});
+
+	it("draws no featured image of no known size where the theme draws one only that wide, and the post's meta still", async () => {
+		const html = await post(IMPORTED.unresolved);
+		expect(html).not.toContain("featured-image");
+		expect(html).toContain(META);
+		expect(html).toMatch(COMMENTS);
+		expect(html).toContain(OG_IMAGE);
+	});
+
+	it("links the posts published just before and just after it, read around its own date", async () => {
+		const layout = withPost();
+		const parts = layout.post.parts;
+		const side = (label: string) => [
+			`<h3>${label}</h3><h4>`,
+			HOLE("adjTitle"),
+			'</h4><a href="',
+			HOLE("adjHref"),
+			'" class="post-link">Read</a>',
+		];
+		const withAdjacent = {
+			...layout,
+			post: {
+				...layout.post,
+				parts: [...parts.slice(0, -1), { slot: "adjacent" }, ...parts.slice(-1)],
+				adjacent: {
+					item: ['<div class="prev-next">', HOLE("prev"), HOLE("next"), "</div>"],
+					prev: side("Previous"),
+					next: side("Next"),
+				},
+			},
+		};
+		// Only the side the query asks for has a post: the one before is found only by `lt`, the one after only by `gt`.
+		reads.getEmDashCollection.mockImplementation(
+			async (_c: string, o: { where?: { published_at?: { lt?: string; gt?: string } } }) => {
+				const at = o.where?.published_at;
+				const e = at?.lt
+					? { id: "the-reeds", data: { title: "The Reeds" } }
+					: at?.gt
+						? { id: "the-heron", data: { title: "The Heron" } }
+						: null;
+				return { entries: e ? [e] : [], cacheHint: {} };
+			},
+		);
+		const html = await post(IMPORTED.resolved, withAdjacent);
+		const at = "2026-01-15T08:30:00.000Z";
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			where: { published_at: { lt: at } },
+			orderBy: { published_at: "desc" },
+			limit: 1,
+		});
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			where: { published_at: { gt: at } },
+			orderBy: { published_at: "asc" },
+			limit: 1,
+		});
+		expect(html).toContain(
+			'<div class="prev-next"><h3>Previous</h3><h4>The Reeds</h4><a href="/posts/the-reeds" class="post-link">Read</a>' +
+				'<h3>Next</h3><h4>The Heron</h4><a href="/posts/the-heron" class="post-link">Read</a></div>',
+		);
+	});
+});
+
+/** A page the record cut on its own (Embark's --pages): the contact page, on a template of its own. */
+function contactLayout() {
+	return {
+		slug: "contact",
+		body: { class: "page page-template-full-width contact-own" },
+		styles: ["/_emdash/api/media/file/wp-shell/contact.css"],
+		parts: [
+			{ html: '<main class="contact-own-layout">' },
+			{ slot: "title", tag: "h1", class: "entry-title" },
+			{ slot: "content", tag: "div", class: "entry-content" },
+			{ html: "</main>" },
+		],
+	};
+}
+
+describe("the /wp-shell/ route: a page the record cut on its own", () => {
+	async function page(slug: string) {
+		reads.shell = { ...record(), pages: [contactLayout()] };
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: slug,
+				data: {
+					id: "01PAGE",
+					title: "A page",
+					content: [],
+					translationGroup: "01PAGE",
+					updatedAt: new Date("2026-09-01T00:00:00Z"),
+					publishedAt: null,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: `pages/${slug}` },
+			request: new Request(`https://example.org/pages/${slug}`),
+		});
+	}
+
+	it("draws the page of that slug in its own layout: its body classes, its stylesheet and its parts", async () => {
+		const html = await page("contact");
+		expect(html).toMatch(/<body class="page page-template-full-width contact-own"/);
+		expect(html).toMatch(
+			/<link rel="stylesheet" href="\/_emdash\/api\/media\/file\/wp-shell\/contact\.css"/,
+		);
+		expect(html).toContain('<main class="contact-own-layout">');
+		expect(html).not.toContain("/_emdash/api/media/file/wp-shell/abc.css");
+		expect(html).not.toContain('<header id="site-header">');
+	});
+
+	it("draws every other page in the record's own layout", async () => {
+		const html = await page("about");
+		expect(html).toMatch(
+			/<link rel="stylesheet" href="\/_emdash\/api\/media\/file\/wp-shell\/abc\.css"/,
+		);
+		expect(html).toContain('<header id="site-header">');
+		expect(html).not.toMatch(/contact-own|contact\.css/);
+	});
+});
+
+describe("WpShell: what the layout draws through its own components", () => {
+	it("draws the entry's imported form in its plugin's markup and a classic video as WordPress's player", async () => {
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShell, {
+			props: {
+				shell: record(),
+				kind: "page",
+				path: "/pages/contact",
+				slug: "contact",
+				title: "Contact",
+				entry: {
+					title: "Contact",
+					body: [
+						{ _type: "emdash-form", _key: "f", formId: "01FORM" },
+						{ _type: "embed", _key: "v", url: "https://vimeo.com/100000001", provider: "vimeo" },
+					],
+					edit: { title: {}, content: {} },
+				},
+			},
+			locals: answering(definition()),
+		});
+		expect(html).toContain('<div class="gform_wrapper">');
+		expect(html).toContain('data-ec-skin="gravityforms"');
+		expect(html).not.toContain('class="ec-form"');
+		expect(html).toMatch(
+			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/100000001"/,
+		);
+		expect(html).not.toContain("emdash-embed");
+	});
+
+	it("puts each post of a listing's lanes by the shape EmDash stores for its image", async () => {
+		const base = record();
+		const shell = {
+			...base,
+			listings: [
+				{
+					...base.listings[0]!,
+					count: 3,
+					// Heights: an image 100px wide, a line of text for each letter, 10px a line.
+					lanes: {
+						columns: 2,
+						from: 0,
+						min: 992,
+						estimate: {
+							titleChars: 100,
+							titleLine: 10,
+							textChars: 1,
+							textLine: 10,
+							paragraph: 0,
+							base: 0,
+							thumbWidth: 100,
+						},
+					},
+				},
+			],
+		};
+		const post = (id: string, excerpt: string, image?: { width: number; height: number }) => ({
+			id,
+			data: {
+				title: id,
+				excerpt,
+				content: [],
+				publishedAt: new Date("2023-07-12T05:00:00Z"),
+				...(image
+					? {
+							featured_image: {
+								provider: "local",
+								id: "01ABC.png",
+								src: "/_emdash/api/media/file/01ABC.png",
+								...image,
+							},
+						}
+					: {}),
+			},
+		});
+		// wide: 10 + 10 + 100 x 0.5 = 70 (95 at the 0.75 taken for an image of no known size); long: 10 + 70 = 80
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: [
+				post("wide", "a", { width: 200, height: 100 }),
+				post("long", "abcdefg"),
+				post("third", "b"),
+			],
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShell, {
+			props: {
+				shell,
+				kind: "home",
+				path: "/",
+				title: "Home",
+				entry: { title: "Home", body: [], edit: { title: {}, content: {} } },
+			},
+		});
+		const lanes = html
+			.split('<div class="wp-shell-lane">')
+			.slice(1)
+			.map((lane) => Array.from(lane.matchAll(/href="\/posts\/([a-z]+)"/g), (m) => m[1]));
+		expect(lanes).toEqual([["wide", "third"], ["long"]]);
+	});
+});
+
+/** A Kleo shaped comment area, as Embark's writer cuts it: the count heading, a comment of its own, the reply form in its boxes. */
+function commentArea() {
+	return {
+		parts: [
+			HOLE("heading"),
+			'<div id="comments-list">',
+			HOLE("list"),
+			'</div><div id="respond-wrap">',
+			HOLE("respond"),
+			"</div>",
+		],
+		heading: {
+			item: ['<div class="hr-title hr-long"><abbr>', HOLE("count"), "</abbr></div>"],
+			zero: "%d Comments",
+		},
+		list: {
+			item: ["<ol>", HOLE("items"), "</ol>"],
+			comment: [
+				'<li id="comment-',
+				HOLE("id"),
+				'" class="',
+				HOLE("cls"),
+				'"><span class="comment-author">',
+				HOLE("author"),
+				'</span> <span class="comment-date">',
+				HOLE("date"),
+				'</span><div class="comment-body">',
+				HOLE("text"),
+				"</div>",
+				HOLE("replies"),
+				"</li>",
+			],
+			replies: ['<ol class="children">', HOLE("items"), "</ol>"],
+			classes: "comment clearfix",
+			date: "F j, Y",
+		},
+		respond: [
+			'<div id="respond" class="comment-respond"><h3 id="reply-title" class="comment-reply-title">Leave a reply</h3>',
+			{ s: "form", id: "commentform", class: "comment-form" },
+			{ s: "field", field: "body" },
+			'<div class="row">',
+			{ s: "field", field: "authorName" },
+			{ s: "field", field: "authorEmail" },
+			'</div><p class="form-submit">',
+			{ s: "submit", tag: "input", id: "submit", class: "submit", label: "Post comment" },
+			"</p>",
+			{ s: "/form" },
+			"</div>",
+		],
+		fields: {
+			body: [
+				'<p class="comment-form-comment">',
+				{ s: "label", for: "comment" },
+				"Comment",
+				{ s: "/label" },
+				{ s: "control", id: "comment", class: "form-control", rows: 8, cols: 45 },
+				"</p>",
+			],
+			authorName: [
+				'<p class="comment-form-author">',
+				{ s: "label", for: "author" },
+				"Name",
+				{ s: "/label" },
+				{ s: "control", id: "author", class: "form-control", size: 30 },
+				"</p>",
+			],
+			authorEmail: [
+				'<p class="comment-form-email">',
+				{ s: "label", for: "email" },
+				"Email",
+				{ s: "/label" },
+				{ s: "control", id: "email", class: "form-control", size: 30 },
+				"</p>",
+			],
+		},
+	};
+}
+/** The record with a post layout whose comment element holds the theme's comment area. */
+const withArea = (area: unknown = commentArea()) => ({
+	...record(),
+	post: {
+		body: { class: "single single-post" },
+		styles: ["/_emdash/api/media/file/wp-shell/post.css"],
+		parts: [
+			{ html: '<main id="site-content"><div class="post hentry">' },
+			{ slot: "title", tag: "h1", class: "entry-title" },
+			{ slot: "content", tag: "div", class: "entry-content" },
+			{ slot: "comments", tag: "div", class: "comments-area", id: "comments" },
+			{ html: "</div></main>" },
+		],
+		utcOffset: -480,
+		meta: [],
+		commentArea: area,
+	},
+});
+
+/**
+ * Each control a comment form posts: its name, type, the checks a browser
+ * makes before it sends, its value; and the form element's own attributes,
+ * the ones EmDash's comment client reads it by.
+ */
+function commentControls(html: string): string[] {
+	const form = /<form\b[\s\S]*<\/form>/.exec(html)?.[0] ?? "";
+	return [...form.matchAll(/<(input|textarea)\b([^>]*)>/g)]
+		.flatMap(([, tag, attrs]) => {
+			const attr = (n: string) => new RegExp(`\\s${n}="([^"]*)"`).exec(attrs!)?.[1] ?? "";
+			const flag = (n: string) => (new RegExp(`\\s${n}(?=[\\s>=]|$)`).test(attrs!) ? n : "");
+			const name = attr("name");
+			const type = tag === "input" ? attr("type") : tag;
+			return name
+				? [
+						[name, type, flag("required"), attr("maxlength"), attr("value")]
+							.filter(Boolean)
+							.join(" "),
+					]
+				: [];
+		})
+		.toSorted();
+}
+const commentFormTag = (html: string) => {
+	const tag = /<form\b([^>]*)>/.exec(html)?.[1] ?? "";
+	return [
+		// An empty value is written with or without `=""`: the browser reads both as "".
+		...["method", "action", "data-endpoint", "data-user-name", "data-user-email"].map((n) => {
+			const m = new RegExp(`\\s${n}(?:="([^"]*)")?(?=[\\s>]|$)`).exec(tag);
+			return m ? (m[1] ?? "") : undefined;
+		}),
+		/\sdata-ec-comment-form(?=[\s>=]|$)/.test(tag),
+	];
+};
+
+/**
+ * What EmDash's comment client (CommentForm's) sends when a visitor fills in
+ * the form's boxes and submits it: the client itself, run on the form drawn,
+ * with a stand-in for the browser's form, FormData and fetch. No network.
+ */
+async function posted(
+	html: string,
+	typed: Record<string, string> = {
+		authorName: "Ann Reader",
+		authorEmail: "ann@example.org",
+		body: "A first comment.",
+	},
+) {
+	const [, tag = "", inner = ""] = /<form\b([^>]*)>([\s\S]*?)<\/form>/.exec(html) ?? [];
+	const attr = (src: string, n: string) => new RegExp(`\\s${n}="([^"]*)"`).exec(src)?.[1];
+	const classed = (cls: string) => new RegExp(`class="(?:[^"]* )?${cls}(?: [^"]*)?"`).test(inner);
+	class Form {
+		dataset = {
+			endpoint: attr(tag, "data-endpoint"),
+			userName: attr(tag, "data-user-name"),
+			userEmail: attr(tag, "data-user-email"),
+		};
+		hasAttribute(n: string) {
+			return new RegExp(`\\s${n}(?=[\\s>=]|$)`).test(tag);
+		}
+		querySelector(sel: string) {
+			if (sel === ".ec-comment-form-submit")
+				return classed("ec-comment-form-submit") ? { disabled: false, textContent: "" } : null;
+			if (sel === ".ec-comment-form-status")
+				return classed("ec-comment-form-status")
+					? { textContent: "", className: "", classList: { add() {} } }
+					: null;
+			if (sel === "textarea[name='body']")
+				return /<textarea\b[^>]*\sname="body"/.test(inner) ? { value: "" } : null;
+			return null;
+		}
+	}
+	// The form's successful controls, in order, with what the visitor typed (a box the page fills keeps its value).
+	const entries = [...inner.matchAll(/<(input|textarea)\b([^>]*)>/g)].flatMap(([, t, a]) => {
+		const name = attr(a!, "name");
+		const type = t === "input" ? (attr(a!, "type") ?? "text") : "textarea";
+		if (!name || ["submit", "button", "image", "reset"].includes(type)) return [];
+		return [[name, typed[name] ?? attr(a!, "value") ?? ""] as [string, string]];
+	});
+	const sent = vi.fn(async (_url: string, _init: RequestInit) => ({
+		ok: true,
+		json: async () => ({ message: "Comment published" }),
+	}));
+	vi.stubGlobal("document", {
+		addEventListener: (_t: string, fn: typeof clientListener) => (clientListener = fn),
+	});
+	vi.stubGlobal("HTMLFormElement", Form);
+	vi.stubGlobal(
+		"FormData",
+		class {
+			entries() {
+				return entries[Symbol.iterator]();
+			}
+		},
+	);
+	vi.stubGlobal("fetch", sent);
+	vi.stubGlobal("window", {});
+	try {
+		// The client listens once per page: its first start's listener serves every form after it.
+		initCommentForms();
+		await clientListener?.({ target: new Form(), preventDefault() {} });
+	} finally {
+		vi.unstubAllGlobals();
+	}
+	const [url, init] = sent.mock.calls[0] ?? [];
+	return {
+		url,
+		method: init?.method,
+		headers: init?.headers,
+		body: typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined,
+	};
+}
+/** The comment client's one listener, as it registered it on the page's document. */
+let clientListener: ((e: unknown) => Promise<void>) | undefined;
+
+describe("WpShellComments: EmDash's comments and form in the theme's comment area", () => {
+	async function draw(
+		component: Parameters<Awaited<ReturnType<typeof AstroContainer.create>>["renderToString"]>[0],
+		props: Record<string, unknown>,
+		locals: Record<string, unknown> = {},
+	) {
+		const c = await AstroContainer.create();
+		return c.renderToString(component, { props, locals });
+	}
+	const skinned = (locals?: Record<string, unknown>, area?: unknown) =>
+		draw(
+			WpShellComments,
+			{ post: withArea(area).post, contentId: "01POST", title: "The Pond" },
+			locals,
+		);
+	const own = (locals?: Record<string, unknown>) =>
+		draw(CommentForm, { collection: "posts", contentId: "01POST" }, locals);
+
+	it("draws EmDash's comment form in the theme's boxes, with the controls and element CommentForm draws", async () => {
+		expect(wpShellProblem(withArea())).toBeNull();
+		const html = await skinned();
+		const theirs = await own();
+		expect(html).toContain(
+			'<div id="respond" class="comment-respond"><h3 id="reply-title" class="comment-reply-title">Leave a reply</h3><form id="commentform" class="comment-form"',
+		);
+		expect(html).not.toContain("ec-comment-form-field");
+		expect(commentControls(html)).toEqual(commentControls(theirs));
+		expect(commentControls(html)).toEqual([
+			"authorEmail email required",
+			"authorName text required 100",
+			"body textarea required 5000",
+			"website_url text",
+		]);
+		expect(commentFormTag(html)).toEqual(commentFormTag(theirs));
+		expect(commentFormTag(html)).toEqual([
+			undefined,
+			undefined,
+			"/_emdash/api/comments/posts/01POST",
+			"",
+			"",
+			true,
+		]);
+	});
+
+	it("posts a comment to EmDash's comment API with the request CommentForm's own form sends: its client, the same fields", async () => {
+		const mine = await posted(await skinned());
+		const theirs = await posted(await own());
+		expect(mine).toEqual(theirs);
+		expect(mine).toEqual({
+			url: "/_emdash/api/comments/posts/01POST",
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-EmDash-Request": "1" },
+			body: {
+				authorName: "Ann Reader",
+				authorEmail: "ann@example.org",
+				body: "A first comment.",
+				website_url: "",
+			},
+		});
+		// every field it posts is one EmDash's comment API takes, the honeypot among them, empty
+		expect(Object.keys(mine.body).every((k) => k in createCommentBody.shape)).toBe(true);
+		expect(createCommentBody.safeParse(mine.body).success).toBe(true);
+	});
+
+	it("posts a signed-in user's name and email as CommentForm does, and draws them where the theme's boxes for them go", async () => {
+		const locals = { user: { name: "Ed Editor", email: "ed@example.org" } };
+		const html = await skinned(locals);
+		expect(html).toContain(
+			'<div class="row"><div class="ec-comment-user-info"><span class="ec-comment-user-name">Ed Editor</span><span class="ec-comment-user-email">ed@example.org</span></div></div>',
+		);
+		expect(commentControls(html)).toEqual(commentControls(await own(locals)));
+		const mine = await posted(html);
+		expect(mine).toEqual(await posted(await own(locals)));
+		expect(mine.body).toEqual({
+			authorName: "Ed Editor",
+			authorEmail: "ed@example.org",
+			body: "A first comment.",
+			website_url: "",
+		});
+	});
+
+	it("starts the comment client once however many forms' scripts start it: one listener, one request per submit", () => {
+		const listen = vi.fn();
+		vi.stubGlobal("document", { addEventListener: listen });
+		try {
+			initCommentForms();
+			initCommentForms();
+			initCommentForms();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+		// One listener at most: none more where an earlier test (posted()) started it already.
+		expect(listen.mock.calls.length).toBeLessThanOrEqual(1);
+	});
+
+	it("runs CommentForm's own client, started as CommentForm starts it", () => {
+		const script = (file: string) =>
+			/<script>([\s\S]*?)<\/script>/
+				.exec(readFileSync(new URL(file, import.meta.url), "utf8"))?.[1]
+				?.replace(/\/\/.*$/gm, "")
+				.replace(/\s+/g, " ")
+				.trim();
+		expect(script("../../src/components/CommentForm.astro")).toBe(
+			'import { initCommentForms } from "./comment-form-client.js"; initCommentForms();',
+		);
+		expect(
+			script("../../../../templates/blog-cloudflare/src/components/WpShellCommentClient.astro"),
+		).toBe('import { initCommentForms } from "emdash/ui/comments/client"; initCommentForms();');
+		// the package's client is that same module
+		const pkg = JSON.parse(
+			readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+		) as { exports: Record<string, unknown> };
+		expect(pkg.exports["./ui/comments/client"]).toBe("./src/components/comment-form-client.ts");
+	});
+
+	it("lists the approved comments EmDash's Comments lists, in the theme's markup for one, under the count in its words", async () => {
+		reads.getComments.mockResolvedValue({
+			items: [
+				{
+					id: "01JCOMMENT",
+					parentId: null,
+					authorName: "Ann <Reader>",
+					isRegisteredUser: false,
+					body: "Nice & <b>bold</b>",
+					createdAt: "2026-01-16T20:00:00.000Z",
+				},
+			],
+			total: 1,
+		});
+		const html = await skinned();
+		expect(reads.getComments).toHaveBeenCalledWith({
+			collection: "posts",
+			contentId: "01POST",
+			threaded: true,
+		});
+		expect(html).toContain(
+			'<div class="hr-title hr-long"><abbr>1 Comment</abbr></div><div id="comments-list"><ol><li id="comment-01JCOMMENT" class="comment clearfix even thread-even depth-1"><span class="comment-author">Ann &lt;Reader&gt;</span> <span class="comment-date">January 16, 2026</span><div class="comment-body"><p>Nice &amp; &lt;b&gt;bold&lt;/b&gt;</p></div></li></ol></div>',
+		);
+	});
+
+	it("draws EmDash's own CommentForm in the theme's reply block where the theme's form was not in its page, and its list where it has no comment of the theme's", async () => {
+		reads.getComments.mockResolvedValue({
+			items: [
+				{
+					id: "01JC",
+					parentId: null,
+					authorName: "Ann",
+					isRegisteredUser: false,
+					body: "Hi",
+					createdAt: "2026-01-16T20:00:00.000Z",
+				},
+			],
+			total: 1,
+		});
+		const { list: _, fields: __, ...rest } = commentArea();
+		const area = {
+			...rest,
+			respond: [
+				'<div id="respond" class="comment-respond"><h3 id="reply-title">Leave a Reply</h3>',
+				HOLE("emdash"),
+				"</div>",
+			],
+		};
+		expect(wpShellProblem(withArea(area))).toBeNull();
+		const html = await skinned({}, area);
+		// EmDash's list without its own heading (the theme's area prints the count), and CommentForm, which brings its own client
+		expect(html).toMatch(
+			/<div id="comments-list">\s*<section class="ec-comments" data-for="posts\/01POST" data-heading="none">EMDASH COMMENTS<\/section>\s*<\/div>/,
+		);
+		expect(html).toMatch(
+			/<h3 id="reply-title">Leave a Reply<\/h3>\s*<form class="ec-comment-form" data-for="posts\/01POST"><\/form>\s*<\/div>/,
+		);
+		expect(html).not.toContain("WpShellCommentClient");
+	});
+
+	it("keeps EmDash's Comments' own count heading, but where the theme's area prints its own", async () => {
+		reads.getComments.mockResolvedValue({
+			items: [
+				{
+					id: "01JC",
+					parentId: null,
+					authorName: "Ann",
+					isRegisteredUser: false,
+					body: "Hi",
+					createdAt: "2026-01-16T20:00:00.000Z",
+				},
+			],
+			total: 1,
+		});
+		const props = { collection: "posts", contentId: "01POST", threaded: true };
+		const withHeading = await draw(EmDashComments, props);
+		expect(withHeading).toMatch(/<h3 class="ec-comments-heading"[^>]*>\s*1 Comment\s*<\/h3>/);
+		const without = await draw(EmDashComments, { ...props, heading: false });
+		expect(without).not.toContain("ec-comments-heading");
+		expect(without).toContain('id="comment-01JC"');
+	});
+
+	it("draws nothing when the site takes no comments", async () => {
+		reads.getCollectionInfo.mockResolvedValue({ slug: "posts", commentsEnabled: false });
+		const html = await skinned();
+		expect(html).not.toMatch(/respond|<form|Comments|ec-comment|<script/);
+		expect(reads.getComments).not.toHaveBeenCalled();
+	});
+});
+
+describe("the /wp-shell/ route: a post's comments in the theme's comment area", () => {
+	async function route(shell: unknown) {
+		reads.shell = shell;
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getCommentCount.mockResolvedValue(0);
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "the-pond",
+				data: {
+					id: "01POST",
+					title: "The Pond",
+					content: [],
+					translationGroup: "01POST",
+					updatedAt: new Date("2026-02-01T00:00:00Z"),
+					publishedAt: new Date("2026-01-15T08:30:00Z"),
+					bylines: [],
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: "posts/the-pond" },
+			request: new Request("https://example.org/posts/the-pond"),
+		});
+	}
+
+	it("draws the theme's comment area in its comment element, EmDash's comments and form in it, and none of EmDash's own markup", async () => {
+		const html = await route(withArea());
+		expect(html).toMatch(
+			/<div class="comments-area" id="comments">\s*<div class="hr-title hr-long"><abbr>0 Comments<\/abbr><\/div><div id="comments-list"><\/div><div id="respond-wrap"><div id="respond" class="comment-respond">/,
+		);
+		expect(html).toContain('data-endpoint="/_emdash/api/comments/posts/01POST"');
+		// its form's client, CommentForm's, rides with it
+		expect(html).toContain("WpShellCommentClient.astro?astro&type=script");
+		expect(html).not.toContain("EMDASH COMMENTS");
+		expect(html).not.toContain("ec-comments");
+	});
+
+	it("draws no comment element at all when the site takes no comments, as WordPress draws no comment area", async () => {
+		reads.getCollectionInfo.mockResolvedValue({ slug: "posts", commentsEnabled: false });
+		for (const shell of [
+			withArea(),
+			{ ...withArea(), post: { ...withArea().post, commentArea: undefined } },
+		]) {
+			const html = await route(shell);
+			expect(html).not.toMatch(
+				/comments-area|id="comments"|EMDASH COMMENTS|ec-comment-form|<form|WpShellCommentClient/,
+			);
+			expect(html).toContain('<div class="entry-content"');
+		}
+		// a record with no post layout draws no comments wrapper either
+		const html = await route({ ...record() });
+		expect(html).not.toContain("comments-wrapper");
+	});
+});

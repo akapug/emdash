@@ -23,6 +23,7 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
+    "@wordpress/autop": "^4.56.0",
     "@wordpress/block-serialization-default-parser": "^5.13.0",
     "parse5": "^7.2.1"
   },

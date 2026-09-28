@@ -1,0 +1,44 @@
+---
+/**
+ * A paragraph, heading or quote in a migrated WordPress design
+ * (layouts/WpShell.astro), drawn as EmDash's own block draws it
+ * (packages/core/src/components/Block.astro), with one difference: a stored
+ * left alignment is drawn too.
+ *
+ * EmDash's own block draws no class for left, its default. In WordPress a
+ * left the classic editor wrote (`<p style="text-align: left;">`) is what
+ * keeps a paragraph left where the theme aligns the region otherwise: Franz
+ * Josef centres its front page's highlights. So every alignment is drawn
+ * here as WordPress's own `has-text-align-{value}` class, and the rules for
+ * them are in ../styles/wp-shell.css.
+ */
+import type { HTMLTag } from "astro/types";
+
+interface Props {
+	node: { style?: string; textAlign?: string };
+	index?: number;
+	isInline?: boolean;
+}
+
+const { node, index: _index, isInline: _isInline, ...attrs } = Astro.props;
+const TAGS: Record<string, HTMLTag> = {
+	h1: "h1",
+	h2: "h2",
+	h3: "h3",
+	h4: "h4",
+	h5: "h5",
+	h6: "h6",
+	blockquote: "blockquote",
+};
+// Allow-listed, so a stored value cannot put a class of its own on the page.
+const ALIGN_CLASS: Record<string, string> = {
+	left: "has-text-align-left",
+	center: "has-text-align-center",
+	right: "has-text-align-right",
+	justify: "has-text-align-justify",
+};
+const Tag = (node.style && Object.hasOwn(TAGS, node.style) ? TAGS[node.style] : undefined) ?? "p";
+const align = node.textAlign && Object.hasOwn(ALIGN_CLASS, node.textAlign) ? ALIGN_CLASS[node.textAlign] : undefined;
+---
+
+<Tag class={align} {...attrs}><slot /></Tag>
