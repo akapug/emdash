@@ -65,7 +65,10 @@
  * operations of ./mediator.ts, run in the same queue with the system lane and
  * EMAIL_SYSTEM; each names a request id too, and is remembered the same way:
  * `unknown` from just before EMAIL_SYSTEM is asked to send, then what it came
- * to.
+ * to. An anonymous one that finds ANONYMOUS_WAITING_MAX waiting runs nothing:
+ * a retry of one this capability asked is told what that came to, or
+ * `unknown` while it is still in the queue (it may yet send); any other is
+ * refused.
  *
  * Nothing here imports `cloudflare:workers`: ./worker.ts wraps it in the
  * Durable Object and the entrypoint.
@@ -777,6 +780,66 @@ export function createMailBroker(deps: BrokerDeps) {
 	type Operation = "requestMagicLink" | "requestSignup" | "createInvite" | "sendRecovery";
 
 	/**
+	 * The anonymous calls in the queue (waiting, or running), by capability and
+	 * request id, each counted once per call: a retry of one of them that finds
+	 * the queue full is not refused, since that first attempt may still send.
+	 */
+	const anonymousInQueue = new Map<string, number>();
+	const queueKey = (r: unknown) =>
+		isRecord(r) && typeof r.capability === "string" && typeof r.requestId === "string"
+			? `${r.capability}\n${r.requestId}`
+			: null;
+
+	/**
+	 * The answer to an anonymous sign-in request that finds
+	 * ANONYMOUS_WAITING_MAX waiting: nothing is run for it. A retry of a request
+	 * id this capability used is told what that came to (recalled), or
+	 * `unknown` while its first attempt is still in the queue (it may yet send);
+	 * only anything else is refused.
+	 */
+	async function full(request: unknown): Promise<BrokerAnswer> {
+		const seq = nextSeq();
+		const r = isRecord(request) ? request : {};
+		const cap = await capabilityOf(r);
+		const requestId = r.requestId;
+		if (!("why" in cap) && typeof requestId === "string" && REQUEST_ID.test(requestId)) {
+			const seen = recalled(requestId, cap.hash);
+			if (seen && !("taken" in seen)) return seen;
+			if (!seen && anonymousInQueue.has(queueKey(r) ?? "")) {
+				return {
+					protocol: AUTH_MAIL_PROTOCOL,
+					status: "unknown",
+					why: "an earlier attempt with this request id is still in the broker's queue: whether it will be sent is not known, so it is not run again",
+					seq,
+				};
+			}
+		}
+		return refused(
+			"the broker has as many sign-in requests waiting as it takes: ask again later",
+			seq,
+		);
+	}
+
+	/**
+	 * `work`, then its call counted out of anonymousInQueue: only after its
+	 * answer is remembered, so a retry that finds the queue full finds that
+	 * answer, or finds this call still in the queue.
+	 */
+	const leaving =
+		<T>(key: string | null, work: (seq: number) => Promise<T>) =>
+		async (seq: number): Promise<T> => {
+			try {
+				return await work(seq);
+			} finally {
+				if (key) {
+					const n = (anonymousInQueue.get(key) ?? 1) - 1;
+					if (n > 0) anonymousInQueue.set(key, n);
+					else anonymousInQueue.delete(key);
+				}
+			}
+		};
+
+	/**
 	 * One auth operation, in its turn: its capability and request id; what
 	 * that request id came to before, for this capability (whichever
 	 * generation is active now); only then, for new work, the ACTIVE
@@ -786,20 +849,17 @@ export function createMailBroker(deps: BrokerDeps) {
 	 * send: a retry of an operation whose first attempt stopped inside that
 	 * send (the object restarted) is neither run again (no second token is
 	 * minted, no second message sent) nor said to be unsent, and its place in
-	 * the budget and its token stay as they are.
+	 * the budget and its token stay as they are. An anonymous one that finds
+	 * the queue full runs nothing (full).
 	 */
 	function operate(op: Operation, request: unknown): Promise<BrokerAnswer> {
 		const cls: CallClass =
 			op === "requestMagicLink" || op === "requestSignup" ? "anonymous" : "site";
-		if (cls === "anonymous" && waiting.anonymous.length >= ANONYMOUS_WAITING_MAX) {
-			return Promise.resolve(
-				refused(
-					"the broker has as many sign-in requests waiting as it takes: ask again later",
-					nextSeq(),
-				),
-			);
-		}
-		return serial(cls, async (seq) => {
+		if (cls === "anonymous" && waiting.anonymous.length >= ANONYMOUS_WAITING_MAX)
+			return full(request);
+		const key = cls === "anonymous" ? queueKey(request) : null;
+		if (key) anonymousInQueue.set(key, (anonymousInQueue.get(key) ?? 0) + 1);
+		const work = leaving(key, async (seq: number): Promise<BrokerAnswer> => {
 			const r = isRecord(request) ? request : {};
 			if (r.protocol !== AUTH_MAIL_PROTOCOL)
 				return refused(
@@ -843,6 +903,7 @@ export function createMailBroker(deps: BrokerDeps) {
 			remember(requestId, capabilityHash, answer);
 			return answer;
 		});
+		return serial(cls, work);
 	}
 
 	/** A lane's budget report for a generation's token, read strictly. */

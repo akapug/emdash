@@ -1146,6 +1146,57 @@ describe("THE QUEUE's classes (neighbors of CURES 4-6)", () => {
 		expect(r.budget.takes).toHaveLength(takes);
 	});
 
+	it("a retry of an anonymous request that finds the queue full is never refused while its first attempt may send: `unknown` while that attempt is still in the queue, what it came to once it answered, and nothing is run again", async () => {
+		const r = rig({ auth: true });
+		const c = creds();
+		await bringUp(r, 1, c, null);
+		const link = (email = "admin@example.org") => ({
+			protocol: P,
+			capability: c.capability,
+			requestId: randomUUID(),
+			email,
+			ip: null,
+		});
+		// A form's send runs, held inside EMAIL_PLUGIN; a sign-in request waits behind it, and the queue fills.
+		let hold = r.plugin.pauseSend();
+		let running = watch(sendWith(r.b, c.capability));
+		await hold.entered;
+		const first = link();
+		const firstAttempt = watch(r.b.requestMagicLink(first));
+		const flood = Array.from({ length: ANONYMOUS_WAITING_MAX - 1 }, (_, i) =>
+			watch(r.b.requestMagicLink(link(`nobody-${i}@example.org`))),
+		);
+		// Its retry (the first call's answer lost on the way) finds the queue full: the first may still send.
+		expect(await r.b.requestMagicLink(first)).toMatchObject({
+			status: "unknown",
+			why: expect.stringMatching(/still in the broker's queue/),
+		});
+		// A new request, and the same request id with another capability, are refused at once.
+		const full = /as many sign-in requests waiting as it takes/;
+		expect(await r.b.requestMagicLink(link())).toMatchObject({ status: "refused", why: full });
+		expect(await r.b.requestMagicLink({ ...first, capability: creds().capability })).toMatchObject({
+			status: "refused",
+			why: full,
+		});
+		hold.release();
+		await running.promise;
+		expect(await firstAttempt.promise).toMatchObject({ status: "sent" });
+		for (const w of flood) expect(await w.promise).toMatchObject({ status: "skipped" });
+		expect(r.system.sent).toHaveLength(1);
+		// Full again: the retry is told what the first attempt came to, and nothing is run again.
+		hold = r.plugin.pauseSend();
+		running = watch(sendWith(r.b, c.capability));
+		await hold.entered;
+		const again = Array.from({ length: ANONYMOUS_WAITING_MAX }, (_, i) =>
+			watch(r.b.requestMagicLink(link(`nobody-${i}@example.org`))),
+		);
+		expect(await r.b.requestMagicLink(first)).toMatchObject({ status: "sent", replayed: true });
+		hold.release();
+		await running.promise;
+		for (const w of again) expect(await w.promise).toMatchObject({ status: "skipped" });
+		expect(r.system.sent).toHaveLength(1);
+	});
+
 	it("a take the budget answers as given back already (a replayed take it refunded) is no place to send in: refused, nothing sent, nothing given back again", async () => {
 		const r = rig();
 		const c = creds();
