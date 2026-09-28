@@ -4119,7 +4119,7 @@
 	},
 	{
 		"version": 1,
-		"id": "56774b3952888e5a31f09072",
+		"id": "cb69833c19341951baa10bda",
 		"source": {
 			"url": "https://www.example.org/about/",
 			"capturedAt": "2026-09-28T00:00:00.000Z"
@@ -4132,7 +4132,7 @@
 			"class": "page-template-default page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/77991b68ba6708d7f8fb35d06b70fce4.css"
+			"/_emdash/api/media/file/wp-shell/c2364a3ba6868f2472fcb14d43e1fbf6.css"
 		],
 		"parts": [
 			{
@@ -4264,7 +4264,7 @@
 				"class": "home page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 			},
 			"styles": [
-				"/_emdash/api/media/file/wp-shell/e5b6dae798e72069bf8d0d9bf0a99481.css"
+				"/_emdash/api/media/file/wp-shell/ecd6402b53344da4a7747e8e449c04d0.css"
 			],
 			"parts": [
 				{
@@ -4320,7 +4320,7 @@
 					"class": "page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 				},
 				"styles": [
-					"/_emdash/api/media/file/wp-shell/d7f7fa6b4dbc663007790f953cf8cd9a.css"
+					"/_emdash/api/media/file/wp-shell/2403631fbbe3d37863cad0d946d121bc.css"
 				],
 				"parts": [
 					{
@@ -4372,7 +4372,7 @@
 				"class": "single single-post single-format-standard wp-custom-logo elementor-default elementor-kit-3 elementor-page-8"
 			},
 			"styles": [
-				"/_emdash/api/media/file/wp-shell/7e6be9983da6f8ffa8193bba04eab4c3.css"
+				"/_emdash/api/media/file/wp-shell/3c6481325ac92f0625d6830108f6bdb0.css"
 			],
 			"parts": [
 				{
@@ -4409,7 +4409,7 @@
 					"class": "elementor-heading-title elementor-size-default"
 				},
 				{
-					"html": "</div></div>\n<div class=\"elementor-element elementor-element-p4 elementor-widget elementor-widget-theme-post-content\" data-id=\"p4\" data-element_type=\"widget\" data-widget_type=\"theme-post-content.default\">"
+					"html": "</div></div>\n<div class=\"elementor-element elementor-element-p7 elementor-widget elementor-widget-post-info\" data-id=\"p7\" data-element_type=\"widget\" data-widget_type=\"post-info.default\"><div class=\"elementor-widget-container\"></div></div>\n<div class=\"elementor-element elementor-element-p4 elementor-widget elementor-widget-theme-post-content\" data-id=\"p4\" data-element_type=\"widget\" data-widget_type=\"theme-post-content.default\">"
 				},
 				{
 					"slot": "content",
