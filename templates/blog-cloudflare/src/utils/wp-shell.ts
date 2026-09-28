@@ -32,6 +32,10 @@ import {
 	type WpDatePaths,
 	type WpZone,
 } from "./wp-archive";
+import declaredFeatures from "./wp-shell-features.json";
+
+/** The record capabilities this reader draws; Embark reads the same checked-in file from the artifact. */
+export const WP_SHELL_FEATURES: readonly string[] = declaredFeatures;
 
 /** The site setting that holds the record: the options row `site:wpShell`. */
 export const WP_SHELL_SETTING = "wpShell";
@@ -3153,8 +3157,7 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		else if (p.slot === "titleText") push(escapeHtml(fill.title ?? ""));
 		else if (p.slot === "title") {
 			if (drawsTitle(shell, fill.kind ?? "page", fill.slug)) out.push({ title: element(p) });
-		}
-		else if (p.slot === "content") {
+		} else if (p.slot === "content") {
 			const end = postHtml(post?.share);
 			out.push({ content: element(p), ...(end ? { end } : {}) });
 		} else if (p.slot === "comments") out.push({ comments: element(p) });
