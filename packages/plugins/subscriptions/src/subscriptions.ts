@@ -613,21 +613,29 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 		notSubscribed: {},
 	};
 	const rows = parseCsv(csv);
-	const header = (rows[0] ?? []).map((h) => h.trim());
-	const data = rows.slice(1);
+	let header = (rows[0] ?? []).map((h) => h.trim());
+	let data = rows.slice(1);
+	let emailAt = header.findIndex((h) => EMAIL_HEADER.test(h));
+	// No header names it: the one column in which every row holds an address. When the first
+	// line holds one there too, the file has no header at all, and its first line is an address.
+	if (emailAt < 0) {
+		const holding = (from: string[][]) =>
+			header
+				.map((_, i) => i)
+				.filter((i) => from.length > 0 && from.every((r) => (r[i] ?? "").includes("@")));
+		const bare = holding(rows);
+		const columns = bare.length === 1 ? bare : holding(data);
+		if (columns.length === 1) emailAt = columns[0]!;
+		if (bare.length === 1) {
+			data = rows;
+			header = [];
+		}
+	}
 	if (data.length > IMPORT_MAX_ROWS)
 		return {
 			...report,
 			refused: `${data.length} rows, past the ${IMPORT_MAX_ROWS} one import reads`,
 		};
-	let emailAt = header.findIndex((h) => EMAIL_HEADER.test(h));
-	// No header names it: the one column in which every row holds an address.
-	if (emailAt < 0) {
-		const columns = header
-			.map((_, i) => i)
-			.filter((i) => data.length > 0 && data.every((r) => (r[i] ?? "").includes("@")));
-		if (columns.length === 1) emailAt = columns[0]!;
-	}
 	if (emailAt < 0)
 		return {
 			...report,

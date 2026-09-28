@@ -429,6 +429,20 @@ describe("the list WordPress kept, imported", () => {
 			await importSubscribers(env, "Subscriber;Joined\nada@example.org;2020-01-01\n"),
 		).toMatchObject({ imported: 1 });
 	});
+
+	it("reads a list of addresses with no header line from its first line, and loses none", async () => {
+		const { env, subscribers } = site();
+		expect(
+			await importSubscribers(env, "first@example.org\nsecond@example.org\nthird@example.org\n"),
+		).toMatchObject({ rows: 3, imported: 3, invalid: 0 });
+		expect(subscribers.rows.has(await subscriberId(env, "first@example.org"))).toBe(true);
+		// one address alone is a list of one
+		const one = site();
+		expect(await importSubscribers(one.env, "only@example.org")).toMatchObject({
+			rows: 1,
+			imported: 1,
+		});
+	});
 });
 
 describe("where the visitor is sent back to", () => {
