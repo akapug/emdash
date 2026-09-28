@@ -593,4 +593,54 @@ describe("the broker's Worker", () => {
 			});
 		}
 	});
+
+	it("checks the operator's bearer before it wakes the Durable Object: a request without the secret never reaches the site's one object", async () => {
+		const secret = "s".repeat(43);
+		const reached: string[] = [];
+		const object = {
+			fetch: async (request: Request) => {
+				reached.push(`${request.method} ${new URL(request.url).pathname}`);
+				return Response.json({ ok: true });
+			},
+			operate: async () => ({ status: "refused", why: "not asked here" }),
+		};
+		const namespace = { idFromName: (name: string) => name, get: () => object };
+		const worker = (env: Record<string, unknown>) =>
+			new MailBrokerEntrypoint({ waitUntil: () => {} } as never, env as never);
+		const withSecret = worker({ BROKER: namespace, BROKER_ADMIN_SECRET: secret });
+		const ask = (w: InstanceType<typeof MailBrokerEntrypoint>, auth?: string, verb = "state") =>
+			w.fetch(
+				new Request(`https://broker.example/admin/${verb}`, {
+					method: verb === "state" ? "GET" : "POST",
+					headers: auth === undefined ? {} : { authorization: auth },
+					...(verb === "state" ? {} : { body: "x".repeat(10_000) }),
+				}),
+			);
+
+		for (const auth of [
+			undefined,
+			"",
+			`Bearer ${"t".repeat(43)}`,
+			`Basic ${secret}`,
+			`Bearer ${secret}x`,
+			secret,
+		]) {
+			expect((await ask(withSecret, auth)).status, String(auth)).toBe(401);
+			expect((await ask(withSecret, auth, "stage")).status, String(auth)).toBe(401);
+		}
+		// Without a secret of its own (or one too short to be the operator's), the door answers nobody.
+		for (const env of [
+			{ BROKER: namespace },
+			{ BROKER: namespace, BROKER_ADMIN_SECRET: "short" },
+			{ BROKER: namespace, BROKER_ADMIN_SECRET: 43 },
+		]) {
+			expect((await ask(worker(env), `Bearer ${secret}`)).status).toBe(503);
+		}
+		expect(reached).toEqual([]);
+
+		// The operator's bearer is handed on to the object, which checks it again (tests/mail-broker.test.ts, "the admin door").
+		const ok = await ask(withSecret, `Bearer ${secret}`);
+		expect(ok.status).toBe(200);
+		expect(reached).toEqual(["GET /admin/state"]);
+	});
 });

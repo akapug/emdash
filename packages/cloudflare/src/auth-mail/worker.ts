@@ -30,6 +30,7 @@ import { Kysely } from "kysely";
 import { D1Dialect } from "kysely-d1";
 
 import {
+	adminRefusal,
 	brokerConfigFromEnv,
 	createMailBroker,
 	type BrokerStore,
@@ -179,12 +180,17 @@ export default class MailBrokerEntrypoint extends WorkerEntrypoint<Record<string
 		return this.#call("status", request);
 	}
 
-	/** The operator's admin door (/admin/...), answered by the object; nothing else answers over HTTP. */
-	override fetch(request: Request): Promise<Response> | Response {
+	/**
+	 * The operator's admin door (/admin/...), answered by the object; nothing
+	 * else answers over HTTP. The bearer is checked here first: the route is
+	 * public, and a request without the operator's secret never reaches the
+	 * site's one object, so a flood of them cannot hold up the site's mail.
+	 */
+	override async fetch(request: Request): Promise<Response> {
 		const object = this.#object();
 		if (!new URL(request.url).pathname.startsWith("/admin/") || !object) {
 			return new Response("emdash-auth-mail:broker: not found", { status: 404 });
 		}
-		return object.fetch(request);
+		return (await adminRefusal(request, this.env.BROKER_ADMIN_SECRET)) ?? object.fetch(request);
 	}
 }

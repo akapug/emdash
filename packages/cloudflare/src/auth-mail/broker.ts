@@ -260,6 +260,28 @@ async function sameSecret(given: string, secret: string): Promise<boolean> {
 }
 
 /**
+ * The answer to an admin request that does not carry the operator's secret
+ * (`secret`, BROKER_ADMIN_SECRET), or null when it does: 503 when the broker
+ * has no secret of at least 32 characters, 401 for any other bearer. The
+ * entrypoint (./worker.ts) asks this before it hands a request to the Durable
+ * Object, and the object asks it again.
+ */
+export async function adminRefusal(request: Request, secret: unknown): Promise<Response | null> {
+	if (typeof secret !== "string" || secret.length < MIN_ADMIN_SECRET) {
+		return json(503, {
+			ok: false,
+			error:
+				"the broker has no operator secret (BROKER_ADMIN_SECRET), so it answers no admin request",
+		});
+	}
+	const auth = request.headers.get("authorization") ?? "";
+	if (!auth.startsWith("Bearer ") || !(await sameSecret(auth.slice(7), secret))) {
+		return json(401, { ok: false, error: "not the operator" });
+	}
+	return null;
+}
+
+/**
  * The broker over its store and configuration. Every method answers what it
  * came to and never throws for a request, a refusal or a failed send.
  */
@@ -725,18 +747,8 @@ export function createMailBroker(deps: BrokerDeps) {
 		const url = new URL(request.url);
 		if (!url.pathname.startsWith("/admin/"))
 			return json(404, { ok: false, error: `${AUTH_MAIL_MARKER}: not found` });
-		const secret = config.adminSecret;
-		if (typeof secret !== "string" || secret.length < MIN_ADMIN_SECRET) {
-			return json(503, {
-				ok: false,
-				error:
-					"the broker has no operator secret (BROKER_ADMIN_SECRET), so it answers no admin request",
-			});
-		}
-		const auth = request.headers.get("authorization") ?? "";
-		if (!auth.startsWith("Bearer ") || !(await sameSecret(auth.slice(7), secret))) {
-			return json(401, { ok: false, error: "not the operator" });
-		}
+		const refusal = await adminRefusal(request, config.adminSecret);
+		if (refusal) return refusal;
 		const verb = url.pathname.slice("/admin/".length);
 		if (verb === "state") {
 			if (request.method !== "GET") return json(405, { ok: false, error: "GET" });
