@@ -50,7 +50,7 @@ if (Astro.cache?.enabled) Astro.cache.set(shellHint);
 
 const { siteTitle } = resolveBlogSiteIdentity(settings);
 
-async function load(r: NonNullable<typeof route>) {
+async function load(r: Exclude<NonNullable<typeof route>, { kind: "archive" }>) {
 	if (r.kind === "home") {
 		const homepage = await getHomepage<InferCollectionData<"pages">>();
 		return {

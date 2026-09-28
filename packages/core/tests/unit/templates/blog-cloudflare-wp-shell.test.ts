@@ -2602,7 +2602,15 @@ describe("the tripwire reads the footer's controls", () => {
 		["a sign-up with two email boxes", (s) => void s.subscribe![0]!.fields.push({ s: "control" })],
 		[
 			"a hole inside a tag",
-			(s) => void s.subscribe![0]!.fields.splice(0, 0, '<p class="', { s: "control" }, '">'),
+			// the one email box, moved into an attribute's value
+			(s) =>
+				void s.subscribe![0]!.fields.splice(
+					4,
+					1,
+					'<span title="',
+					s.subscribe![0]!.fields[4]!,
+					'"></span>',
+				),
 		],
 		[
 			"a submit control's words past 200 letters",
@@ -2823,10 +2831,13 @@ describe("the sign-up", () => {
 	});
 
 	it("has words for every status the sign-up plugin sends back", () => {
-		for (const status of SUBSCRIBE_STATUSES) expect(WP_SHELL_SUBSCRIBE_MESSAGES[status]).toBeTruthy();
+		for (const status of SUBSCRIBE_STATUSES)
+			expect(WP_SHELL_SUBSCRIBE_MESSAGES[status]).toBeTruthy();
 		// a confirmation that failed to send is saved and retried: the visitor is not asked to try again
 		const queued = draw({ status: "queued" });
-		expect(queued.startsWith('<div class="success"><p>Thank you! Your subscription is saved.')).toBe(true);
+		expect(
+			queued.startsWith('<div class="success"><p>Thank you! Your subscription is saved.'),
+		).toBe(true);
 		expect(queued).not.toContain('name="email"');
 	});
 

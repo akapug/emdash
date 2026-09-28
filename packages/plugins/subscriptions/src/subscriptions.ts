@@ -23,9 +23,12 @@
  * outbox once the site can send.
  */
 
-import type { EmailAccess, KVAccess, LogAccess, StorageCollection } from "emdash";
+import type { KVAccess, LogAccess, PluginContext, StorageCollection } from "emdash";
 
 import { parseCsv } from "./csv.js";
+
+/** The site's email, as a plugin with `email:send` reaches it (`ctx.email`). */
+type EmailAccess = NonNullable<PluginContext["email"]>;
 
 // ─── Types ───────────────────────────────────────────────────────
 

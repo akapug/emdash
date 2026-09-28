@@ -53,9 +53,10 @@ export interface SubscriptionsPluginOptions {
 
 const VERSION = "0.1.0";
 
+/** The plugin's collections. The descriptor's declaration takes single fields only, so it names the composite index's fields alone. */
 const STORAGE = {
-	subscribers: { indexes: ["status", "createdAt"] as const },
-	outbox: { indexes: ["status", "subscriber", "createdAt", ["status", "createdAt"]] as const },
+	subscribers: { indexes: ["status", "createdAt"] },
+	outbox: { indexes: ["status", "subscriber", "createdAt", ["status", "createdAt"]] },
 };
 
 export function subscriptionsPlugin(
