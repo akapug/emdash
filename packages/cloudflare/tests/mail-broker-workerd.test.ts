@@ -3,10 +3,12 @@
  * by wrangler as an operator's build bundles it (`wrangler deploy --dry-run`,
  * its Durable Object declared), started through Miniflare, and reached from a
  * site's Worker through a REAL service binding. Beside it, a mail budget Worker
- * that speaks protocol 3 and a Worker that stands for both send_email bindings
- * and can hold a send open. tests/mail-broker.test.ts proves the broker over
- * doubles; this proves the same door, fence and storage in the runtime, where a
- * Durable Object's own ordering lets another request in while a call awaits.
+ * that speaks protocol 3, a Worker that stands for both send_email bindings and
+ * can hold a send open, and a D1 database for its sign-in operations (Kysely
+ * over D1 inside the Durable Object). tests/mail-broker.test.ts proves the
+ * broker over doubles; this proves the same door, fence and storage in the
+ * runtime, where a Durable Object's own ordering lets another request in while
+ * a call awaits.
  */
 
 import { execFileSync } from "node:child_process";
@@ -17,6 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { AUTH_TABLES_SQL } from "@emdash-cms/auth/adapters/kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AUTH_MAIL_MARKER, AUTH_MAIL_PROTOCOL } from "../src/auth-mail/mediator.js";
@@ -39,6 +42,7 @@ interface Worker {
 }
 interface Miniflare {
 	getWorker(name: string): Promise<Worker>;
+	getD1Database(binding: string, worker?: string): Promise<D1Database>;
 	dispose(): Promise<void>;
 }
 interface MiniflareModule {
@@ -144,6 +148,7 @@ function options() {
 				compatibilityDate: "2026-04-01",
 				compatibilityFlags: ["nodejs_compat"],
 				durableObjects: { BROKER: { className: "MailBroker", useSQLite: true } },
+				d1Databases: ["DB"],
 				serviceBindings: { MAIL_BUDGET: "budget", EMAIL_PLUGIN: "send", EMAIL_SYSTEM: "send" },
 				bindings: {
 					BROKER_TENANT: TENANT,
@@ -380,5 +385,55 @@ describe("the broker's Worker in workerd", () => {
 			status: "refused",
 			why: expect.stringMatching(/not this site's active generation's/),
 		});
+	}, 60_000);
+
+	it("sends sign-in mail from the site's D1 in the runtime: a magic link for an enabled user goes out through EMAIL_SYSTEM with the system lane, and a stale capability writes nothing to D1", async () => {
+		const d1 = await running().getD1Database("DB", "broker");
+		const tables = `${AUTH_TABLES_SQL};
+			CREATE TABLE _emdash_rate_limits (key TEXT NOT NULL, "window" TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (key, "window"))`;
+		for (const statement of tables
+			.split(";")
+			.map((t) => t.trim())
+			.filter(Boolean)) {
+			await d1.prepare(statement).run();
+		}
+		const now = new Date().toISOString();
+		await d1
+			.prepare(
+				"INSERT INTO users (id, email, name, role, email_verified, disabled, created_at, updated_at) VALUES ('u-admin', 'admin@example.org', 'Admin', 50, 1, 0, ?, ?)",
+			)
+			.bind(now, now)
+			.run();
+		const rows = async () => ({
+			tokens: (await d1.prepare("SELECT COUNT(*) AS n FROM auth_tokens").first<{ n: number }>())?.n,
+			rates: (
+				await d1.prepare("SELECT COUNT(*) AS n FROM _emdash_rate_limits").first<{ n: number }>()
+			)?.n,
+		});
+		const request = (capability: string) => ({
+			protocol: P,
+			capability,
+			email: "admin@example.org",
+			ip: "203.0.113.1",
+		});
+		const before = (await sendBinding()).sent.length;
+		expect(await call("requestMagicLink", request(g1.capability))).toMatchObject({
+			status: "refused",
+			why: expect.stringMatching(/not this site's active generation's/),
+		});
+		expect(await rows()).toEqual({ tokens: 0, rates: 0 });
+		expect((await sendBinding()).sent).toHaveLength(before);
+		expect(await call("requestMagicLink", request(g2.capability))).toMatchObject({
+			protocol: P,
+			status: "sent",
+		});
+		const sent = (await sendBinding()).sent;
+		expect(sent).toHaveLength(before + 1);
+		expect(sent.at(-1)).toMatchObject({
+			from: { email: "notify@mail.example.org", name: "Acme" },
+			to: "admin@example.org",
+			text: expect.stringContaining("https://acme.example.org/_emdash"),
+		});
+		expect((await rows()).tokens).toBe(1);
 	}, 60_000);
 });
