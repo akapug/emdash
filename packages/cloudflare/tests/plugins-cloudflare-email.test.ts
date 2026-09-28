@@ -865,284 +865,200 @@ describe("what a log carries", () => {
 	});
 });
 
-const TOKEN = "tok_0123456789abcdef0123456789abcdef0123456";
+const CAP = "cap_0123456789abcdef0123456789abcdef0123456";
 
 /**
- * The mail-budget service as its service binding exposes it: `take` answers a
- * take or a refusal from `answer` (default: a take), and every call is kept.
+ * The site's mail broker as its service binding exposes it: `send` answers
+ * from `answer` (default: sent), and every call is kept.
  */
-function fakeBudget(
-	answer: (req: { recipients: string[] }) => unknown = () => ({
-		ok: true,
+function fakeBroker(
+	answer: (req: { message: Record<string, unknown> }) => unknown = () => ({
 		protocol: 2,
-		takeId: "take-1",
+		status: "sent",
+		seq: 1,
 	}),
 ) {
-	type Take = { protocol: number; token: string; recipients: string[] };
-	type Refund = { protocol: number; token: string; takeId: string };
-	const takes: Take[] = [];
-	const refunds: Refund[] = [];
+	type Send = {
+		protocol: number;
+		capability: string;
+		requestId: string;
+		message: Record<string, unknown>;
+	};
+	const sends: Send[] = [];
+	const statuses: Array<Record<string, unknown>> = [];
 	const service = {
-		take: vi.fn(async (req: Take) => {
-			takes.push(req);
+		send: vi.fn(async (req: Send) => {
+			sends.push(req);
 			return answer(req);
 		}),
-		refund: vi.fn(async (req: Refund) => {
-			refunds.push(req);
-			return { ok: true, protocol: 2, refunded: 1 };
+		status: vi.fn(async (req: Record<string, unknown>) => {
+			statuses.push(req);
+			return { protocol: 2, marker: "emdash-auth-mail:broker;v=2", capability: "unknown" };
 		}),
 	};
-	return { service, takes, refunds, env: { MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: TOKEN } };
+	return { service, sends, statuses, env: { MAIL_BROKER: service, MAIL_BROKER_CAPABILITY: CAP } };
 }
 
-describe("the account's budget", () => {
-	const withBudget = (env: Record<string, unknown>) =>
+describe("the site's mail broker", () => {
+	const withBroker = (env: Record<string, unknown>, over: Partial<CloudflareEmailConfig> = {}) =>
 		createCloudflareEmailDeliver(
-			{ from: "notify@mail.example.org", accountBudget: {}, allowCc: true },
+			{ from: "notify@mail.example.org", broker: {}, allowCc: true, ...over },
 			async () => env,
 		);
 
-	it("every message takes its place there too, and only the recipients' hashes leave the Worker", async () => {
+	it("every message goes to the broker as its envelope with this site's capability and a request id, and nothing goes through a binding of this Worker's", async () => {
 		const mail = fakeEnv();
-		const budget = fakeBudget();
-		await withBudget({ ...mail.env, ...budget.env })(
+		const broker = fakeBroker();
+		await withBroker({ ...mail.env, ...broker.env })(
 			{
-				message: { ...message, to: "User@Example.com", cc: ["team@example.com"] },
+				message: {
+					...message,
+					to: "User@Example.com",
+					cc: ["team@example.com"],
+					html: "<p>hi</p>",
+				},
 				source: "system",
 			},
 			fakeCtx(),
 		);
-
-		expect(mail.send).toHaveBeenCalledOnce();
-		expect(budget.takes).toHaveLength(1);
-		const [take] = budget.takes;
-		// The request carries the token and the hashes only: no source, no lane, no
-		// `system`. The lane is the token's registration, and this Worker's token is
-		// its plugin lane's, so EmDash's own "system" mail from here takes no reserve.
-		expect(Object.keys(take!).toSorted()).toEqual(["protocol", "recipients", "token"]);
-		expect(take).toMatchObject({ protocol: 2, token: TOKEN });
-		expect(take!.recipients).toHaveLength(2);
-		for (const h of take!.recipients) expect(h).toMatch(/^[0-9a-f]{64}$/);
-		expect(JSON.stringify(budget.takes)).not.toContain("@");
-		// The hash is of the address in lower case: one recipient, whatever its case.
-		const again = fakeBudget();
-		await withBudget({ ...fakeEnv().env, ...again.env })(
-			{ message: { ...message, to: "user@example.com" }, source: "system" },
-			fakeCtx(),
-		);
-		expect(again.takes[0]!.recipients[0]).toBe(take!.recipients[0]);
+		// Even with a send_email binding in the env, this Worker never calls it.
+		expect(mail.send).not.toHaveBeenCalled();
+		expect(broker.sends).toHaveLength(1);
+		const [sent] = broker.sends;
+		// The request is the envelope, the capability and a request id: no source, no lane, no sender, no token.
+		expect(Object.keys(sent!).toSorted()).toEqual([
+			"capability",
+			"message",
+			"protocol",
+			"requestId",
+		]);
+		expect(sent).toMatchObject({ protocol: 2, capability: CAP });
+		expect(sent!.requestId).toMatch(/^[0-9a-f-]{36}$/);
+		expect(sent!.message).toEqual({
+			to: "User@Example.com",
+			cc: ["team@example.com"],
+			subject: "Your magic link",
+			text: "Click here",
+			html: "<p>hi</p>",
+		});
+		expect(JSON.stringify(broker.sends)).not.toMatch(/system|lane|source|from/);
 		// A form's mail asks the same way: nothing a source says reaches the request.
-		await withBudget({ ...fakeEnv().env, ...again.env })(
-			{ message, source: "emdash-forms" },
-			fakeCtx(),
-		);
-		expect(Object.keys(again.takes[1]!).toSorted()).toEqual(["protocol", "recipients", "token"]);
-		expect(JSON.stringify(again.takes)).not.toMatch(/system|lane|source/);
+		await withBroker({ ...broker.env })({ message, source: "emdash-forms" }, fakeCtx());
+		expect(Object.keys(broker.sends[1]!).toSorted()).toEqual([
+			"capability",
+			"message",
+			"protocol",
+			"requestId",
+		]);
+		expect(broker.sends[1]!.requestId).not.toBe(sent!.requestId);
 	});
 
-	it("a Worker without the service binding or the token sends nothing, spends nothing of the site's, and says why", async () => {
+	it("a Worker without the broker's service binding or the capability sends nothing, spends nothing of the site's, and says why", async () => {
 		for (const [env, why] of [
-			[{ MAIL_BUDGET_TOKEN: TOKEN }, /no service binding "MAIL_BUDGET" in this Worker/],
+			[{ MAIL_BROKER_CAPABILITY: CAP }, /no service binding "MAIL_BROKER" in this Worker/],
 			[
-				{ MAIL_BUDGET: { take: async () => ({}) }, MAIL_BUDGET_TOKEN: TOKEN },
-				/no service binding "MAIL_BUDGET"/,
+				{ MAIL_BROKER: { send: async () => ({}) }, MAIL_BROKER_CAPABILITY: CAP },
+				/no service binding "MAIL_BROKER"/,
 			],
 			[
-				{ MAIL_BUDGET: fakeBudget().service },
-				/no token: the secret "MAIL_BUDGET_TOKEN" is not set/,
+				{ MAIL_BROKER: fakeBroker().service },
+				/no generation capability for the mail broker: the secret "MAIL_BROKER_CAPABILITY" is not set/,
 			],
-			[{ MAIL_BUDGET: fakeBudget().service, MAIL_BUDGET_TOKEN: "  " }, /no token/],
+			[
+				{ MAIL_BROKER: fakeBroker().service, MAIL_BROKER_CAPABILITY: "  " },
+				/no generation capability/,
+			],
 		] as const) {
 			const mail = fakeEnv();
 			const kv = memoryKv();
 			await expect(
-				withBudget({ ...mail.env, ...env })({ message, source: "emdash-forms" }, fakeCtx({ kv })),
+				withBroker({ ...mail.env, ...env })({ message, source: "emdash-forms" }, fakeCtx({ kv })),
 			).rejects.toThrow(why);
 			expect(mail.send).not.toHaveBeenCalled();
 			expect([...kv.rows.keys()]).toEqual([]);
 		}
 	});
 
-	it("a refusal there sends nothing and gives the site's places back", async () => {
-		const mail = fakeEnv();
+	it("a refusal there sends nothing and gives the site's places back, and names no address", async () => {
 		const kv = memoryKv();
-		const budget = fakeBudget(() => ({
-			ok: false,
+		const broker = fakeBroker(() => ({
 			protocol: 2,
-			refused: "the account has sent 200 of its 200 today",
+			status: "refused",
+			why: "1 of its recipients (at example.com) are not on the broker's recipient list: user@example.com",
+			seq: 4,
 		}));
-		await expect(
-			withBudget({ ...mail.env, ...budget.env })(
-				{ message, source: "emdash-forms" },
-				fakeCtx({ kv }),
-			),
-		).rejects.toThrow(
-			/the account's mail budget refused it: the account has sent 200 of its 200 today/,
+		const error = (await withBroker(broker.env)(
+			{ message, source: "emdash-forms" },
+			fakeCtx({ kv }),
+		).catch((e: unknown) => e)) as Error;
+		expect(error.message).toMatch(
+			/the mail broker refused it: 1 of its recipients \(at example\.com\) are not on the broker's recipient list/,
 		);
-		expect(mail.send).not.toHaveBeenCalled();
+		expect(error.message.toLowerCase()).not.toContain("user@");
 		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
 	});
 
-	it("an error asking it, or an answer that is neither a take nor a refusal, sends nothing", async () => {
+	it("an error asking it is asked once more with the SAME request id, and an answer that says neither sent nor refused is not known to be sent: the site's places stay taken", async () => {
+		// Thrown once, then sent: the retry carries the same request id, which the broker answers as the first.
+		let calls = 0;
+		const flaky = fakeBroker(() => {
+			calls++;
+			if (calls === 1) throw new Error("the connection was lost for User@Example.com");
+			return { protocol: 2, status: "sent", seq: 2, replayed: true };
+		});
+		await withBroker(flaky.env)({ message, source: "system" }, fakeCtx());
+		expect(flaky.sends).toHaveLength(2);
+		expect(flaky.sends[0]!.requestId).toBe(flaky.sends[1]!.requestId);
 		for (const [answer, why] of [
 			[
 				() => {
 					throw new Error("service unavailable for User@Example.com");
 				},
-				/could not be asked \(Error: service unavailable for <an address at example\.com>\), so nothing is sent/,
+				/could not be asked \(Error: service unavailable for <an address at example\.com>\), so whether it was sent is not known/,
 			],
-			[() => ({ protocol: 2 }), /answered neither a take nor a refusal/],
-			[() => ({ ok: true, protocol: 2 }), /answered neither a take nor a refusal/],
+			[() => ({ protocol: 2 }), /answered neither sent nor refused/],
+			[() => ({ protocol: 2, status: "refused" }), /answered neither sent nor refused/],
+			[
+				() => ({ protocol: 1, status: "sent" }),
+				/answered in protocol 1, and this provider speaks 2/,
+			],
+			[() => ({ status: "sent" }), /answered in protocol null/],
 		] as const) {
-			const mail = fakeEnv();
-			const budget = fakeBudget(answer);
-			const error = (await withBudget({ ...mail.env, ...budget.env })(
+			const kv = memoryKv();
+			const broker = fakeBroker(answer);
+			const error = (await withBroker(broker.env)(
 				{ message: { ...message, to: "user@example.com" }, source: "system" },
-				fakeCtx(),
+				fakeCtx({ kv }),
 			).catch((e: unknown) => e)) as Error;
 			expect(error.message).toMatch(why);
 			expect(error.message.toLowerCase()).not.toContain("user@");
-			expect(mail.send).not.toHaveBeenCalled();
+			// Not known to be unsent: the site's own counts keep the places.
+			expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([1, 1, 1, 1]);
 		}
 	});
 
-	/**
-	 * The host's lifetime extender as a test sees it: every piece of work the
-	 * provider hands it, kept. Nothing else keeps an isolate alive after the
-	 * response: work that is not handed here is work Cloudflare may never run.
-	 */
-	const lifetime = () => {
-		const held: Promise<unknown>[] = [];
-		return { held, extend: (work: Promise<unknown>) => void held.push(work) };
-	};
-
-	it("a take that does not answer in time sends nothing, gives the site's places back, and its give-back is held alive by the host", async () => {
-		const mail = fakeEnv();
+	it("a send the broker has not answered in time is NOT known to be unsent: it is reported so, and asked no second time", async () => {
 		const kv = memoryKv();
-		let answer: (v: unknown) => void = () => {};
-		const budget = fakeBudget();
-		budget.service.take.mockImplementation(
-			(req) => (budget.takes.push(req), new Promise((resolve) => (answer = resolve))),
+		const broker = fakeBroker();
+		broker.service.send.mockImplementation(
+			(req) => (broker.sends.push(req), new Promise(() => {})),
 		);
-		const host = lifetime();
 		const deliver = createCloudflareEmailDeliver(
-			{ from: "notify@mail.example.org", accountBudget: { timeoutMs: 20 } },
-			async () => ({ ...mail.env, ...budget.env }),
-			undefined,
-			host.extend,
+			{ from: "notify@mail.example.org", broker: { timeoutMs: 20 } },
+			async () => broker.env,
 		);
 		await expect(deliver({ message, source: "emdash-forms" }, fakeCtx({ kv }))).rejects.toThrow(
-			/the account's mail budget did not answer within 20 ms, so nothing is sent/,
+			/the mail broker did not answer within 20 ms, so whether it was sent is not known/,
 		);
-		expect(mail.send).not.toHaveBeenCalled();
-		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
-		// The request is over, and the give-back is the host's to keep alive, not a
-		// detached promise: exactly one piece of work was handed to it, and it is
-		// still pending (the take has not answered).
-		expect(host.held).toHaveLength(1);
-		expect(budget.refunds).toEqual([]);
-		// The take arrives after all: the work the host holds gives it back, and
-		// settles only once it has.
-		answer({ ok: true, protocol: 2, takeId: "take-late" });
-		await Promise.all(host.held);
-		expect(budget.refunds).toEqual([{ protocol: 2, token: TOKEN, takeId: "take-late" }]);
+		expect(broker.sends).toHaveLength(1);
+		expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([1, 1, 1]);
 	});
 
-	it("a refund that does not answer in time is not waited for, and is held alive by the host: the binding's error still reaches the caller", async () => {
-		const mail = fakeEnv(async () => {
-			throw new Error("E_RECIPIENT_NOT_ALLOWED");
-		});
-		const budget = fakeBudget();
-		let refunded: (v: unknown) => void = () => {};
-		budget.service.refund.mockImplementation(
-			(req) => (
-				budget.refunds.push(req),
-				new Promise((resolve) => {
-					refunded = (v) => resolve(v as never);
-				})
-			),
-		);
-		const ctx = fakeCtx();
-		const host = lifetime();
-		await expect(
-			createCloudflareEmailDeliver(
-				{ from: "notify@mail.example.org", accountBudget: { timeoutMs: 20 } },
-				async () => ({ ...mail.env, ...budget.env }),
-				undefined,
-				host.extend,
-			)({ message, source: "system" }, ctx),
-		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
-		expect(ctx.log.warn).toHaveBeenCalledWith(
-			"the account's mail budget did not answer a refund in time",
-			{ timeoutMs: 20 },
-		);
-		// The pending refund is the host's to keep alive, and settles when it answers.
-		expect(host.held).toHaveLength(1);
-		let settled = false;
-		void Promise.all(host.held).then(() => (settled = true));
-		await Promise.resolve();
-		expect(settled).toBe(false);
-		refunded({ ok: true, protocol: 2, refunded: 1 });
-		await Promise.all(host.held);
-		expect(budget.refunds).toEqual([{ protocol: 2, token: TOKEN, takeId: "take-1" }]);
-	});
-
-	it("an answer in another protocol, or in none, sends nothing, and a take in it is given back before the refusal returns", async () => {
-		for (const [answer, spoke] of [
-			[{ ok: true, protocol: 1, takeId: "take-v1" }, "1"],
-			[{ ok: true, takeId: "take-v0" }, "null"],
-			[{ ok: false, protocol: "2", refused: "no" }, '"2"'],
-		] as const) {
-			const mail = fakeEnv();
-			const kv = memoryKv();
-			const budget = fakeBudget(() => answer);
-			// A refund that takes a moment to answer: only one that was awaited has
-			// settled by the time the refusal returns.
-			const settled: string[] = [];
-			budget.service.refund.mockImplementation(async (req) => {
-				budget.refunds.push(req);
-				await new Promise((resolve) => setTimeout(resolve, 5));
-				settled.push(req.takeId);
-				return { ok: true, protocol: 2, refunded: 1 };
-			});
-			const host = lifetime();
-			await expect(
-				createCloudflareEmailDeliver(
-					{ from: "notify@mail.example.org", accountBudget: {}, allowCc: true },
-					async () => ({ ...mail.env, ...budget.env }),
-					undefined,
-					host.extend,
-				)({ message, source: "emdash-forms" }, fakeCtx({ kv })),
-			).rejects.toThrow(
-				`the account's mail budget answered in protocol ${spoke}, and this provider speaks 2, so nothing is sent`,
-			);
-			expect(mail.send).not.toHaveBeenCalled();
-			expect(Array.from(kv.rows.values(), (r) => r.value)).toEqual([0, 0, 0]);
-			// Given back already, awaited in the request: nothing left for the host.
-			expect(settled).toEqual(answer.ok ? [answer.takeId] : []);
-			expect(budget.refunds).toEqual(
-				answer.ok ? [{ protocol: 2, token: TOKEN, takeId: answer.takeId }] : [],
-			);
-			expect(host.held).toEqual([]);
-		}
-	});
-
-	it("a message the binding refuses gives its place back to the account's budget too", async () => {
-		const mail = fakeEnv(async () => {
-			throw new Error("E_RECIPIENT_NOT_ALLOWED");
-		});
-		const budget = fakeBudget(() => ({ ok: true, protocol: 2, takeId: "take-7" }));
-		await expect(
-			withBudget({ ...mail.env, ...budget.env })({ message, source: "system" }, fakeCtx()),
-		).rejects.toThrow("E_RECIPIENT_NOT_ALLOWED");
-		expect(budget.refunds).toEqual([{ protocol: 2, token: TOKEN, takeId: "take-7" }]);
-	});
-
-	it("a site that has spent its own day asks the account nothing", async () => {
-		const budget = fakeBudget();
+	it("a site that has spent its own day asks the broker nothing", async () => {
+		const broker = fakeBroker();
 		const deliver = createCloudflareEmailDeliver(
-			{ from: "notify@mail.example.org", accountBudget: {}, limits: { perDay: 1 } },
-			async () => ({ ...fakeEnv().env, ...budget.env }),
+			{ from: "notify@mail.example.org", broker: {}, limits: { perDay: 1 } },
+			async () => broker.env,
 			() => new Date("2026-01-01T10:00:00Z"),
 		);
 		const kv = memoryKv();
@@ -1150,29 +1066,30 @@ describe("the account's budget", () => {
 		await expect(deliver({ message, source: "x" }, fakeCtx({ kv }))).rejects.toThrow(
 			/"x" this day/,
 		);
-		expect(budget.takes).toHaveLength(1);
+		expect(broker.sends).toHaveLength(1);
 	});
 
-	it("without accountBudget in the config, no account budget is asked, whatever the env holds", async () => {
-		const budget = fakeBudget();
+	it("without broker in the config, no broker is asked, whatever the env holds, and the Worker's own binding sends", async () => {
+		const broker = fakeBroker();
+		const mail = fakeEnv();
 		await createCloudflareEmailDeliver({ from: "notify@mail.example.org" }, async () => ({
-			...fakeEnv().env,
-			...budget.env,
+			...mail.env,
+			...broker.env,
 		}))(event, fakeCtx());
-		expect(budget.takes).toEqual([]);
+		expect(broker.sends).toEqual([]);
+		expect(mail.send).toHaveBeenCalledOnce();
 	});
 
 	it("names other bindings when the config does", async () => {
-		const budget = fakeBudget();
-		const mail = fakeEnv();
+		const broker = fakeBroker();
 		await createCloudflareEmailDeliver(
 			{
 				from: "notify@mail.example.org",
-				accountBudget: { binding: "BUDGET2", token: "BUDGET2_TOKEN" },
+				broker: { binding: "BROKER2", capability: "BROKER2_CAP" },
 			},
-			async () => ({ ...mail.env, BUDGET2: budget.service, BUDGET2_TOKEN: TOKEN }),
+			async () => ({ BROKER2: broker.service, BROKER2_CAP: CAP }),
 		)(event, fakeCtx());
-		expect(budget.takes).toHaveLength(1);
+		expect(broker.sends).toHaveLength(1);
 	});
 });
 
@@ -1268,7 +1185,7 @@ describe("createCloudflareEmailStatus()", () => {
 			await status(fakeCtx({ kv: memoryKv({ "settings:replyTo": "office@example.org" }) })),
 		).toEqual({
 			provider: "cloudflare-email",
-			capability: "emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=2",
+			capability: "emdash-cloudflare-email:checked-headers,site-budget,mail-broker;v=3",
 			from: "notify@mail.example.org",
 			senderName: "site title",
 			binding: { name: "EMAIL", present: true },
@@ -1280,193 +1197,193 @@ describe("createCloudflareEmailStatus()", () => {
 				systemReserve: 50,
 				systemPerRecipient: 10,
 			},
-			accountBudget: null,
+			broker: null,
 			attestation: {
-				v: 2,
+				v: 3,
 				provider: "cloudflare-email",
 				capability: CLOUDFLARE_EMAIL_CAPABILITY,
 				guarantees: {
 					headersChecked: true,
 					siteBudget: true,
-					accountBudget: false,
+					broker: false,
 					cancellation: "reported",
 					redaction: "addresses",
 				},
-				accountBudget: null,
+				broker: null,
 			},
 		});
 	});
 
-	it("attests what the build enforces and, live, what the account's budget holds this site to, and never the token; it takes and refunds nothing", async () => {
-		const budget = fakeBudget();
-		const caps = {
-			accountPerDay: 200,
-			accountSystemReserve: 50,
-			tenantPerDay: 100,
-			tenantSystemReserve: 10,
-			systemPerRecipient: 10,
-		};
-		const report = vi.fn(async (req: { protocol: number; token: string }) =>
-			req.token === TOKEN
-				? {
-						ok: true,
-						protocol: 2,
-						tenant: "acme",
-						lane: "plugin",
-						site: { used: 3, cap: 90 },
-						caps,
-					}
-				: { ok: false, protocol: 2, scope: "token", refused: "unknown" },
+	/** The broker's status for this site's capability, as a staged generation 3 answers it. */
+	const brokerStatus = (over: Record<string, unknown> = {}) => ({
+		protocol: 2,
+		marker: "emdash-auth-mail:broker;v=2",
+		seq: 9,
+		tenant: "acme",
+		deployment: "artifact:code",
+		send: { plugin: true, system: true },
+		site: true,
+		recipients: 3,
+		generations: { active: null, staged: 3 },
+		capability: "staged",
+		generation: 3,
+		capabilityHash: "c".repeat(64),
+		tokenHashes: { plugin: "a".repeat(64), system: "b".repeat(64) },
+		budget: {
+			plugin: {
+				ok: true,
+				tenant: "acme",
+				lane: "plugin",
+				generation: 3,
+				state: "staged",
+				caps: { tenantPerDay: 100 },
+			},
+			system: {
+				ok: true,
+				tenant: "acme",
+				lane: "system",
+				generation: 3,
+				state: "staged",
+				caps: { tenantPerDay: 100 },
+			},
+		},
+		...over,
+	});
+
+	it("attests what the build enforces and, live, what the broker says of this site's capability: its generation, the hashes and each lane's report; never the capability; it sends, takes and refunds nothing", async () => {
+		const broker = fakeBroker();
+		broker.service.status.mockImplementation(
+			async (req) => (
+				broker.statuses.push(req),
+				brokerStatus({ extra: "must-not-pass", tokens: { plugin: "raw" } })
+			),
 		);
-		const service = { ...budget.service, report };
 		const status = createCloudflareEmailStatus(
-			{ from: "notify@mail.example.org", accountBudget: {} },
-			async () => ({ ...fakeEnv().env, MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: TOKEN }),
+			{ from: "notify@mail.example.org", broker: {} },
+			async () => ({ ...broker.env, MAIL_GENERATION: "3" }),
 		);
 		const answer = await status(fakeCtx());
+		const capabilityHash = await crypto.subtle
+			.digest("SHA-256", new TextEncoder().encode(CAP))
+			.then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
 		expect(answer.attestation).toEqual({
-			v: 2,
+			v: 3,
 			provider: "cloudflare-email",
 			capability: CLOUDFLARE_EMAIL_CAPABILITY,
 			guarantees: {
 				headersChecked: true,
 				siteBudget: true,
-				accountBudget: true,
+				broker: true,
 				cancellation: "reported",
 				redaction: "addresses",
 			},
-			accountBudget: {
+			broker: {
 				protocol: 2,
 				ready: true,
-				live: { ok: true, tenant: "acme", lane: "plugin", limits: caps },
+				generation: "3",
+				capabilityHash,
+				live: {
+					ok: true,
+					marker: "emdash-auth-mail:broker;v=2",
+					seq: 9,
+					tenant: "acme",
+					deployment: "artifact:code",
+					capability: "staged",
+					generations: { active: null, staged: 3 },
+					generation: 3,
+					capabilityHash: "c".repeat(64),
+					tokenHashes: { plugin: "a".repeat(64), system: "b".repeat(64) },
+					send: { plugin: true, system: true },
+					site: true,
+					recipients: 3,
+					budget: {
+						plugin: {
+							ok: true,
+							tenant: "acme",
+							lane: "plugin",
+							generation: 3,
+							state: "staged",
+							caps: { tenantPerDay: 100 },
+						},
+						system: {
+							ok: true,
+							tenant: "acme",
+							lane: "system",
+							generation: 3,
+							state: "staged",
+							caps: { tenantPerDay: 100 },
+						},
+					},
+				},
 			},
 		});
-		expect(report).toHaveBeenCalledWith({ protocol: 2, token: TOKEN });
-		expect(budget.takes).toEqual([]);
-		expect(budget.refunds).toEqual([]);
-		expect(JSON.stringify(answer)).not.toContain(TOKEN);
+		expect(broker.statuses).toEqual([{ protocol: 2, capability: CAP }]);
+		expect(broker.sends).toEqual([]);
+		expect(JSON.stringify(answer)).not.toContain(CAP);
+		expect(JSON.stringify(answer)).not.toMatch(/must-not-pass|"raw"/);
 	});
 
-	it("attests the tenant the token is registered to, whichever Worker holds it: a token swapped in from another tenant names that tenant", async () => {
-		const caps = {
-			accountPerDay: 200,
-			accountSystemReserve: 50,
-			tenantPerDay: 100,
-			tenantSystemReserve: 10,
-			systemPerRecipient: 10,
-		};
-		// The service derives the tenant from the token: bravo's Worker holding alpha's token is alpha to it.
-		const byToken: Record<string, string> = {
-			[TOKEN]: "alpha",
-			tok_bravo_0123456789abcdef0123456789abcdef0: "bravo",
+	it("attests the site and the lanes the broker says the capability's tokens are registered to, whichever Worker asks: a capability swapped in from another site names that site's broker's answer", async () => {
+		const byCap: Record<string, Record<string, unknown>> = {
+			[CAP]: brokerStatus({ tenant: "alpha" }),
+			cap_bravo_0123456789abcdef0123456789abcdef0: brokerStatus({ tenant: "bravo" }),
 		};
 		const service = {
-			...fakeBudget().service,
-			report: vi.fn(async (req: { protocol: number; token: string }) =>
-				byToken[req.token]
-					? { ok: true, protocol: 2, tenant: byToken[req.token], lane: "plugin", caps }
-					: { ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" },
+			...fakeBroker().service,
+			status: vi.fn(
+				async (req: { capability: string }) =>
+					byCap[req.capability] ??
+					brokerStatus({
+						capability: "unknown",
+						generation: undefined,
+						tokenHashes: undefined,
+						budget: undefined,
+					}),
 			),
 		};
-		const attested = async (token: string) =>
+		const attested = async (capability: string) =>
 			(
 				await createCloudflareEmailStatus(
-					{ from: "notify@mail.example.org", accountBudget: {} },
-					async () => ({ ...fakeEnv().env, MAIL_BUDGET: service, MAIL_BUDGET_TOKEN: token }),
+					{ from: "notify@mail.example.org", broker: {} },
+					async () => ({ MAIL_BROKER: service, MAIL_BROKER_CAPABILITY: capability }),
 				)(fakeCtx())
-			).attestation.accountBudget?.live;
-		expect(await attested("tok_bravo_0123456789abcdef0123456789abcdef0")).toMatchObject({
+			).attestation.broker?.live;
+		expect(await attested("cap_bravo_0123456789abcdef0123456789abcdef0")).toMatchObject({
 			ok: true,
 			tenant: "bravo",
 		});
-		// Swapped: bravo's Worker with alpha's still-valid token attests alpha.
-		expect(await attested(TOKEN)).toMatchObject({ ok: true, tenant: "alpha" });
-		// A stale secret the service has revoked is not live at all.
-		expect(await attested("tok_stale_0123456789abcdef0123456789abcdef0")).toMatchObject({
-			ok: false,
-			why: expect.stringMatching(/refused this site's token/),
+		expect(await attested(CAP)).toMatchObject({ ok: true, tenant: "alpha" });
+		// A capability the broker does not know is live, and says so: neither active nor staged, no generation, no lanes.
+		expect(await attested("cap_stale_0123456789abcdef0123456789abcdef0")).toMatchObject({
+			ok: true,
+			capability: "unknown",
+			generation: null,
+			tokenHashes: { plugin: null, system: null },
+			budget: { plugin: { ok: false }, system: { ok: false } },
 		});
 	});
 
-	it("attests the account's budget NOT live, and why, for every answer short of a report in its protocol with the limits", async () => {
+	it("attests the broker NOT live, and why, for every answer short of a status in its protocol with its marker", async () => {
 		const at = async (
-			report: unknown,
-			{ token = TOKEN, timeoutMs }: { token?: string; timeoutMs?: number } = {},
+			status: unknown,
+			{ capability = CAP, timeoutMs }: { capability?: string; timeoutMs?: number } = {},
 		) => {
-			const service = { ...fakeBudget().service, ...(report === undefined ? {} : { report }) };
-			const status = createCloudflareEmailStatus(
-				{ from: "notify@mail.example.org", accountBudget: timeoutMs ? { timeoutMs } : {} },
-				async () => ({
-					...fakeEnv().env,
-					MAIL_BUDGET: service,
-					...(token ? { MAIL_BUDGET_TOKEN: token } : {}),
-				}),
-			);
-			return (await status(fakeCtx())).attestation.accountBudget;
+			const service = { ...fakeBroker().service, status };
+			return (
+				await createCloudflareEmailStatus(
+					{ from: "notify@mail.example.org", broker: timeoutMs ? { timeoutMs } : {} },
+					async () => ({
+						MAIL_BROKER: service,
+						...(capability ? { MAIL_BROKER_CAPABILITY: capability } : {}),
+					}),
+				)(fakeCtx())
+			).attestation.broker;
 		};
-		const caps = {
-			accountPerDay: 200,
-			accountSystemReserve: 50,
-			tenantPerDay: 100,
-			tenantSystemReserve: 10,
-			systemPerRecipient: 10,
-		};
-		for (const [report, why, opts] of [
-			[undefined, /has no report/, {}],
-			[
-				async () => ({ ok: false, protocol: 2, scope: "token", refused: "unknown or revoked" }),
-				/refused this site's token \(unknown or revoked\)/,
-				{},
-			],
-			[
-				async () => ({ ok: true, protocol: 1, tenant: "acme", lane: "plugin", caps }),
-				/answered in protocol 1, not 2/,
-				{},
-			],
-			[
-				async () => ({ ok: true, tenant: "acme", lane: "plugin", caps }),
-				/answered in protocol null, not 2/,
-				{},
-			],
-			[
-				async () => ({ ok: true, protocol: 2, lane: "plugin", caps }),
-				/does not say which tenant this site's token belongs to/,
-				{},
-			],
-			[
-				async () => ({ ok: true, protocol: 2, tenant: "", lane: "plugin", caps }),
-				/does not say which tenant/,
-				{},
-			],
-			[
-				async () => ({ ok: true, protocol: 2, tenant: "acme", caps }),
-				/does not say which lane this site's token holds/,
-				{},
-			],
-			[
-				async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin" }),
-				/does not say the limits/,
-				{},
-			],
-			[
-				async () => ({
-					ok: true,
-					protocol: 2,
-					tenant: "acme",
-					lane: "plugin",
-					caps: { ...caps, tenantPerDay: "100" },
-				}),
-				/does not say the limits/,
-				{},
-			],
-			[
-				async () => {
-					const { tenantSystemReserve: _, ...protocol1Caps } = caps;
-					return { ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps: protocol1Caps };
-				},
-				/does not say the limits/,
-				{},
-			],
+		for (const [status, why, opts] of [
+			[async () => brokerStatus({ protocol: 1 }), /answered in protocol 1, not 2/, {}],
+			[async () => brokerStatus({ protocol: undefined }), /answered in protocol null, not 2/, {}],
+			[async () => "sent", /answered in protocol null/, {}],
+			[async () => brokerStatus({ marker: undefined }), /carries no marker/, {}],
 			[
 				async () => {
 					throw new Error("service unavailable for User@Example.com");
@@ -1475,54 +1392,58 @@ describe("createCloudflareEmailStatus()", () => {
 				{},
 			],
 			[() => new Promise(() => {}), /did not answer within 20 ms/, { timeoutMs: 20 }],
-			[
-				async () => ({ ok: true, protocol: 2, tenant: "acme", lane: "plugin", caps }),
-				/no token: the secret "MAIL_BUDGET_TOKEN" is not set/,
-				{ token: "" },
-			],
 		] as const) {
-			const live = await at(report, opts);
-			expect(live?.live, String(why)).toMatchObject({ ok: false, why: expect.stringMatching(why) });
-			expect(JSON.stringify(live).toLowerCase()).not.toContain("user@");
+			const b = await at(status, opts);
+			expect(b?.live, String(why)).toMatchObject({ ok: false, why: expect.stringMatching(why) });
+			expect(JSON.stringify(b).toLowerCase()).not.toContain("user@");
 		}
+		const none = await at(async () => brokerStatus(), { capability: "" });
+		expect(none).toMatchObject({
+			ready: false,
+			generation: null,
+			capabilityHash: null,
+			live: { ok: false, why: expect.stringMatching(/no generation capability/) },
+		});
 	});
 
-	it("says whether the Worker has what the account budget needs, and never the token", async () => {
+	it("says whether the Worker has what the broker needs, and never the capability", async () => {
 		const ready = createCloudflareEmailStatus(
-			{ from: "notify@mail.example.org", accountBudget: {} },
-			async () => ({ ...fakeEnv().env, ...fakeBudget().env }),
+			{ from: "notify@mail.example.org", broker: {} },
+			async () => fakeBroker().env,
 		);
-		const noToken = createCloudflareEmailStatus(
-			{ from: "notify@mail.example.org", accountBudget: {} },
-			async () => ({ MAIL_BUDGET: fakeBudget().service }),
+		const noCap = createCloudflareEmailStatus(
+			{ from: "notify@mail.example.org", broker: {} },
+			async () => ({ MAIL_BROKER: fakeBroker().service }),
 		);
 
 		const on = await ready(fakeCtx());
-		expect(on.accountBudget).toEqual({
-			binding: "MAIL_BUDGET",
-			token: "MAIL_BUDGET_TOKEN",
+		expect(on.broker).toEqual({
+			binding: "MAIL_BROKER",
+			capability: "MAIL_BROKER_CAPABILITY",
 			ready: true,
 		});
-		expect(JSON.stringify(on)).not.toContain(TOKEN);
-		expect((await noToken(fakeCtx())).accountBudget).toMatchObject({
+		expect(on.binding).toEqual({ name: "MAIL_BROKER", present: true });
+		expect(JSON.stringify(on)).not.toContain(CAP);
+		expect((await noCap(fakeCtx())).broker).toMatchObject({
 			ready: false,
-			why: expect.stringMatching(/no token: the secret "MAIL_BUDGET_TOKEN" is not set/),
+			why: expect.stringMatching(/the secret "MAIL_BROKER_CAPABILITY" is not set/),
 		});
+		expect((await noCap(fakeCtx())).binding.present).toBe(false);
 	});
 
 	it("answers the capability marker through the plugin's own status route, the string a built Worker carries", async () => {
-		// v=2: the account's budget in protocol 2, where this Worker's token is its plugin lane's.
+		// v=3: every message through the site's mail broker, which alone holds the send bindings and budget tokens.
 		expect(CLOUDFLARE_EMAIL_CAPABILITY).toBe(
-			"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=2",
+			"emdash-cloudflare-email:checked-headers,site-budget,mail-broker;v=3",
 		);
-		const plugin = createPlugin({ from: "cms@mails.example.com", accountBudget: {} });
+		const plugin = createPlugin({ from: "cms@mails.example.com", broker: {} });
 		const answer = (await plugin.routes.status?.handler(fakeCtx() as never)) as Record<
 			string,
 			unknown
 		>;
 		expect(answer).toMatchObject({
 			capability: CLOUDFLARE_EMAIL_CAPABILITY,
-			accountBudget: { ready: false },
+			broker: { ready: false },
 		});
 	});
 

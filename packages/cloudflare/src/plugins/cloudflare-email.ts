@@ -37,16 +37,18 @@
  *   A send moves its own counts and deletes none: the counts of windows that
  *   are over go in a daily cron task ({@link pruneBudgets}), a bounded number
  *   at a time, and never the current window's or the one before it.
- * - With `accountBudget`, every message also takes its place in the account's
- *   budget (Embark's mail-budget service, one Durable Object per Cloudflare
- *   account, through a service binding and this site's token): the tenant's
- *   day and the account's day, less the reserves kept for sign-in mail. The
- *   token is this Worker's plugin-lane token (mail-budget protocol 2), so no
- *   message sent from here, whatever its source, reaches those reserves: only
- *   the tenant's auth-mail mediator, a Worker of its own holding the system
- *   lane's token, does. A missing binding or token, a refusal or any error
- *   sends nothing; a message the binding refuses gives its place back there
- *   too.
+ * - With `broker`, no message is sent from this Worker at all: after the
+ *   checks here and the site's own budget, it is handed to the site's mail
+ *   broker (a Worker of its own, `@emdash-cms/cloudflare/auth-mail/worker`,
+ *   the only one with the send_email bindings and the account's mail-budget
+ *   tokens) as a fixed envelope (to, cc, subject, text, html, reply-to) with
+ *   this site's generation capability and a request id. The broker checks the
+ *   capability (only its active generation's counts), the envelope and every
+ *   recipient against its own list, takes the place in the account's budget,
+ *   and sends. The Worker holds no send_email binding and no budget token. A
+ *   missing binding or capability, a refusal or any error sends nothing; a
+ *   call that throws is asked once more with the same request id, which the
+ *   broker answers as the first (it never sends one request id twice).
  * - A log names a recipient's domain, never the address, and an error the
  *   binding throws has every address replaced by its domain, in any letter
  *   case, in its message, its stack and its causes (EmDash's scrubAddresses).
@@ -86,14 +88,14 @@
  */
 
 import type { PluginContext, PluginDescriptor, ResolvedPlugin } from "emdash";
-import { after, definePlugin, describeRedacted, redactAddresses, scrubAddresses } from "emdash";
+import { definePlugin, describeRedacted, redactAddresses, scrubAddresses } from "emdash";
 import type { EmailDeliverEvent } from "emdash/plugin";
 
 import { MAX_SUBJECT, displayName, domainOf, headerText, mailbox } from "./email-headers.js";
-import { MAIL_BUDGET_PROTOCOL } from "./mail-budget-protocol.js";
+import { MAIL_BROKER_PROTOCOL } from "./mail-broker-protocol.js";
 
 export { displayName, domainOf, headerText, mailbox } from "./email-headers.js";
-export { MAIL_BUDGET_PROTOCOL } from "./mail-budget-protocol.js";
+export { MAIL_BROKER_PROTOCOL } from "./mail-broker-protocol.js";
 
 /**
  * Cloudflare Email Provider Configuration
@@ -138,53 +140,63 @@ export interface CloudflareEmailConfig {
 	allowCc?: boolean;
 
 	/**
-	 * An account-wide budget beside the site's own: the mail-budget service
-	 * (Embark's packages/mail-budget, one Durable Object per Cloudflare
-	 * account) through a service binding, and this site's capability token for
-	 * it, both read from the Worker's env. When it is set, every message takes
-	 * its place there as well, before the binding sends it, and gives it back
-	 * when the binding refuses it. A missing service binding or token, a
-	 * refusal, or any error sends nothing, and the error says why.
+	 * The site's mail broker: a Worker of its own that alone holds the
+	 * send_email bindings and the account's mail-budget tokens, reached
+	 * through a service binding with this site's generation capability, both
+	 * read from the Worker's env. With it, a message is never sent from this
+	 * Worker: once the checks here and the site's own budget pass, it is handed
+	 * to the broker, which checks the capability, the envelope and every
+	 * recipient, takes the account's budget and sends. `binding` is not used.
+	 * A missing binding or capability, a refusal, or any error sends nothing,
+	 * and the error says why.
 	 */
-	accountBudget?: AccountBudgetConfig;
+	broker?: MailBrokerConfig;
 }
 
-/** Where the account-wide budget is (see {@link CloudflareEmailConfig.accountBudget}). */
-export interface AccountBudgetConfig {
+/** Where the site's mail broker is (see {@link CloudflareEmailConfig.broker}). */
+export interface MailBrokerConfig {
 	/**
-	 * Name of the service binding to the mail-budget Worker.
-	 * @default "MAIL_BUDGET"
+	 * Name of the service binding to the broker's Worker.
+	 * @default "MAIL_BROKER"
 	 */
 	binding?: string;
 	/**
-	 * Name of the secret that holds this site's capability token.
-	 * @default "MAIL_BUDGET_TOKEN"
+	 * Name of the secret that holds this site's generation capability.
+	 * @default "MAIL_BROKER_CAPABILITY"
 	 */
-	token?: string;
+	capability?: string;
 	/**
-	 * How long a call to the mail-budget service may take. A take that has not
-	 * answered by then is a refusal and nothing is sent; one that answers
-	 * later is given back.
+	 * Name of the variable that holds this site's generation (a whole number the
+	 * operator sets beside the capability), which the status route attests.
+	 * @default "MAIL_GENERATION"
+	 */
+	generation?: string;
+	/**
+	 * How long a call to the broker may take. A send that has not answered by
+	 * then is NOT known to be unsent (the broker may still send it), so it is
+	 * reported as such and the site's own budget keeps its places.
 	 * @default 5000
 	 */
 	timeoutMs?: number;
 }
 
-/** How long a call to the mail-budget service may take by default (see {@link AccountBudgetConfig.timeoutMs}). */
-export const ACCOUNT_BUDGET_TIMEOUT_MS = 5_000;
+/** How long a call to the broker may take by default (see {@link MailBrokerConfig.timeoutMs}). */
+export const BROKER_TIMEOUT_MS = 5_000;
 
 /**
- * The mail-budget service as its service binding exposes it (RPC). `take`
- * answers `{ ok: true, protocol, takeId, lane }` or `{ ok: false, protocol,
- * refused }`; the service derives the tenant AND the lane from the token,
- * never from anything else sent. A request carries no source, no lane and
- * no tenant: this Worker's token is a plugin-lane token, whatever sends.
+ * The broker as its service binding exposes it (RPC; the broker's protocol,
+ * MAIL_BROKER_PROTOCOL). A send is `{ protocol, capability, requestId,
+ * message }` and answers `{ protocol, status: "sent" | "refused" | "skipped",
+ * why?, seq }`; the status is read-only.
  */
-interface MailBudgetService {
-	take(request: { protocol: number; token: string; recipients: string[] }): Promise<unknown>;
-	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
-	/** Read-only: this tenant's day and the caps in force. Takes and refunds nothing. */
-	report?(request: { protocol: number; token: string }): Promise<unknown>;
+interface MailBrokerService {
+	send(request: {
+		protocol: number;
+		capability: string;
+		requestId: string;
+		message: Record<string, unknown>;
+	}): Promise<unknown>;
+	status(request: { protocol: number; capability: string }): Promise<unknown>;
 }
 
 /** How many recipients the site may reach (see {@link CloudflareEmailConfig.limits}). */
@@ -213,22 +225,23 @@ interface SendEmailBinding {
 /**
  * What this provider enforces, as a marker a deployment can check a build for
  * before it turns the build's email on: headers checked before the binding,
- * the site's own budget, and the account-wide budget (`accountBudget`). The
- * status route answers it, so every Worker bundle that carries this provider
- * carries it as a string; a change to what the provider enforces changes it.
- * Embark's tenant tool checks the built dist for it at install and the live
- * status route for it when it turns email on.
+ * the site's own budget, and every message through the site's mail broker
+ * (`broker`). The status route answers it, so every Worker bundle that
+ * carries this provider carries it as a string; a change to what the provider
+ * enforces changes it. Embark's tenant tool checks the built dist for it at
+ * install and the live status route for it when it turns email on.
  */
 export const CLOUDFLARE_EMAIL_CAPABILITY =
-	"emdash-cloudflare-email:checked-headers,site-budget,account-budget;v=2";
+	"emdash-cloudflare-email:checked-headers,site-budget,mail-broker;v=3";
 
 /**
  * The version of the provider's attestation (the status route's
  * `attestation`): the machine-readable statement of what this build enforces
- * and what the account's budget holds it to, which a deployment reads before
- * it turns the site's email on. A change to its shape or meaning changes it.
+ * and what the site's mail broker says of this site's generation, which a
+ * deployment reads before it turns the site's email on. A change to its shape
+ * or meaning changes it.
  */
-export const EMAIL_ATTESTATION_VERSION = 2;
+export const EMAIL_ATTESTATION_VERSION = 3;
 
 /** How many recipients the site may reach: the config's, over 50 an hour and 200 a day per source, 300 a day in all with 50 of them kept for "system" mail, and 10 a day of "system" mail to one address. */
 export function limitsOf(config: CloudflareEmailConfig): SendingLimits {
@@ -440,33 +453,25 @@ async function loadWorkerEnv(): Promise<Record<string, unknown>> {
 	}
 }
 
-/** The account budget's binding and token names and its timeout, or null when the config sets none. */
-function accountBudgetOf(config: CloudflareEmailConfig): Required<AccountBudgetConfig> | null {
-	if (!config.accountBudget) return null;
-	const timeoutMs = config.accountBudget.timeoutMs;
+/** The broker's binding and secret names and its timeout, or null when the config sets none. */
+function brokerOf(config: CloudflareEmailConfig): Required<MailBrokerConfig> | null {
+	if (!config.broker) return null;
+	const timeoutMs = config.broker.timeoutMs;
 	return {
-		binding: config.accountBudget.binding ?? "MAIL_BUDGET",
-		token: config.accountBudget.token ?? "MAIL_BUDGET_TOKEN",
-		timeoutMs:
-			typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : ACCOUNT_BUDGET_TIMEOUT_MS,
+		binding: config.broker.binding ?? "MAIL_BROKER",
+		capability: config.broker.capability ?? "MAIL_BROKER_CAPABILITY",
+		generation: config.broker.generation ?? "MAIL_GENERATION",
+		timeoutMs: typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : BROKER_TIMEOUT_MS,
 	};
 }
 
-/** The account's mail budget as a send uses it: the service, this site's token, how long a call may take. */
-type AccountBudget = { service: MailBudgetService; token: string; timeoutMs: number };
-
-/**
- * Hands work that must outlive the send (a take that answered too late, a
- * refund that has not answered yet) to the host's lifetime extender, so the
- * Worker is not torn down before it runs: EmDash's `after`, which is
- * Cloudflare's `waitUntil` under workerd.
- */
-export type ExtendLifetime = (work: Promise<unknown>) => void;
-
-const extendWithWaitUntil: ExtendLifetime = (work) =>
-	after(async () => {
-		await work;
-	});
+/** The broker as a send uses it: the service, this site's capability and generation, how long a call may take. */
+type Broker = {
+	service: MailBrokerService;
+	capability: string;
+	generation: string | null;
+	timeoutMs: number;
+};
 
 /** `call`'s answer, or `late` when it has not answered within `ms`. A call that fails rejects as it does. */
 async function within<T>(call: Promise<T>, ms: number): Promise<{ answer: T } | { late: true }> {
@@ -481,166 +486,92 @@ async function within<T>(call: Promise<T>, ms: number): Promise<{ answer: T } | 
 	}
 }
 
-/** The mail-budget service and this site's token from the env, or why either is missing. */
-function accountBudgetIn(
+/** The broker and this site's capability from the env, or why either is missing. */
+function brokerIn(
 	env: Record<string, unknown>,
-	names: Required<AccountBudgetConfig>,
-): AccountBudget | { missing: string } {
+	names: Required<MailBrokerConfig>,
+): Broker | { missing: string } {
 	const service = env[names.binding];
-	const token = env[names.token];
+	const capability = env[names.capability];
+	const generation = env[names.generation];
 	const callable =
 		(typeof service === "object" || typeof service === "function") &&
 		service !== null &&
-		typeof Reflect.get(service, "take") === "function" &&
-		typeof Reflect.get(service, "refund") === "function";
+		typeof Reflect.get(service, "send") === "function" &&
+		typeof Reflect.get(service, "status") === "function";
 	if (!callable) {
 		return {
-			missing: `the account's mail budget has no service binding "${names.binding}" in this Worker, so nothing is sent (bind the mail-budget Worker as a service)`,
+			missing: `the site's mail broker has no service binding "${names.binding}" in this Worker, so nothing is sent (bind the broker's Worker as a service)`,
 		};
 	}
-	if (typeof token !== "string" || !token.trim()) {
+	if (typeof capability !== "string" || !capability.trim()) {
 		return {
-			missing: `the account's mail budget has no token: the secret "${names.token}" is not set in this Worker, so nothing is sent`,
+			missing: `this Worker has no generation capability for the mail broker: the secret "${names.capability}" is not set, so nothing is sent`,
 		};
 	}
-	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: take and refund are callable
-	return { service: service as MailBudgetService, token: token.trim(), timeoutMs: names.timeoutMs };
-}
-
-/** SHA-256 of an address, lowercased, in hex: all the account budget ever learns of a recipient. */
-async function recipientHash(address: string): Promise<string> {
-	const digest = await crypto.subtle.digest(
-		"SHA-256",
-		new TextEncoder().encode(address.toLowerCase()),
-	);
-	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+	return {
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: send and status are callable
+		service: service as MailBrokerService,
+		capability: capability.trim(),
+		generation: typeof generation === "string" && generation.trim() ? generation.trim() : null,
+		timeoutMs: names.timeoutMs,
+	};
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
+/** SHA-256 of `text`, hex. */
+async function sha256Hex(text: string): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /**
- * Take a message's places from the account's budget: `recipients` counted
- * against the tenant's day and the account's day as the token's lane may
- * take them, in one step the service makes atomic. The lane is the token's
- * registration: this Worker's token is its plugin lane's, whatever source
- * sends (EmDash's own auth mail included), so nothing here reaches the
- * reserve kept for sign-in mail; only the tenant's auth-mail mediator, a
- * Worker of its own holding the system lane's token, does. Only the
- * recipients' hashes leave the Worker. Any answer but a take is a refusal,
- * and so is no answer within `budget.timeoutMs`: a take that answers after
- * that is given back.
+ * Hand one message to the broker: its envelope, this site's capability and a
+ * request id. `sent`, `refused` (the broker said why; nothing was sent), or
+ * `unknown` (no answer that says either: the broker may have sent it). A call
+ * that throws is asked once more with the same request id, which the broker
+ * answers as it answered the first: one request id is never sent twice.
  */
-export async function takeAccountBudget(
-	budget: AccountBudget,
+async function sendThroughBroker(
+	broker: Broker,
+	message: Record<string, unknown>,
 	recipients: readonly string[],
-	extend: ExtendLifetime = extendWithWaitUntil,
-): Promise<{ takeId: string } | { refused: string }> {
-	let answer: unknown;
-	try {
-		const call = budget.service.take({
-			protocol: MAIL_BUDGET_PROTOCOL,
-			token: budget.token,
-			recipients: await Promise.all(recipients.map(recipientHash)),
-		});
-		const got = await within(call, budget.timeoutMs);
-		if ("late" in got) {
-			// Nothing is sent: a take that still arrives is given back. The give-back
-			// outlives this send, so it is handed to the host's lifetime extender
-			// (waitUntil) before the refusal returns, never left detached for an
-			// isolate that may be torn down with the response.
-			extend(
-				call
-					.then((late) =>
-						isRecord(late) && late.ok === true && typeof late.takeId === "string"
-							? budget.service.refund({
-									protocol: MAIL_BUDGET_PROTOCOL,
-									token: budget.token,
-									takeId: late.takeId,
-								})
-							: undefined,
-					)
-					.catch(() => undefined),
-			);
-			return {
-				refused: `the account's mail budget did not answer within ${budget.timeoutMs} ms, so nothing is sent`,
-			};
-		}
-		answer = got.answer;
-	} catch (error) {
-		return {
-			refused: `the account's mail budget could not be asked (${describeRedacted(error, recipients)}), so nothing is sent`,
-		};
-	}
-	if (!isRecord(answer) || answer.protocol !== MAIL_BUDGET_PROTOCOL) {
-		// A take in a protocol this provider does not know is given back before
-		// the refusal returns: awaited, within the budget's timeout, and what has
-		// not answered by then handed to the host's lifetime extender.
-		if (isRecord(answer) && answer.ok === true && typeof answer.takeId === "string") {
-			await giveBack(budget, answer.takeId, extend);
-		}
-		const spoke = isRecord(answer) ? JSON.stringify(answer.protocol ?? null) : "nothing";
-		return {
-			refused: `the account's mail budget answered in protocol ${spoke}, and this provider speaks ${MAIL_BUDGET_PROTOCOL}, so nothing is sent`,
-		};
-	}
-	if (answer.ok === true && typeof answer.takeId === "string") {
-		return { takeId: answer.takeId };
-	}
-	if (answer.ok === false && typeof answer.refused === "string") {
-		return {
-			refused: `the account's mail budget refused it: ${redactAddresses(answer.refused, recipients)}`,
-		};
-	}
-	return {
-		refused: "the account's mail budget answered neither a take nor a refusal, so nothing is sent",
+): Promise<{ sent: true } | { refused: string } | { unknown: string }> {
+	const request = {
+		protocol: MAIL_BROKER_PROTOCOL,
+		capability: broker.capability,
+		requestId: crypto.randomUUID(),
+		message,
 	};
-}
-
-/**
- * Give one take back: awaited within `budget.timeoutMs`, and a refund that
- * has not answered by then handed to the host's lifetime extender, so it
- * still lands after the send returns. Answers "late" for that, and throws
- * what the service threw.
- */
-async function giveBack(
-	budget: AccountBudget,
-	takeId: string,
-	extend: ExtendLifetime,
-): Promise<"given" | "late"> {
-	const refund = budget.service.refund({
-		protocol: MAIL_BUDGET_PROTOCOL,
-		token: budget.token,
-		takeId,
-	});
-	const got = await within(refund, budget.timeoutMs);
-	if (!("late" in got)) return "given";
-	extend(refund.catch(() => undefined));
-	return "late";
-}
-
-/**
- * Give a take back to the account's budget. Best effort: a count left high
- * refuses sooner, never later. It is awaited within `budget.timeoutMs`, and
- * a refund still pending then is kept alive by the host (waitUntil) rather
- * than waited for, so the binding's own error reaches the caller in time.
- */
-async function refundAccountBudget(
-	budget: AccountBudget,
-	takeId: string,
-	ctx: PluginContext,
-	extend: ExtendLifetime,
-): Promise<void> {
+	let got: { answer: unknown } | { late: true };
 	try {
-		if ((await giveBack(budget, takeId, extend)) === "late") {
-			ctx.log.warn("the account's mail budget did not answer a refund in time", {
-				timeoutMs: budget.timeoutMs,
-			});
+		try {
+			got = await within(broker.service.send(request), broker.timeoutMs);
+		} catch {
+			got = await within(broker.service.send(request), broker.timeoutMs);
 		}
 	} catch (error) {
-		ctx.log.warn("the account's mail budget did not take a refund back", {
-			error: describeRedacted(error),
-		});
+		return {
+			unknown: `the mail broker could not be asked (${describeRedacted(error, recipients)}), so whether it was sent is not known`,
+		};
 	}
+	if ("late" in got) {
+		return {
+			unknown: `the mail broker did not answer within ${broker.timeoutMs} ms, so whether it was sent is not known`,
+		};
+	}
+	const a = got.answer;
+	if (!isRecord(a) || a.protocol !== MAIL_BROKER_PROTOCOL) {
+		return {
+			unknown: `the mail broker answered in protocol ${JSON.stringify(isRecord(a) ? (a.protocol ?? null) : null)}, and this provider speaks ${MAIL_BROKER_PROTOCOL}`,
+		};
+	}
+	if (a.status === "sent") return { sent: true };
+	if ((a.status === "refused" || a.status === "skipped") && typeof a.why === "string") {
+		return { refused: redactAddresses(a.why, recipients) };
+	}
+	return { unknown: "the mail broker answered neither sent nor refused" };
 }
 
 function bindingOf(env: Record<string, unknown>, name: string): SendEmailBinding | undefined {
@@ -665,12 +596,11 @@ export function createCloudflareEmailDeliver(
 	config: CloudflareEmailConfig,
 	loadEnv: () => Promise<Record<string, unknown>> = loadWorkerEnv,
 	now: () => Date = () => new Date(),
-	extend: ExtendLifetime = extendWithWaitUntil,
 ): (event: EmailDeliverEvent, ctx: PluginContext) => Promise<void> {
 	const bindingName = config.binding ?? "EMAIL";
 	const from = typeof config.from === "string" ? { email: config.from } : config.from;
 	const limits = limitsOf(config);
-	const account = accountBudgetOf(config);
+	const brokerNames = brokerOf(config);
 
 	return async (event, ctx) => {
 		const { message, source } = event;
@@ -695,6 +625,58 @@ export function createCloudflareEmailDeliver(
 		}
 
 		const env = await loadEnv();
+		if (message.replyTo !== undefined && !mailbox(message.replyTo)) {
+			ctx.log.warn("reply-to dropped: it is not one plain address", { source });
+		}
+		const replyTo = mailbox(message.replyTo) ?? (await siteReplyTo(ctx)) ?? mailbox(config.replyTo);
+
+		if (brokerNames) {
+			// Through the site's mail broker: this Worker sends nothing itself.
+			const broker = brokerIn(env, brokerNames);
+			if ("missing" in broker) {
+				ctx.log.warn("email refused: no mail broker", { source, why: broker.missing });
+				throw new Error(`[cloudflare-email] refusing to send: ${broker.missing}`);
+			}
+			const budget = await takeBudget(ctx.kv, source, [to, ...cc], limits, now());
+			if ("refused" in budget) {
+				ctx.log.warn("email refused: sending budget spent", { source, why: budget.refused });
+				throw new Error(`[cloudflare-email] refusing to send: ${budget.refused}`);
+			}
+			const recipients = [to, ...cc, ...(replyTo ? [replyTo] : [])];
+			const got = await sendThroughBroker(
+				broker,
+				{
+					to,
+					subject,
+					text: message.text,
+					...(message.html ? { html: message.html } : {}),
+					...(cc.length ? { cc } : {}),
+					...(replyTo ? { replyTo } : {}),
+				},
+				recipients,
+			);
+			if ("refused" in got) {
+				// Only a send the broker made spends the site's budget.
+				await refundBudget(ctx.kv, budget.taken);
+				ctx.log.warn("email refused: the mail broker refused it", { source, why: got.refused });
+				throw new Error(
+					`[cloudflare-email] refusing to send: the mail broker refused it: ${got.refused}`,
+				);
+			}
+			if ("unknown" in got) {
+				// It may have gone: the site's places stay taken, which refuses sooner, never later.
+				ctx.log.warn("email not known to be sent", { source, why: got.unknown });
+				throw new Error(`[cloudflare-email] ${got.unknown}`);
+			}
+			ctx.log.info("email delivered via the site's mail broker", {
+				toDomain: domainOf(to),
+				...(cc.length ? { cc: cc.length } : {}),
+				subject,
+				source,
+			});
+			return;
+		}
+
 		const binding = bindingOf(env, bindingName);
 		if (!binding) {
 			throw new Error(
@@ -702,33 +684,11 @@ export function createCloudflareEmailDeliver(
 					`declare it in the wrangler config ("send_email": [{ "name": "${bindingName}" }]).`,
 			);
 		}
-		const accountBudget = account ? accountBudgetIn(env, account) : null;
-		if (accountBudget && "missing" in accountBudget) {
-			ctx.log.warn("email refused: no account budget", { source, why: accountBudget.missing });
-			throw new Error(`[cloudflare-email] refusing to send: ${accountBudget.missing}`);
-		}
-
-		if (message.replyTo !== undefined && !mailbox(message.replyTo)) {
-			ctx.log.warn("reply-to dropped: it is not one plain address", { source });
-		}
-		const replyTo = mailbox(message.replyTo) ?? (await siteReplyTo(ctx)) ?? mailbox(config.replyTo);
 
 		const budget = await takeBudget(ctx.kv, source, [to, ...cc], limits, now());
 		if ("refused" in budget) {
 			ctx.log.warn("email refused: sending budget spent", { source, why: budget.refused });
 			throw new Error(`[cloudflare-email] refusing to send: ${budget.refused}`);
-		}
-		// The account's budget after the site's own: a site that has spent its
-		// day asks the account nothing, and a refusal here gives the site's back.
-		let accountTake: string | null = null;
-		if (accountBudget) {
-			const taken = await takeAccountBudget(accountBudget, [to, ...cc], extend);
-			if ("refused" in taken) {
-				await refundBudget(ctx.kv, budget.taken);
-				ctx.log.warn("email refused: account budget", { source, why: taken.refused });
-				throw new Error(`[cloudflare-email] refusing to send: ${taken.refused}`);
-			}
-			accountTake = taken.takeId;
 		}
 
 		const name = displayName(from.name ?? ctx.site?.name);
@@ -746,9 +706,6 @@ export function createCloudflareEmailDeliver(
 		} catch (error) {
 			// Only a send Cloudflare accepts spends the budget.
 			await refundBudget(ctx.kv, budget.taken);
-			if (accountBudget && accountTake) {
-				await refundAccountBudget(accountBudget, accountTake, ctx, extend);
-			}
 			throw scrubAddresses(error, [to, ...cc, ...(replyTo ? [replyTo] : [])]);
 		}
 
@@ -774,21 +731,25 @@ export function withoutAddresses(text: string, addresses: readonly string[]): st
 
 /**
  * What the provider would send with, for the admin and for an operator's
- * import report: the sender, whether the Worker has the binding, where
- * replies go when a message names nobody. It sends nothing.
+ * import report: the sender, whether the Worker has what it sends through
+ * (the send_email binding, or with `broker` the broker's service binding and
+ * this site's capability), where replies go when a message names nobody. It
+ * sends nothing.
  *
  * `attestation` (EMAIL_ATTESTATION_VERSION) is what a deployment checks
  * before it turns the site's email on: the provider and its capability
- * marker, what this build guarantees (headers checked before the binding,
- * the site's own budget, the account's budget, a cancelled send reported as
- * cancelled, addresses redacted from what is logged), and, with
- * `accountBudget`, the mail-budget protocol this provider speaks and the
- * service's LIVE answer to this site's token: its report, read-only, which
- * proves the service is there and knows the token, and says the tenant and
- * lane the token is registered to (the service derives both from the
- * token's hash, so a deployment can check the Worker holds its own tenant's
- * plugin token and not another's) and the limits it holds this site to. It
- * never carries the token or a recipient, and takes and refunds nothing.
+ * marker, what this build guarantees (headers checked before anything is
+ * sent, the site's own budget, every message through the site's mail broker,
+ * a cancelled send reported as cancelled, addresses redacted from what is
+ * logged), and, with `broker`, the broker protocol this provider speaks, the
+ * generation this Worker was given (MAIL_GENERATION), the SHA-256 of its
+ * capability, and the broker's LIVE status for that capability: whether it is
+ * the broker's active or staged generation's, the site and deployment the
+ * broker is configured as, and, for its generation, the capability's and the
+ * two budget tokens' hashes and the account's budget's report of each lane
+ * (the tenant, lane, generation and state each token is registered to). It
+ * never carries the capability, a token or a recipient, and sends, takes and
+ * refunds nothing.
  *
  * @internal
  */
@@ -798,28 +759,29 @@ export function createCloudflareEmailStatus(
 ) {
 	const bindingName = config.binding ?? "EMAIL";
 	const from = typeof config.from === "string" ? { email: config.from } : config.from;
-	const account = accountBudgetOf(config);
+	const names = brokerOf(config);
 	return async (ctx: PluginContext) => {
 		const env = await loadEnv().catch((): Record<string, unknown> => ({}));
 		const site = await siteReplyTo(ctx);
-		const budget = account ? accountBudgetIn(env, account) : null;
-		const live = budget ? await liveAccountBudget(budget) : null;
+		const broker = names ? brokerIn(env, names) : null;
+		const ready = Boolean(broker && !("missing" in broker));
 		return {
 			provider: "cloudflare-email",
 			capability: CLOUDFLARE_EMAIL_CAPABILITY,
 			from: from.email,
 			senderName: from.name ? "configured" : "site title",
-			binding: { name: bindingName, present: Boolean(bindingOf(env, bindingName)) },
+			binding: names
+				? { name: names.binding, present: ready }
+				: { name: bindingName, present: Boolean(bindingOf(env, bindingName)) },
 			replyTo: site ? "site" : mailbox(config.replyTo) ? "configured" : null,
 			limits: limitsOf(config),
-			// Whether sends take a place in the account's budget, and whether this
-			// Worker has what that needs; never the token.
-			accountBudget: account
+			// Whether sends go through the broker, and whether this Worker has what that needs; never the capability.
+			broker: names
 				? {
-						binding: account.binding,
-						token: account.token,
-						ready: Boolean(budget && !("missing" in budget)),
-						...(budget && "missing" in budget ? { why: budget.missing } : {}),
+						binding: names.binding,
+						capability: names.capability,
+						ready,
+						...(broker && "missing" in broker ? { why: broker.missing } : {}),
 					}
 				: null,
 			attestation: {
@@ -829,18 +791,24 @@ export function createCloudflareEmailStatus(
 				guarantees: {
 					headersChecked: true,
 					siteBudget: true,
-					accountBudget: account !== null,
+					broker: names !== null,
 					cancellation: "reported",
 					redaction: "addresses",
 				},
-				accountBudget: account
+				broker: names
 					? {
-							protocol: MAIL_BUDGET_PROTOCOL,
-							ready: Boolean(budget && !("missing" in budget)),
-							live: live ?? {
-								ok: false,
-								why: (budget && "missing" in budget && budget.missing) || "not asked",
-							},
+							protocol: MAIL_BROKER_PROTOCOL,
+							ready,
+							generation: broker && !("missing" in broker) ? broker.generation : null,
+							capabilityHash:
+								broker && !("missing" in broker) ? await sha256Hex(broker.capability) : null,
+							live:
+								broker && !("missing" in broker)
+									? await liveBroker(broker)
+									: {
+											ok: false,
+											why: (broker && "missing" in broker && broker.missing) || "not asked",
+										},
 						}
 					: null,
 			},
@@ -848,75 +816,86 @@ export function createCloudflareEmailStatus(
 	};
 }
 
-/**
- * The mail-budget service's live answer to this site's token: its report,
- * read-only (it takes and refunds nothing), in this provider's protocol and
- * within the budget's timeout. `{ ok: true, limits }` with the caps the
- * service holds this site to, or `{ ok: false, why }`: no report method, an
- * unknown or revoked token, another protocol, an error, no answer in time.
- */
-async function liveAccountBudget(
-	budget: AccountBudget | { missing: string },
-): Promise<
-	| { ok: true; tenant: string; lane: string; limits: Record<string, number> }
-	| { ok: false; why: string }
-	| null
-> {
-	if ("missing" in budget) return null;
-	const { service, token, timeoutMs } = budget;
-	if (typeof service.report !== "function") {
-		return { ok: false, why: "the mail-budget service has no report" };
-	}
-	let answer: unknown;
-	try {
-		const got = await within(service.report({ protocol: MAIL_BUDGET_PROTOCOL, token }), timeoutMs);
-		if ("late" in got) return { ok: false, why: `it did not answer within ${timeoutMs} ms` };
-		answer = got.answer;
-	} catch (error) {
-		return { ok: false, why: `it could not be asked (${describeRedacted(error)})` };
-	}
-	if (!isRecord(answer) || answer.protocol !== MAIL_BUDGET_PROTOCOL) {
-		return {
-			ok: false,
-			why: `it answered in protocol ${JSON.stringify(isRecord(answer) ? (answer.protocol ?? null) : null)}, not ${MAIL_BUDGET_PROTOCOL}`,
-		};
-	}
-	if (answer.ok !== true) {
-		return {
-			ok: false,
-			why: `it refused this site's token (${typeof answer.refused === "string" ? redactAddresses(answer.refused) : "no reason given"})`,
-		};
-	}
-	// The tenant and the lane are the token's registration, derived by the
-	// service from its hash: a deployment checks that this site's Worker holds
-	// ITS OWN token (a token of another tenant still reports ready, and every
-	// send would be charged to that tenant) and a plugin-lane one.
-	if (typeof answer.tenant !== "string" || !answer.tenant) {
-		return { ok: false, why: "its report does not say which tenant this site's token belongs to" };
-	}
-	if (typeof answer.lane !== "string") {
-		return { ok: false, why: "its report does not say which lane this site's token holds" };
-	}
-	const caps = isRecord(answer.caps) ? answer.caps : {};
-	const limits: Record<string, number> = {};
-	for (const name of MAIL_BUDGET_CAPS) {
-		const cap = caps[name];
-		if (typeof cap !== "number") {
-			return { ok: false, why: "its report does not say the limits it holds this site to" };
-		}
-		limits[name] = cap;
-	}
-	return { ok: true, tenant: answer.tenant, lane: answer.lane, limits };
+const HEX64 = /^[0-9a-f]{64}$/;
+const text = (v: unknown) => (typeof v === "string" ? v : null);
+const whole = (v: unknown) => (Number.isSafeInteger(v) ? Number(v) : null);
+
+/** One lane's budget report, as the broker relays it: only these fields, each of its type. */
+function laneOf(v: unknown) {
+	if (!isRecord(v)) return { ok: false as const, why: "no report" };
+	if (v.ok !== true) return { ok: false as const, why: text(v.why) ?? "not ok" };
+	const caps = isRecord(v.caps)
+		? Object.fromEntries(
+				Object.entries(v.caps).filter(
+					(e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]),
+				),
+			)
+		: null;
+	return {
+		ok: true as const,
+		tenant: text(v.tenant),
+		lane: text(v.lane),
+		generation: whole(v.generation),
+		state: text(v.state),
+		caps,
+	};
 }
 
-/** The caps the mail-budget service holds a site to (Embark's packages/mail-budget DEFAULT_CAPS), which the attestation says. */
-const MAIL_BUDGET_CAPS = [
-	"accountPerDay",
-	"accountSystemReserve",
-	"tenantPerDay",
-	"tenantSystemReserve",
-	"systemPerRecipient",
-] as const;
+/**
+ * The broker's live status for this site's capability, within the timeout,
+ * read strictly (no field passes through unread): `{ ok: true, ... }` in the
+ * broker's protocol with its marker, or `{ ok: false, why }` for an error, no
+ * answer in time, another protocol, or no marker.
+ */
+async function liveBroker(broker: Broker) {
+	let answer: unknown;
+	try {
+		const got = await within(
+			broker.service.status({ protocol: MAIL_BROKER_PROTOCOL, capability: broker.capability }),
+			broker.timeoutMs,
+		);
+		if ("late" in got)
+			return { ok: false as const, why: `it did not answer within ${broker.timeoutMs} ms` };
+		answer = got.answer;
+	} catch (error) {
+		return { ok: false as const, why: `it could not be asked (${describeRedacted(error)})` };
+	}
+	if (!isRecord(answer) || answer.protocol !== MAIL_BROKER_PROTOCOL) {
+		return {
+			ok: false as const,
+			why: `it answered in protocol ${JSON.stringify(isRecord(answer) ? (answer.protocol ?? null) : null)}, not ${MAIL_BROKER_PROTOCOL}`,
+		};
+	}
+	if (typeof answer.marker !== "string")
+		return { ok: false as const, why: "its status carries no marker" };
+	const capability = answer.capability;
+	const generations = isRecord(answer.generations) ? answer.generations : {};
+	const hashes = isRecord(answer.tokenHashes) ? answer.tokenHashes : {};
+	const send = isRecord(answer.send) ? answer.send : {};
+	const budget = isRecord(answer.budget) ? answer.budget : {};
+	return {
+		ok: true as const,
+		marker: answer.marker,
+		seq: whole(answer.seq),
+		tenant: text(answer.tenant),
+		deployment: text(answer.deployment),
+		capability: capability === "active" || capability === "staged" ? capability : "unknown",
+		generations: { active: whole(generations.active), staged: whole(generations.staged) },
+		generation: whole(answer.generation),
+		capabilityHash:
+			typeof answer.capabilityHash === "string" && HEX64.test(answer.capabilityHash)
+				? answer.capabilityHash
+				: null,
+		tokenHashes: {
+			plugin: typeof hashes.plugin === "string" && HEX64.test(hashes.plugin) ? hashes.plugin : null,
+			system: typeof hashes.system === "string" && HEX64.test(hashes.system) ? hashes.system : null,
+		},
+		send: { plugin: send.plugin === true, system: send.system === true },
+		site: answer.site === true,
+		recipients: whole(answer.recipients),
+		budget: { plugin: laneOf(budget.plugin), system: laneOf(budget.system) },
+	};
+}
 
 /** Validate the sender address early so misconfiguration fails at config time. */
 function assertValidFrom(config: CloudflareEmailConfig): void {
