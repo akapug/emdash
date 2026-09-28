@@ -27,6 +27,7 @@ import {
 	renderWpShellForm,
 	renderWpShellSubscribe,
 	safeHref,
+	stylesFor,
 	WP_SHELL_SUBSCRIBE_MESSAGES,
 	wpShellDateSite,
 	wpShellDocumentTitle,
@@ -959,6 +960,154 @@ describe("wp-shell: a page cut on its own, for the EmDash page of its slug", () 
 		[
 			"a page body class that leaves its attribute",
 			{ ...sample(), pages: [{ ...contactOf(), body: { class: 'x" onload="y' } }] },
+		],
+	];
+	for (const [what, record] of refused) {
+		it(`refuses ${what}`, () => {
+			expect(wpShellProblem(record)).not.toBeNull();
+		});
+	}
+});
+
+describe("wp-shell: a template's layout its pages share, and each page's own", () => {
+	const html = (s: WpShell, kind: "home" | "page" | "post", slug: string | null) =>
+		composeWpShell(s, { menuItems: () => null, currentPath: "/pages/x", kind, slug })
+			.flatMap((p) => ("html" in p ? [p.html] : []))
+			.join("");
+	const OWN = "/_emdash/api/media/file/wp-shell/own21.css";
+	const wide = (): WpShell => ({
+		...sample(),
+		home: homeOf(),
+		pages: [{ ...contactOf(), slug: "privacy", also: ["terms", "events"] }],
+		pageOwn: [
+			{ slug: "about", styles: [OWN], body: "page-id-21 elementor-page-21" },
+			{ slug: "terms", styles: ["/_emdash/api/media/file/wp-shell/own7.css"] },
+			{ slug: "home", body: "page-id-2" },
+		],
+	});
+
+	it("draws every page `also` names in the page layout, its title the layout's, and every other page in the record's", () => {
+		const s = wide();
+		expect(wpShellProblem(s)).toBeNull();
+		for (const slug of ["privacy", "terms", "events"]) {
+			expect(layoutFor(s, "page", slug), slug).toBe(s.pages![0]);
+			expect(html(s, "page", slug)).toContain('<main class="one-column">');
+			expect(drawsTitle(s, "page", slug)).toBe(true);
+		}
+		for (const [kind, slug] of [
+			["page", "about"],
+			["post", "terms"],
+		] as const) {
+			expect(layoutFor(s, kind, slug), `${kind} ${slug}`).toBe(s);
+			expect(html(s, kind, slug)).not.toContain("one-column");
+		}
+	});
+
+	it("adds a page's own stylesheets after its layout's, and its own body classes, for a page and the home of its slug alone", () => {
+		const s = wide();
+		expect(stylesFor(s, "page", "about")).toEqual([...s.styles, OWN]);
+		expect(bodyClassFor(s, "page", "about")).toBe(
+			`${bodyClassFor(sample(), "page")} page-id-21 elementor-page-21`,
+		);
+		// in a layout it shares with other pages
+		expect(stylesFor(s, "page", "terms")).toEqual([
+			"/_emdash/api/media/file/wp-shell/contact1.css",
+			"/_emdash/api/media/file/wp-shell/own7.css",
+		]);
+		expect(bodyClassFor(s, "page", "terms")).toBe(
+			"page-template-template-full-width page page-id-9",
+		);
+		// the home, by its page's slug, in its own layout
+		expect(stylesFor(s, "home", "home")).toEqual(homeOf().styles);
+		expect(bodyClassFor(s, "home", "home")).toBe(`${homeOf().body.class} page-id-2`);
+		// a class the layout has already is not drawn twice
+		const twice: WpShell = { ...s, pageOwn: [{ slug: "about", body: "wp-singular page-id-21" }] };
+		expect(bodyClassFor(twice, "page", "about")).toBe(
+			`${bodyClassFor(sample(), "page")} page-id-21`,
+		);
+		// a post or an archive of that slug, and a page of no slug, draw none of it
+		for (const [kind, slug] of [
+			["post", "about"],
+			["archive", "about"],
+			["page", null],
+			["home", null],
+		] as const) {
+			expect(stylesFor(s, kind, slug), `${kind} ${slug}`).toEqual(layoutFor(s, kind, slug).styles);
+			expect(bodyClassFor(s, kind, slug)).toBe(
+				bodyClassFor({ ...s, pageOwn: undefined }, kind, slug),
+			);
+		}
+	});
+
+	it("draws a record without them as before", () => {
+		for (const s of [sample(), { ...sample(), home: homeOf(), pages: [contactOf()] }]) {
+			for (const [kind, slug] of [
+				["home", "home"],
+				["page", "contact"],
+				["page", "about"],
+				["post", "x"],
+				["archive", null],
+			] as const) {
+				expect(stylesFor(s, kind, slug)).toEqual(layoutFor(s, kind, slug).styles);
+			}
+		}
+	});
+
+	const refused: Array<[string, unknown]> = [
+		[
+			"other pages that are not a list",
+			{ ...sample(), pages: [{ ...contactOf(), also: "terms" }] },
+		],
+		["another page with no slug", { ...sample(), pages: [{ ...contactOf(), also: ["a b"] }] }],
+		[
+			"a page drawn in two layouts",
+			{
+				...sample(),
+				pages: [
+					{ ...contactOf(), also: ["terms"] },
+					{ ...contactOf(), slug: "terms" },
+				],
+			},
+		],
+		[
+			"a page named twice in one layout",
+			{ ...sample(), pages: [{ ...contactOf(), also: ["terms", "terms"] }] },
+		],
+		[
+			"a layout that names itself again",
+			{ ...sample(), pages: [{ ...contactOf(), also: ["contact"] }] },
+		],
+		["pages' own that are not a list", { ...sample(), pageOwn: { about: { styles: [OWN] } } }],
+		["an own with no slug", { ...sample(), pageOwn: [{ styles: [OWN] }] }],
+		[
+			"two owns of one page",
+			{
+				...sample(),
+				pageOwn: [
+					{ slug: "about", styles: [OWN] },
+					{ slug: "about", body: "x" },
+				],
+			},
+		],
+		["an own that carries nothing", { ...sample(), pageOwn: [{ slug: "about" }] }],
+		[
+			"an own stylesheet on another host",
+			{ ...sample(), pageOwn: [{ slug: "about", styles: ["https://old-host.example/c.css"] }] },
+		],
+		[
+			"an own stylesheet that is not a stylesheet",
+			{
+				...sample(),
+				pageOwn: [{ slug: "about", styles: ["/_emdash/api/media/file/wp-shell/x.js"] }],
+			},
+		],
+		[
+			"more own stylesheets than a page has",
+			{ ...sample(), pageOwn: [{ slug: "about", styles: Array.from({ length: 9 }).fill(OWN) }] },
+		],
+		[
+			"own body classes that leave their attribute",
+			{ ...sample(), pageOwn: [{ slug: "about", body: 'x" onload="y' }] },
 		],
 	];
 	for (const [what, record] of refused) {
