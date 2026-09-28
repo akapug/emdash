@@ -93,10 +93,12 @@ function cron() {
 	const tasks = new Map<string, string>();
 	return {
 		tasks,
-		schedule: vi.fn(async (name: string, o: { schedule: string }) => void tasks.set(name, o.schedule)),
+		schedule: vi.fn(
+			async (name: string, o: { schedule: string }) => void tasks.set(name, o.schedule),
+		),
 		cancel: vi.fn(async (name: string) => void tasks.delete(name)),
 		list: vi.fn(async () =>
-			[...tasks].map(([name, schedule]) => ({ name, schedule, nextRunAt: "", lastRunAt: null })),
+			Array.from(tasks, ([name, schedule]) => ({ name, schedule, nextRunAt: "", lastRunAt: null })),
 		),
 	};
 }
@@ -207,7 +209,7 @@ describe("a visitor subscribes on the site's form", () => {
 		const flaky = site(opts);
 		await subscribe(flaky.env, { email: "reader@example.org", page: "/" });
 		for (let i = 0; i < 5; i++) await drain(flaky.env);
-		expect([...flaky.outbox.rows.values()].map((m) => m.status)).toEqual(["failed"]);
+		expect(Array.from(flaky.outbox.rows.values(), (m) => m.status)).toEqual(["failed"]);
 		expect(await subscribe(flaky.env, { email: "reader@example.org", page: "/" })).toBe("queued");
 		opts.failing = false;
 		expect(await subscribe(flaky.env, { email: "reader@example.org", page: "/" })).toBe("sent");
