@@ -1,21 +1,26 @@
 /**
- * EmDash's own sign-in mail through an auth-mail mediator.
+ * EmDash's own sign-in mail through the site's mail broker.
  *
- * When the config names one (`systemMail: { binding }`), the magic-link,
- * sign-up, invite and recovery routes never build or send the message in this
- * Worker: they hand the mediator (a separately deployed Worker, bound here as
- * a service; `@emdash-cms/cloudflare/auth-mail`) the OPERATION and the
- * original request's credential, and it validates, issues the token, renders
- * the template, takes the mail budget's system lane and sends, itself. Nothing
- * in this Worker (a plugin's hook included) ever sees that message or its
- * token, and nothing here can spend the reserve kept for it.
+ * When the config names one (`systemMail: { binding, capability }`), the
+ * magic-link, sign-up, invite and recovery routes never build or send the
+ * message in this Worker: they hand the broker (a separately deployed Worker,
+ * bound here as a service; `@emdash-cms/cloudflare/auth-mail`) the OPERATION,
+ * the original request's credential and this site's generation capability,
+ * and it checks the capability, validates, issues the token, renders the
+ * template, takes the mail budget's system lane and sends, itself. Nothing in
+ * this Worker (a plugin's hook included) ever sees that message or its token,
+ * and nothing here can spend the reserve kept for it.
  *
- * Without the binding, a configured mediation sends nothing: the routes never
- * fall back to this Worker's own email pipeline for sign-in mail.
+ * Without the binding or the capability, a configured mediation sends
+ * nothing: the routes never fall back to this Worker's own email pipeline for
+ * sign-in mail.
  */
 
-/** The version of the mediator's RPC these routes speak (the mediator's AUTH_MAIL_PROTOCOL). */
-export const SYSTEM_MAIL_PROTOCOL = 1;
+/** The version of the broker's RPC these routes speak (the broker's AUTH_MAIL_PROTOCOL). 2: every request carries the capability. */
+export const SYSTEM_MAIL_PROTOCOL = 2;
+
+/** The secret the site's generation capability is in, when the config names none. */
+export const SYSTEM_MAIL_CAPABILITY = "MAIL_BROKER_CAPABILITY";
 
 /** A privileged operation's credential: the original request's, forwarded as it came. */
 export interface SystemMailCredential {
@@ -23,21 +28,32 @@ export interface SystemMailCredential {
 	cookie: string | null;
 }
 
-/** The mediator as its service binding exposes it (RPC). */
+/** The broker as its service binding exposes it (RPC); systemMailOf adds `capability` to each request. */
 export interface SystemMailMediator {
 	requestMagicLink(request: {
 		protocol: number;
 		email: string;
 		ip: string | null;
+		capability?: string;
 	}): Promise<unknown>;
-	requestSignup(request: { protocol: number; email: string; ip: string | null }): Promise<unknown>;
+	requestSignup(request: {
+		protocol: number;
+		email: string;
+		ip: string | null;
+		capability?: string;
+	}): Promise<unknown>;
 	createInvite(
-		request: { protocol: number; email: string; role: number } & SystemMailCredential,
+		request: {
+			protocol: number;
+			email: string;
+			role: number;
+			capability?: string;
+		} & SystemMailCredential,
 	): Promise<unknown>;
 	sendRecovery(
-		request: { protocol: number; userId: string } & SystemMailCredential,
+		request: { protocol: number; userId: string; capability?: string } & SystemMailCredential,
 	): Promise<unknown>;
-	status(request: { protocol: number }): Promise<unknown>;
+	status(request: { protocol: number; capability?: string }): Promise<unknown>;
 }
 
 /** What the config says, and what this Worker has. */
@@ -53,6 +69,8 @@ const OPERATIONS = ["requestMagicLink", "requestSignup", "createInvite", "sendRe
 
 const field = (a: unknown, key: string): unknown =>
 	typeof a === "object" && a !== null ? Reflect.get(a, key) : undefined;
+const text = (v: unknown) => (typeof v === "string" ? v : null);
+const whole = (v: unknown) => (Number.isSafeInteger(v) ? Number(v) : null);
 
 async function workerEnv(): Promise<Record<string, unknown> | undefined> {
 	try {
@@ -66,12 +84,13 @@ async function workerEnv(): Promise<Record<string, unknown> | undefined> {
 
 /**
  * Whether sign-in mail is mediated here, and by what: the config's
- * `systemMail.binding` looked up in the Worker's env, and callable as the
- * mediator (each operation a function). `loadEnv` stands in for the Worker's
- * env in a test.
+ * `systemMail.binding` looked up in the Worker's env, callable as the broker
+ * (each operation a function), and the capability in the secret
+ * `systemMail.capability` names. The mediator it answers adds the capability
+ * to every request. `loadEnv` stands in for the Worker's env in a test.
  */
 export async function systemMailOf(
-	config: { systemMail?: { binding?: unknown } | null } | undefined,
+	config: { systemMail?: { binding?: unknown; capability?: unknown } | null } | undefined,
 	loadEnv: () => Promise<Record<string, unknown> | undefined> = workerEnv,
 ): Promise<SystemMail> {
 	const binding = config?.systemMail?.binding;
@@ -93,11 +112,30 @@ export async function systemMailOf(
 		return {
 			mediated: true,
 			binding,
-			missing: `the auth-mail mediator's service binding "${binding}" is not in this Worker, so sign-in mail is not sent`,
+			missing: `the mail broker's service binding "${binding}" is not in this Worker, so sign-in mail is not sent`,
+		};
+	}
+	const name = config?.systemMail?.capability ?? SYSTEM_MAIL_CAPABILITY;
+	const capability = typeof name === "string" && name ? env?.[name] : undefined;
+	if (typeof capability !== "string" || !capability.trim()) {
+		return {
+			mediated: true,
+			binding,
+			missing: `this Worker has no generation capability for the mail broker (the secret "${typeof name === "string" ? name : SYSTEM_MAIL_CAPABILITY}" is not set), so sign-in mail is not sent`,
 		};
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: every operation is callable
-	return { mediated: true, binding, mediator: service as SystemMailMediator };
+	const broker = service as SystemMailMediator;
+	const cap = capability.trim();
+	// Every request with the capability: the broker checks it before anything else.
+	const mediator: SystemMailMediator = {
+		requestMagicLink: (r) => broker.requestMagicLink({ ...r, capability: cap }),
+		requestSignup: (r) => broker.requestSignup({ ...r, capability: cap }),
+		createInvite: (r) => broker.createInvite({ ...r, capability: cap }),
+		sendRecovery: (r) => broker.sendRecovery({ ...r, capability: cap }),
+		status: (r) => broker.status({ ...r, capability: cap }),
+	};
+	return { mediated: true, binding, mediator };
 }
 
 /** The mediator's answer to an operation, or what a call that threw came to. */
@@ -108,11 +146,11 @@ export async function askMediator(call: () => Promise<unknown>): Promise<SystemM
 	} catch (error) {
 		return {
 			status: "refused",
-			why: `the auth-mail mediator could not be asked (${error instanceof Error ? error.name : "error"})`,
+			why: `the mail broker could not be asked (${error instanceof Error ? error.name : "error"})`,
 		};
 	}
 	if (field(a, "protocol") !== SYSTEM_MAIL_PROTOCOL) {
-		return { status: "refused", why: "the auth-mail mediator answered in another protocol" };
+		return { status: "refused", why: "the mail broker answered in another protocol" };
 	}
 	const status = field(a, "status");
 	const why = field(a, "why");
@@ -122,26 +160,45 @@ export async function askMediator(call: () => Promise<unknown>): Promise<SystemM
 	}
 	return {
 		status: "refused",
-		why: "the auth-mail mediator answered neither sent, skipped nor refused",
+		why: "the mail broker answered neither sent, skipped nor refused",
 	};
 }
 
-/** What the mediator says it is, read strictly (no field passes through unread). */
+/** What the broker says it is, for this site's capability, read strictly (no field passes through unread). */
 export type MediatorStatus =
 	| {
 			ok: true;
 			marker: string;
+			/** The site and deployment the broker is configured as. */
+			tenant: string | null;
+			deployment: string | null;
+			/** Whether this site's capability is the broker's active generation's, its staged one's, or neither. */
+			capability: "active" | "staged" | "unknown";
+			generation: number | null;
+			capabilityHash: string | null;
+			/** Whether it has EMAIL_SYSTEM. */
 			send: boolean;
 			site: boolean;
-			budget: { ok: true; tenant: string; lane: string } | { ok: false; why: string };
+			/** The mail budget's report of that generation's system-lane token. */
+			budget:
+				| {
+						ok: true;
+						tenant: string;
+						lane: string;
+						generation: number | null;
+						state: string | null;
+				  }
+				| { ok: false; why: string };
 	  }
 	| { ok: false; why: string };
 
 /**
- * The mediator's own status: its marker, whether it has its send binding and
- * site configuration, and the tenant and lane the mail budget says its token
- * is registered to. Sends nothing; a call that throws or answers another
- * protocol is `ok: false`.
+ * The broker's own status for this site's capability: its marker, the site
+ * and deployment it is configured as, whether the capability is its active
+ * or staged generation's, whether it has EMAIL_SYSTEM and its site
+ * configuration, and the tenant, lane, generation and state the mail budget
+ * says that generation's system token is registered to. Sends nothing; a call
+ * that throws or answers another protocol is `ok: false`.
  */
 export async function mediatorStatus(mediator: SystemMailMediator): Promise<MediatorStatus> {
 	let a: unknown;
@@ -157,23 +214,35 @@ export async function mediatorStatus(mediator: SystemMailMediator): Promise<Medi
 	if (field(a, "protocol") !== SYSTEM_MAIL_PROTOCOL || typeof marker !== "string") {
 		return { ok: false, why: "answered in another protocol" };
 	}
-	const budget = field(a, "budget");
+	const budget = field(field(a, "budget"), "system");
 	const tenant = field(budget, "tenant");
 	const lane = field(budget, "lane");
 	const why = field(budget, "why");
+	const capability = field(a, "capability");
 	return {
 		ok: true,
 		marker,
-		send: field(a, "send") === true,
+		tenant: text(field(a, "tenant")),
+		deployment: text(field(a, "deployment")),
+		capability: capability === "active" || capability === "staged" ? capability : "unknown",
+		generation: whole(field(a, "generation")),
+		capabilityHash: text(field(a, "capabilityHash")),
+		send: field(field(a, "send"), "system") === true,
 		site: field(a, "site") === true,
 		budget:
 			field(budget, "ok") === true && typeof tenant === "string" && typeof lane === "string"
-				? { ok: true, tenant, lane }
+				? {
+						ok: true,
+						tenant,
+						lane,
+						generation: whole(field(budget, "generation")),
+						state: text(field(budget, "state")),
+					}
 				: { ok: false, why: typeof why === "string" ? why : "no report" },
 	};
 }
 
-/** The request's own credential, forwarded to the mediator as it came: never an assertion of who asked. */
+/** The request's own credential, forwarded to the broker as it came: never an assertion of who asked. */
 export function credentialOf(request: Request): SystemMailCredential {
 	return {
 		authorization: request.headers.get("authorization"),

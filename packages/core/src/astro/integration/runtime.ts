@@ -499,16 +499,18 @@ export interface EmDashConfig {
 
 	/**
 	 * Send EmDash's own sign-in mail (magic links, sign-up verification,
-	 * invites, recovery links) through an auth-mail mediator: a separately
+	 * invites, recovery links) through the site's mail broker: a separately
 	 * deployed Worker bound to this one as a service named `binding`
 	 * (`@emdash-cms/cloudflare/auth-mail`), which authenticates, issues the
-	 * token, renders the message and sends it itself. When set, those routes
-	 * never build or send the message in this Worker, so no plugin hook ever
-	 * sees it; without the binding they send nothing (an invite falls back to
-	 * its copy-link), and never fall back to this Worker's own email pipeline.
-	 * Cloudflare only.
+	 * token, renders the message and sends it itself. Every request carries
+	 * the site's generation capability, the secret named `capability`
+	 * (default `MAIL_BROKER_CAPABILITY`), which the broker checks first. When
+	 * set, those routes never build or send the message in this Worker, so no
+	 * plugin hook ever sees it; without the binding or the capability they send
+	 * nothing (an invite falls back to its copy-link), and never fall back to
+	 * this Worker's own email pipeline. Cloudflare only.
 	 */
-	systemMail?: { binding: string };
+	systemMail?: { binding: string; capability?: string };
 
 	/**
 	 * User middleware that wraps the complete EmDash request pipeline.

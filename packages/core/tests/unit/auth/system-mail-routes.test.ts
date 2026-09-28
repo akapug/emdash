@@ -1,11 +1,13 @@
 /**
- * Sign-in mail through an auth-mail mediator (the config's `systemMail`).
+ * Sign-in mail through the site's mail broker (the config's `systemMail`).
  *
  * With `systemMail: { binding }`, the magic-link, sign-up, invite and recovery
- * routes hand the mediator the operation and the request's own credential and
- * build nothing themselves: this Worker's email pipeline (and so every plugin
- * hook on it) never sees the message, and no auth token is minted here. With
- * the binding missing they send nothing, and never fall back to the pipeline.
+ * routes hand the broker the operation, the request's own credential and the
+ * site's generation capability (the secret MAIL_BROKER_CAPABILITY), and build
+ * nothing themselves: this Worker's email pipeline (and so every plugin hook
+ * on it) never sees the message, and no auth token is minted here. With the
+ * binding or the capability missing they send nothing, and never fall back to
+ * the pipeline.
  */
 
 import { Role } from "@emdash-cms/auth";
@@ -23,11 +25,15 @@ import {
 import type { Database } from "../../../src/database/types.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
-const CONFIG = { siteUrl: "https://example.com", systemMail: { binding: "SYSTEM_MAIL" } };
+const CONFIG = { siteUrl: "https://example.com", systemMail: { binding: "MAIL_BROKER" } };
+/** The site's generation capability, as the operator binds it. */
+const CAP = "cap_synthetic_0123456789abcdefghijklmnopqrstuv";
+/** The env of a Worker bound to the broker `binding`, with its capability. */
+const bound = (binding: unknown) => ({ MAIL_BROKER: binding, MAIL_BROKER_CAPABILITY: CAP });
 
 type Call = { op: string; request: Record<string, unknown> };
 
-/** A mediator stand-in: records each call, answers `reply`. */
+/** A broker stand-in: records each call, answers `reply`. */
 function mediator(reply: unknown = { protocol: SYSTEM_MAIL_PROTOCOL, status: "sent" }) {
 	const calls: Call[] = [];
 	const op =
@@ -129,7 +135,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	it("magic link: the mediator is asked, the pipeline never sees a message, no token is minted here", async () => {
 		const m = mediator();
 		const p = pipeline();
-		const { magicLink } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { magicLink } = await routesWith(bound(m.binding));
 		const { status, body } = await call(magicLink, {
 			request: post("auth/magic-link/send", { email: "Writer@Example.com" }),
 			locals: { emdash: { db, config: CONFIG, email: p.email } },
@@ -143,6 +149,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 					protocol: SYSTEM_MAIL_PROTOCOL,
 					email: "writer@example.com",
 					ip: "198.51.100.7",
+					capability: CAP,
 				},
 			},
 		]);
@@ -150,17 +157,25 @@ describe("sign-in mail through the auth-mail mediator", () => {
 		expect(await tokens()).toBe(0);
 	});
 
-	it("magic link: without the binding nothing is sent, and the pipeline is never the fallback", async () => {
-		const p = pipeline();
-		const { magicLink } = await routesWith({});
-		const { status, body } = await call(magicLink, {
-			request: post("auth/magic-link/send", { email: "writer@example.com" }),
-			locals: { emdash: { db, config: CONFIG, email: p.email } },
-		});
-		expect(status).toBe(200);
-		expect(body.data.success).toBe(true);
-		expect(p.sent).toEqual([]);
-		expect(await tokens()).toBe(0);
+	it("magic link: without the binding, or without the capability, nothing is sent, and the pipeline is never the fallback", async () => {
+		const m = mediator();
+		for (const env of [
+			{},
+			{ MAIL_BROKER: m.binding },
+			{ MAIL_BROKER: m.binding, MAIL_BROKER_CAPABILITY: " " },
+		]) {
+			const p = pipeline();
+			const { magicLink } = await routesWith(env);
+			const { status, body } = await call(magicLink, {
+				request: post("auth/magic-link/send", { email: "writer@example.com" }),
+				locals: { emdash: { db, config: CONFIG, email: p.email } },
+			});
+			expect(status).toBe(200);
+			expect(body.data.success).toBe(true);
+			expect(p.sent).toEqual([]);
+			expect(await tokens()).toBe(0);
+		}
+		expect(m.calls).toEqual([]);
 	});
 
 	it("magic link, control: not mediated, the pipeline sends it", async () => {
@@ -177,14 +192,14 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	it("sign-up: the mediator is asked, with no email pipeline needed here and none used", async () => {
 		const m = mediator();
 		const p = pipeline();
-		const { signup } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { signup } = await routesWith(bound(m.binding));
 		const { status } = await call(signup, {
 			request: post("auth/signup/request", { email: "New@example.com" }),
 			locals: { emdash: { db, config: CONFIG, email: p.email } },
 		});
 		expect(status).toBe(200);
 		expect(m.calls.map((c) => c.op)).toEqual(["requestSignup"]);
-		expect(m.calls[0]?.request).toMatchObject({ email: "new@example.com" });
+		expect(m.calls[0]?.request).toMatchObject({ email: "new@example.com", capability: CAP });
 		expect(p.sent).toEqual([]);
 		expect(await tokens()).toBe(0);
 
@@ -210,7 +225,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	it("invite: the mediator gets the request's own credential and sends it; the pipeline never sees it", async () => {
 		const m = mediator();
 		const p = pipeline();
-		const { invite } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { invite } = await routesWith(bound(m.binding));
 		const { body } = await call(invite, {
 			request: post(
 				"auth/invite",
@@ -230,6 +245,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 					role: Role.EDITOR,
 					authorization: "Bearer ec_pat_synthetic",
 					cookie: "astro-session=synthetic",
+					capability: CAP,
 				},
 			},
 		]);
@@ -240,7 +256,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	it("invite: a refusal makes it here with no email and returns the link; the pipeline never sends it", async () => {
 		const m = mediator({ protocol: SYSTEM_MAIL_PROTOCOL, status: "refused", why: "budget" });
 		const p = pipeline();
-		const { invite } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { invite } = await routesWith(bound(m.binding));
 		const { body } = await call(invite, {
 			request: post("auth/invite", { email: "invitee@example.com" }),
 			locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
@@ -265,7 +281,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	it("recovery: the mediator gets the target and the credential; a refusal is an error, never a pipeline send", async () => {
 		const m = mediator();
 		const p = pipeline();
-		const { recovery } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { recovery } = await routesWith(bound(m.binding));
 		const sent = await call(recovery, {
 			request: post(
 				`admin/users/${target.id}/send-recovery`,
@@ -284,6 +300,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 					userId: target.id,
 					authorization: null,
 					cookie: "astro-session=synthetic",
+					capability: CAP,
 				},
 			},
 		]);
@@ -293,7 +310,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 			status: "refused",
 			why: "rate limited",
 		});
-		const again = await routesWith({ SYSTEM_MAIL: refusing.binding });
+		const again = await routesWith(bound(refusing.binding));
 		const refused = await call(again.recovery, {
 			request: post(`admin/users/${target.id}/send-recovery`, {}),
 			params: { id: target.id },
@@ -313,39 +330,73 @@ describe("sign-in mail through the auth-mail mediator", () => {
 		expect(await tokens()).toBe(0);
 	});
 
-	it("settings: says whether sign-in mail is mediated, and reads the mediator's status strictly", async () => {
+	it("settings: says whether sign-in mail is mediated, and reads the broker's status for the site's capability strictly", async () => {
 		const m = mediator({
 			protocol: SYSTEM_MAIL_PROTOCOL,
-			marker: "emdash-auth-mail:mediator;v=1",
-			send: true,
+			marker: "emdash-auth-mail:broker;v=2",
+			seq: 7,
+			tenant: "demo",
+			deployment: "artifact:code",
+			capability: "staged",
+			generation: 3,
+			capabilityHash: "c".repeat(64),
+			send: { plugin: true, system: true },
 			site: true,
-			budget: { ok: true, tenant: "demo", lane: "system", token: "must-not-pass" },
+			budget: {
+				plugin: { ok: true, tenant: "demo", lane: "plugin", generation: 3, state: "staged" },
+				system: {
+					ok: true,
+					tenant: "demo",
+					lane: "system",
+					generation: 3,
+					state: "staged",
+					token: "must-not-pass",
+				},
+			},
 			extra: "must-not-pass",
 		});
 		const hooks = { getExclusiveHookProviders: () => [], getHookProviders: () => [] };
 		const user = { id: admin.id, role: Role.ADMIN };
-		const { settings } = await routesWith({ SYSTEM_MAIL: m.binding });
+		const { settings } = await routesWith(bound(m.binding));
 		const { body } = await call(settings, {
 			locals: { user, emdash: { db, config: CONFIG, hooks, email: pipeline().email } },
 		});
 		expect(body.data.systemMail).toEqual({
 			mediated: true,
-			binding: "SYSTEM_MAIL",
+			binding: "MAIL_BROKER",
 			present: true,
 			status: {
 				ok: true,
-				marker: "emdash-auth-mail:mediator;v=1",
+				marker: "emdash-auth-mail:broker;v=2",
+				tenant: "demo",
+				deployment: "artifact:code",
+				capability: "staged",
+				generation: 3,
+				capabilityHash: "c".repeat(64),
 				send: true,
 				site: true,
-				budget: { ok: true, tenant: "demo", lane: "system" },
+				budget: { ok: true, tenant: "demo", lane: "system", generation: 3, state: "staged" },
 			},
 		});
+		// The status was asked with the capability.
+		expect(m.calls).toEqual([
+			{ op: "status", request: { protocol: SYSTEM_MAIL_PROTOCOL, capability: CAP } },
+		]);
 
 		const missing = await routesWith({});
 		const none = await call(missing.settings, {
 			locals: { user, emdash: { db, config: CONFIG, hooks } },
 		});
 		expect(none.body.data.systemMail).toMatchObject({ mediated: true, present: false });
+		const noCap = await routesWith({ MAIL_BROKER: m.binding });
+		const unkeyed = await call(noCap.settings, {
+			locals: { user, emdash: { db, config: CONFIG, hooks } },
+		});
+		expect(unkeyed.body.data.systemMail).toMatchObject({
+			mediated: true,
+			present: false,
+			why: expect.stringMatching(/MAIL_BROKER_CAPABILITY/),
+		});
 		const plain = await call(missing.settings, {
 			locals: { user, emdash: { db, config: {}, hooks } },
 		});
@@ -365,16 +416,31 @@ describe("systemMailOf / askMediator", () => {
 
 	it("is missing for a binding that is not every operation callable", async () => {
 		const partial = { requestMagicLink: async () => ({}) };
-		const got = await systemMailOf(CONFIG, env({ SYSTEM_MAIL: partial }));
-		expect(got).toMatchObject({ mediated: true, binding: "SYSTEM_MAIL" });
+		const got = await systemMailOf(CONFIG, env(bound(partial)));
+		expect(got).toMatchObject({ mediated: true, binding: "MAIL_BROKER" });
 		expect(got).toHaveProperty("missing");
 		expect(await systemMailOf({ systemMail: { binding: "" } }, env({}))).toHaveProperty("missing");
 		expect(
 			await systemMailOf(CONFIG, async () => Promise.reject(new Error("no env"))),
 		).toHaveProperty("missing");
-		expect(await systemMailOf(CONFIG, env({ SYSTEM_MAIL: mediator().binding }))).toHaveProperty(
-			"mediator",
+		expect(await systemMailOf(CONFIG, env({ MAIL_BROKER: mediator().binding }))).toHaveProperty(
+			"missing",
 		);
+		// The capability is found under the name the config gives, and added to every call.
+		const m = mediator();
+		const named = await systemMailOf(
+			{ systemMail: { binding: "MAIL_BROKER", capability: "OTHER_CAP" } },
+			env({ MAIL_BROKER: m.binding, OTHER_CAP: CAP }),
+		);
+		expect(named).toHaveProperty("mediator");
+		if (!("mediator" in named)) throw new Error("not mediated");
+		await named.mediator.requestMagicLink({
+			protocol: SYSTEM_MAIL_PROTOCOL,
+			email: "a@example.com",
+			ip: null,
+		});
+		await named.mediator.status({ protocol: SYSTEM_MAIL_PROTOCOL });
+		expect(m.calls.map((c) => c.request.capability)).toEqual([CAP, CAP]);
 	});
 
 	it("reads only the mediator's own answer as sent", async () => {
@@ -382,7 +448,7 @@ describe("systemMailOf / askMediator", () => {
 		expect(await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "sent" })).toEqual({
 			status: "sent",
 		});
-		expect(await ask({ protocol: 2, status: "sent" })).toMatchObject({ status: "refused" });
+		expect(await ask({ protocol: 1, status: "sent" })).toMatchObject({ status: "refused" });
 		expect(await ask({ status: "sent" })).toMatchObject({ status: "refused" });
 		expect(await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "ok" })).toMatchObject({
 			status: "refused",
