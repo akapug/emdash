@@ -502,6 +502,52 @@ describe("a send", () => {
 		hold.release();
 	});
 
+	it("CURE 5: whose answer was lost before an activation gets that answer on its retry after it (sent, or unknown for one that never finished), never refused; only new work is held to the active generation, and another capability gets nothing of that request id", async () => {
+		const store = mapStore();
+		const budget = fakeBudget();
+		const r = rig({ store, budget });
+		const g0 = creds();
+		const g1 = creds();
+		await bringUp(r, 1, g0, null);
+		const request = (capability: string) => ({
+			protocol: P,
+			capability,
+			requestId: randomUUID(),
+			message: message(),
+		});
+		// G0's send goes, and its answer is lost on the way back to the site.
+		const lost = request(g0.capability);
+		expect(await r.b.send(lost)).toMatchObject({ status: "sent" });
+		// A second G0 send stops inside the binding: the object restarts there.
+		const hold = r.plugin.pauseSend();
+		const cut = request(g0.capability);
+		void r.b.send(cut);
+		await hold.entered;
+		const after = rig({ store, budget });
+		// The operator activates G1 in the new object: G0 is no longer the active generation.
+		await bringUp(after, 2, g1, 1);
+		// The site's retries of both, with G0's capability: what each came to, never "refused",
+		// so the site keeps its places for mail that went or may have gone.
+		expect(await after.b.send(lost)).toMatchObject({ status: "sent", replayed: true });
+		expect(await after.b.send(cut)).toMatchObject({ status: "unknown", replayed: true });
+		expect(after.budget.refunds).toEqual([]);
+		// New work with G0's capability is refused, before anything is counted or sent.
+		const takes = after.budget.takes.length;
+		expect(await after.b.send(request(g0.capability))).toMatchObject({
+			status: "refused",
+			why: expect.stringMatching(/not this site's active generation's/),
+		});
+		expect(after.budget.takes).toHaveLength(takes);
+		// Another capability naming G0's request id learns nothing of it and sends nothing.
+		expect(await after.b.send({ ...lost, capability: g1.capability })).toMatchObject({
+			status: "refused",
+			why: "that request id was used with another capability",
+		});
+		expect(r.plugin.sent).toHaveLength(1);
+		expect(after.plugin.sent).toEqual([]);
+		hold.release();
+	});
+
 	it("whose take answered and whose answer was lost asks again with the same request id, and is counted once", async () => {
 		const r = rig();
 		const c = creds();

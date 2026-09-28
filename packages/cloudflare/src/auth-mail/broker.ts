@@ -22,7 +22,8 @@
  * keeps in its own storage. Then it activates G. One generation is active at
  * a time, and a request counts only when its capability hashes to the ACTIVE
  * one's: a staged generation's capability, a retired one's, and any other are
- * refused before anything is read, written, counted or sent. The active
+ * refused before anything is written, counted or sent (the one thing read
+ * first is what a request id that capability used came to, below). The active
  * generation is in storage, so it survives an eviction, a restart and an
  * upload of this Worker.
  *
@@ -48,9 +49,11 @@
  * addresses the operator allowed, the ones the site's forms notified before
  * the move among them); the subject is header text; a reply-to that is not one
  * plain address is dropped. The take is the plugin lane's, with the request's
- * id, so a retry of it counts once; a request id seen already answers what it
- * came to the first time and sends nothing again (`unknown` when that first
- * attempt never finished, since it may have gone). Sign-in mail is the four
+ * id, so a retry of it counts once; a request id this capability used already
+ * answers what it came to the first time and sends nothing again (`unknown`
+ * when that first attempt never finished, since it may have gone), whichever
+ * generation is active by then: only new work is held to the active one. A
+ * request id another capability used answers nothing. Sign-in mail is the four
  * operations of ./mediator.ts, run in the same queue with the system lane's
  * token and EMAIL_SYSTEM.
  *
@@ -319,18 +322,24 @@ export function createMailBroker(deps: BrokerDeps) {
 	const staged = () => asGeneration(store.get("staged"));
 	const highest = () => Number(store.get("highest") ?? 0);
 
-	/**
-	 * The active generation, when `capability` is its capability; otherwise why
-	 * not. Read at the call's turn in the queue, before anything else it does.
-	 */
-	async function admit(capability: unknown): Promise<{ gen: Generation } | { why: string }> {
-		if (typeof capability !== "string" || !SECRET.test(capability))
+	/** The SHA-256 of a request's capability, or why it carries none. Nothing is read or written for it. */
+	async function capabilityOf(r: Record<string, unknown>): Promise<{ hash: string } | { why: string }> {
+		if (typeof r.capability !== "string" || !SECRET.test(r.capability))
 			return { why: "the request carries no capability" };
-		const hash = await sha256Hex(capability);
+		return { hash: await sha256Hex(r.capability) };
+	}
+
+	/**
+	 * The active generation, when `capabilityHash` is its capability's;
+	 * otherwise why not. Only NEW work is held to it: a request id this
+	 * capability used before answers what it came to (recalled), whichever
+	 * generation is active now.
+	 */
+	function admit(capabilityHash: string): { gen: Generation } | { why: string } {
 		const a = active();
-		if (a && a.capabilityHash === hash) return { gen: a };
+		if (a && a.capabilityHash === capabilityHash) return { gen: a };
 		const s = staged();
-		if (s && s.capabilityHash === hash)
+		if (s && s.capabilityHash === capabilityHash)
 			return {
 				why: `the capability is generation ${s.generation}'s, which is staged, not active: it sends nothing until the operator activates it`,
 			};
@@ -339,10 +348,10 @@ export function createMailBroker(deps: BrokerDeps) {
 		};
 	}
 
-	/** Remember what a request id came to (on its day), and forget ids two days old. */
-	function remember(requestId: string, answer: BrokerAnswer) {
+	/** Remember what a request id came to (on its day), for the capability that asked, and forget ids two days old. */
+	function remember(requestId: string, capabilityHash: string, answer: BrokerAnswer) {
 		const day = dayOf(now());
-		store.put(`op:${day}:${requestId}`, answer);
+		store.put(`op:${day}:${requestId}`, { ...answer, capabilityHash });
 		const cut = `op:${dayOf(now() - DAY_MS)}`;
 		for (const key of store.keys("op:", 50)) {
 			if (key >= cut) break;
@@ -350,12 +359,22 @@ export function createMailBroker(deps: BrokerDeps) {
 		}
 	}
 
-	function recalled(requestId: string): BrokerAnswer | null {
+	/**
+	 * What a request id came to, when this capability used it before: its
+	 * answer again (`replayed`). An id another capability used answers nothing
+	 * of that (`{ taken: true }`), and nothing is run for it.
+	 */
+	function recalled(
+		requestId: string,
+		capabilityHash: string,
+	): BrokerAnswer | { taken: true } | null {
 		for (const day of [dayOf(now()), dayOf(now() - DAY_MS)]) {
 			const seen = store.get(`op:${day}:${requestId}`);
 			if (isRecord(seen) && typeof seen.status === "string") {
+				const { capabilityHash: by, ...answer } = seen;
+				if (by !== capabilityHash) return { taken: true };
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- written by remember() above
-				return seen as unknown as BrokerAnswer;
+				return { ...(answer as unknown as BrokerAnswer), replayed: true };
 			}
 		}
 		return null;
@@ -506,7 +525,14 @@ export function createMailBroker(deps: BrokerDeps) {
 		};
 	}
 
-	/** One send of the site's own mail, in its turn: capability, envelope, the plugin lane's take, EMAIL_PLUGIN, the give-back. */
+	/**
+	 * One send of the site's own mail, in its turn: its shape, capability and
+	 * request id; what that request id came to before, for this capability,
+	 * whichever generation is active now (a retry of a send whose answer was
+	 * lost gets that answer, even after an activation); only then, for new
+	 * work, the ACTIVE generation's capability, the envelope, the plugin lane's
+	 * take, EMAIL_PLUGIN, and the give-back of a send it refused.
+	 */
 	function send(request: unknown): Promise<BrokerAnswer> {
 		return serial(async (seq) => {
 			const r = isRecord(request) ? request : {};
@@ -515,16 +541,21 @@ export function createMailBroker(deps: BrokerDeps) {
 					`the broker speaks protocol ${AUTH_MAIL_PROTOCOL}, and the request names ${JSON.stringify(r.protocol ?? null)}`,
 					seq,
 				);
-			const got = await admit(r.capability);
-			if ("why" in got) return refused(got.why, seq);
 			const extra = Object.keys(r).filter((k) => !SEND_FIELDS.has(k));
 			if (extra.length)
 				return refused(`a send takes no ${extra.map((k) => JSON.stringify(k)).join(", ")}`, seq);
+			const cap = await capabilityOf(r);
+			if ("why" in cap) return refused(cap.why, seq);
+			const capabilityHash = cap.hash;
 			const requestId = r.requestId;
 			if (typeof requestId !== "string" || !REQUEST_ID.test(requestId))
 				return refused("a send names its request id (16 to 64 letters, digits, - or _)", seq);
-			const seen = recalled(requestId);
-			if (seen) return { ...seen, replayed: true };
+			const seen = recalled(requestId, capabilityHash);
+			if (seen && "taken" in seen)
+				return refused("that request id was used with another capability", seq);
+			if (seen) return seen;
+			const got = admit(capabilityHash);
+			if ("why" in got) return refused(got.why, seq);
 			if ("missing" in config.site) return refused(config.site.missing, seq);
 			if ("missing" in config.recipients) return refused(config.recipients.missing, seq);
 			if (!config.plugin) return refused("the broker has no EMAIL_PLUGIN binding", seq);
@@ -538,13 +569,13 @@ export function createMailBroker(deps: BrokerDeps) {
 			});
 			if ("why" in t) {
 				const a = refused(t.why, seq);
-				remember(requestId, a);
+				remember(requestId, capabilityHash, a);
 				return a;
 			}
 			// Written before the send: a retry of a send that never finished (the object
 			// restarted inside it) is not known to be unsent, so it is not sent again,
 			// and its answer says so (`unknown`), never that nothing was sent.
-			remember(requestId, {
+			remember(requestId, capabilityHash, {
 				protocol: AUTH_MAIL_PROTOCOL,
 				status: "unknown",
 				why: "an earlier attempt with this request id did not finish: whether it was sent is not known, so it is not sent again",
@@ -561,11 +592,11 @@ export function createMailBroker(deps: BrokerDeps) {
 							? error.name
 							: "error";
 				const a = refused(`EMAIL_PLUGIN refused it (${code})`, seq);
-				remember(requestId, a);
+				remember(requestId, capabilityHash, a);
 				return a;
 			}
 			const a: BrokerAnswer = { protocol: AUTH_MAIL_PROTOCOL, status: "sent", seq };
-			remember(requestId, a);
+			remember(requestId, capabilityHash, a);
 			return a;
 		});
 	}
@@ -581,7 +612,9 @@ export function createMailBroker(deps: BrokerDeps) {
 					`the broker speaks protocol ${AUTH_MAIL_PROTOCOL}, and the request names ${JSON.stringify(r.protocol ?? null)}`,
 					seq,
 				);
-			const got = await admit(r.capability);
+			const cap = await capabilityOf(r);
+			if ("why" in cap) return refused(cap.why, seq);
+			const got = admit(cap.hash);
 			if ("why" in got) return refused(got.why, seq);
 			if (!deps.db) return refused("the broker has no DB binding", seq);
 			const { capability: _capability, ...rest } = r;
