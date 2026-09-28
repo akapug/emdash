@@ -496,6 +496,57 @@
 	},
 	{
 		"version": 1,
+		"id": "3e554f7e5fe284024a21a38c",
+		"source": {
+			"url": "https://www.example.org/app/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": ""
+		},
+		"body": {
+			"class": "wp-singular page-template-default page wp-theme-hello-elementor elementor-default elementor-kit-8 elementor-page"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/30367dd8427c531c2759b76dd9973aea.css"
+		],
+		"parts": [
+			{
+				"html": "\n<header class=\"site-header\"><p class=\"site-title\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p></header>\n<main id=\"content\" class=\"site-main page type-page status-publish hentry\">\n\n"
+			},
+			{
+				"slot": "title",
+				"tag": "h1"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "page-content"
+			},
+			{
+				"html": "\n</main>\n<footer class=\"site-footer\"><p>Footer</p></footer>\n"
+			}
+		],
+		"menus": [],
+		"titles": {
+			"hidden": [
+				"home",
+				"app",
+				"faq",
+				"landing"
+			]
+		}
+	},
+	{
+		"version": 1,
 		"id": "154068ab93070982b117df6c",
 		"source": {
 			"url": "https://www.example.org/team/",
@@ -3771,6 +3822,94 @@
 					"</span></span></span></a>"
 				]
 			}
+		}
+	},
+	{
+		"version": 1,
+		"id": "69f56c2ee9b022616feaaf4a",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-27T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": "no-js"
+		},
+		"body": {
+			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6be2a25527a1bcf7ed87fbb6ee255839.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "<li id=\"nav-menu-item-search\" class=\"menu-item kleo-search-nav\">\t\t<a class=\"search-trigger wp-shell-control\" href=\"/search\"><i class=\"icon icon-search\"></i></a>\n\t\t<div class=\"kleo-search-wrap searchHidden\" id=\"ajax_search_container\">\n\t\t\t<a href=\"/search\" id=\"ajax_searchform\" class=\"form-inline wp-shell-form wp-shell-control\"><span class=\"ajax_s form-control wp-shell-field wp-shell-input wp-shell-input-text wp-shell-placeholder\">Start typing to search...</span></a>\n\t\t</div>\n\t\t</li></ul></div>\n\t\t\t\t<div id=\"wp-shell-menu-0-1\" class=\"secondary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-extras\" class=\"nav navbar-nav\"><li class=\"menu-item menu-item-type-custom\"><a title=\"Give\" href=\"https://give.example.net/\" class=\"btn btn-highlight\">GIVE</a></li>\n</ul></div>\n\t\t\t</div>\n\t\t</div></div>\n\t</div>\n</div>\n<div id=\"main\">\n\n<section class=\"container-wrap main-color\">\n\t<div id=\"main-container\" class=\"container-full\">\n\t\t<div class=\"template-page col-sm-12 tpl-no\">\n\t\t\t<div class=\"wrap-content\">\n\t\t\t\t<article class=\"clearfix page type-page status-publish\">\n\t\t\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "article-content"
+			},
+			{
+				"html": "\n\t\t\t\t</article>\n\t\t\t</div>\n\t\t</div>\n\t</div>\n</section>\n</div>\n<div id=\"socket\" class=\"socket-color\"><div class=\"container\"><p>Mail <a href=\"mailto:team@example.org\">the team</a> any time.</p></div></div>\n<a class=\"kleo-go-top\" href=\"#\"><i class=\"icon-up-open-big\"></i></a>\n</div>\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item dropdown menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"js-activated\">",
+					{
+						"s": "label"
+					},
+					" <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Team\" href=\"/team/\">Team</a></li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page menu-item-has-children dropdown mega-2-cols\"><a title=\"About\" href=\"/about/\" class=\"js-activated\">About <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"History\" href=\"/history/\">History</a></li>\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Board\" href=\"/board/\">Board</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-custom menu-item-object-custom menu-item-has-children dropdown mega-1-cols\"><a title=\"Help\" href=\"#\" class=\"js-activated\">Help <span class=\"caret\"></span></a>\n<ul role=\"menu\" class=\"dropdown-menu sub-menu pull-left\">\n\t<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a title=\"Donate\" href=\"/donate/\">Donate</a></li>\n</ul>\n</li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"titles": {
+			"shown": [
+				"donate"
+			]
 		}
 	}
 ]

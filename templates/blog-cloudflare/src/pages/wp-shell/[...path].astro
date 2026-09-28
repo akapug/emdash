@@ -121,7 +121,7 @@ const area = layoutComments && shell.post?.commentArea ? shell.post : null;
 	shell={shell}
 	kind={route.kind}
 	path={route.kind === "home" ? "/" : origin}
-	slug={route.kind === "page" ? entry.id : null}
+	slug={route.kind === "post" ? null : entry.id}
 	title={seo.title}
 	seoTitle={getContentSeo(entry)?.title}
 	pageTitle={seo.ogTitle}

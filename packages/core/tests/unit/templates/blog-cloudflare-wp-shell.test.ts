@@ -4,6 +4,7 @@ import {
 	bodyClassFor,
 	classicVideoEmbed,
 	composeWpShell,
+	drawsTitle,
 	featuredDrawn,
 	formatWpDate,
 	formatWpTime,
@@ -707,10 +708,12 @@ describe("wp-shell route", () => {
  * and stylesheet, for its Twenty Twenty and Bootstrap toggles (links to a
  * menu's id, a details summary), and for its Franz Josef fixtures with a
  * breadcrumb trail, the front page's own layout and its listing of the latest
- * posts (packages/control-plane/test/wp-shell.test.ts), and for its Kleo
- * fixtures: a post in its own layout, a page whose title is hidden, and a post
- * with no title band and related posts (test/wp-shell-kleo.test.ts), each
- * dumped with WPSHELL_DUMP=1. A tripwire that refused them would put every
+ * posts, and for a Hello Elementor page that hides its own title on a site
+ * whose other pages print theirs (packages/control-plane/test/wp-shell.test.ts),
+ * and for its Kleo fixtures: a post in its own layout, a page whose title is
+ * hidden, a post with no title band and related posts, and a page that prints
+ * its title where the site hides every other page's (test/wp-shell-kleo.test.ts),
+ * each dumped with WPSHELL_DUMP=1. A tripwire that refused them would put every
  * migrated site back in the template's own design.
  */
 
@@ -2459,5 +2462,84 @@ describe("wp-shell: a post's comments in the theme's comment area", () => {
 		],
 	])("refuses the record whole for %s", (_, record) => {
 		expect(wpShellProblem(record)).not.toBeNull();
+	});
+});
+
+describe("wp-shell: which pages print their title, page by page", () => {
+	const drawn = (s: WpShell, kind: "home" | "page" | "post", slug: string | null) =>
+		composeWpShell(s, { menuItems: () => null, currentPath: "/", kind, slug }).some((p) => "title" in p);
+	const hidden = (): WpShell => ({ ...sample(), titles: { hidden: ["app", "home"] } });
+
+	it("draws no title for a page `hidden` names, the home by its page's slug, and every other page's", () => {
+		const s = hidden();
+		expect(wpShellProblem(s)).toBeNull();
+		expect(drawn(s, "page", "app")).toBe(false);
+		expect(drawn(s, "home", "home")).toBe(false);
+		expect(drawn(s, "page", "home")).toBe(false);
+		for (const [kind, slug] of [["page", "about"], ["page", null], ["home", "welcome"], ["home", null], ["post", "app"]] as const) {
+			expect(drawn(s, kind, slug), `${kind} ${slug}`).toBe(true);
+			expect(drawsTitle(s, kind, slug)).toBe(true);
+		}
+		// the title is left out, and nothing else: the markup around it and the content, as drawn with it
+		const read = (pieces: ReturnType<typeof composeWpShell>) =>
+			pieces.map((p) => ("html" in p ? p.html : "title" in p ? "[title]" : "content" in p ? "[content]" : "")).join("");
+		const all = read(composeWpShell(sample(), { menuItems: () => null, currentPath: "/", kind: "page", slug: "app" }));
+		expect(all).toContain("[title]");
+		expect(read(composeWpShell(s, { menuItems: () => null, currentPath: "/", kind: "page", slug: "app" }))).toBe(all.replace("[title]", ""));
+	});
+
+	it("draws the title only for the pages `shown` names: every other page, and a post in the record's layout, draws none", () => {
+		const s: WpShell = { ...sample(), titles: { shown: ["donate"] } };
+		expect(wpShellProblem(s)).toBeNull();
+		expect(drawn(s, "page", "donate")).toBe(true);
+		for (const [kind, slug] of [["page", "about"], ["page", null], ["home", "home"], ["home", null], ["post", "donate"]] as const)
+			expect(drawn(s, kind, slug), `${kind} ${slug}`).toBe(false);
+	});
+
+	it("leaves a page in a layout of its own, the home's own and the post layout to their own title", () => {
+		for (const titles of [{ hidden: ["contact", "home", "a-post"] }, { shown: [] }]) {
+			const s: WpShell = { ...withPost(), home: homeOf(), pages: [contactOf()], titles };
+			expect(wpShellProblem(s)).toBeNull();
+			expect(drawn(s, "page", "contact")).toBe(true);
+			expect(drawn(s, "home", "home")).toBe(true);
+			expect(drawn(s, "post", "a-post")).toBe(true);
+		}
+	});
+
+	it("draws every page's title for a record without titles, as before", () => {
+		for (const [kind, slug] of [["page", "app"], ["home", "home"], ["post", "app"]] as const) expect(drawn(sample(), kind, slug)).toBe(true);
+	});
+
+	it("refuses titles that name no pages", () => {
+		for (const titles of [
+			null,
+			[],
+			{},
+			{ hidden: "app" },
+			{ hidden: ["app"], shown: [] },
+			{ drawn: ["app"] },
+			{ hidden: ["../app"] },
+			{ shown: ["app", "app"] },
+			{ hidden: [7] },
+			{ hidden: Array.from({ length: 1001 }, (_, i) => `p${i}`) },
+		])
+			expect(wpShellProblem({ ...sample(), titles }), JSON.stringify(titles).slice(0, 40)).toBe("the titles name no pages");
+		expect(wpShellProblem({ ...sample(), titles: { hidden: Array.from({ length: 1000 }, (_, i) => `p${i}`) } })).toBeNull();
+	});
+
+	it("is what Embark's writer names: a page's own choice on a site that prints its titles, and pages that print theirs where the site hides them", () => {
+		const titled = writerRecords.filter((r) => "titles" in r) as unknown as WpShell[];
+		expect(titled.map((r) => Object.keys(r.titles!))).toEqual([["hidden"], ["shown"]]);
+		for (const r of titled) {
+			expect(wpShellProblem(r)).toBeNull();
+			// the record's own layout draws the title, and the page named keeps its own choice
+			expect(r.parts.filter((p) => "slot" in p && p.slot === "title")).toEqual([{ slot: "title", tag: "h1" }]);
+		}
+		const [hid, shown] = titled;
+		expect(drawn(hid!, "page", "app")).toBe(false);
+		expect(drawn(hid!, "home", "home")).toBe(false);
+		expect(drawn(hid!, "page", "about")).toBe(true);
+		expect(drawn(shown!, "page", "donate")).toBe(true);
+		expect(drawn(shown!, "page", "history")).toBe(false);
 	});
 });
