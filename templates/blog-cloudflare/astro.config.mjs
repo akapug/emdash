@@ -8,19 +8,16 @@ import emdash from "emdash/astro";
 
 // Email through Cloudflare Email Sending when the build names a sender:
 // `EMDASH_EMAIL_FROM=notifications@mail.example.org astro build`. The sender's
-// domain must be onboarded for Email Sending, and the Worker needs a
-// `send_email` binding named EMAIL that allows the sender. Every message also
-// takes its place in the account's mail budget (Embark's mail-budget Worker):
-// the Worker needs a service binding to it named MAIL_BUDGET and this site's
-// token in the secret MAIL_BUDGET_TOKEN, and without either it sends nothing.
-// The sender's name is the site's title. Without EMDASH_EMAIL_FROM the site
-// has no email provider, and forms store submissions without mailing anyone.
-//
-// With a sender, the site's own sign-in mail (magic links, invites, recovery)
-// goes through its auth-mail mediator instead: a Worker of its own, bound here
-// as the service SYSTEM_MAIL, which alone holds the mail budget's system lane
-// and the send_email binding that mail goes out through. This Worker never
-// builds or sends it, and without SYSTEM_MAIL sends none of it.
+// domain must be onboarded for Email Sending. The site's Worker sends nothing
+// itself: every message, its forms' and its own sign-in mail (magic links,
+// invites, recovery) alike, goes through the site's mail broker, a Worker of
+// its own (`@emdash-cms/cloudflare/auth-mail/worker`) bound here as the service
+// MAIL_BROKER, which alone holds the send_email bindings and the account's
+// mail-budget tokens. This Worker holds only that binding and its generation's
+// capability, the secret MAIL_BROKER_CAPABILITY; without either it sends
+// nothing. The sender's name is the site's title. Without EMDASH_EMAIL_FROM
+// the site has no email provider, and forms store submissions without mailing
+// anyone.
 const emailFrom = process.env.EMDASH_EMAIL_FROM?.trim();
 
 export default defineConfig({
@@ -37,9 +34,11 @@ export default defineConfig({
 			storage: r2({ binding: "MEDIA" }),
 			plugins: [
 				formsPlugin(),
-				...(emailFrom ? [cloudflareEmail({ from: emailFrom, accountBudget: {} })] : []),
+				...(emailFrom ? [cloudflareEmail({ from: emailFrom, broker: {} })] : []),
 			],
-			...(emailFrom ? { systemMail: { binding: "SYSTEM_MAIL" } } : {}),
+			...(emailFrom
+				? { systemMail: { binding: "MAIL_BROKER", capability: "MAIL_BROKER_CAPABILITY" } }
+				: {}),
 		}),
 	],
 	fonts: [
