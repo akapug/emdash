@@ -873,7 +873,7 @@ const CAP = "cap_0123456789abcdef0123456789abcdef0123456";
  */
 function fakeBroker(
 	answer: (req: { message: Record<string, unknown> }) => unknown = () => ({
-		protocol: 2,
+		protocol: 3,
 		status: "sent",
 		seq: 1,
 	}),
@@ -893,7 +893,7 @@ function fakeBroker(
 		}),
 		status: vi.fn(async (req: Record<string, unknown>) => {
 			statuses.push(req);
-			return { protocol: 2, marker: "emdash-auth-mail:broker;v=2", capability: "unknown" };
+			return { protocol: 3, marker: "emdash-auth-mail:broker;v=3", capability: "unknown" };
 		}),
 	};
 	return { service, sends, statuses, env: { MAIL_BROKER: service, MAIL_BROKER_CAPABILITY: CAP } };
@@ -932,7 +932,7 @@ describe("the site's mail broker", () => {
 			"protocol",
 			"requestId",
 		]);
-		expect(sent).toMatchObject({ protocol: 2, capability: CAP });
+		expect(sent).toMatchObject({ protocol: 3, capability: CAP });
 		expect(sent!.requestId).toMatch(/^[0-9a-f-]{36}$/);
 		expect(sent!.message).toEqual({
 			to: "User@Example.com",
@@ -982,7 +982,7 @@ describe("the site's mail broker", () => {
 	it("a refusal there sends nothing and gives the site's places back, and names no address", async () => {
 		const kv = memoryKv();
 		const broker = fakeBroker(() => ({
-			protocol: 2,
+			protocol: 3,
 			status: "refused",
 			why: "1 of its recipients (at example.com) are not on the broker's recipient list: user@example.com",
 			seq: 4,
@@ -1004,7 +1004,7 @@ describe("the site's mail broker", () => {
 		const flaky = fakeBroker(() => {
 			calls++;
 			if (calls === 1) throw new Error("the connection was lost for User@Example.com");
-			return { protocol: 2, status: "sent", seq: 2, replayed: true };
+			return { protocol: 3, status: "sent", seq: 2, replayed: true };
 		});
 		await withBroker(flaky.env)({ message, source: "system" }, fakeCtx());
 		expect(flaky.sends).toHaveLength(2);
@@ -1016,12 +1016,12 @@ describe("the site's mail broker", () => {
 				},
 				/could not be asked \(Error: service unavailable for <an address at example\.com>\), so whether it was sent is not known/,
 			],
-			[() => ({ protocol: 2 }), /answered neither sent nor refused/],
-			[() => ({ protocol: 2, status: "refused" }), /answered neither sent nor refused/],
+			[() => ({ protocol: 3 }), /answered neither sent nor refused/],
+			[() => ({ protocol: 3, status: "refused" }), /answered neither sent nor refused/],
 			// The broker's own "not known": a retry of a first attempt that never finished there.
 			[
 				() => ({
-					protocol: 2,
+					protocol: 3,
 					status: "unknown",
 					why: "an earlier attempt with this request id did not finish (user@example.com)",
 					seq: 7,
@@ -1031,7 +1031,7 @@ describe("the site's mail broker", () => {
 			],
 			[
 				() => ({ protocol: 1, status: "sent" }),
-				/answered in protocol 1, and this provider speaks 2/,
+				/answered in protocol 1, and this provider speaks 3/,
 			],
 			[() => ({ status: "sent" }), /answered in protocol null/],
 		] as const) {
@@ -1227,8 +1227,8 @@ describe("createCloudflareEmailStatus()", () => {
 
 	/** The broker's status for this site's capability, as a staged generation 3 answers it. */
 	const brokerStatus = (over: Record<string, unknown> = {}) => ({
-		protocol: 2,
-		marker: "emdash-auth-mail:broker;v=2",
+		protocol: 3,
+		marker: "emdash-auth-mail:broker;v=3",
 		seq: 9,
 		tenant: "acme",
 		deployment: "artifact:code",
@@ -1289,13 +1289,13 @@ describe("createCloudflareEmailStatus()", () => {
 				redaction: "addresses",
 			},
 			broker: {
-				protocol: 2,
+				protocol: 3,
 				ready: true,
 				generation: "3",
 				capabilityHash,
 				live: {
 					ok: true,
-					marker: "emdash-auth-mail:broker;v=2",
+					marker: "emdash-auth-mail:broker;v=3",
 					seq: 9,
 					tenant: "acme",
 					deployment: "artifact:code",
@@ -1328,7 +1328,7 @@ describe("createCloudflareEmailStatus()", () => {
 				},
 			},
 		});
-		expect(broker.statuses).toEqual([{ protocol: 2, capability: CAP }]);
+		expect(broker.statuses).toEqual([{ protocol: 3, capability: CAP }]);
 		expect(broker.sends).toEqual([]);
 		expect(JSON.stringify(answer)).not.toContain(CAP);
 		expect(JSON.stringify(answer)).not.toMatch(/must-not-pass|"raw"/);
@@ -1391,8 +1391,8 @@ describe("createCloudflareEmailStatus()", () => {
 			).attestation.broker;
 		};
 		for (const [status, why, opts] of [
-			[async () => brokerStatus({ protocol: 1 }), /answered in protocol 1, not 2/, {}],
-			[async () => brokerStatus({ protocol: undefined }), /answered in protocol null, not 2/, {}],
+			[async () => brokerStatus({ protocol: 1 }), /answered in protocol 1, not 3/, {}],
+			[async () => brokerStatus({ protocol: undefined }), /answered in protocol null, not 3/, {}],
 			[async () => "sent", /answered in protocol null/, {}],
 			[async () => brokerStatus({ marker: undefined }), /carries no marker/, {}],
 			[

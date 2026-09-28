@@ -58,15 +58,18 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		if (mail.mediated) {
 			const outcome =
 				"mediator" in mail
-					? await askMediator(() =>
+					? await askMediator((requestId) =>
 							mail.mediator.requestMagicLink({
 								protocol: SYSTEM_MAIL_PROTOCOL,
+								requestId,
 								email: body.email.toLowerCase(),
 								ip: mediatorIp(ip),
 							}),
 						)
 					: { status: "refused" as const, why: mail.missing };
 			if (outcome.status === "refused") console.warn(`[magic-link] not sent: ${outcome.why}`);
+			if (outcome.status === "unknown")
+				console.warn(`[magic-link] not known to be sent: ${outcome.why}`);
 			return apiSuccess({
 				success: true,
 				message: "If an account exists for this email, a magic link has been sent.",

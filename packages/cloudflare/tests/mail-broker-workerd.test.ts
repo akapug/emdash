@@ -413,6 +413,7 @@ describe("the broker's Worker in workerd", () => {
 		const request = (capability: string) => ({
 			protocol: P,
 			capability,
+			requestId: crypto.randomUUID(),
 			email: "admin@example.org",
 			ip: "203.0.113.1",
 		});

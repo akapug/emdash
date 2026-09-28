@@ -14,10 +14,23 @@
  * Without the binding or the capability, a configured mediation sends
  * nothing: the routes never fall back to this Worker's own email pipeline for
  * sign-in mail.
+ *
+ * Each operation names a request id, and a call that throws (its answer lost)
+ * is asked once more with the same id, which the broker answers as it
+ * answered the first: one operation is never run twice. What it came to is
+ * `sent`, `skipped` or `refused` only when the broker says so; anything else
+ * (no answer, an answer that is not the broker's, the broker's own `unknown`
+ * for a first attempt that stopped inside its send) is `unknown`: the message
+ * may have gone, so a route never says it was not sent, and never makes a
+ * second invite for it.
  */
 
-/** The version of the broker's RPC these routes speak (the broker's AUTH_MAIL_PROTOCOL). 2: every request carries the capability. */
-export const SYSTEM_MAIL_PROTOCOL = 2;
+/**
+ * The version of the broker's RPC these routes speak (the broker's
+ * AUTH_MAIL_PROTOCOL). 3: every operation names a request id, and an answer
+ * may be `unknown`; 2: every request carries the capability.
+ */
+export const SYSTEM_MAIL_PROTOCOL = 3;
 
 /** The secret the site's generation capability is in, when the config names none. */
 export const SYSTEM_MAIL_CAPABILITY = "MAIL_BROKER_CAPABILITY";
@@ -32,12 +45,14 @@ export interface SystemMailCredential {
 export interface SystemMailMediator {
 	requestMagicLink(request: {
 		protocol: number;
+		requestId: string;
 		email: string;
 		ip: string | null;
 		capability?: string;
 	}): Promise<unknown>;
 	requestSignup(request: {
 		protocol: number;
+		requestId: string;
 		email: string;
 		ip: string | null;
 		capability?: string;
@@ -45,13 +60,19 @@ export interface SystemMailMediator {
 	createInvite(
 		request: {
 			protocol: number;
+			requestId: string;
 			email: string;
 			role: number;
 			capability?: string;
 		} & SystemMailCredential,
 	): Promise<unknown>;
 	sendRecovery(
-		request: { protocol: number; userId: string; capability?: string } & SystemMailCredential,
+		request: {
+			protocol: number;
+			requestId: string;
+			userId: string;
+			capability?: string;
+		} & SystemMailCredential,
 	): Promise<unknown>;
 	status(request: { protocol: number; capability?: string }): Promise<unknown>;
 }
@@ -62,8 +83,14 @@ export type SystemMail =
 	| { mediated: true; binding: string; mediator: SystemMailMediator }
 	| { mediated: true; binding: string; missing: string };
 
-/** What an operation came to, read strictly: anything but the mediator's own answer is a refusal. */
-export type SystemMailOutcome = { status: "sent" } | { status: "skipped" | "refused"; why: string };
+/**
+ * What an operation came to, read strictly: `sent`, `skipped` or `refused`
+ * only as the broker's own answer says; anything else is `unknown` (it may
+ * have gone).
+ */
+export type SystemMailOutcome =
+	| { status: "sent" }
+	| { status: "skipped" | "refused" | "unknown"; why: string };
 
 const OPERATIONS = ["requestMagicLink", "requestSignup", "createInvite", "sendRecovery", "status"];
 
@@ -138,29 +165,46 @@ export async function systemMailOf(
 	return { mediated: true, binding, mediator };
 }
 
-/** The mediator's answer to an operation, or what a call that threw came to. */
-export async function askMediator(call: () => Promise<unknown>): Promise<SystemMailOutcome> {
+/**
+ * The broker's answer to one operation, `call` given the operation's request
+ * id: a call that throws is asked once more with the SAME id (the broker
+ * answers a request id it has seen as it answered it, and runs nothing
+ * again); a second throw, or an answer that is not the broker's, is
+ * `unknown`, never `refused`. `id` stands in for the random id in a test.
+ */
+export async function askMediator(
+	call: (requestId: string) => Promise<unknown>,
+	id: () => string = () => crypto.randomUUID(),
+): Promise<SystemMailOutcome> {
+	const requestId = id();
 	let a: unknown;
 	try {
-		a = await call();
+		try {
+			a = await call(requestId);
+		} catch {
+			a = await call(requestId);
+		}
 	} catch (error) {
 		return {
-			status: "refused",
-			why: `the mail broker could not be asked (${error instanceof Error ? error.name : "error"})`,
+			status: "unknown",
+			why: `the mail broker could not be asked (${error instanceof Error ? error.name : "error"}), so whether it was sent is not known`,
 		};
 	}
 	if (field(a, "protocol") !== SYSTEM_MAIL_PROTOCOL) {
-		return { status: "refused", why: "the mail broker answered in another protocol" };
+		return {
+			status: "unknown",
+			why: "the mail broker answered in another protocol, so whether it was sent is not known",
+		};
 	}
 	const status = field(a, "status");
 	const why = field(a, "why");
 	if (status === "sent") return { status: "sent" };
-	if (status === "skipped" || status === "refused") {
+	if (status === "skipped" || status === "refused" || status === "unknown") {
 		return { status, why: typeof why === "string" ? why : status };
 	}
 	return {
-		status: "refused",
-		why: "the mail broker answered neither sent, skipped nor refused",
+		status: "unknown",
+		why: "the mail broker answered neither sent, skipped, refused nor unknown, so whether it was sent is not known",
 	};
 }
 

@@ -24,8 +24,8 @@
  *   createInvite({ protocol, email, role, authorization, cookie })
  *   sendRecovery({ protocol, userId, authorization, cookie })
  *
- * Each also carries the site's capability, which the broker checks, and takes
- * off, before the operation sees the request. What the broker is, and which
+ * Each also carries the site's capability and a request id, which the broker
+ * checks, and takes off, before the operation sees the request. What the broker is, and which
  * generation counts, is the broker's own `status`. Each operation, itself:
  * parses the request; rate-limits it (by the IP it is given, and always by the
  * recipient); checks eligibility (a user who exists and is not disabled; a
@@ -75,9 +75,7 @@ import { MAIL_BROKER_PROTOCOL } from "../plugins/mail-broker-protocol.js";
 
 /**
  * The version of the broker's RPC (./broker.ts), this mediator's operations
- * among it: what a request asks and an answer says. 2: every request carries
- * the site's generation capability, which the broker checks before anything
- * else, and the site's own mail is sent through the broker too.
+ * among it: what a request asks and an answer says (../plugins/mail-broker-protocol.ts).
  */
 export const AUTH_MAIL_PROTOCOL = MAIL_BROKER_PROTOCOL;
 
@@ -85,7 +83,7 @@ export const AUTH_MAIL_PROTOCOL = MAIL_BROKER_PROTOCOL;
  * What the broker is, as a marker its status answers and its built module
  * carries, so a deployment can check both before it relies on it.
  */
-export const AUTH_MAIL_MARKER = "emdash-auth-mail:broker;v=2";
+export const AUTH_MAIL_MARKER = "emdash-auth-mail:broker;v=3";
 
 /** The session cookie EmDash's admin signs in with (Astro's default). */
 const SESSION_COOKIE = "astro-session";
@@ -159,6 +157,12 @@ export interface AuthMailDeps {
 	now?: () => number;
 	/** A log line; never given an address or a token. */
 	log?: (line: string) => void;
+	/**
+	 * Called just before EMAIL_SYSTEM is asked to send, after the budget's
+	 * place is taken: from then on the message may have gone (the broker
+	 * remembers the operation as `unknown` here).
+	 */
+	sending?: () => void;
 }
 
 const answer = {
@@ -402,6 +406,7 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 		}
 		if ("why" in taken) throw new Refusal(taken.why);
 		const name = displayName(site.name);
+		deps.sending?.();
 		try {
 			await send.send({
 				from: name ? { email: site.from, name } : { email: site.from },

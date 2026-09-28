@@ -268,6 +268,8 @@ function rig(
 		system?: ReturnType<typeof sendBinding>;
 		tenant?: string;
 		auth?: boolean;
+		/** The site's database of another rig: the same D1 behind a restarted object. */
+		database?: ReturnType<typeof authDb>;
 		adminSecret?: string | null;
 	} = {},
 ): Rig {
@@ -275,7 +277,8 @@ function rig(
 	const budget = over.budget ?? fakeBudget();
 	const plugin = over.plugin ?? sendBinding();
 	const system = over.system ?? sendBinding();
-	const { sqlite, db } = over.auth ? authDb() : { sqlite: null, db: null };
+	const { sqlite, db } =
+		over.database ?? (over.auth ? authDb() : { sqlite: null, db: null });
 	const sessions = { get: vi.fn(async () => null) };
 	const b = createMailBroker({
 		store,
@@ -293,7 +296,8 @@ function rig(
 		sessions,
 	});
 	const r = { b, store, budget, plugin, system, db, sqlite, sessions };
-	open.push(r);
+	// A database shared with another rig is closed by that rig.
+	if (!over.database) open.push(r);
 	return r;
 }
 
@@ -615,6 +619,76 @@ describe("a send", () => {
 	});
 });
 
+describe("a sign-in operation (CURE 4: its request id)", () => {
+	it("whose first attempt stopped inside EMAIL_SYSTEM's send is answered unknown on its retry, never refused and never run again: no second token or message, and its place and its token stay", async () => {
+		const store = mapStore();
+		const budget = fakeBudget();
+		const first = rig({ store, budget, auth: true });
+		const database = { sqlite: first.sqlite!, db: first.db! };
+		const c = creds();
+		await bringUp(first, 1, c, null);
+		const hold = first.system.pauseSend();
+		const request = {
+			protocol: P,
+			capability: c.capability,
+			requestId: randomUUID(),
+			email: "admin@example.org",
+			ip: null,
+		};
+		void first.b.requestMagicLink(request);
+		await hold.entered;
+		// The object stops inside the send; a new one over the same storage and database gets the site's retry.
+		const second = rig({ store, budget, database });
+		const tokens = () => database.sqlite.prepare("SELECT COUNT(*) AS n FROM auth_tokens").get();
+		expect(await second.b.requestMagicLink(request)).toMatchObject({
+			status: "unknown",
+			why: expect.stringMatching(/did not finish: whether it was sent is not known/),
+			replayed: true,
+		});
+		// Nothing was run again: one take, no give-back, no second message, and the first link's token stays.
+		expect(second.system.sent).toEqual([]);
+		expect(budget.takes).toHaveLength(1);
+		expect(budget.refunds).toEqual([]);
+		expect(budget.counted()).toBe(1);
+		expect(tokens()).toEqual({ n: 1 });
+		hold.release();
+	});
+
+	it("whose answer was lost is answered what it came to on its retry, after an activation too; a new one with the old capability is refused, and another capability gets nothing of that request id", async () => {
+		const r = rig({ auth: true });
+		const g0 = creds();
+		const g1 = creds();
+		await bringUp(r, 1, g0, null);
+		const request = {
+			protocol: P,
+			capability: g0.capability,
+			requestId: randomUUID(),
+			email: "admin@example.org",
+			ip: null,
+		};
+		expect(await r.b.requestMagicLink(request)).toMatchObject({ status: "sent" });
+		await bringUp(r, 2, g1, 1);
+		expect(await r.b.requestMagicLink(request)).toMatchObject({ status: "sent", replayed: true });
+		expect(r.system.sent).toHaveLength(1);
+		expect(
+			await r.b.requestMagicLink({ ...request, requestId: randomUUID() }),
+		).toMatchObject({
+			status: "refused",
+			why: expect.stringMatching(/not this site's active generation's/),
+		});
+		expect(await r.b.requestMagicLink({ ...request, capability: g1.capability })).toMatchObject({
+			status: "refused",
+			why: "that request id was used with another capability",
+		});
+		// Without a request id nothing is run.
+		const { requestId: _id, ...unnamed } = request;
+		expect(
+			await r.b.requestMagicLink({ ...unnamed, capability: g1.capability }),
+		).toMatchObject({ status: "refused", why: expect.stringMatching(/names its request id/) });
+		expect(r.system.sent).toHaveLength(1);
+	});
+});
+
 describe("a capability", () => {
 	it("counts only when it is the ACTIVE generation's: none, a malformed one, a staged one, a retired one or another site's is refused before anything is read, counted or sent", async () => {
 		const r = rig({ auth: true });
@@ -643,7 +717,13 @@ describe("a capability", () => {
 			).toMatchObject({ status: "refused", why: expect.stringMatching(why) });
 			for (const op of ["requestMagicLink", "requestSignup"] as const) {
 				expect(
-					await r.b[op]({ protocol: P, capability, email: "admin@example.org", ip: "203.0.113.1" }),
+					await r.b[op]({
+						protocol: P,
+						capability,
+						requestId: randomUUID(),
+						email: "admin@example.org",
+						ip: "203.0.113.1",
+					}),
 					`${op} ${what}`,
 				).toMatchObject({ status: "refused", why: expect.stringMatching(why) });
 			}
@@ -651,6 +731,7 @@ describe("a capability", () => {
 				await r.b.createInvite({
 					protocol: P,
 					capability,
+					requestId: randomUUID(),
 					email: "new@example.org",
 					role: 30,
 					authorization: null,
@@ -662,6 +743,7 @@ describe("a capability", () => {
 				await r.b.sendRecovery({
 					protocol: P,
 					capability,
+					requestId: randomUUID(),
 					userId: "u-admin",
 					authorization: null,
 					cookie,
@@ -713,6 +795,7 @@ describe("a capability", () => {
 			await r.b.requestMagicLink({
 				protocol: P,
 				capability: g2.capability,
+				requestId: randomUUID(),
 				email: "admin@example.org",
 				ip: null,
 			}),
@@ -787,6 +870,7 @@ describe("THE QUEUE", () => {
 			await r.b.requestMagicLink({
 				protocol: P,
 				capability: g0.capability,
+				requestId: randomUUID(),
 				email: "admin@example.org",
 				ip: null,
 			}),
@@ -927,6 +1011,7 @@ describe("a give-back (CURE 6: inside the fence)", () => {
 			await r.b.requestMagicLink({
 				protocol: P,
 				capability: g0.capability,
+				requestId: randomUUID(),
 				email: "admin@example.org",
 				ip: null,
 			}),
@@ -1348,7 +1433,11 @@ describe("the broker's configuration", () => {
 			{ what: "no sender", over: { AUTH_MAIL_FROM: "not an address" }, why: /AUTH_MAIL_FROM/ },
 			{ what: "no DB", over: {}, why: /the broker has no DB binding/, withDb: null },
 		]) {
-			expect(await upload(over, withDb).requestMagicLink(request), what).toMatchObject({
+			// A fresh request id each time: an id this capability used answers what it came to.
+			expect(
+				await upload(over, withDb).requestMagicLink({ ...request, requestId: randomUUID() }),
+				what,
+			).toMatchObject({
 				status: "refused",
 				why: expect.stringMatching(why),
 			});
@@ -1357,7 +1446,9 @@ describe("the broker's configuration", () => {
 		expect(budget.takes).toHaveLength(takes);
 		expect(system.sent).toEqual([]);
 		// THE CONTROL: the same storage and request, uploaded with everything, sends it.
-		expect(await upload({}).requestMagicLink(request)).toMatchObject({ status: "sent" });
+		expect(
+			await upload({}).requestMagicLink({ ...request, requestId: randomUUID() }),
+		).toMatchObject({ status: "sent" });
 		expect(system.sent).toHaveLength(1);
 		expect(budget.takes.at(-1)).toMatchObject({ token: c.system, protocol: 3 });
 		await db.destroy();

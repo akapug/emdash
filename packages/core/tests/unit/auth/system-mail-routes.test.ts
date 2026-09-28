@@ -147,6 +147,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 				op: "requestMagicLink",
 				request: {
 					protocol: SYSTEM_MAIL_PROTOCOL,
+					requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
 					email: "writer@example.com",
 					ip: "198.51.100.7",
 					capability: CAP,
@@ -241,6 +242,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 				op: "createInvite",
 				request: {
 					protocol: SYSTEM_MAIL_PROTOCOL,
+					requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
 					email: "invitee@example.com",
 					role: Role.EDITOR,
 					authorization: "Bearer ec_pat_synthetic",
@@ -264,6 +266,59 @@ describe("sign-in mail through the auth-mail mediator", () => {
 		expect(body.data).toMatchObject({ success: true, emailed: false });
 		expect(body.data.inviteUrl).toContain("/invite/accept?token=");
 		expect(p.sent).toEqual([]);
+	});
+
+	it("invite, CURE 4: when whether it was emailed is not known (the broker's unknown, a call lost twice, an answer that is not the broker's), no invite is made here, no link comes back, and it is never said to be unsent; the retry names the same request id", async () => {
+		const lost = () => {
+			const calls: Array<Record<string, unknown>> = [];
+			const binding = {
+				...mediator().binding,
+				createInvite: async (request: Record<string, unknown>) => {
+					calls.push(request);
+					throw new Error("the connection was lost");
+				},
+			};
+			return { calls, binding };
+		};
+		const twice = lost();
+		for (const [what, binding] of [
+			[
+				"the broker's unknown",
+				mediator({ protocol: SYSTEM_MAIL_PROTOCOL, status: "unknown", why: "did not finish" })
+					.binding,
+			],
+			["a call lost twice", twice.binding],
+			["another protocol", mediator({ protocol: 2, status: "refused", why: "x" }).binding],
+		] as const) {
+			const p = pipeline();
+			const { invite } = await routesWith(bound(binding));
+			const { status, body } = await call(invite, {
+				request: post("auth/invite", { email: "invitee@example.com" }),
+				locals: { user: admin, emdash: { db, config: CONFIG, email: p.email } },
+			});
+			expect(status, what).toBe(502);
+			expect(body.error.code, what).toBe("INVITE_EMAIL_UNKNOWN");
+			expect(body.error.message, what).toMatch(/may have been emailed/);
+			expect(JSON.stringify(body), what).not.toContain("inviteUrl");
+			expect(await tokens(), what).toBe(0);
+			expect(p.sent, what).toEqual([]);
+		}
+		// The retry of the lost call is the same operation: the same request id.
+		expect(twice.calls).toHaveLength(2);
+		expect(twice.calls[0]!.requestId).toBe(twice.calls[1]!.requestId);
+	});
+
+	it("recovery, CURE 4: a link not known to be sent is RECOVERY_SEND_UNKNOWN, never RECOVERY_NOT_SENT", async () => {
+		const m = mediator({ protocol: SYSTEM_MAIL_PROTOCOL, status: "unknown", why: "did not finish" });
+		const { recovery } = await routesWith(bound(m.binding));
+		const r = await call(recovery, {
+			request: post(`admin/users/${target.id}/send-recovery`, {}),
+			params: { id: target.id },
+			locals: { user: admin, emdash: { db, config: CONFIG, email: pipeline().email } },
+		});
+		expect(r.status).toBe(502);
+		expect(r.body.error.code).toBe("RECOVERY_SEND_UNKNOWN");
+		expect(r.body.error.message).toMatch(/may have been sent/);
 	});
 
 	it("invite: without the binding the link comes back and nothing is sent", async () => {
@@ -297,6 +352,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 				op: "sendRecovery",
 				request: {
 					protocol: SYSTEM_MAIL_PROTOCOL,
+					requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
 					userId: target.id,
 					authorization: null,
 					cookie: "astro-session=synthetic",
@@ -333,7 +389,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 	it("settings: says whether sign-in mail is mediated, and reads the broker's status for the site's capability strictly", async () => {
 		const m = mediator({
 			protocol: SYSTEM_MAIL_PROTOCOL,
-			marker: "emdash-auth-mail:broker;v=2",
+			marker: "emdash-auth-mail:broker;v=3",
 			seq: 7,
 			tenant: "demo",
 			deployment: "artifact:code",
@@ -367,7 +423,7 @@ describe("sign-in mail through the auth-mail mediator", () => {
 			present: true,
 			status: {
 				ok: true,
-				marker: "emdash-auth-mail:broker;v=2",
+				marker: "emdash-auth-mail:broker;v=3",
 				tenant: "demo",
 				deployment: "artifact:code",
 				capability: "staged",
@@ -436,6 +492,7 @@ describe("systemMailOf / askMediator", () => {
 		if (!("mediator" in named)) throw new Error("not mediated");
 		await named.mediator.requestMagicLink({
 			protocol: SYSTEM_MAIL_PROTOCOL,
+			requestId: "0f8fad5b-d9cb-469f-a165-70867728950e",
 			email: "a@example.com",
 			ip: null,
 		});
@@ -443,22 +500,37 @@ describe("systemMailOf / askMediator", () => {
 		expect(m.calls.map((c) => c.request.capability)).toEqual([CAP, CAP]);
 	});
 
-	it("reads only the mediator's own answer as sent", async () => {
+	it("reads only the mediator's own answer as sent, skipped or refused; anything else, a call lost twice included, is unknown, never refused", async () => {
 		const ask = (a: unknown) => askMediator(async () => a);
 		expect(await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "sent" })).toEqual({
 			status: "sent",
 		});
-		expect(await ask({ protocol: 1, status: "sent" })).toMatchObject({ status: "refused" });
-		expect(await ask({ status: "sent" })).toMatchObject({ status: "refused" });
+		expect(await ask({ protocol: 1, status: "sent" })).toMatchObject({ status: "unknown" });
+		expect(await ask({ status: "sent" })).toMatchObject({ status: "unknown" });
 		expect(await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "ok" })).toMatchObject({
-			status: "refused",
+			status: "unknown",
 		});
-		expect(await ask("sent")).toMatchObject({ status: "refused" });
+		expect(await ask("sent")).toMatchObject({ status: "unknown" });
 		expect(
-			await askMediator(async () => {
+			await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "unknown", why: "did not finish" }),
+		).toEqual({ status: "unknown", why: "did not finish" });
+		const ids: string[] = [];
+		expect(
+			await askMediator(async (requestId) => {
+				ids.push(requestId);
 				throw new Error("RPC failed");
 			}),
-		).toMatchObject({ status: "refused" });
+		).toMatchObject({ status: "unknown" });
+		expect(ids).toHaveLength(2);
+		expect(ids[0]).toBe(ids[1]);
+		// One lost answer, then the broker's answer to the same request id.
+		let n = 0;
+		expect(
+			await askMediator(async () => {
+				if (n++ === 0) throw new Error("RPC failed");
+				return { protocol: SYSTEM_MAIL_PROTOCOL, status: "refused", why: "rate limited" };
+			}),
+		).toEqual({ status: "refused", why: "rate limited" });
 		expect(
 			await ask({ protocol: SYSTEM_MAIL_PROTOCOL, status: "skipped", why: "no user" }),
 		).toEqual({

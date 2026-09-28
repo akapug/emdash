@@ -72,15 +72,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		if (mail.mediated) {
 			const outcome =
 				"mediator" in mail
-					? await askMediator(() =>
+					? await askMediator((requestId) =>
 							mail.mediator.requestSignup({
 								protocol: SYSTEM_MAIL_PROTOCOL,
+								requestId,
 								email: body.email.toLowerCase().trim(),
 								ip: mediatorIp(ip),
 							}),
 						)
 					: { status: "refused" as const, why: mail.missing };
 			if (outcome.status === "refused") console.warn(`[signup] not sent: ${outcome.why}`);
+			if (outcome.status === "unknown") console.warn(`[signup] not known to be sent: ${outcome.why}`);
 			return apiSuccess(GENERIC_SUCCESS);
 		}
 

@@ -59,8 +59,10 @@
  * when that first attempt never finished, since it may have gone), whichever
  * generation is active by then: only new work is held to the active one. A
  * request id another capability used answers nothing. Sign-in mail is the four
- * operations of ./mediator.ts, run in the same queue with the system lane's
- * token and EMAIL_SYSTEM.
+ * operations of ./mediator.ts, run in the same queue with the system lane and
+ * EMAIL_SYSTEM; each names a request id too, and is remembered the same way:
+ * `unknown` from just before EMAIL_SYSTEM is asked to send, then what it came
+ * to.
  *
  * Nothing here imports `cloudflare:workers`: ./worker.ts wraps it in the
  * Durable Object and the entrypoint.
@@ -245,6 +247,18 @@ const refused = (why: string, seq: number): BrokerAnswer => ({
 	protocol: AUTH_MAIL_PROTOCOL,
 	status: "refused",
 	why,
+	seq,
+});
+
+/**
+ * What a request id is remembered as while its message is inside the Email
+ * binding's send: a retry of it, after the object stopped there, is neither
+ * sent again nor said to be unsent.
+ */
+const unfinished = (seq: number): BrokerAnswer => ({
+	protocol: AUTH_MAIL_PROTOCOL,
+	status: "unknown",
+	why: "an earlier attempt with this request id did not finish: whether it was sent is not known, so it is not sent again",
 	seq,
 });
 
@@ -690,12 +704,7 @@ export function createMailBroker(deps: BrokerDeps) {
 			// Written before the send: a retry of a send that never finished (the object
 			// restarted inside it) is not known to be unsent, so it is not sent again,
 			// and its answer says so (`unknown`), never that nothing was sent.
-			remember(requestId, capabilityHash, {
-				protocol: AUTH_MAIL_PROTOCOL,
-				status: "unknown",
-				why: "an earlier attempt with this request id did not finish: whether it was sent is not known, so it is not sent again",
-				seq,
-			});
+			remember(requestId, capabilityHash, unfinished(seq));
 			try {
 				await config.plugin.send(env.out);
 			} catch (error) {
@@ -718,7 +727,18 @@ export function createMailBroker(deps: BrokerDeps) {
 
 	type Operation = "requestMagicLink" | "requestSignup" | "createInvite" | "sendRecovery";
 
-	/** One auth operation, in its turn: capability first, then ./mediator.ts with the system lane's token and EMAIL_SYSTEM. */
+	/**
+	 * One auth operation, in its turn: its capability and request id; what
+	 * that request id came to before, for this capability (whichever
+	 * generation is active now); only then, for new work, the ACTIVE
+	 * generation's capability, and ./mediator.ts with that generation's system
+	 * lane and EMAIL_SYSTEM. What it came to is remembered under its request
+	 * id, and `unknown` is remembered just before EMAIL_SYSTEM is asked to
+	 * send: a retry of an operation whose first attempt stopped inside that
+	 * send (the object restarted) is neither run again (no second token is
+	 * minted, no second message sent) nor said to be unsent, and its place in
+	 * the budget and its token stay as they are.
+	 */
 	function operate(op: Operation, request: unknown): Promise<BrokerAnswer> {
 		return serial(async (seq) => {
 			const r = isRecord(request) ? request : {};
@@ -729,10 +749,21 @@ export function createMailBroker(deps: BrokerDeps) {
 				);
 			const cap = await capabilityOf(r);
 			if ("why" in cap) return refused(cap.why, seq);
-			const got = admit(cap.hash);
+			const capabilityHash = cap.hash;
+			const requestId = r.requestId;
+			if (typeof requestId !== "string" || !REQUEST_ID.test(requestId))
+				return refused(
+					"an operation names its request id (16 to 64 letters, digits, - or _, the same again for a retry of it)",
+					seq,
+				);
+			const seen = recalled(requestId, capabilityHash);
+			if (seen && "taken" in seen)
+				return refused("that request id was used with another capability", seq);
+			if (seen) return seen;
+			const got = admit(capabilityHash);
 			if ("why" in got) return refused(got.why, seq);
 			if (!deps.db) return refused("the broker has no DB binding", seq);
-			const { capability: _capability, ...rest } = r;
+			const { capability: _capability, requestId: _requestId, ...rest } = r;
 			const gen = got.gen;
 			const mediator = createAuthMailMediator({
 				db: deps.db,
@@ -745,9 +776,13 @@ export function createMailBroker(deps: BrokerDeps) {
 				site: config.site,
 				now,
 				log,
+				// From here on its message may have gone: a retry answers `unknown`, never runs it again.
+				sending: () => remember(requestId, capabilityHash, unfinished(seq)),
 			});
 			const a: AuthMailAnswer = await mediator[op](rest);
-			return { ...a, seq };
+			const answer: BrokerAnswer = { ...a, seq };
+			remember(requestId, capabilityHash, answer);
+			return answer;
 		});
 	}
 

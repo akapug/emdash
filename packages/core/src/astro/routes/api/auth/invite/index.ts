@@ -65,14 +65,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		// issues the invite and sends it. Nothing about that message is built or
 		// sent here. When it is not sent (no binding, a refusal), the invite is
 		// made here with no email and its link returned, as for a site with no
-		// email provider: this Worker never mails it.
+		// email provider: this Worker never mails it. When whether it was sent
+		// is not known, the broker may have made and mailed one: none is made
+		// here, and the answer never says it was not sent.
 		const mail = await systemMailOf(emdash.config);
 		if (mail.mediated) {
 			const outcome =
 				"mediator" in mail
-					? await askMediator(() =>
+					? await askMediator((requestId) =>
 							mail.mediator.createInvite({
 								protocol: SYSTEM_MAIL_PROTOCOL,
+								requestId,
 								email: body.email,
 								role,
 								...credentialOf(request),
@@ -85,6 +88,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 					emailed: true,
 					message: `Invite sent to ${body.email}`,
 				});
+			}
+			if (outcome.status === "unknown") {
+				console.warn(`[invite] not known to be emailed: ${outcome.why}`);
+				return apiError(
+					"INVITE_EMAIL_UNKNOWN",
+					"The invite may have been emailed: whether it was is not known, so no second invite was made. Ask the invitee to check their inbox before you invite them again.",
+					502,
+				);
 			}
 			console.warn(`[invite] not emailed: ${outcome.why}`);
 			const unsent = await createInvite({ baseUrl, siteName }, adapter, body.email, role, user.id);
