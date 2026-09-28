@@ -296,13 +296,29 @@ export interface CacheHint {
 	lastModified?: Date;
 }
 
-interface PublishedDatesResult {
+/** Result from getPublishedDates */
+export interface PublishedDatesResult {
+	/** The publication dates of the collection's published entries, newest first. */
 	dates: Date[];
+	/** Cache hint for route caching (pass to Astro.cache.set()) */
 	cacheHint: CacheHint;
+	/** Error if the query failed */
 	error?: Error;
 }
 
-/** @internal Publication dates for the Archives widget. */
+/**
+ * The publication dates of a collection's published entries, newest first,
+ * and nothing else: what an archives list or a date archive's links need,
+ * without loading any entry. EmDash's Archives widget groups them by month.
+ *
+ * @example
+ * ```ts
+ * import { getPublishedDates } from "emdash";
+ *
+ * const { dates, cacheHint } = await getPublishedDates("posts");
+ * if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
+ * ```
+ */
 export async function getPublishedDates(
 	type: string,
 	options?: { locale?: string },

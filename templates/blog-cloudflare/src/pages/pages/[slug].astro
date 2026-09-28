@@ -26,7 +26,8 @@ if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
 
 // A site migrated from WordPress keeps its own design (layouts/WpShell.astro).
 if ((await loadWpShell()).shell) {
-	return Astro.rewrite(`/wp-shell/pages/${encodeURIComponent(slug)}`);
+	// The query goes along: a rewrite to a path drops it, and the layout reads it (`?subscribe=`).
+	return Astro.rewrite(`/wp-shell/pages/${encodeURIComponent(slug)}${Astro.url.search}`);
 }
 
 const settings = await getSiteSettings();

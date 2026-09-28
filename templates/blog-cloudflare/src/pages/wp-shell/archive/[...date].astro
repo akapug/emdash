@@ -1,0 +1,82 @@
+---
+/**
+ * A date archive of a site migrated from WordPress, in its own design: the
+ * record's layout (the site's header, footer and sidebar), the theme's
+ * heading for the archive where the record carries it ("Monthly Archive:
+ * July 2023", else WordPress's "Month: July 2023") in the title's place, and
+ * the posts published in it, newest first, in the content's.
+ *
+ * Reached ONLY through Astro.rewrite() from pages/[...date].astro and from
+ * `/?m=` (pages/index.astro): the visitor's URL stays the one they asked for.
+ * A request for /wp-shell/archive/... itself is a 404, as for /wp-shell/.
+ * Its own route, and not /wp-shell/[...path], because it draws no entry.
+ */
+import { createNoop, getEmDashCollection, getSiteSettings } from "emdash";
+import WpShell from "../../../layouts/WpShell.astro";
+import { archiveName, archiveTitle, dateRange, datePath } from "../../../utils/wp-archive";
+import {
+	imageRatio,
+	ownImagePath,
+	plainText,
+	renderArchiveNav,
+	renderArchivePosts,
+	wpShellDateSite,
+	wpShellRoute,
+	type WpShellPost,
+} from "../../../utils/wp-shell";
+import { loadWpShell } from "../../../utils/wp-shell-loader";
+
+const origin = Astro.originPathname;
+const route = wpShellRoute(`archive/${Astro.params.date ?? ""}`);
+if (!route || route.kind !== "archive" || origin.startsWith("/wp-shell")) {
+	return new Response(null, { status: 404 });
+}
+const { archive } = route;
+
+const [{ shell, cacheHint: shellHint }, settings] = await Promise.all([
+	loadWpShell(),
+	getSiteSettings(),
+]);
+// The record went away between the page route's read and this one: the page
+// route draws the archive in this template's own design.
+if (!shell) return Astro.rewrite(origin);
+if (Astro.cache?.enabled) Astro.cache.set(shellHint);
+
+const site = wpShellDateSite(shell, settings.timezone);
+const perPage = Math.min(100, Math.max(1, settings.postsPerPage || 10));
+const result = await getEmDashCollection("posts", {
+	where: { published_at: dateRange(archive, site.zone) },
+	orderBy: { published_at: "desc" },
+	limit: perPage,
+	offset: (archive.page - 1) * perPage,
+});
+// WordPress answers a date with no posts, or a page past its last, with its 404.
+if (result.entries.length === 0) return Astro.rewrite("/404");
+if (Astro.cache?.enabled) Astro.cache.set(result.cacheHint);
+
+const posts: WpShellPost[] = result.entries.map((e) => ({
+	title: e.data.title,
+	url: `/posts/${e.id}`,
+	excerpt: e.data.excerpt,
+	text: plainText(e.data.content),
+	date: e.data.publishedAt,
+	image: ownImagePath(e.data.featured_image),
+	imageRatio: imageRatio(e.data.featured_image),
+}));
+const heading = archiveTitle(archive, site.titles);
+const html =
+	renderArchivePosts(posts, site, shell.listings?.[0]?.date) +
+	renderArchiveNav(archive, result.hasMore === true, site);
+---
+
+<WpShell
+	shell={shell}
+	kind="archive"
+	path={origin}
+	title={archiveName(archive)}
+	pageTitle={heading}
+	canonical={new URL(datePath(archive, site.paths), Astro.url.origin).href}
+	entry={{ title: heading, edit: createNoop() }}
+	contentHtml={html}
+	comments={false}
+/>

@@ -153,6 +153,7 @@ export {
 	getEmDashEntry,
 	getEmDashReferences,
 	getEditMeta,
+	getPublishedDates,
 	getTranslations,
 	resolveEmDashPath,
 } from "./query.js";
@@ -167,6 +168,7 @@ export type {
 	EmDashCollectionReferences,
 	InferCollectionData,
 	InferCollectionReferences,
+	PublishedDatesResult,
 	ReferencePage,
 	ReferencePages,
 	ReferenceQuery,

@@ -17,16 +17,24 @@
  * drawn from the record's home layout when it has one (the front page's own),
  * and a post from its post layout: its meta, featured image and share links
  * from the post's own values, and EmDash's comments inside the theme's
- * comment element.
+ * comment element. A date archive is drawn in the record's own layout, its
+ * posts (`contentHtml`) in the content's place.
+ *
+ * Two of the chrome's controls are EmDash's own: WordPress's Archives widget
+ * lists the months of EmDash's published posts (getPublishedDates), each a
+ * link to its archive, and a sign-up for new posts by email posts to the
+ * site's subscriptions plugin, its count line the plugin's confirmed count.
  */
 import type { HTMLTag } from "astro/types";
 import {
 	getEmDashCollection,
 	getMenuWithCacheHint,
+	getPublishedDates,
 	getSiteSettingsWithCacheHint,
 	type EditProxy,
 	type PortableTextBlock,
 } from "emdash";
+import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import { EmDashHead, EmDashBodyStart, EmDashBodyEnd, PortableText } from "emdash/ui";
 import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
@@ -47,6 +55,8 @@ import {
 	type WpShellMenuItem,
 	type WpShellPost,
 	type WpShellPostFill,
+	type WpShellSubscribeFill,
+	wpShellDateSite,
 	wpShellDocumentTitle,
 } from "../utils/wp-shell";
 
@@ -71,6 +81,8 @@ interface Props {
 	author?: string | null;
 	content?: { collection: string; id: string; slug?: string | null };
 	entry: { title: string; body?: PortableTextBlock[]; edit: EditProxy };
+	/** Markup drawn in the content's place instead of the entry's body: a date archive's posts. */
+	contentHtml?: string;
 	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
 	post?: WpShellPostFill | null;
 	/** Whether the page takes comments: without, the theme's comment element is not drawn. */
@@ -95,6 +107,7 @@ const {
 	author,
 	content,
 	entry,
+	contentHtml,
 	post,
 	comments = true,
 } = Astro.props;
@@ -130,6 +143,43 @@ const postsResult =
 		? await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: listed })
 		: null;
 if (postsResult && Astro.cache?.enabled) Astro.cache.set(postsResult.cacheHint);
+// The months the Archives widget lists, where the layout has one: the dates of the published posts alone.
+const hasSlot = (slot: string) => layout.parts.some((p) => "slot" in p && p.slot === slot);
+const datesResult = hasSlot("archives") ? await getPublishedDates("posts") : null;
+if (datesResult && Astro.cache?.enabled) Astro.cache.set(datesResult.cacheHint);
+if (datesResult?.error)
+	console.warn(JSON.stringify({ event: "wp_shell_archives_dates", why: datesResult.error.message }));
+
+// A sign-up posts to the subscriptions plugin; its count line is the plugin's count of confirmed
+// subscribers. A site whose plugin does not answer takes no sign-ups, and draws none.
+const SUBSCRIPTIONS = "emdash-subscriptions";
+async function subscribeFill(): Promise<WpShellSubscribeFill | null> {
+	const handle = getPublicPluginApiRouteHandler(Astro.locals);
+	if (!handle) return null;
+	try {
+		const status = await handle(
+			SUBSCRIPTIONS,
+			"GET",
+			"status",
+			new Request(new URL(`/_emdash/api/plugins/${SUBSCRIPTIONS}/status`, Astro.url)),
+		);
+		const data = status.success ? (status.data as { confirmed?: unknown } | undefined) : undefined;
+		if (!data) return null;
+		return {
+			action: `/_emdash/api/plugins/${SUBSCRIPTIONS}/subscribe`,
+			source: path,
+			status: Astro.url.searchParams.get("subscribe"),
+			count: typeof data.confirmed === "number" ? data.confirmed : null,
+		};
+	} catch (error) {
+		console.warn(
+			JSON.stringify({ event: "wp_shell_subscribe", why: error instanceof Error ? error.message : String(error) }),
+		);
+		return null;
+	}
+}
+const subscribe = hasSlot("subscribe") ? await subscribeFill() : null;
+
 const posts: WpShellPost[] = (postsResult?.entries ?? []).map((e) => ({
 	title: e.data.title,
 	url: `/posts/${e.id}`,
@@ -151,6 +201,9 @@ const pieces = composeWpShell(shell, {
 	title: entry.title,
 	posts,
 	post,
+	dates: datesResult?.dates ?? null,
+	dateSite: wpShellDateSite(shell, settings.timezone),
+	subscribe,
 });
 // EmDash's comments (the route's slot) go inside the theme's comment element where the layout has
 // one (a post), and after the content otherwise.
@@ -222,7 +275,11 @@ const pageCtx = createPublicPageContext({
 				return (
 					<Fragment>
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
-							<PortableText value={entry.body} components={components} />
+							{contentHtml !== undefined ? (
+								<Fragment set:html={contentHtml} />
+							) : (
+								<PortableText value={entry.body} components={components} />
+							)}
 							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>
 						{!commentsInLayout && <slot />}

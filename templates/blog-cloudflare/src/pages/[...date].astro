@@ -1,0 +1,145 @@
+---
+/**
+ * The site's date archives, at the paths WordPress served them
+ * (utils/wp-archive.ts): `/2023/07/` lists July 2023's published posts,
+ * `/2023/` the year's, `/2023/07/05/` the day's, in pages of the site's
+ * posts-per-page setting (`/2023/07/page/2/`). A site migrated from WordPress
+ * draws them in its own design (layouts/WpShell.astro, through the
+ * /wp-shell/archive/ route) and under the front its permalinks had
+ * (`/blog/2023/07/`); any other site in this template's design.
+ *
+ * A rest route is the router's last choice, so this answers only a path no
+ * other route does. A path that names no date, and a date with no posts on
+ * that page, answer the 404 page, as WordPress answers an empty date archive.
+ * EmDash's redirects run before any route, so an old post's permalink
+ * (`/2023/07/hello/`) still goes to the post.
+ */
+import { getEmDashCollection, getSiteSettings, getTermsForEntries } from "emdash";
+import Base from "../layouts/Base.astro";
+import PostCard from "../components/PostCard.astro";
+import { getReadingTime } from "../utils/reading-time";
+import { archiveName, dateRange, datePath, parseDatePath } from "../utils/wp-archive";
+import { wpShellDateSite } from "../utils/wp-shell";
+import { loadWpShell } from "../utils/wp-shell-loader";
+
+const [{ shell }, settings] = await Promise.all([loadWpShell(), getSiteSettings()]);
+const site = wpShellDateSite(shell, settings.timezone);
+// The route's own path: a rewrite from `/?m=` (pages/index.astro) arrives here with the path it names.
+const archive = parseDatePath(`/${Astro.params.date ?? ""}/`, site.paths.front);
+if (!archive) {
+	return Astro.rewrite("/404");
+}
+if (shell) {
+	// The query goes along: a rewrite to a path drops it, and the layout reads it (`?subscribe=`).
+	return Astro.rewrite(`${datePath(archive, { front: "/wp-shell/archive/" })}${Astro.url.search}`);
+}
+
+const perPage = Math.min(100, Math.max(1, settings.postsPerPage || 10));
+const result = await getEmDashCollection("posts", {
+	where: { published_at: dateRange(archive, site.zone) },
+	orderBy: { published_at: "desc" },
+	limit: perPage,
+	offset: (archive.page - 1) * perPage,
+});
+if (result.entries.length === 0) {
+	return Astro.rewrite("/404");
+}
+if (Astro.cache?.enabled) Astro.cache.set(result.cacheHint);
+
+const tagsByEntry = await getTermsForEntries(
+	"posts",
+	result.entries.map((p) => p.data.id),
+	"tag",
+);
+const kind = archive.m === undefined ? "Year" : archive.d === undefined ? "Month" : "Day";
+const name = archiveName(archive);
+---
+
+<Base title={`${name} posts`} description={`Posts published in ${name}`}>
+	<section class="archive-section">
+		<header class="archive-header">
+			<span class="archive-label">{kind}</span>
+			<h1 class="archive-title">{name}</h1>
+		</header>
+		<div class="posts-grid">
+			{
+				result.entries.map((post) => (
+					<PostCard
+						title={post.data.title}
+						excerpt={post.data.excerpt}
+						featuredImage={post.data.featured_image}
+						href={`/posts/${post.id}`}
+						date={post.data.publishedAt ?? undefined}
+						readingTime={getReadingTime(post.data.content)}
+						tags={(tagsByEntry.get(post.data.id) ?? []).map((t) => ({
+							slug: t.slug,
+							label: t.label,
+						}))}
+						edit={post.edit}
+					/>
+				))
+			}
+		</div>
+		<nav class="pagination" aria-label="Pagination">
+			{
+				archive.page > 1 && (
+					<a href={datePath({ ...archive, page: archive.page - 1 }, site.paths)}>Newer posts</a>
+				)
+			}
+			{
+				result.hasMore && (
+					<a href={datePath({ ...archive, page: archive.page + 1 }, site.paths)}>Older posts</a>
+				)
+			}
+		</nav>
+	</section>
+</Base>
+
+<style>
+	.archive-section {
+		max-width: var(--wide-width);
+		margin: 0 auto;
+		padding: var(--spacing-12) var(--spacing-6);
+	}
+
+	.archive-header {
+		margin-bottom: var(--spacing-12);
+		padding-bottom: var(--spacing-8);
+		border-bottom: 1px solid var(--color-border-subtle);
+	}
+
+	.archive-label {
+		display: block;
+		font-size: var(--font-size-xs);
+		font-weight: 500;
+		color: var(--color-brand);
+		text-transform: uppercase;
+		letter-spacing: var(--tracking-wider);
+		margin-bottom: var(--spacing-2);
+	}
+
+	.archive-title {
+		font-size: var(--font-size-4xl);
+		font-weight: var(--font-weight-display);
+		letter-spacing: var(--tracking-tight);
+		margin-bottom: var(--spacing-2);
+	}
+
+	.posts-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: var(--spacing-12) var(--spacing-8);
+	}
+
+	@media (max-width: 900px) {
+		.posts-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@media (max-width: 600px) {
+		.posts-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>
