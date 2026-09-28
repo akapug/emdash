@@ -76,6 +76,15 @@ export interface SubscriptionsEnv {
 	now(): Date;
 }
 
+/** The site's host, from its address; empty when it has none. */
+function hostOf(url: string): string {
+	try {
+		return new URL(url).host;
+	} catch {
+		return "";
+	}
+}
+
 /** Where the plugin's public routes are. */
 export const PLUGIN_ID = "emdash-subscriptions";
 export const ROUTES = `/_emdash/api/plugins/${PLUGIN_ID}`;
@@ -86,18 +95,20 @@ export const ROUTES = `/_emdash/api/plugins/${PLUGIN_ID}`;
  * the site cannot send email yet and none did, `queued` sending failed and it
  * waits in the outbox.
  */
-export type SubscribeStatus =
-	| "sent"
-	| "saved"
-	| "queued"
-	| "pending"
-	| "pending_saved"
-	| "already"
-	| "invalid_email"
-	| "error"
-	| "confirmed"
-	| "unsubscribed"
-	| "invalid_link";
+export const SUBSCRIBE_STATUSES = [
+	"sent",
+	"saved",
+	"queued",
+	"pending",
+	"pending_saved",
+	"already",
+	"invalid_email",
+	"error",
+	"confirmed",
+	"unsubscribed",
+	"invalid_link",
+] as const;
+export type SubscribeStatus = (typeof SUBSCRIBE_STATUSES)[number];
 
 // ─── Addresses, pages and signed links ───────────────────────────
 
@@ -214,7 +225,7 @@ async function compose(
 	m: OutboxMessage,
 	id: string,
 ): Promise<{ subject: string; text: string; html: string }> {
-	const site = env.site.name || new URL(env.site.url).host;
+	const site = env.site.name || hostOf(env.site.url);
 	const leave = await link(env, "unsubscribe", id);
 	if (m.kind === "confirm") {
 		const confirmUrl = await link(env, "confirm", id);
@@ -326,7 +337,7 @@ export async function subscribe(
 		email,
 		status: "pending",
 		createdAt: now,
-		consent: { source: "form", site: new URL(env.site.url).host, page: input.page, at: now },
+		consent: { source: "form", site: hostOf(env.site.url), page: input.page, at: now },
 		...(input.fragment ? { fragment: input.fragment } : {}),
 	});
 	if (!made.applied) {
@@ -339,15 +350,31 @@ export async function subscribe(
 	return (await sendOne(env, key)) ? "sent" : "queued";
 }
 
+/**
+ * Where a link sends the visitor back to: the page they subscribed on, which
+ * has the sign-up that says what the link did, and its form.
+ */
+export interface LinkOutcome {
+	status: SubscribeStatus;
+	page: string;
+	fragment?: string;
+}
+
+const outcome = (status: SubscribeStatus, sub?: Subscriber | null): LinkOutcome => ({
+	status,
+	page: sub?.consent.page ? pageOf(sub.consent.page) : "/",
+	...(sub?.fragment ? { fragment: sub.fragment } : {}),
+});
+
 /** The confirmation link: the subscriber is confirmed, once. */
 export async function confirm(
 	env: SubscriptionsEnv,
 	query: { s?: unknown; t?: unknown },
-): Promise<{ status: SubscribeStatus; fragment?: string }> {
-	if (!(await tokenHolds(env, "confirm", query.s, query.t))) return { status: "invalid_link" };
+): Promise<LinkOutcome> {
+	if (!(await tokenHolds(env, "confirm", query.s, query.t))) return outcome("invalid_link");
 	const id = query.s as string;
 	const sub = await env.subscribers.get(id);
-	if (!sub) return { status: "invalid_link" };
+	if (!sub) return outcome("invalid_link");
 	if (sub.status !== "confirmed")
 		await env.subscribers.put(id, {
 			...sub,
@@ -355,15 +382,15 @@ export async function confirm(
 			confirmedAt: env.now().toISOString(),
 		});
 	await env.outbox.delete(`confirm:${id}`);
-	return { status: "confirmed", ...(sub.fragment ? { fragment: sub.fragment } : {}) };
+	return outcome("confirmed", sub);
 }
 
 /** The unsubscribe link: the address is deleted, with every message waiting for it. */
 export async function unsubscribe(
 	env: SubscriptionsEnv,
 	query: { s?: unknown; t?: unknown },
-): Promise<{ status: SubscribeStatus; fragment?: string }> {
-	if (!(await tokenHolds(env, "unsubscribe", query.s, query.t))) return { status: "invalid_link" };
+): Promise<LinkOutcome> {
+	if (!(await tokenHolds(env, "unsubscribe", query.s, query.t))) return outcome("invalid_link");
 	const id = query.s as string;
 	const sub = await env.subscribers.get(id);
 	await env.subscribers.delete(id);
@@ -372,7 +399,7 @@ export async function unsubscribe(
 		if (items.length === 0) break;
 		await env.outbox.deleteMany(items.map((i) => i.id));
 	}
-	return { status: "unsubscribed", ...(sub?.fragment ? { fragment: sub.fragment } : {}) };
+	return outcome("unsubscribed", sub);
 }
 
 /** How many confirmed subscribers the site has: the count its sign-up says. */
@@ -565,7 +592,7 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 		};
 	const dateAt = header.findIndex((h, i) => i !== emailAt && DATE_HEADER.test(h));
 	const statusAt = header.findIndex((h, i) => i !== emailAt && STATUS_HEADER.test(h));
-	const site = new URL(env.site.url).host;
+	const site = hostOf(env.site.url);
 	const now = env.now().toISOString();
 	for (const row of data) {
 		report.rows++;

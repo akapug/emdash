@@ -149,7 +149,7 @@ describe("a visitor subscribes on the site's form", () => {
 		expect(sent[0]!.subject).toBe("Confirm your subscription to Example Site");
 		expect(outbox.rows.size).toBe(0);
 		const l = linkIn(sent[0]!.text, "confirm")!;
-		expect(await confirm(env, l)).toEqual({ status: "confirmed" });
+		expect(await confirm(env, l)).toEqual({ status: "confirmed", page: "/" });
 		expect([...subscribers.rows.values()][0]!.status).toBe("confirmed");
 		expect([...subscribers.rows.values()][0]!.confirmedAt).toBe(NOW.toISOString());
 	});
@@ -208,28 +208,31 @@ describe("the links an email carries", () => {
 		const id = [...subscribers.rows.keys()][0]!;
 		const good = await linkToken(env, "confirm", id);
 		const forged = `${good.slice(0, 31)}${good.at(-1) === "0" ? "1" : "0"}`;
-		expect(await confirm(env, { s: id, t: forged })).toEqual({ status: "invalid_link" });
+		expect(await confirm(env, { s: id, t: forged })).toMatchObject({ status: "invalid_link" });
+		// a refused link goes to the home page: it says nothing of the page the address signed up on
 		expect(await confirm(env, { s: id, t: await linkToken(env, "unsubscribe", id) })).toEqual({
 			status: "invalid_link",
+			page: "/",
 		});
-		expect(await unsubscribe(env, { s: id, t: good })).toEqual({ status: "invalid_link" });
-		expect(await confirm(env, { s: "../x", t: good })).toEqual({ status: "invalid_link" });
+		expect(await unsubscribe(env, { s: id, t: good })).toMatchObject({ status: "invalid_link" });
+		expect(await confirm(env, { s: "../x", t: good })).toMatchObject({ status: "invalid_link" });
 		expect([...subscribers.rows.values()][0]!.status).toBe("pending");
 		// another site's key signs other links
 		const other = site();
 		await subscribe(other.env, { email: "reader@example.org", page: "/" });
-		expect(await confirm(other.env, { s: id, t: good })).toEqual({ status: "invalid_link" });
+		expect(await confirm(other.env, { s: id, t: good })).toMatchObject({ status: "invalid_link" });
 	});
 
 	it("unsubscribe deletes the address and every message waiting for it", async () => {
 		const { env, subscribers, outbox } = site();
-		await subscribe(env, { email: "reader@example.org", page: "/", fragment: "sub-1" });
+		await subscribe(env, { email: "reader@example.org", page: "/about/", fragment: "sub-1" });
 		const id = [...subscribers.rows.keys()][0]!;
 		await confirm(env, { s: id, t: await linkToken(env, "confirm", id) });
 		await queueNewPost(env, post("p1"), (s) => `/posts/${s}`);
 		expect(outbox.rows.size).toBe(1);
 		expect(await unsubscribe(env, { s: id, t: await linkToken(env, "unsubscribe", id) })).toEqual({
 			status: "unsubscribed",
+			page: "/about/",
 			fragment: "sub-1",
 		});
 		expect(subscribers.rows.size).toBe(0);

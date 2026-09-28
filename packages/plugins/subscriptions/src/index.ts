@@ -66,7 +66,7 @@ export function subscriptionsPlugin(
 		version: VERSION,
 		entrypoint: "@emdash-cms/plugin-subscriptions",
 		options,
-		capabilities: ["email:send"],
+		capabilities: ["email:send", "content:read"],
 		adminPages: [{ path: "/", label: "Subscribers", icon: "envelope" }],
 		storage: {
 			subscribers: { indexes: ["status", "createdAt"] },
@@ -75,15 +75,27 @@ export function subscriptionsPlugin(
 	};
 }
 
-/** What the plugin reaches, from a hook's or a route's context. */
-function envOf(ctx: PluginContext): SubscriptionsEnv {
+/** Where the site answers, remembered from the last request, for a hook or a cron that has none. */
+const ORIGIN_KEY = "state:origin";
+
+/**
+ * What the plugin reaches, from a hook's or a route's context. The site's
+ * address is its URL setting, else the address a visitor reached it at (a
+ * route's request), else the one remembered from the last request: an email's
+ * links must be absolute.
+ */
+async function envOf(ctx: PluginContext, request?: Request): Promise<SubscriptionsEnv> {
+	const reached = !ctx.site.url && request ? new URL(request.url).origin : "";
+	const kept = ctx.site.url ? "" : ((await ctx.kv.get<string>(ORIGIN_KEY)) ?? "");
+	if (reached && reached !== kept) await ctx.kv.set(ORIGIN_KEY, reached);
+	const origin = ctx.site.url || reached || kept;
 	return {
 		subscribers: ctx.storage.subscribers as SubscriptionsEnv["subscribers"],
 		outbox: ctx.storage.outbox as SubscriptionsEnv["outbox"],
 		kv: ctx.kv,
 		...(ctx.email ? { email: ctx.email } : {}),
-		site: { name: ctx.site.name, url: ctx.site.url },
-		url: (path) => ctx.url(path),
+		site: { name: ctx.site.name, url: origin },
+		url: (path) => (origin ? new URL(path, origin).href : path),
 		log: ctx.log,
 		now: () => new Date(),
 	};
@@ -109,7 +121,7 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 	return definePlugin({
 		id: PLUGIN_ID,
 		version: VERSION,
-		capabilities: ["email:send"],
+		capabilities: ["email:send", "content:read"],
 		storage: STORAGE,
 
 		hooks: {
@@ -121,7 +133,7 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 			},
 			cron: {
 				handler: async (event, ctx) => {
-					if (event.name === "drain") await drain(envOf(ctx));
+					if (event.name === "drain") await drain(await envOf(ctx));
 				},
 			},
 			"content:afterPublish": {
@@ -140,7 +152,7 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 							: typeof c.publishedAt === "string"
 								? new Date(c.publishedAt)
 								: null;
-					const env = envOf(ctx);
+					const env = await envOf(ctx);
 					const queued = await queueNewPost(
 						env,
 						{
@@ -171,7 +183,7 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 					const fragment = fragmentOf(f.fragment);
 					let status: Awaited<ReturnType<typeof subscribe>>;
 					try {
-						status = await subscribe(envOf(ctx), {
+						status = await subscribe(await envOf(ctx, ctx.request), {
 							email: f.email,
 							page,
 							...(fragment ? { fragment } : {}),
@@ -192,11 +204,11 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 				methods: ["GET"],
 				response: "raw",
 				handler: async (ctx: RouteContext) => {
-					const { status, fragment } = await confirm(
-						envOf(ctx),
+					const { status, page, fragment } = await confirm(
+						await envOf(ctx, ctx.request),
 						ctx.input as Record<string, unknown>,
 					);
-					return redirect(backTo("/", status, fragment));
+					return redirect(backTo(page, status, fragment));
 				},
 			},
 
@@ -205,11 +217,11 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 				methods: ["GET"],
 				response: "raw",
 				handler: async (ctx: RouteContext) => {
-					const { status, fragment } = await unsubscribe(
-						envOf(ctx),
+					const { status, page, fragment } = await unsubscribe(
+						await envOf(ctx, ctx.request),
 						ctx.input as Record<string, unknown>,
 					);
-					return redirect(backTo("/", status, fragment));
+					return redirect(backTo(page, status, fragment));
 				},
 			},
 
@@ -217,13 +229,16 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 			status: {
 				public: true,
 				methods: ["GET"],
-				handler: async (ctx: RouteContext) => ({ confirmed: await confirmedCount(envOf(ctx)) }),
+				handler: async (ctx: RouteContext) => ({
+					// a count needs no address: a page view writes nothing
+					confirmed: await confirmedCount(await envOf(ctx)),
+				}),
 			},
 
 			// --- Admin: the Subscribers page (Block Kit) ---
 
 			admin: {
-				handler: async (ctx: RouteContext) => adminPage(envOf(ctx), ctx.input),
+				handler: async (ctx: RouteContext) => adminPage(await envOf(ctx, ctx.request), ctx.input),
 			},
 		},
 
