@@ -16,6 +16,7 @@ import { Kysely, SqliteDialect } from "kysely";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+	ANONYMOUS_WAITING_MAX,
 	createMailBroker,
 	sha256Hex,
 	brokerConfigFromEnv,
@@ -1084,6 +1085,88 @@ describe("a give-back (CURE 6: inside the fence)", () => {
 			requestId: r.budget.takes[0]!.requestId,
 		});
 		expect(r.budget.counted()).toBe(0);
+	});
+});
+
+describe("THE QUEUE's classes (neighbors of CURES 4-6)", () => {
+	it("an operator's call overtakes the site's and anonymous calls WAITING (never the one running), so a flood of sign-in requests cannot hold a retire; the calls it overtook run after it, held to what it left; at most ANONYMOUS_WAITING_MAX anonymous calls wait, and one more is refused at once", async () => {
+		const r = rig({ auth: true });
+		const c = creds();
+		await bringUp(r, 1, c, null);
+		const link = () => ({
+			protocol: P,
+			capability: c.capability,
+			requestId: randomUUID(),
+			email: "admin@example.org",
+			ip: null,
+		});
+		const hold = r.system.pauseSend();
+		const running = watch(r.b.requestMagicLink(link()));
+		await hold.entered;
+		const flood = Array.from({ length: ANONYMOUS_WAITING_MAX }, () =>
+			watch(r.b.requestMagicLink(link())),
+		);
+		const form = watch(sendWith(r.b, c.capability));
+		const takes = r.budget.takes.length;
+		// One more anonymous request than may wait: refused at once, nothing read, counted or sent for it.
+		expect(await r.b.requestMagicLink(link())).toMatchObject({
+			status: "refused",
+			why: expect.stringMatching(/as many sign-in requests waiting as it takes/),
+		});
+		const retire = watch(admin(r.b, "retire", { generation: 1 }));
+		await settle();
+		// The retire waits for the call running, and for nothing else.
+		expect(retire.done).toBe(false);
+		hold.release();
+		const retired = await retire.promise;
+		expect(retired.status).toBe(200);
+		const at = retired.body.seq as number;
+		const first = await running.promise;
+		expect(first).toMatchObject({ status: "sent" });
+		expect(first.seq).toBeLessThan(at);
+		for (const w of [form, ...flood]) {
+			const a = await w.promise;
+			expect(a).toMatchObject({
+				status: "refused",
+				why: expect.stringMatching(/not this site's active generation's/),
+			});
+			expect(a.seq).toBeGreaterThan(at);
+		}
+		expect(r.system.sent).toHaveLength(1);
+		expect(r.plugin.sent).toEqual([]);
+		expect(r.budget.takes).toHaveLength(takes);
+	});
+
+	it("a take the budget answers as given back already (a replayed take it refunded) is no place to send in: refused, nothing sent, nothing given back again", async () => {
+		const r = rig();
+		const c = creds();
+		await bringUp(r, 1, c, null);
+		r.budget.service.take.mockImplementationOnce((async () => ({
+			ok: true,
+			protocol: 3,
+			takeId: "2026-01-01:00000000-0000-4000-8000-000000000000",
+			lane: "plugin",
+			generation: 1,
+			replayed: true,
+			refunded: true,
+		})) as never);
+		expect(await sendWith(r.b, c.capability)).toMatchObject({
+			status: "refused",
+			why: "the mail budget refused it (refunded)",
+		});
+		// As the account's ledger answers such a replay: refused, scope refunded.
+		r.budget.service.take.mockImplementationOnce((async () => ({
+			ok: false,
+			protocol: 3,
+			scope: "refunded",
+			refused: "that take was given back",
+		})) as never);
+		expect(await sendWith(r.b, c.capability)).toMatchObject({
+			status: "refused",
+			why: "the mail budget refused it (refunded)",
+		});
+		expect(r.plugin.sent).toEqual([]);
+		expect(r.budget.refunds).toEqual([]);
 	});
 });
 

@@ -29,7 +29,9 @@
  *
  * THE QUEUE. Every call (each send, each auth operation, each status, and
  * every admin call: stage, activate, retire, state) takes its turn in ONE
- * queue, and runs to its end before the next starts: the capability check,
+ * queue, and runs to its end before the next starts (among the calls
+ * waiting, the operator's go first, then the site's, then at most
+ * ANONYMOUS_WAITING_MAX anonymous sign-in requests): the capability check,
  * the budget's take, the awaited `send_email` call, and the give-back when the
  * binding refuses. A Durable Object alone does not give that (a request's
  * awaits let the next one in), so the queue is this module's own (`serial`).
@@ -38,13 +40,14 @@
  * activation and a retire each ask for every give-back still owed, and answer
  * (acknowledge) only once none is, so the fence covers the give-backs of the
  * sends before it too, across a restart.
- * An activation therefore answers only after every call queued before it
- * reached its end (sent, or refused and given back), and every call queued
- * after it is checked against the generation it activated: no delivery with
- * the old capability completes after an activation's answer. The binding's
+ * An activation therefore answers only after the call running when it came
+ * reached its end (sent, or refused and given back), and every call that runs
+ * after it (one it overtook among those waiting included) is checked against
+ * the generation it activated: no delivery with the old capability completes
+ * after an activation's answer. The binding's
  * send is not cut short by a timeout: a send that was still running when a
  * timeout fired could complete after the answer, so the queue waits for it.
- * Each call is numbered as it enters (`seq`, kept in storage), and its answer
+ * Each call is numbered as it starts (`seq`, kept in storage), and its answer
  * carries the number, so the order the queue ran calls in can be read.
  *
  * WHAT A SEND IS. `send({ protocol, capability, requestId, message })`, where
@@ -110,6 +113,8 @@ const MESSAGE_FIELDS = new Set(["to", "cc", "subject", "text", "html", "replyTo"
 const SEND_FIELDS = new Set(["protocol", "capability", "requestId", "message"]);
 /** How many owed give-backs one fence (an activation or a retire) asks the budget for before it answers. */
 const REFUNDS_PER_FENCE = 100;
+/** How many anonymous sign-in requests (magic link, sign-up) may wait in the queue; one more is refused at once. */
+export const ANONYMOUS_WAITING_MAX = 16;
 
 /** A synchronous store: the Durable Object's SQLite in ./worker.ts, a Map in the tests. */
 export interface BrokerStore {
@@ -455,6 +460,8 @@ export function createBudgetClient(deps: {
 					why: `the mail budget refused it${typeof a.scope === "string" ? ` (${a.scope})` : ""}`,
 				};
 			}
+			// A replayed take the budget gave back already is no place to send in, whatever else it says.
+			if (a.refunded === true) return { why: "the mail budget refused it (refunded)" };
 			if (a.lane !== want.lane || a.generation !== want.generation) {
 				await giveBack(token, requestId, takeId);
 				return {
@@ -502,6 +509,14 @@ export async function adminRefusal(request: Request, secret: unknown): Promise<R
 }
 
 /**
+ * Who a call is, for its place among the calls waiting in the queue: the
+ * operator's admin calls, the site's own calls (its sends, an admin's invite
+ * or recovery link, the status), and anonymous sign-in requests (a magic
+ * link, a sign-up).
+ */
+type CallClass = "operator" | "site" | "anonymous";
+
+/**
  * The broker over its store and configuration. Every method answers what it
  * came to and never throws for a request, a refusal or a failed send.
  */
@@ -511,21 +526,49 @@ export function createMailBroker(deps: BrokerDeps) {
 	const log = deps.log ?? (() => {});
 	const ledger = createBudgetClient({ store, budget: config.budget, now, log, id: deps.id });
 
-	// THE QUEUE: each call starts only once every call before it has ended.
-	let tail: Promise<unknown> = Promise.resolve();
-	/** Run `work` in its turn, numbered as it enters. */
-	function serial<T>(work: (seq: number) => Promise<T>): Promise<T> {
+	// THE QUEUE: one call runs at a time, each to its end before the next
+	// starts, and a running call is never cut short. Among the calls WAITING,
+	// the operator's go first, then the site's, then anonymous sign-in
+	// requests, of which at most ANONYMOUS_WAITING_MAX wait: however many
+	// sign-in requests arrive, an activation or a retire waits only for the
+	// one call running when it came. A site's call that it overtook runs after
+	// it, and is held to the generation it left.
+	const waiting: Record<CallClass, Array<() => Promise<void>>> = {
+		operator: [],
+		site: [],
+		anonymous: [],
+	};
+	let running = false;
+	/** The next call's number: numbers follow the order calls run in. */
+	function nextSeq() {
 		const seq = Number(store.get("seq") ?? 0) + 1;
 		store.put("seq", seq);
-		const run = tail.then(
-			() => work(seq),
-			() => work(seq),
-		);
-		tail = run.then(
-			() => undefined,
-			() => undefined,
-		);
-		return run;
+		return seq;
+	}
+	function pump() {
+		if (running) return;
+		const next = waiting.operator.shift() ?? waiting.site.shift() ?? waiting.anonymous.shift();
+		if (!next) return;
+		running = true;
+		void Promise.resolve()
+			.then(next)
+			.finally(() => {
+				running = false;
+				pump();
+			});
+	}
+	/** Run `work` in its turn among the calls of its class, numbered as it starts. */
+	function serial<T>(cls: CallClass, work: (seq: number) => Promise<T>): Promise<T> {
+		return new Promise<T>((resolve, reject) => {
+			waiting[cls].push(async () => {
+				try {
+					resolve(await work(nextSeq()));
+				} catch (error) {
+					reject(error);
+				}
+			});
+			pump();
+		});
 	}
 
 	const active = () => asGeneration(store.get("active"));
@@ -663,7 +706,7 @@ export function createMailBroker(deps: BrokerDeps) {
 	 * take, EMAIL_PLUGIN, and the give-back of a send it refused.
 	 */
 	function send(request: unknown): Promise<BrokerAnswer> {
-		return serial(async (seq) => {
+		return serial("site", async (seq) => {
 			const r = isRecord(request) ? request : {};
 			if (r.protocol !== AUTH_MAIL_PROTOCOL)
 				return refused(
@@ -740,7 +783,17 @@ export function createMailBroker(deps: BrokerDeps) {
 	 * the budget and its token stay as they are.
 	 */
 	function operate(op: Operation, request: unknown): Promise<BrokerAnswer> {
-		return serial(async (seq) => {
+		const cls: CallClass =
+			op === "requestMagicLink" || op === "requestSignup" ? "anonymous" : "site";
+		if (cls === "anonymous" && waiting.anonymous.length >= ANONYMOUS_WAITING_MAX) {
+			return Promise.resolve(
+				refused(
+					"the broker has as many sign-in requests waiting as it takes: ask again later",
+					nextSeq(),
+				),
+			);
+		}
+		return serial(cls, async (seq) => {
 			const r = isRecord(request) ? request : {};
 			if (r.protocol !== AUTH_MAIL_PROTOCOL)
 				return refused(
@@ -847,7 +900,7 @@ export function createMailBroker(deps: BrokerDeps) {
 	 * capability that is neither is told the numbers only, and nothing is asked.
 	 */
 	function status(request: unknown) {
-		return serial(async (seq) => {
+		return serial("site", async (seq) => {
 			const r = isRecord(request) ? request : {};
 			if (r.protocol !== AUTH_MAIL_PROTOCOL)
 				return refused(`the broker speaks protocol ${AUTH_MAIL_PROTOCOL}`, seq);
@@ -938,7 +991,7 @@ export function createMailBroker(deps: BrokerDeps) {
 		const verb = url.pathname.slice("/admin/".length);
 		if (verb === "state") {
 			if (request.method !== "GET") return json(405, { ok: false, error: "GET" });
-			return serial(async (seq) => json(200, state(seq)));
+			return serial("operator", async (seq) => json(200, state(seq)));
 		}
 		if (!["stage", "activate", "retire"].includes(verb))
 			return json(404, { ok: false, error: "not found" });
@@ -989,7 +1042,7 @@ export function createMailBroker(deps: BrokerDeps) {
 				});
 			}
 			const capabilityHash = b.capabilityHash;
-			return serial(async (seq) => {
+			return serial("operator", async (seq) => {
 				if ((active()?.generation ?? null) !== expectActive)
 					return conflict(
 						`the active generation is ${active()?.generation ?? "none"}, not ${JSON.stringify(expectActive)}`,
@@ -1016,7 +1069,7 @@ export function createMailBroker(deps: BrokerDeps) {
 		}
 		if (verb === "activate") {
 			const capabilityHash = b.capabilityHash;
-			return serial(async (seq) => {
+			return serial("operator", async (seq) => {
 				const a = active();
 				if (a && a.generation === g && a.capabilityHash === capabilityHash)
 					return json(200, { ...state(seq), unchanged: true });
@@ -1042,7 +1095,7 @@ export function createMailBroker(deps: BrokerDeps) {
 				return json(200, { ...state(seq), unchanged: false });
 			});
 		}
-		return serial(async (seq) => {
+		return serial("operator", async (seq) => {
 			const a = active();
 			const s = staged();
 			const retired = [a?.generation === g && "active", s?.generation === g && "staged"].filter(
