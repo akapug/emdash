@@ -22,6 +22,7 @@ import {
 	type MarketplaceVersionSummary,
 	type PluginBundle,
 } from "../../plugins/marketplace.js";
+import { sandboxBypassRefusal } from "../../plugins/sandbox-bypass.js";
 import { withUnavailableReason } from "../../plugins/sandbox/types.js";
 import type { SandboxRunner } from "../../plugins/sandbox/types.js";
 import { PluginStateRepository } from "../../plugins/state.js";
@@ -403,12 +404,18 @@ export async function handleMarketplaceInstall(
 		 * is the noop runner (isAvailable() === false) but the runtime will
 		 * load the marketplace plugin in-process via syncMarketplacePlugins().
 		 * Skip the SANDBOX_NOT_AVAILABLE gate so the install can proceed.
+		 * Refused on Cloudflare Workers (SANDBOX_BYPASS_REFUSED), before anything else.
 		 */
 		sandboxBypassed?: boolean;
 		confirmMcpTools?: boolean;
 		acknowledgedPublicRoutes?: string[];
 	},
 ): Promise<ApiResult<MarketplaceInstallResult>> {
+	const bypassRefused = sandboxBypassRefusal(opts?.sandboxBypassed);
+	if (bypassRefused) {
+		return { success: false, error: { code: "SANDBOX_BYPASS_REFUSED", message: bypassRefused } };
+	}
+
 	const client = getClient(marketplaceUrl, opts?.siteOrigin);
 	if (!client) {
 		return {
@@ -432,7 +439,7 @@ export async function handleMarketplaceInstall(
 
 	// Sandbox availability check: skip when sandbox: false bypass is active.
 	// The runtime's syncMarketplacePlugins() will load the plugin in-process.
-	if (!opts?.sandboxBypassed && (!sandboxRunner || !sandboxRunner.isAvailable())) {
+	if (opts?.sandboxBypassed !== true && (!sandboxRunner || !sandboxRunner.isAvailable())) {
 		return {
 			success: false,
 			error: {
@@ -646,10 +653,16 @@ export async function handleMarketplaceUpdate(
 		 * is the noop runner (isAvailable() === false) but the runtime will
 		 * load the marketplace plugin in-process via syncMarketplacePlugins().
 		 * Skip the SANDBOX_NOT_AVAILABLE gate so the update can proceed.
+		 * Refused on Cloudflare Workers (SANDBOX_BYPASS_REFUSED), before anything else.
 		 */
 		sandboxBypassed?: boolean;
 	},
 ): Promise<ApiResult<MarketplaceUpdateResult>> {
+	const bypassRefused = sandboxBypassRefusal(opts?.sandboxBypassed);
+	if (bypassRefused) {
+		return { success: false, error: { code: "SANDBOX_BYPASS_REFUSED", message: bypassRefused } };
+	}
+
 	const client = getClient(marketplaceUrl);
 	if (!client) {
 		return {
@@ -665,7 +678,7 @@ export async function handleMarketplaceUpdate(
 	}
 	// Sandbox availability check: skip when sandbox: false bypass is active.
 	// The runtime's syncMarketplacePlugins() will load the plugin in-process.
-	if (!opts?.sandboxBypassed && (!sandboxRunner || !sandboxRunner.isAvailable())) {
+	if (opts?.sandboxBypassed !== true && (!sandboxRunner || !sandboxRunner.isAvailable())) {
 		return {
 			success: false,
 			error: {

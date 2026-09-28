@@ -1,6 +1,7 @@
 import type { ClientRequest, IncomingMessage } from "node:http";
 import type { RequestOptions } from "node:https";
 
+import { isCloudflareWorkersRuntime } from "../plugins/sandbox-bypass.js";
 import { resolveAndValidateExternalUrlTarget, SsrfError } from "../security/ssrf.js";
 
 const TRAILING_DOT = /\.+$/;
@@ -152,14 +153,6 @@ export function createWorkersRegistryArtifactTransport(
 			};
 		},
 	};
-}
-
-function isCloudflareWorkersRuntime(): boolean {
-	return (
-		typeof navigator !== "undefined" &&
-		typeof navigator.userAgent === "string" &&
-		navigator.userAgent.includes("Cloudflare-Workers")
-	);
 }
 
 function limitResponseBody(response: Response, maxBytes: number): Response {
