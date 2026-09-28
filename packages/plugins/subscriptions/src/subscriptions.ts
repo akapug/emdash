@@ -375,7 +375,16 @@ export async function subscribe(
 	if (!made.applied) {
 		const have = await env.subscribers.get(id);
 		if (have?.status === "confirmed") return "already";
-		return env.email ? "pending" : "pending_saved";
+		// "Check your inbox" is true only of a confirmation that went. One that waits (the site
+		// could not send, or sending failed) is tried again now, and the visitor told what happened.
+		const key = `confirm:${id}`;
+		const waiting = await env.outbox.get(key);
+		if (!waiting) return env.email ? "pending" : "pending_saved";
+		if (waiting.status === "failed")
+			await env.outbox.put(key, { ...waiting, status: "queued", attempts: 0 });
+		await ensureDrain(env);
+		if (!env.email) return "pending_saved";
+		return (await sendOne(env, key)) ? "sent" : "queued";
 	}
 	const key = await enqueue(env, id, "confirm");
 	await ensureDrain(env);

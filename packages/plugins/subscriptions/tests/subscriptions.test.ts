@@ -194,6 +194,26 @@ describe("a visitor subscribes on the site's form", () => {
 		expect(live.sent).toHaveLength(1);
 	});
 
+	it("sends a second try the confirmation that never went, and says 'check your inbox' only of one that did", async () => {
+		// saved while the site could not send; the site can send now
+		const quiet = site();
+		await subscribe(quiet.env, { email: "reader@example.org", page: "/" });
+		(quiet.env as { email?: unknown }).email = { send: quiet.send };
+		expect(await subscribe(quiet.env, { email: "reader@example.org", page: "/" })).toBe("sent");
+		expect(quiet.sent.map((m) => m.to)).toEqual(["reader@example.org"]);
+		expect(quiet.outbox.rows.size).toBe(0);
+		// given up on after five failed tries; the provider works again
+		const opts = { mail: true, failing: true };
+		const flaky = site(opts);
+		await subscribe(flaky.env, { email: "reader@example.org", page: "/" });
+		for (let i = 0; i < 5; i++) await drain(flaky.env);
+		expect([...flaky.outbox.rows.values()].map((m) => m.status)).toEqual(["failed"]);
+		expect(await subscribe(flaky.env, { email: "reader@example.org", page: "/" })).toBe("queued");
+		opts.failing = false;
+		expect(await subscribe(flaky.env, { email: "reader@example.org", page: "/" })).toBe("sent");
+		expect(flaky.sent).toHaveLength(1);
+	});
+
 	it("stores nothing for an address a message cannot go to, or a filled honeypot", async () => {
 		const { env, subscribers, outbox } = site();
 		for (const email of [
