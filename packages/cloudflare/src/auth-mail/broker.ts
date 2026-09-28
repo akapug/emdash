@@ -30,9 +30,14 @@
  * THE QUEUE. Every call (each send, each auth operation, each status, and
  * every admin call: stage, activate, retire, state) takes its turn in ONE
  * queue, and runs to its end before the next starts: the capability check,
- * the budget's take, the awaited `send_email` call, and the refund when the
+ * the budget's take, the awaited `send_email` call, and the give-back when the
  * binding refuses. A Durable Object alone does not give that (a request's
  * awaits let the next one in), so the queue is this module's own (`serial`).
+ * A give-back is OWED in the object's storage before the budget is asked for
+ * it, and forgotten only once the budget answers it (createBudgetClient); an
+ * activation and a retire each ask for every give-back still owed, and answer
+ * (acknowledge) only once none is, so the fence covers the give-backs of the
+ * sends before it too, across a restart.
  * An activation therefore answers only after every call queued before it
  * reached its end (sent, or refused and given back), and every call queued
  * after it is checked against the generation it activated: no delivery with
@@ -77,7 +82,7 @@ import {
 	createAuthMailMediator,
 	type AuthMailAnswer,
 	type AuthMailTables,
-	type SystemBudgetService,
+	type SystemLane,
 } from "./mediator.js";
 
 /** A capability and a budget token: 32 random bytes, base64url, as the operator mints them. */
@@ -101,6 +106,8 @@ const MIN_ADMIN_SECRET = 32;
 const MESSAGE_FIELDS = new Set(["to", "cc", "subject", "text", "html", "replyTo"]);
 /** The fields a send request may have. */
 const SEND_FIELDS = new Set(["protocol", "capability", "requestId", "message"]);
+/** How many owed give-backs one fence (an activation or a retire) asks the budget for before it answers. */
+const REFUNDS_PER_FENCE = 100;
 
 /** A synchronous store: the Durable Object's SQLite in ./worker.ts, a Map in the tests. */
 export interface BrokerStore {
@@ -124,8 +131,24 @@ export interface BrokerSendBinding {
 	}): Promise<unknown>;
 }
 
-/** The mail budget's service binding (mail-budget protocol 3). */
-export interface BrokerBudgetService extends SystemBudgetService {
+/**
+ * The mail budget's service binding (mail-budget protocol 3). A refund names
+ * the take it gives back, or, when the take's answer never came, the request
+ * id the take was asked with: the budget gives back the take that request id
+ * made with that token, or answers that it holds none.
+ */
+export interface BrokerBudgetService {
+	take(request: {
+		protocol: number;
+		token: string;
+		recipients: string[];
+		requestId: string;
+	}): Promise<unknown>;
+	refund(
+		request:
+			| { protocol: number; token: string; takeId: string }
+			| { protocol: number; token: string; requestId: string },
+	): Promise<unknown>;
 	report(request: { protocol: number; token: string }): Promise<unknown>;
 }
 
@@ -156,11 +179,9 @@ export interface BrokerDeps {
 	/** The site's session store, read-only. */
 	sessions: { get(key: string): Promise<string | null> } | null;
 	now?: () => number;
-	/** Keeps work alive past an answer (the Durable Object's waitUntil). */
-	extend?: (work: Promise<unknown>) => void;
 	/** A log line; never given an address, a token or a capability. */
 	log?: (line: string) => void;
-	/** A random request id (a take's, when the operation names none). */
+	/** A random request id (a sign-in message's take's). */
 	id?: () => string;
 }
 
@@ -269,6 +290,182 @@ async function sameSecret(given: string, secret: string): Promise<boolean> {
 }
 
 /**
+ * A give-back the broker owes the budget, kept in its storage until the
+ * budget answers it: the token that took, the request id it took with, and
+ * the take's id when its answer came.
+ */
+interface OwedRefund {
+	token: string;
+	requestId: string;
+	takeId: string | null;
+	at: string;
+}
+
+function asOwed(v: unknown): OwedRefund | null {
+	if (!isRecord(v) || typeof v.token !== "string" || typeof v.requestId !== "string") return null;
+	return {
+		token: v.token,
+		requestId: v.requestId,
+		takeId: typeof v.takeId === "string" ? v.takeId : null,
+		at: typeof v.at === "string" ? v.at : "",
+	};
+}
+
+const owedKey = (requestId: string) => `refund:${requestId}`;
+
+/**
+ * The mail budget as the broker asks it, for both lanes: a take, and every
+ * give-back OWED in the broker's storage before the budget is asked for it,
+ * and forgotten only once the budget answers it. Nothing is handed to work
+ * that outlives a call: a give-back the budget does not answer stays owed, and
+ * the next fence (an activation or a retire) asks for it again before it
+ * answers, across a restart too.
+ */
+export function createBudgetClient(deps: {
+	store: BrokerStore;
+	budget: BrokerBudgetService | null;
+	now?: () => number;
+	log?: (line: string) => void;
+	id?: () => string;
+}) {
+	const { store, budget } = deps;
+	const now = deps.now ?? (() => Date.now());
+	const log = deps.log ?? (() => {});
+	const newId = deps.id ?? (() => crypto.randomUUID());
+	const owe = (token: string, requestId: string, takeId: string | null) =>
+		store.put(owedKey(requestId), { token, requestId, takeId, at: new Date(now()).toISOString() });
+
+	/**
+	 * Ask the budget for one give-back the broker owes, once, within the
+	 * timeout. It is settled (and forgotten) when the budget gives it back, or
+	 * answers that it already did, or that it holds no such take (a take that
+	 * never committed): each of those answers is the same every time it is
+	 * asked. Anything else (no answer in time, a lost answer, another protocol)
+	 * keeps it owed. True when settled.
+	 */
+	async function settle(key: string): Promise<boolean> {
+		const owed = asOwed(store.get(key));
+		if (!owed) {
+			store.delete(key);
+			return true;
+		}
+		if (!budget) return false;
+		try {
+			const request = owed.takeId
+				? { protocol: MAIL_BUDGET_PROTOCOL, token: owed.token, takeId: owed.takeId }
+				: { protocol: MAIL_BUDGET_PROTOCOL, token: owed.token, requestId: owed.requestId };
+			const got = await within(budget.refund(request), BUDGET_TIMEOUT_MS);
+			if ("late" in got) return false;
+			const a = got.answer;
+			if (!isRecord(a) || a.protocol !== MAIL_BUDGET_PROTOCOL) return false;
+			if (a.ok !== true && !["take", "request", "token"].includes(String(a.scope))) return false;
+			store.delete(key);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Give back what `token` took for `requestId` (its `takeId`, or null when the take's answer never came): owed first, then asked once. */
+	async function giveBack(token: string, requestId: string, takeId: string | null): Promise<void> {
+		owe(token, requestId, takeId);
+		if (!(await settle(owedKey(requestId))))
+			log("mail broker: a give-back to the mail budget is owed, and is asked for again at the next fence");
+	}
+
+	/** How many give-backs are owed (counted up to one more than a fence asks for). */
+	const owed = () => store.keys("refund:", REFUNDS_PER_FENCE + 1).length;
+
+	const client = {
+		giveBack,
+		owed,
+		/** Every owed give-back asked for again, up to REFUNDS_PER_FENCE: how many are still owed after. */
+		async settleOwed(): Promise<number> {
+			for (const key of store.keys("refund:", REFUNDS_PER_FENCE)) await settle(key);
+			return owed();
+		},
+
+		/**
+		 * Take `recipients` (hashes) with `token`, for `requestId`: the take, or
+		 * why not. A take whose answer does not come in time is owed back BEFORE
+		 * it is waited for any more, so whatever it counted is given back, now
+		 * or at the next fence; one whose answer is lost is asked again with the
+		 * same request id (the same take), and owed back if that is lost too.
+		 */
+		async take(
+			token: string,
+			recipients: string[],
+			requestId: string,
+			want: { lane: "plugin" | "system"; generation: number },
+		): Promise<{ takeId: string } | { why: string }> {
+			if (!budget) return { why: "the broker has no service binding MAIL_BUDGET" };
+			const ask = () => budget.take({ protocol: MAIL_BUDGET_PROTOCOL, token, recipients, requestId });
+			let call = ask();
+			let got: { answer: unknown } | { late: true };
+			try {
+				got = await within(call, BUDGET_TIMEOUT_MS);
+			} catch {
+				// The answer was lost (the call threw): the same request id again is the same take.
+				try {
+					call = ask();
+					got = await within(call, BUDGET_TIMEOUT_MS);
+				} catch {
+					// Either call may have counted: whatever this request id took is owed back.
+					await giveBack(token, requestId, null);
+					return { why: "the mail budget could not be asked" };
+				}
+			}
+			if ("late" in got) {
+				owe(token, requestId, null);
+				const settled = await within(
+					call.catch(() => null),
+					BUDGET_LATE_MS,
+				);
+				const late = "late" in settled ? null : settled.answer;
+				if (isRecord(late) && late.ok === true && typeof late.takeId === "string") {
+					await giveBack(token, requestId, late.takeId);
+				} else if (isRecord(late) && late.ok !== true && late.protocol === MAIL_BUDGET_PROTOCOL) {
+					// The budget refused it: nothing was counted, nothing is owed.
+					store.delete(owedKey(requestId));
+				}
+				return { why: "the mail budget did not answer in time" };
+			}
+			const a = got.answer;
+			const takeId = isRecord(a) && a.ok === true && typeof a.takeId === "string" ? a.takeId : null;
+			if (!isRecord(a) || a.protocol !== MAIL_BUDGET_PROTOCOL) {
+				if (takeId) await giveBack(token, requestId, takeId);
+				return { why: "the mail budget answered in another protocol" };
+			}
+			if (!takeId) {
+				return {
+					why: `the mail budget refused it${typeof a.scope === "string" ? ` (${a.scope})` : ""}`,
+				};
+			}
+			if (a.lane !== want.lane || a.generation !== want.generation) {
+				await giveBack(token, requestId, takeId);
+				return {
+					why: `the mail budget counted it to the ${JSON.stringify(a.lane ?? null)} lane of generation ${JSON.stringify(a.generation ?? null)}, not the ${want.lane} lane of ${want.generation}`,
+				};
+			}
+			return { takeId };
+		},
+
+		/** One generation's lane as the mediator takes from it: one message's place per take, a fresh request id each. */
+		lane(token: string, want: { lane: "plugin" | "system"; generation: number }): SystemLane {
+			return {
+				take: async (recipient) => {
+					const requestId = newId();
+					const t = await client.take(token, [recipient], requestId, want);
+					return "why" in t ? t : { takeId: t.takeId, requestId };
+				},
+				giveBack: (t) => giveBack(token, t.requestId, t.takeId),
+			};
+		},
+	};
+	return client;
+}
+
+/**
  * The answer to an admin request that does not carry the operator's secret
  * (`secret`, BROKER_ADMIN_SECRET), or null when it does: 503 when the broker
  * has no secret of at least 32 characters, 401 for any other bearer. The
@@ -298,8 +495,7 @@ export function createMailBroker(deps: BrokerDeps) {
 	const { store, config } = deps;
 	const now = deps.now ?? (() => Date.now());
 	const log = deps.log ?? (() => {});
-	const extend = deps.extend ?? ((work: Promise<unknown>) => void work.catch(() => undefined));
-	const newId = deps.id ?? (() => crypto.randomUUID());
+	const ledger = createBudgetClient({ store, budget: config.budget, now, log, id: deps.id });
 
 	// THE QUEUE: each call starts only once every call before it has ended.
 	let tail: Promise<unknown> = Promise.resolve();
@@ -378,87 +574,6 @@ export function createMailBroker(deps: BrokerDeps) {
 			}
 		}
 		return null;
-	}
-
-	/**
-	 * Take `recipients` (hashes) from the budget with `token`, for `requestId`:
-	 * the take, or why not. A take that answers too late is waited for a while
-	 * more and given back, so the call ends with nothing counted.
-	 */
-	async function take(
-		token: string,
-		recipients: string[],
-		requestId: string,
-		want: { lane: "plugin" | "system"; generation: number },
-	): Promise<{ takeId: string } | { why: string }> {
-		const budget = config.budget;
-		if (!budget) return { why: "the broker has no service binding MAIL_BUDGET" };
-		const ask = () => budget.take({ protocol: MAIL_BUDGET_PROTOCOL, token, recipients, requestId });
-		let call = ask();
-		let got: { answer: unknown } | { late: true };
-		try {
-			got = await within(call, BUDGET_TIMEOUT_MS);
-		} catch {
-			// The answer was lost (the call threw): the same request id again is the same take.
-			try {
-				call = ask();
-				got = await within(call, BUDGET_TIMEOUT_MS);
-			} catch {
-				return { why: "the mail budget could not be asked" };
-			}
-		}
-		if ("late" in got) {
-			const settled = await within(
-				call.catch(() => null),
-				BUDGET_LATE_MS,
-			);
-			const late = "late" in settled ? null : settled.answer;
-			if (isRecord(late) && late.ok === true && typeof late.takeId === "string") {
-				await giveBack(token, late.takeId);
-			} else if ("late" in settled) {
-				extend(
-					call
-						.then((a) =>
-							isRecord(a) && a.ok === true && typeof a.takeId === "string"
-								? giveBack(token, a.takeId)
-								: undefined,
-						)
-						.catch(() => undefined),
-				);
-			}
-			return { why: "the mail budget did not answer in time" };
-		}
-		const a = got.answer;
-		const takeId = isRecord(a) && a.ok === true && typeof a.takeId === "string" ? a.takeId : null;
-		if (!isRecord(a) || a.protocol !== MAIL_BUDGET_PROTOCOL) {
-			if (takeId) await giveBack(token, takeId);
-			return { why: "the mail budget answered in another protocol" };
-		}
-		if (!takeId) {
-			return {
-				why: `the mail budget refused it${typeof a.scope === "string" ? ` (${a.scope})` : ""}`,
-			};
-		}
-		if (a.lane !== want.lane || a.generation !== want.generation) {
-			await giveBack(token, takeId);
-			return {
-				why: `the mail budget counted it to the ${JSON.stringify(a.lane ?? null)} lane of generation ${JSON.stringify(a.generation ?? null)}, not the ${want.lane} lane of ${want.generation}`,
-			};
-		}
-		return { takeId };
-	}
-
-	/** Give a take back with the token that made it: awaited within the timeout, and kept alive past it. */
-	async function giveBack(token: string, takeId: string): Promise<void> {
-		const budget = config.budget;
-		if (!budget) return;
-		try {
-			const refund = budget.refund({ protocol: MAIL_BUDGET_PROTOCOL, token, takeId });
-			if ("late" in (await within(refund, BUDGET_TIMEOUT_MS)))
-				extend(refund.catch(() => undefined));
-		} catch {
-			log("mail broker: the mail budget did not take a refund back");
-		}
 	}
 
 	/** The message as the binding gets it, or why not: exactly the envelope's fields, each checked. */
@@ -563,7 +678,7 @@ export function createMailBroker(deps: BrokerDeps) {
 			if ("why" in env) return refused(env.why, seq);
 			const hashes = await Promise.all(env.recipients.map((a) => sha256Hex(a.toLowerCase())));
 			const token = got.gen.tokens.plugin;
-			const t = await take(token, hashes, requestId, {
+			const t = await ledger.take(token, hashes, requestId, {
 				lane: "plugin",
 				generation: got.gen.generation,
 			});
@@ -584,7 +699,7 @@ export function createMailBroker(deps: BrokerDeps) {
 			try {
 				await config.plugin.send(env.out);
 			} catch (error) {
-				await giveBack(token, t.takeId);
+				await ledger.giveBack(token, requestId, t.takeId);
 				const code =
 					isRecord(error) && typeof error.code === "string"
 						? error.code
@@ -619,33 +734,17 @@ export function createMailBroker(deps: BrokerDeps) {
 			if (!deps.db) return refused("the broker has no DB binding", seq);
 			const { capability: _capability, ...rest } = r;
 			const gen = got.gen;
-			const budget = config.budget;
 			const mediator = createAuthMailMediator({
 				db: deps.db,
 				sessions: deps.sessions,
-				budget: budget
-					? {
-							service: {
-								// The system lane of THIS generation, or it is not this broker's take (the mediator gives it back).
-								take: (req) =>
-									budget
-										.take(req)
-										.then((a) =>
-											isRecord(a) && a.ok === true && a.generation !== gen.generation
-												? { ...a, lane: "another generation's" }
-												: a,
-										),
-								refund: (req) => budget.refund(req),
-							},
-							token: gen.tokens.system,
-						}
+				// The system lane of THIS generation, through the broker's own take and owed give-back.
+				budget: config.budget
+					? ledger.lane(gen.tokens.system, { lane: "system", generation: gen.generation })
 					: { missing: "the broker has no service binding MAIL_BUDGET" },
 				send: config.system,
 				site: config.site,
 				now,
-				extend,
 				log,
-				id: newId,
 			});
 			const a: AuthMailAnswer = await mediator[op](rest);
 			return { ...a, seq };
@@ -756,7 +855,7 @@ export function createMailBroker(deps: BrokerDeps) {
 		});
 	}
 
-	/** The broker's state as the admin door answers it: numbers and hashes, never a token. */
+	/** The broker's state as the admin door answers it: numbers and hashes, never a token, and how many give-backs it owes the budget. */
 	const state = (seq: number) => ({
 		ok: true,
 		seq,
@@ -765,21 +864,34 @@ export function createMailBroker(deps: BrokerDeps) {
 		active: view(active()),
 		staged: view(staged()),
 		highest: highest(),
+		owedRefunds: ledger.owed(),
 	});
 
 	const conflict = (why: string, seq: number) =>
 		json(409, { ...state(seq), ok: false, conflict: true, why });
 
+	/** The answer of a fence that still owes the budget give-backs of earlier sends: not an acknowledgement. */
+	const owing = (seq: number, owed: number, extra: Record<string, unknown> = {}) =>
+		json(503, {
+			...state(seq),
+			...extra,
+			ok: false,
+			error: `${owed} give-back(s) of places earlier sends took are not yet known to be done: this answer waits for them; ask again`,
+		});
+
 	/**
 	 * The operator's door, behind BROKER_ADMIN_SECRET:
-	 *   GET  /admin/state      the active and staged generations (numbers and hashes), the highest ever staged, `seq`
+	 *   GET  /admin/state      the active and staged generations (numbers and hashes), the highest ever staged,
+	 *                          how many give-backs it owes the budget (`owedRefunds`), `seq`
 	 *   POST /admin/stage      { generation, capabilityHash, tokens: { plugin, system }, expectActive }
 	 *                          stage a generation after every one before it, while `expectActive` is the active
 	 *                          one's number (null for none); its tokens must be this site's, that generation's,
 	 *                          STAGED lanes in the budget. Replaces any other staged one.
 	 *   POST /admin/activate   { generation, capabilityHash, expectActive }: the staged one active, in its turn
-	 *                          (after every call before it ended), while `expectActive` is the active one's number
-	 *   POST /admin/retire     { generation }: that generation, active or staged, no longer counts
+	 *                          (after every call before it ended), while `expectActive` is the active one's
+	 *                          number, once every give-back an earlier send owes the budget is settled (503 until then)
+	 *   POST /admin/retire     { generation }: that generation, active or staged, no longer counts, at once; answered
+	 *                          200 once every give-back an earlier send owes is settled (503, retired, until then)
 	 * Each is answered after its turn in the queue, with the state it left.
 	 */
 	async function admin(request: Request): Promise<Response> {
@@ -884,6 +996,9 @@ export function createMailBroker(deps: BrokerDeps) {
 						`the active generation is ${a?.generation ?? "none"}, not ${JSON.stringify(expectActive)}`,
 						seq,
 					);
+				// Inside the fence: every give-back an earlier send owes is settled before the activation is.
+				const owed = await ledger.settleOwed();
+				if (owed) return owing(seq, owed);
 				const why = await lanesRefused(s, ["staged", "active"]);
 				if (why) return json(400, { ...state(seq), ok: false, error: why });
 				store.put("active", { ...s, at: new Date(now()).toISOString() });
@@ -900,6 +1015,9 @@ export function createMailBroker(deps: BrokerDeps) {
 			);
 			if (a?.generation === g) store.delete("active");
 			if (s?.generation === g) store.delete("staged");
+			// Retired at once (nothing after this counts); acknowledged once every give-back an earlier send owes is settled.
+			const owed = await ledger.settleOwed();
+			if (owed) return owing(seq, owed, { retired });
 			return json(200, { ...state(seq), retired });
 		});
 	}

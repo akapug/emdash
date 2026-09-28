@@ -91,7 +91,6 @@ export class MailBroker extends DurableObject<Record<string, unknown>> {
 					? // eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: get is callable
 						(sessions as { get(key: string): Promise<string | null> })
 					: null,
-			extend: (work) => ctx.waitUntil(work),
 			log: (line) => console.warn(line),
 		});
 	}

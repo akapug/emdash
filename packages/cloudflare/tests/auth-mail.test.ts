@@ -34,6 +34,7 @@ import {
 	type AuthMailTables,
 } from "../src/auth-mail/mediator.js";
 import MailBrokerEntrypoint from "../src/auth-mail/worker.js";
+import { createBudgetClient, type BrokerStore } from "../src/auth-mail/broker.js";
 
 const SITE = {
 	url: "https://acme.example.org",
@@ -110,7 +111,9 @@ function sessionStore() {
 }
 
 /** The mail budget's system lane: every take and refund kept; `answer` decides what a take gets. */
-function systemBudget(answer: () => unknown = () => ({ ok: true, protocol: 3, lane: "system" })) {
+function systemBudget(
+	answer: () => unknown = () => ({ ok: true, protocol: 3, lane: "system", generation: 1 }),
+) {
 	const takes: Array<Record<string, unknown>> = [];
 	const refunds: Array<Record<string, unknown>> = [];
 	let n = 0;
@@ -130,6 +133,27 @@ function systemBudget(answer: () => unknown = () => ({ ok: true, protocol: 3, la
 	};
 	return { service, takes, refunds };
 }
+
+/** A store over a Map, as the broker's Durable Object storage. */
+function mapStore(map = new Map<string, unknown>()): BrokerStore {
+	return {
+		get: (key) => map.get(key),
+		put: (key, value) => void map.set(key, value),
+		delete: (key) => void map.delete(key),
+		keys: (prefix, limit) =>
+			[...map.keys()]
+				.filter((k) => k.startsWith(prefix))
+				.toSorted()
+				.slice(0, limit),
+	};
+}
+
+/** Generation 1's system lane over `service`, as the broker hands it to the mediator (its own take and give-back). */
+const systemLane = (service: ReturnType<typeof systemBudget>["service"]) =>
+	createBudgetClient({ store: mapStore(), budget: service }).lane("sys-token", {
+		lane: "system",
+		generation: 1,
+	});
 
 /** EMAIL_SYSTEM: every message kept; `fail` makes it refuse. */
 function systemSend(fail?: Error) {
@@ -153,7 +177,7 @@ function mediator(over: Partial<AuthMailDeps> = {}) {
 	const deps: AuthMailDeps = {
 		db,
 		sessions,
-		budget: { service: budget.service, token: "sys-token" },
+		budget: systemLane(budget.service),
 		send: mail.binding,
 		site: SITE,
 		...over,
@@ -369,7 +393,7 @@ describe("a send that does not go out", () => {
 		expect(tokens()).toEqual([]);
 	});
 
-	it("sends nothing and deletes the token when the budget refuses, answers in another protocol, or is not the system lane's", async () => {
+	it("sends nothing and deletes the token when the budget refuses, answers in another protocol, or counts it to another lane than the system lane of its generation (the broker's own take, which the mediator takes through)", async () => {
 		for (const [what, answerIs, why, refunded] of [
 			[
 				"refused",
@@ -380,15 +404,23 @@ describe("a send that does not go out", () => {
 			["another protocol", () => ({ ok: true, protocol: 1 }), /answered in another protocol/, 1],
 			[
 				"the plugin lane",
-				() => ({ ok: true, protocol: 3, lane: "plugin" }),
-				/not the system lane's/,
+				() => ({ ok: true, protocol: 3, lane: "plugin", generation: 1 }),
+				/not the system lane of 1/,
+				1,
+			],
+			[
+				"another generation",
+				() => ({ ok: true, protocol: 3, lane: "system", generation: 7 }),
+				/generation 7, not the system lane of 1/,
 				1,
 			],
 		] as const) {
+			// A fresh database each time: a recipient gets three a window.
+			await setup();
 			const budget = systemBudget(answerIs);
 			const mail = systemSend();
 			const { m } = mediator({
-				budget: { service: budget.service, token: "sys-token" },
+				budget: systemLane(budget.service),
 				send: mail.binding,
 			});
 			const a = await m.requestMagicLink({ protocol: P, email: "admin@example.org", ip: null });

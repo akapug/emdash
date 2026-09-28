@@ -100,6 +100,7 @@ function fakeBudget(tenant = "acme") {
 	const made = new Map<string, { by: string; refunded: boolean }>();
 	const holds: Pause[] = [];
 	let lose = 0;
+	let refundFails = 0;
 	const service = {
 		take: vi.fn(async (req: Record<string, unknown>) => {
 			takes.push(req);
@@ -130,7 +131,16 @@ function fakeBudget(tenant = "acme") {
 		}),
 		refund: vi.fn(async (req: Record<string, unknown>) => {
 			refunds.push(req);
-			const r = made.get(String(req.takeId));
+			if (refundFails > 0) {
+				refundFails--;
+				throw new Error("the connection was lost");
+			}
+			// By the take's id, or, when its answer never came, by the request id it was asked with.
+			const takeId =
+				typeof req.takeId === "string"
+					? req.takeId
+					: byRequest.get(`${String(req.token)}:${String(req.requestId)}`)?.takeId;
+			const r = takeId ? made.get(takeId) : undefined;
 			if (!r || r.by !== req.token) return { ok: false, protocol: 3, scope: "take" };
 			const was = r.refunded;
 			r.refunded = true;
@@ -166,6 +176,10 @@ function fakeBudget(tenant = "acme") {
 		},
 		loseNextAnswer() {
 			lose++;
+		},
+		/** The next `n` refunds are lost on the way (the budget is not reached, or its answer never comes). */
+		failRefunds(n: number) {
+			refundFails = n;
 		},
 	};
 }
@@ -891,6 +905,100 @@ describe("THE QUEUE", () => {
 		r.budget.activate(2);
 		expect(await round()).toEqual(pairs(refused(0), sent(1)));
 		expect(r.plugin.sent).toHaveLength(6);
+	});
+});
+
+describe("a give-back (CURE 6: inside the fence)", () => {
+	it("that the budget does not answer is OWED in the broker's storage; neither an activation nor a retire is acknowledged until every owed give-back is settled, across a restart, and the plugin and system lanes alike", async () => {
+		const store = mapStore();
+		const budget = fakeBudget();
+		const r = rig({ store, budget, auth: true });
+		const g0 = creds();
+		const g1 = creds();
+		await bringUp(r, 1, g0, null);
+		// G0's form mail: EMAIL_PLUGIN refuses it, and its give-back never reaches the budget.
+		r.plugin.failNext(Object.assign(new Error("refused"), { code: "E_SENDER_NOT_VERIFIED" }));
+		budget.failRefunds(1);
+		expect(await sendWith(r.b, g0.capability)).toMatchObject({ status: "refused" });
+		// G0's magic link: EMAIL_SYSTEM refuses it, and its give-back is lost too.
+		r.system.failNext(Object.assign(new Error("refused"), { code: "E_SENDER_NOT_VERIFIED" }));
+		budget.failRefunds(1);
+		expect(
+			await r.b.requestMagicLink({
+				protocol: P,
+				capability: g0.capability,
+				email: "admin@example.org",
+				ip: null,
+			}),
+		).toMatchObject({ status: "refused" });
+		// Both places are still counted, and the broker says it owes both.
+		expect(budget.counted()).toBe(2);
+		expect((await admin(r.b, "state")).body).toMatchObject({ owedRefunds: 2 });
+		// G1 staged; while the budget still does not answer, its activation is NOT acknowledged, and G0 stays active.
+		expect((await stageBoth(r, 2, g1, 1)).status).toBe(200);
+		budget.failRefunds(2);
+		const held = await activate(r, 2, g1, 1);
+		expect(held.status).toBe(503);
+		expect(held.body).toMatchObject({ ok: false, active: { generation: 1 }, staged: { generation: 2 } });
+		expect(held.body.error).toMatch(/give-back\(s\) of places earlier sends took are not yet known to be done/);
+		// The object restarts: what it owes is in its storage, and the activation settles it first.
+		const after = rig({ store, budget, auth: true });
+		const acked = await activate(after, 2, g1, 1);
+		expect(acked.status, JSON.stringify(acked.body)).toBe(200);
+		expect(acked.body).toMatchObject({ owedRefunds: 0, active: { generation: 2 } });
+		expect(budget.counted()).toBe(0);
+		// Each by the EXACT token that took it (G0's, retired in the budget by then).
+		expect(budget.refunds.filter((x) => x.token === g0.plugin).at(-1)).toMatchObject({
+			takeId: expect.any(String),
+		});
+		expect(budget.refunds.filter((x) => x.token === g0.system).at(-1)).toMatchObject({
+			takeId: expect.any(String),
+		});
+		// A retire likewise: retired at once, acknowledged only once nothing is owed.
+		budget.activate(2);
+		after.plugin.failNext(Object.assign(new Error("refused"), { code: "E_SENDER_NOT_VERIFIED" }));
+		budget.failRefunds(1);
+		expect(await sendWith(after.b, g1.capability)).toMatchObject({ status: "refused" });
+		budget.failRefunds(1);
+		const retiring = await admin(after.b, "retire", { generation: 2 });
+		expect(retiring.status).toBe(503);
+		expect(retiring.body).toMatchObject({ ok: false, retired: ["active"], active: null, owedRefunds: 1 });
+		// Nothing of G1 counts from the retire on, acknowledged or not.
+		expect(await sendWith(after.b, g1.capability)).toMatchObject({
+			status: "refused",
+			why: expect.stringMatching(/not this site's active generation's/),
+		});
+		const retired = await admin(after.b, "retire", { generation: 2 });
+		expect(retired.status).toBe(200);
+		expect(retired.body).toMatchObject({ ok: true, retired: [], owedRefunds: 0 });
+		expect(budget.counted()).toBe(0);
+	});
+
+	it("of a take whose answer was lost twice is owed by its request id, and settled by it: the budget gives back whatever that request id took with that token", async () => {
+		const r = rig();
+		const c = creds();
+		await bringUp(r, 1, c, null);
+		// The take commits, and both answers are lost: whether it counted is not known to the broker.
+		r.budget.loseNextAnswer();
+		r.budget.loseNextAnswer();
+		r.budget.failRefunds(1);
+		expect(await sendWith(r.b, c.capability)).toMatchObject({
+			status: "refused",
+			why: "the mail budget could not be asked",
+		});
+		expect(r.plugin.sent).toEqual([]);
+		expect(r.budget.counted()).toBe(1);
+		expect((await admin(r.b, "state")).body).toMatchObject({ owedRefunds: 1 });
+		// The next fence asks for it by the request id, and the budget gives that take back.
+		const g2 = creds();
+		expect((await stageBoth(r, 2, g2, 1)).status).toBe(200);
+		expect((await activate(r, 2, g2, 1)).status).toBe(200);
+		expect(r.budget.refunds.at(-1)).toEqual({
+			protocol: 3,
+			token: c.plugin,
+			requestId: r.budget.takes[0]!.requestId,
+		});
+		expect(r.budget.counted()).toBe(0);
 	});
 });
 

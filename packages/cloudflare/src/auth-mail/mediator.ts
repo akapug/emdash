@@ -34,10 +34,12 @@
  * tenant forwards (a personal access or OAuth token, or the admin's session),
  * never from anything the tenant asserts; generates the token and persists its
  * hash (EmDash's own @emdash-cms/auth does both, with its own templates);
- * takes the system lane's place in the account's budget; sends through
- * EMAIL_SYSTEM; and, when the budget or the binding refuses, gives the place
- * back and deletes the token it issued, so a link that was never sent never
- * works. Each answer is `{ protocol, status: "sent" | "skipped" | "refused" }`
+ * takes the system lane's place in the account's budget, through the lane the
+ * broker hands it (the broker's own take, with its lost-answer and late-answer
+ * handling, and its give-backs owed in its storage until the budget answers
+ * them); sends through EMAIL_SYSTEM; and, when the budget or the binding
+ * refuses, gives the place back and deletes the token it issued, so a link
+ * that was never sent never works. Each answer is `{ protocol, status: "sent" | "skipped" | "refused" }`
  * and never carries a token, a link or an address.
  *
  * WHAT IT DOES NOT HOLD AGAINST. It shares the tenant's database (users,
@@ -70,7 +72,6 @@ import { sql, type Kysely } from "kysely";
 
 import { MAX_SUBJECT, displayName, headerText, mailbox } from "../plugins/email-headers.js";
 import { MAIL_BROKER_PROTOCOL } from "../plugins/mail-broker-protocol.js";
-import { MAIL_BUDGET_PROTOCOL } from "../plugins/mail-budget-protocol.js";
 
 /**
  * The version of the broker's RPC (./broker.ts), this mediator's operations
@@ -94,8 +95,6 @@ const SESSION_ID = /^[\w-]{1,128}$/;
 const BEARER = /^Bearer (ec_(?:pat|oat)_[A-Za-z0-9_-]{16,})$/;
 /** How many of one operation an IP, or one recipient, gets in a window. */
 const RATE = { max: 3, windowSeconds: 300 };
-/** How long a call to the mail budget may take. */
-const BUDGET_TIMEOUT_MS = 5_000;
 
 /** What an operation came to. Never a token, a link or an address. */
 export type AuthMailAnswer =
@@ -114,15 +113,16 @@ export interface SystemSendBinding {
 	}): Promise<unknown>;
 }
 
-/** The mail-budget service as its service binding exposes it (protocol 3). */
-export interface SystemBudgetService {
-	take(request: {
-		protocol: number;
-		token: string;
-		recipients: string[];
-		requestId: string;
-	}): Promise<unknown>;
-	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
+/**
+ * The system lane of the ACTIVE generation, as the broker hands it to the
+ * mediator (./broker.ts createBudgetClient `lane`): one message's place per
+ * take (the recipient's SHA-256), with its own request id, or why not; and a
+ * give-back of a take whose message did not go, which the broker owes the
+ * budget until the budget answers it. Neither throws for a refusal.
+ */
+export interface SystemLane {
+	take(recipientHash: string): Promise<{ takeId: string; requestId: string } | { why: string }>;
+	giveBack(take: { takeId: string; requestId: string }): Promise<void>;
 }
 
 /** The tenant's tables the mediator reads and writes: EmDash's auth tables, its API and OAuth tokens, and its rate limits. */
@@ -143,26 +143,22 @@ export interface AuthMailTables extends AuthTables {
 	_emdash_rate_limits: { key: string; window: string; count: number };
 }
 
-/** What the mediator works with: the broker builds it for each operation (./broker.ts), with the ACTIVE generation's system token. */
+/** What the mediator works with: the broker builds it for each operation (./broker.ts), with the ACTIVE generation's system lane. */
 export interface AuthMailDeps {
 	/** The tenant's database, through Kysely. */
 	db: Kysely<AuthMailTables>;
 	/** The tenant's session store (its SESSION KV), read-only here; null when the Worker has none. */
 	sessions: { get(key: string): Promise<string | null> } | null;
-	/** The account's mail budget with the SYSTEM lane's token, or why not. */
-	budget: { service: SystemBudgetService; token: string } | { missing: string };
+	/** The account's mail budget's SYSTEM lane, as the broker hands it, or why not. */
+	budget: SystemLane | { missing: string };
 	/** EMAIL_SYSTEM, or null when the Worker has none. */
 	send: SystemSendBinding | null;
 	/** The operator's configuration: the site's URL and name, and the sender. */
 	site: { url: string; name: string; from: string } | { missing: string };
 	/** Milliseconds since the epoch. */
 	now?: () => number;
-	/** Keeps work alive past the answer (the Worker's waitUntil). */
-	extend?: (work: Promise<unknown>) => void;
 	/** A log line; never given an address or a token. */
 	log?: (line: string) => void;
-	/** A fresh request id for a take (a retry of it names the same one). */
-	id?: () => string;
 }
 
 const answer = {
@@ -262,19 +258,6 @@ export function parseRequest(
 async function sha256Hex(text: string): Promise<string> {
 	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
 	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** `call`'s answer, or `late` when it has not answered within `ms`. */
-async function within<T>(call: Promise<T>, ms: number): Promise<{ answer: T } | { late: true }> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const late = new Promise<{ late: true }>((resolve) => {
-		timer = setTimeout(resolve, ms, { late: true });
-	});
-	try {
-		return await Promise.race([call.then((a) => ({ answer: a })), late]);
-	} finally {
-		clearTimeout(timer);
-	}
 }
 
 /**
@@ -394,23 +377,6 @@ async function authenticate(
 export function createAuthMailMediator(deps: AuthMailDeps) {
 	const now = deps.now ?? (() => Date.now());
 	const log = deps.log ?? (() => {});
-	const extend = deps.extend ?? ((work: Promise<unknown>) => void work.catch(() => undefined));
-	const newId = deps.id ?? (() => crypto.randomUUID());
-
-	/** Give a take back, awaited within the timeout, and kept alive past it. */
-	async function giveBack(budget: { service: SystemBudgetService; token: string }, takeId: string) {
-		const refund = budget.service.refund({
-			protocol: MAIL_BUDGET_PROTOCOL,
-			token: budget.token,
-			takeId,
-		});
-		try {
-			if ("late" in (await within(refund, BUDGET_TIMEOUT_MS)))
-				extend(refund.catch(() => undefined));
-		} catch {
-			log("auth-mail: the mail budget did not take a refund back");
-		}
-	}
 
 	/**
 	 * Send one message the operation built: its recipient one plain address,
@@ -420,7 +386,7 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 	 */
 	async function dispatch(
 		message: EmailMessage,
-		budget: { service: SystemBudgetService; token: string },
+		budget: SystemLane,
 		send: SystemSendBinding,
 		site: { name: string; from: string },
 	): Promise<void> {
@@ -428,63 +394,13 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 		if (!to || message.to !== to) throw new Refusal("the recipient is not one plain address");
 		const subject = headerText(message.subject, MAX_SUBJECT);
 		if (!subject) throw new Refusal("the message has no subject");
-		let takeId: string;
+		let taken: { takeId: string; requestId: string } | { why: string };
 		try {
-			const recipients = [await sha256Hex(to.toLowerCase())];
-			const requestId = newId();
-			const ask = () =>
-				budget.service.take({
-					protocol: MAIL_BUDGET_PROTOCOL,
-					token: budget.token,
-					recipients,
-					requestId,
-				});
-			let call = ask();
-			let got: { answer: unknown } | { late: true };
-			try {
-				got = await within(call, BUDGET_TIMEOUT_MS);
-			} catch {
-				// The answer was lost (the call threw): the same request id again is the same take.
-				call = ask();
-				got = await within(call, BUDGET_TIMEOUT_MS);
-			}
-			if ("late" in got) {
-				extend(
-					call
-						.then((late) =>
-							isRecord(late) && late.ok === true && typeof late.takeId === "string"
-								? budget.service.refund({
-										protocol: MAIL_BUDGET_PROTOCOL,
-										token: budget.token,
-										takeId: late.takeId,
-									})
-								: undefined,
-						)
-						.catch(() => undefined),
-				);
-				throw new Refusal("the mail budget did not answer in time");
-			}
-			const a = got.answer;
-			if (!isRecord(a) || a.protocol !== MAIL_BUDGET_PROTOCOL) {
-				if (isRecord(a) && a.ok === true && typeof a.takeId === "string") {
-					await giveBack(budget, a.takeId);
-				}
-				throw new Refusal("the mail budget answered in another protocol");
-			}
-			if (a.ok !== true || typeof a.takeId !== "string") {
-				throw new Refusal(
-					`the mail budget refused it${typeof a.scope === "string" ? ` (${a.scope})` : ""}`,
-				);
-			}
-			if (a.lane !== "system") {
-				await giveBack(budget, a.takeId);
-				throw new Refusal("the mediator's mail-budget token is not the system lane's");
-			}
-			takeId = a.takeId;
-		} catch (error) {
-			if (error instanceof Refusal) throw error;
+			taken = await budget.take(await sha256Hex(to.toLowerCase()));
+		} catch {
 			throw new Refusal("the mail budget could not be asked");
 		}
+		if ("why" in taken) throw new Refusal(taken.why);
 		const name = displayName(site.name);
 		try {
 			await send.send({
@@ -495,7 +411,7 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 				...(message.html ? { html: message.html } : {}),
 			});
 		} catch (error) {
-			await giveBack(budget, takeId);
+			await budget.giveBack(taken).catch(() => log("auth-mail: a give-back was not owed"));
 			const code =
 				isRecord(error) && typeof error.code === "string"
 					? error.code
