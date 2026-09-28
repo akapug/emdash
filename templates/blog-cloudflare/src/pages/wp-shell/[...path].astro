@@ -34,7 +34,8 @@ import { loadWpShell } from "../../utils/wp-shell-loader";
 
 const origin = Astro.originPathname;
 const route = wpShellRoute(Astro.params.path);
-if (!route || origin.startsWith("/wp-shell")) {
+// A date archive has its own route (wp-shell/archive/[...date].astro), which draws no entry.
+if (!route || route.kind === "archive" || origin.startsWith("/wp-shell")) {
 	return new Response(null, { status: 404 });
 }
 

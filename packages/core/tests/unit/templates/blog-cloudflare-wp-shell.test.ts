@@ -17,11 +17,17 @@ import {
 	parseWpShell,
 	parseWpShellCached,
 	plainText,
+	renderArchiveNav,
+	renderArchivePosts,
+	renderArchives,
 	renderListing,
 	renderMenu,
 	renderWpShellComments,
 	renderWpShellForm,
+	renderWpShellSubscribe,
 	safeHref,
+	WP_SHELL_SUBSCRIBE_MESSAGES,
+	wpShellDateSite,
 	wpShellDocumentTitle,
 	wpShellPostFill,
 	wpShellProblem,
@@ -37,6 +43,7 @@ import {
 	type WpShellPost,
 	type WpShellPostFill,
 	type WpShellPostLayout,
+	type WpShellSubscribe,
 } from "../../../../../templates/blog-cloudflare/src/utils/wp-shell";
 import writerRecords from "./wp-shell-writer-records.json";
 
@@ -709,7 +716,8 @@ describe("wp-shell route", () => {
  * breadcrumb trail, the front page's own layout and its listing of the latest
  * posts (packages/control-plane/test/wp-shell.test.ts), and for its Kleo
  * fixtures: a post in its own layout, a page whose title is hidden, and a post
- * with no title band and related posts (test/wp-shell-kleo.test.ts), each
+ * with no title band and related posts (test/wp-shell-kleo.test.ts), and for
+ * a footer whose Archives widget and Jetpack sign-up are slots, each
  * dumped with WPSHELL_DUMP=1. A tripwire that refused them would put every
  * migrated site back in the template's own design.
  */
@@ -738,6 +746,10 @@ describe("the tripwire reads the writer's form", () => {
 			'{"s":"share-x"}',
 			'{"slot":"authorBio"}',
 			'{"slot":"adjacent"}',
+			'{"slot":"archives","archives":0}',
+			'{"slot":"subscribe","subscribe":0}',
+			'"dates"',
+			'{"s":"phrase"}',
 			'{"s":"adjTitle"}',
 			'"many":"%d Comments"',
 			// Kleo's: the hidden title, jQuery Sticky's wrapper, a textless toggle's line, both collapses
@@ -2459,5 +2471,379 @@ describe("wp-shell: a post's comments in the theme's comment area", () => {
 		],
 	])("refuses the record whole for %s", (_, record) => {
 		expect(wpShellProblem(record)).not.toBeNull();
+	});
+});
+
+// --- the footer's controls: WordPress's Archives widget and Jetpack's sign-up ------------
+
+/** A footer as Embark's writer cuts it: WordPress's Archives widget's list box and Jetpack's sign-up as slots. */
+function withFooterControls(): WpShell {
+	const s = sample();
+	s.parts.splice(
+		-1,
+		1,
+		{
+			html: '</div></article></main><footer id="site-footer"><div id="archives-2" class="widget_archive"><h4 class="item-title">Past posts</h4><span class="screen-reader-text">Past posts</span>',
+		},
+		{ slot: "archives", archives: 0 },
+		{
+			html: '</div><div id="blog_subscription-3" class="widget_blog_subscription"><h4 class="item-title">Follow by email</h4>',
+		},
+		{ slot: "subscribe", subscribe: 0 },
+		{ html: "</div></footer>" },
+	);
+	s.archives = [
+		{
+			as: "dropdown",
+			type: "monthly",
+			count: true,
+			id: "archives-dropdown-2",
+			label: "Select Month",
+		},
+	];
+	s.dates = {
+		front: "/",
+		timeZone: "America/Los_Angeles",
+		title: { month: "Monthly Archive: %s", year: "Yearly Archive: %s" },
+	};
+	s.subscribe = [subscribeSkin()];
+	return s;
+}
+
+function subscribeSkin(): WpShellSubscribe {
+	return {
+		plugin: "jetpack",
+		parts: [
+			'<div class="wp-block-jetpack-subscriptions__container">',
+			{ s: "form", id: "subscribe-blog-blog_subscription-3" },
+			{ s: "fields" },
+			{ s: "/form" },
+			{ s: "count" },
+			"</div>",
+		],
+		fields: [
+			'<div id="subscribe-text"><p>Enter your address to follow this site.</p></div><p id="subscribe-email">',
+			{ s: "label", for: "subscribe-field-blog_subscription-3", class: "screen-reader-text" },
+			"Email Address",
+			{ s: "/label" },
+			{ s: "control", id: "subscribe-field-blog_subscription-3", placeholder: "Email Address" },
+			'</p><p id="subscribe-submit">',
+			{ s: "submit", tag: "button", class: "wp-block-button__link", label: "Subscribe now" },
+			"</p>",
+		],
+		count: {
+			item: ['<div class="wp-block-jetpack-subscriptions__subscount">', { s: "phrase" }, "</div>"],
+			one: "Join %s other subscriber",
+			many: "Join %s other subscribers",
+		},
+	};
+}
+
+const SUBSCRIBE = {
+	action: "/_emdash/api/plugins/emdash-subscriptions/subscribe",
+	source: "/about/",
+};
+
+describe("the tripwire reads the footer's controls", () => {
+	it("accepts an Archives widget, the site's date archives and a sign-up", () => {
+		expect(wpShellProblem(withFooterControls())).toBeNull();
+	});
+
+	const refused: Array<[string, (s: WpShell) => void]> = [
+		[
+			"an archives slot naming no widget",
+			(s) => void s.parts.push({ slot: "archives", archives: 1 }),
+		],
+		[
+			"a subscribe slot naming no sign-up",
+			(s) => void s.parts.push({ slot: "subscribe", subscribe: 2 }),
+		],
+		[
+			"a widget that is neither a list box nor a list",
+			(s) => void ((s.archives![0] as { as: string }).as = "select"),
+		],
+		["a widget's id that leaves its attribute", (s) => void (s.archives![0]!.id = 'x" onfocus="y')],
+		[
+			"a widget's first line past 200 letters",
+			(s) => void (s.archives![0]!.label = "x".repeat(201)),
+		],
+		["a front that is not a path", (s) => void (s.dates!.front = "https://evil.example/")],
+		["a front that climbs", (s) => void (s.dates!.front = "/../")],
+		["a heading with markup", (s) => void (s.dates!.title!.month = "<b>%s</b>")],
+		[
+			"a heading with no place for the name",
+			(s) => void (s.dates!.title!.month = "Monthly Archive"),
+		],
+		["a time zone that is not one", (s) => void (s.dates!.timeZone = "UTC; x")],
+		[
+			"a sign-up of another plugin",
+			(s) => void ((s.subscribe![0] as { plugin: string }).plugin = "mailchimp"),
+		],
+		[
+			"a sign-up with no form element",
+			(s) =>
+				void (s.subscribe![0]!.parts = s.subscribe![0]!.parts.filter(
+					(x) => typeof x === "string" || x.s !== "form",
+				)),
+		],
+		[
+			"a sign-up whose fields are outside its form",
+			(s) =>
+				void (s.subscribe![0]!.parts = [
+					"<div>",
+					{ s: "form" },
+					{ s: "/form" },
+					{ s: "fields" },
+					{ s: "count" },
+					"</div>",
+				]),
+		],
+		["a sign-up with two email boxes", (s) => void s.subscribe![0]!.fields.push({ s: "control" })],
+		[
+			"a hole inside a tag",
+			(s) => void s.subscribe![0]!.fields.splice(0, 0, '<p class="', { s: "control" }, '">'),
+		],
+		[
+			"a submit control's words past 200 letters",
+			(s) =>
+				void (s.subscribe![0]!.fields[6] = { s: "submit", tag: "button", label: "x".repeat(201) }),
+		],
+		[
+			"a box's id that leaves its attribute",
+			(s) => void (s.subscribe![0]!.fields[4] = { s: "control", id: 'x" autofocus onfocus="y' }),
+		],
+		[
+			"a count phrase with two places",
+			(s) => void (s.subscribe![0]!.count!.many = "Join %s of %s"),
+		],
+		["a count line drawn twice", (s) => void s.subscribe![0]!.parts.push({ s: "count" })],
+		[
+			"a form element in the sign-up's markup",
+			(s) => void s.subscribe![0]!.fields.push('<form action="https://evil.example/"></form>'),
+		],
+		[
+			"an input in the sign-up's markup",
+			(s) => void s.subscribe![0]!.fields.push('<input name="email">'),
+		],
+		[
+			"a script in the count line",
+			(s) => void s.subscribe![0]!.count!.item.push("<script>x</script>"),
+		],
+	];
+	for (const [what, change] of refused) {
+		it(`refuses ${what}`, () => {
+			const s = withFooterControls();
+			change(s);
+			expect(wpShellProblem(s)).not.toBeNull();
+		});
+	}
+});
+
+describe("the Archives widget", () => {
+	const site = wpShellDateSite(withFooterControls());
+	const dates = [
+		new Date("2023-07-05T12:00:00Z"),
+		// 23:30 on July 31 in the site's time zone (Los Angeles): July's
+		new Date("2023-08-01T06:30:00Z"),
+		new Date("2022-12-18T10:00:00Z"),
+	];
+
+	it("is a details whose summary is the list box as the theme drew it, and whose links are the site's months", () => {
+		const html = renderArchives(withFooterControls().archives![0]!, dates, site);
+		expect(html).toBe(
+			'<details class="wp-shell-archives"><summary class="wp-shell-archives-summary">' +
+				'<span style="--wp-shell-select-width:153px;" id="archives-dropdown-2" class="wp-shell-field wp-shell-select">Select Month</span>' +
+				'</summary><ul class="wp-shell-archives-list">' +
+				'<li><a href="/2023/07/">July 2023  (2)</a></li>' +
+				'<li><a href="/2022/12/">December 2022  (1)</a></li></ul></details>',
+		);
+	});
+
+	it("is as wide as its longest line, as a list box is", () => {
+		const one = renderArchives(
+			withFooterControls().archives![0]!,
+			[new Date("2023-07-05T12:00:00Z")],
+			site,
+		);
+		// July 2023 and a no-break space before (1): 80.8px, with the box's 34px: Embark's writer measured the captured box so
+		expect(one).toContain("--wp-shell-select-width:115px;");
+		const none = renderArchives(withFooterControls().archives![0]!, null, site);
+		expect(none).toContain('<ul class="wp-shell-archives-list"></ul>');
+		expect(none).toContain(">Select Month</span>");
+	});
+
+	it("links each month where the site's permalinks put it: under its front, or by WordPress's query", () => {
+		const a = withFooterControls().archives![0]!;
+		expect(renderArchives(a, dates, { paths: { front: "/blog/" }, zone: {} })).toContain(
+			'href="/blog/2023/08/"',
+		);
+		expect(renderArchives(a, dates, { paths: { front: "/", plain: true }, zone: {} })).toContain(
+			'href="/?m=202307"',
+		);
+	});
+
+	it("is WordPress's list of links when the widget was one, with its counts after them", () => {
+		const html = renderArchives(
+			{ as: "list", type: "monthly", count: true, class: "wp-block-archives-list" },
+			dates,
+			site,
+		);
+		expect(html).toBe(
+			'<ul class="wp-block-archives-list"><li><a href="/2023/07/">July 2023</a>&nbsp;(2)</li>\n<li><a href="/2022/12/">December 2022</a>&nbsp;(1)</li></ul>',
+		);
+		expect(renderArchives({ as: "list", type: "yearly", count: false }, dates, site)).toBe(
+			'<ul><li><a href="/2023/">2023</a></li>\n<li><a href="/2022/">2022</a></li></ul>',
+		);
+	});
+
+	it("is drawn where the record's slot is, from the dates the layout read", () => {
+		const shell = withFooterControls();
+		const html = composeWpShell(shell, {
+			menuItems: () => null,
+			currentPath: "/",
+			dates,
+			dateSite: site,
+		})
+			.map((p) => ("html" in p ? p.html : ""))
+			.join("");
+		expect(html).toContain(
+			'<span class="screen-reader-text">Past posts</span><details class="wp-shell-archives">',
+		);
+		expect(html).toContain('<a href="/2023/07/">July 2023  (2)</a>');
+	});
+});
+
+describe("a date archive", () => {
+	it("is drawn in the record's own layout, with WordPress's archive classes and none of a single entry's", () => {
+		const s = sample();
+		expect(bodyClassFor(s, "archive")).toBe(
+			"archive date wp-theme-twentytwenty enable-search-modal",
+		);
+		expect(layoutFor(s, "archive")).toBe(s);
+	});
+
+	it("is reached at /wp-shell/archive/ with WordPress's own shape of its date", () => {
+		expect(wpShellRoute("archive/2023/07")).toEqual({
+			kind: "archive",
+			archive: { y: 2023, m: 7, page: 1 },
+		});
+		expect(wpShellRoute("archive/2023/07/page/2")).toEqual({
+			kind: "archive",
+			archive: { y: 2023, m: 7, page: 2 },
+		});
+		expect(wpShellRoute("archive/2023/13")).toBeNull();
+		expect(wpShellRoute("archive")).toBeNull();
+	});
+
+	it("lists its posts in a classic theme's entry markup, dated in the site's time zone, escaped", () => {
+		const html = renderArchivePosts(
+			[
+				{
+					title: "Tom & <Jerry>",
+					url: "/posts/tom",
+					excerpt: "Words & more",
+					date: new Date("2023-08-01T06:30:00Z"),
+				},
+			],
+			{ zone: { timeZone: "America/Los_Angeles" } },
+		);
+		expect(html).toBe(
+			'<article class="post type-post status-publish format-standard hentry"><header class="entry-header"><h2 class="entry-title"><a href="/posts/tom" rel="bookmark">Tom &amp; &lt;Jerry&gt;</a></h2>' +
+				'<div class="entry-meta"><span class="posted-on"><a href="/posts/tom" rel="bookmark"><time class="entry-date published" datetime="2023-08-01T06:30:00.000Z">July 31, 2023</time></a></span></div></header>' +
+				'<div class="entry-summary"><p>Words &amp; more</p></div></article>',
+		);
+	});
+
+	it("links its other pages as WordPress's posts navigation does", () => {
+		const site = { paths: { front: "/" } };
+		expect(renderArchiveNav({ y: 2023, m: 7, page: 1 }, false, site)).toBe("");
+		expect(renderArchiveNav({ y: 2023, m: 7, page: 2 }, true, site)).toBe(
+			'<nav class="navigation posts-navigation" aria-label="Posts"><h2 class="screen-reader-text">Posts navigation</h2><div class="nav-links">' +
+				'<div class="nav-previous"><a href="/2023/07/page/3/">Older posts</a></div><div class="nav-next"><a href="/2023/07/">Newer posts</a></div></div></nav>',
+		);
+	});
+
+	it("takes its time zone from the record, else the site's setting", () => {
+		expect(wpShellDateSite(null, "Europe/Paris").zone).toEqual({ timeZone: "Europe/Paris" });
+		expect(wpShellDateSite(null, "not a zone").zone).toEqual({});
+		expect(
+			wpShellDateSite({ dates: { front: "/date/", utcOffset: -480 } }, "Europe/Paris"),
+		).toEqual({ paths: { front: "/date/" }, zone: { utcOffset: -480 }, titles: {} });
+	});
+});
+
+describe("the sign-up", () => {
+	const draw = (fill: Partial<Parameters<typeof renderWpShellSubscribe>[1]> = {}) =>
+		renderWpShellSubscribe(subscribeSkin(), { ...SUBSCRIBE, status: null, count: null, ...fill });
+
+	it("is a form posting to the subscriptions plugin, in Jetpack's markup, with its own box and button", () => {
+		expect(draw({ count: 0 })).toBe(
+			'<div class="wp-block-jetpack-subscriptions__container">' +
+				'<form method="post" action="/_emdash/api/plugins/emdash-subscriptions/subscribe" accept-charset="utf-8" id="subscribe-blog-blog_subscription-3">' +
+				'<input type="hidden" name="source" value="/about/"><input type="hidden" name="fragment" value="subscribe-blog-blog_subscription-3">' +
+				'<p aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;"><input type="text" name="website" value="" tabindex="-1" autocomplete="off"></p>' +
+				'<div id="subscribe-text"><p>Enter your address to follow this site.</p></div><p id="subscribe-email">' +
+				'<label for="subscribe-field-blog_subscription-3" class="screen-reader-text">Email Address</label>' +
+				'<input type="email" name="email" autocomplete="email" required id="subscribe-field-blog_subscription-3" placeholder="Email Address">' +
+				'</p><p id="subscribe-submit"><button type="submit" class="wp-block-button__link">Subscribe now</button></p></form></div>',
+		);
+	});
+
+	it("says how many the site's own confirmed subscribers are, as Jetpack says it, and nothing for none", () => {
+		expect(draw({ count: 0 })).not.toContain("subscount");
+		expect(draw({ count: null })).not.toContain("subscount");
+		expect(draw({ count: 1 })).toContain(
+			'<div class="wp-block-jetpack-subscriptions__subscount">Join 1 other subscriber</div>',
+		);
+		expect(draw({ count: 23 })).toContain(">Join 23 other subscribers</div>");
+		expect(draw({ count: 1234 })).toContain(">Join 1,234 other subscribers</div>");
+		expect(draw({ count: 12_345 })).toContain(">Join 12.3K other subscribers</div>");
+		expect(draw({ count: 1_500_000 })).toContain(">Join 1.5M other subscribers</div>");
+	});
+
+	it("says what a try did before the form, and draws no fields once the visitor is signed up", () => {
+		const saved = draw({ status: "saved" });
+		expect(
+			saved.startsWith(
+				`<div class="success"><p>${WP_SHELL_SUBSCRIBE_MESSAGES.saved!.text}</p></div><div class="wp-block-jetpack-subscriptions__container"><form`,
+			),
+		).toBe(true);
+		expect(saved).not.toContain('name="email"');
+		expect(WP_SHELL_SUBSCRIBE_MESSAGES.saved!.text).toContain("no confirmation email was sent");
+		const invalid = draw({ status: "invalid_email" });
+		expect(
+			invalid.startsWith(
+				'<p class="error">Oops! The email you used is invalid. Please try again.</p>',
+			),
+		).toBe(true);
+		expect(invalid).toContain('name="email"');
+		// a status the plugin never sends says nothing
+		expect(draw({ status: "<script>" })).toBe(draw());
+	});
+
+	it("escapes what it writes into the form", () => {
+		expect(draw({ source: '/a"><script>' })).toContain(
+			'name="source" value="/a&quot;&gt;&lt;script&gt;"',
+		);
+	});
+
+	it("is drawn where the record's slot is only when the site takes sign-ups", () => {
+		const shell = withFooterControls();
+		const html = (fill: Parameters<typeof composeWpShell>[1]) =>
+			composeWpShell(shell, fill)
+				.map((p) => ("html" in p ? p.html : ""))
+				.join("");
+		expect(html({ menuItems: () => null, currentPath: "/" })).not.toContain(
+			"jetpack-subscriptions",
+		);
+		expect(
+			html({
+				menuItems: () => null,
+				currentPath: "/",
+				subscribe: { ...SUBSCRIBE, status: null, count: 23 },
+			}),
+		).toContain(
+			'<h4 class="item-title">Follow by email</h4><div class="wp-block-jetpack-subscriptions__container"><form method="post"',
+		);
 	});
 });

@@ -13,7 +13,17 @@ import PageArticle from "../components/PageArticle.astro";
 import PostCard from "../components/PostCard.astro";
 import { getReadingTime } from "../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../utils/site-identity";
+import { datePath, parseDateQuery } from "../utils/wp-archive";
 import { loadWpShell } from "../utils/wp-shell-loader";
+
+// WordPress's plain permalinks name a date archive by query: `/?m=202307`
+// (`&paged=2`). It is the archive its path names (pages/[...date].astro), in the
+// site's own design when it has one, and the visitor's URL stays the query.
+const byQuery = parseDateQuery(Astro.url.searchParams.get("m"), Astro.url.searchParams.get("paged"));
+if (byQuery) {
+	const { shell } = await loadWpShell();
+	return Astro.rewrite(datePath(byQuery, { front: shell ? "/wp-shell/archive/" : "/" }));
+}
 
 // Limit to what we render (1 featured + 6 grid). The DB does the slicing
 // instead of fetching every post and discarding the tail in JS.

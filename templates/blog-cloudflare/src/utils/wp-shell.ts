@@ -20,6 +20,19 @@
  * This module is pure (no EmDash runtime import) so the unit tests reach it.
  */
 
+import {
+	archiveGroups,
+	archiveLabel,
+	DATE_FRONT,
+	datePath,
+	dayIn,
+	MONTH_NAMES,
+	parseDatePath,
+	type WpDateArchive,
+	type WpDatePaths,
+	type WpZone,
+} from "./wp-archive";
+
 /** The site setting that holds the record: the options row `site:wpShell`. */
 export const WP_SHELL_SETTING = "wpShell";
 
@@ -76,6 +89,10 @@ export type WpShellPart =
 	| { slot: "titleText" }
 	/** The site's latest posts, where the front page lists them: the record's `listings[listing]`. */
 	| { slot: "listing"; listing: number }
+	/** WordPress's Archives widget, its months drawn from EmDash's posts: the record's `archives[archives]`. */
+	| { slot: "archives"; archives: number }
+	/** A sign-up for new posts by email, posting to EmDash: the record's `subscribe[subscribe]`. */
+	| { slot: "subscribe"; subscribe: number }
 	// Only in the record's post layout (WpShellPostLayout); anywhere else the record is refused.
 	/** The post's meta: the post layout's `meta[meta]`. */
 	| { slot: "postMeta"; meta: number }
@@ -331,6 +348,79 @@ export interface WpShell extends WpShellLayout {
 	forms?: WpShellForm[];
 	/** The layout every single post is drawn in; without it, posts wear the record's own layout. */
 	post?: WpShellPostLayout;
+	/** The Archives widgets the layouts' `archives` slots draw. */
+	archives?: WpShellArchives[];
+	/** Where the site's date archives are, and what the theme calls them. */
+	dates?: WpShellDates;
+	/** The sign-ups the layouts' `subscribe` slots draw. */
+	subscribe?: WpShellSubscribe[];
+}
+
+/**
+ * WordPress's Archives widget (or block), drawn with the months (or years)
+ * EmDash's published posts fall in, each a link to its archive, so a post
+ * published after the move is listed and a month's count is the site's own.
+ *
+ * `dropdown`: WordPress's list box, which a script sent to the month chosen.
+ * The record runs no script, so the box is the summary of a `<details>`, drawn
+ * as the list box was (the theme's rules for it, the builder's own control
+ * look), and the months are links in the panel it opens. `list`: the widget's
+ * list of links, as WordPress printed it.
+ */
+export interface WpShellArchives {
+	as: "dropdown" | "list";
+	type: "monthly" | "yearly";
+	/** Whether each line says how many posts it has, as `(3)`. */
+	count: boolean;
+	/** The list box's id and classes (a dropdown), or the list's classes (a list). */
+	id?: string;
+	class?: string;
+	/** The list box's first line, which it shows until a month is chosen ("Select Month"). */
+	label?: string;
+}
+
+/** Where the site's date archives are, the time zone its posts' months are taken in, and the theme's headings for them. */
+export interface WpShellDates {
+	/** The path before the year (`/`, `/blog/`, `/date/`): WordPress's front of the permalink structure. */
+	front: string;
+	/** Plain permalinks: an archive is `/?m=YYYYMM`. */
+	plain?: true;
+	timeZone?: string;
+	utcOffset?: number;
+	/** The archive page's heading for a year, a month and a day, `%s` the archive's name ("Monthly Archive: %s"). */
+	title?: { year?: string; month?: string; day?: string };
+}
+
+/**
+ * A hole in a sign-up's templates. Its markup: EmDash's form element and its
+ * end, where the form's fields go (drawn until the visitor has subscribed),
+ * and where the count line goes. Its fields: a label and its end, the email
+ * box, the submit control. The count line: its phrase.
+ */
+export type WpShellSubscribeHole =
+	| { s: "form"; id?: string; class?: string }
+	| { s: "/form" }
+	| { s: "fields" }
+	| { s: "count" }
+	| { s: "label"; for?: string; class?: string }
+	| { s: "/label" }
+	| { s: "control"; id?: string; class?: string; placeholder?: string }
+	| { s: "submit"; tag: "button" | "input"; id?: string; class?: string; label: string }
+	| { s: "phrase" };
+export type WpShellSubscribePart = string | WpShellSubscribeHole;
+
+/**
+ * A sign-up for new posts by email (Jetpack's Subscriptions widget) in the
+ * plugin's markup, with holes for EmDash's own form: a visitor's address is
+ * posted to the site's subscriptions plugin, and the count line says how many
+ * others the site itself has, never the number WordPress.com had.
+ */
+export interface WpShellSubscribe {
+	plugin: "jetpack";
+	parts: WpShellSubscribePart[];
+	fields: WpShellSubscribePart[];
+	/** The line that says how many others subscribed, drawn for one or more: `%s` the count. */
+	count?: { item: WpShellSubscribePart[]; one: string; many: string };
 }
 
 /** A page's own layout, for the EmDash page of its slug. */
@@ -389,7 +479,7 @@ export interface WpShellForm {
 }
 
 /** What a page is, for the body classes WordPress would have given it. */
-export type WpShellKind = "home" | "page" | "post";
+export type WpShellKind = "home" | "page" | "post" | "archive";
 
 /** The EmDash menu item shape this file reads. */
 export interface WpShellMenuItem {
@@ -618,6 +708,17 @@ function drawnMarkup(s: WpShell): string[] {
 	}
 	// A form's holes as elements that fit between tags: renderWpShellForm writes the form's own.
 	for (const f of s.forms ?? []) out.push(f.parts.map(formFillForCheck).join(""));
+	// A sign-up drawn whole: its fields and its count line in their holes (renderWpShellSubscribe).
+	for (const x of s.subscribe ?? []) {
+		const fill = (t: readonly WpShellSubscribePart[], holes: Record<string, string> = {}) =>
+			t.map((y) => (typeof y === "string" ? y : (holes[y.s] ?? SUBSCRIBE_FILL[y.s]))).join("");
+		out.push(
+			fill(x.parts, {
+				fields: fill(x.fields),
+				count: x.count ? fill(x.count.item) : "",
+			}),
+		);
+	}
 	if (s.post) out.push(...postMarkupForCheck(s.post));
 	return out;
 }
@@ -765,6 +866,18 @@ const FORM_FILL: Record<WpShellFormHole["s"], string> = {
 };
 const formFillForCheck = (x: WpShellFormPart) => (typeof x === "string" ? x : FORM_FILL[x.s]);
 
+const SUBSCRIBE_FILL: Record<WpShellSubscribeHole["s"], string> = {
+	form: "<div>",
+	"/form": "</div>",
+	fields: "<b></b>",
+	count: "<b></b>",
+	label: "<b>",
+	"/label": "</b>",
+	control: "<b></b>",
+	submit: "<b></b>",
+	phrase: "<b></b>",
+};
+
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -782,10 +895,17 @@ function checkElement(p: Record<string, unknown>): boolean {
 const isIndex = (v: unknown, below: number): boolean =>
 	typeof v === "number" && Number.isInteger(v) && v >= 0 && v < below;
 
+/** How many of each list the record's slots may name. */
+interface SlotCounts {
+	listings: number;
+	archives: number;
+	subscribe: number;
+}
+
 function checkPart(
 	p: unknown,
 	menus: number,
-	listings: number,
+	counts: SlotCounts,
 	post: WpShellPostLayout | null = null,
 ): string | null {
 	if (!isObject(p)) return "a part is not an object";
@@ -811,7 +931,11 @@ function checkPart(
 		case "titleText":
 			return null;
 		case "listing":
-			return isIndex(p.listing, listings) ? null : "a listing slot names no listing";
+			return isIndex(p.listing, counts.listings) ? null : "a listing slot names no listing";
+		case "archives":
+			return isIndex(p.archives, counts.archives) ? null : "an archives slot names no archives";
+		case "subscribe":
+			return isIndex(p.subscribe, counts.subscribe) ? null : "a subscribe slot names no sign-up";
 		// A post's slots are drawn only in the post layout, from its own templates.
 		case "postMeta":
 			return post && isIndex(p.meta, post.meta.length)
@@ -980,6 +1104,9 @@ function markupOf(s: WpShell): string[] {
 	for (const l of s.listings ?? [])
 		for (const x of [...l.item, ...(l.thumb ?? [])]) if (typeof x === "string") out.push(x);
 	for (const f of s.forms ?? []) for (const x of f.parts) if (typeof x === "string") out.push(x);
+	for (const x of s.subscribe ?? [])
+		for (const t of [x.parts, x.fields, ...(x.count ? [x.count.item] : [])])
+			for (const y of t) if (typeof y === "string") out.push(y);
 	if (s.post) {
 		for (const t of postTemplatesOf(s.post))
 			for (const x of t) if (typeof x === "string") out.push(x);
@@ -1062,6 +1189,116 @@ function checkForm(f: unknown): string | null {
 	return null;
 }
 
+/** A line of text the layout escapes and draws: a list box's first line, a box's placeholder, a button's words. */
+const SHORT_TEXT = 200;
+const isShortText = (v: unknown): v is string => isText(v) && v.length <= SHORT_TEXT;
+const optionalShortText = (v: unknown) => v === undefined || isShortText(v);
+/** A phrase with one `%s` where a count or a name goes, and nothing that could open a tag. */
+const PHRASE = /^[^<>%]{0,200}%s[^<>%]{0,200}$/;
+
+/** Why an Archives widget is not one this layout draws, or null. */
+function checkArchives(a: unknown): string | null {
+	if (!isObject(a)) return "an archives widget is not an object";
+	if (a.as !== "dropdown" && a.as !== "list")
+		return "an archives widget is neither a list box nor a list";
+	if (a.type !== "monthly" && a.type !== "yearly")
+		return "an archives widget lists neither months nor years";
+	if (typeof a.count !== "boolean") return "an archives widget does not say whether it counts";
+	if (!optionalToken(a.id) || !optionalToken(a.class))
+		return "an archives widget's id or classes are not tokens";
+	if (!optionalShortText(a.label)) return "an archives widget's first line is not one";
+	return null;
+}
+
+/** Why the record's date archives are not ones this layout draws, or null. */
+function checkDates(d: unknown): string | null {
+	if (!isObject(d)) return "the date archives are not an object";
+	if (!isText(d.front) || !DATE_FRONT.test(d.front))
+		return "the date archives' front is not a path";
+	if (d.plain !== undefined && d.plain !== true) return "the date archives' plain flag is not one";
+	if (d.timeZone !== undefined && (!isText(d.timeZone) || !TIME_ZONE.test(d.timeZone)))
+		return "the date archives' time zone is not one";
+	if (
+		d.utcOffset !== undefined &&
+		(typeof d.utcOffset !== "number" ||
+			!Number.isInteger(d.utcOffset) ||
+			Math.abs(d.utcOffset) > 840)
+	)
+		return "the date archives' offset from UTC is not one";
+	const { title } = d;
+	if (
+		title !== undefined &&
+		(!isObject(title) ||
+			Object.keys(title).some((k) => !["year", "month", "day"].includes(k)) ||
+			Object.values(title).some((v) => !isText(v) || !PHRASE.test(v)))
+	)
+		return "the date archives' headings are not phrases";
+	return null;
+}
+
+const SUBSCRIBE_HOLES = new Set(["form", "/form", "fields", "count"]);
+const SUBSCRIBE_FIELD_HOLES = new Set(["label", "/label", "control", "submit"]);
+const SUBSCRIBE_COUNT_HOLES = new Set(["phrase"]);
+
+/**
+ * How many of each hole a sign-up's template has, or null when it is not one
+ * this layout fills: a hole of another kind, attributes that are not tokens,
+ * labels that do not nest, or a hole inside a tag.
+ */
+function subscribeHoles(t: unknown, allowed: ReadonlySet<string>): Record<string, number> | null {
+	if (!Array.isArray(t)) return null;
+	const count: Record<string, number> = {};
+	let depth = 0;
+	for (const [i, x] of t.entries()) {
+		if (isText(x)) continue;
+		if (!isObject(x) || !isText(x.s) || !allowed.has(x.s)) return null;
+		count[x.s] = (count[x.s] ?? 0) + 1;
+		if (!optionalToken(x.id) || !optionalToken(x.class) || !optionalToken(x.for)) return null;
+		if (!optionalShortText(x.placeholder)) return null;
+		if (x.s === "submit" && ((x.tag !== "button" && x.tag !== "input") || !isShortText(x.label)))
+			return null;
+		if (x.s === "label") depth++;
+		if (x.s === "/label" && --depth < 0) return null;
+		const before = t
+			.slice(0, i)
+			.map((y) => (isText(y) ? y : "X"))
+			.join("");
+		if (before.lastIndexOf("<") > before.lastIndexOf(">")) return null;
+	}
+	return depth === 0 ? count : null;
+}
+
+/** Why a sign-up is not one this layout draws, or null. */
+function checkSubscribe(x: unknown): string | null {
+	if (!isObject(x)) return "a sign-up is not an object";
+	if (x.plugin !== "jetpack") return "a sign-up's plugin is not one this layout draws";
+	const parts = subscribeHoles(x.parts, SUBSCRIBE_HOLES);
+	const fields = subscribeHoles(x.fields, SUBSCRIBE_FIELD_HOLES);
+	if (!parts || !fields) return "a sign-up's templates are malformed";
+	if (parts.form !== 1 || parts["/form"] !== 1 || parts.fields !== 1)
+		return "a sign-up needs one form element and one place for its fields";
+	// The fields go inside the form.
+	const holes = Array.isArray(x.parts) ? x.parts : [];
+	const at = (s: string) => holes.findIndex((p: unknown) => isObject(p) && p.s === s);
+	if (!(at("form") < at("fields") && at("fields") < at("/form")))
+		return "a sign-up's fields are not inside its form";
+	if (fields.control !== 1 || fields.submit !== 1)
+		return "a sign-up needs one email box and one submit control";
+	const { count } = x;
+	if (count === undefined) return parts.count ? "a sign-up's count line has no template" : null;
+	if (parts.count !== 1) return "a sign-up's count line is not drawn once";
+	if (
+		!isObject(count) ||
+		subscribeHoles(count.item, SUBSCRIBE_COUNT_HOLES)?.phrase !== 1 ||
+		!isText(count.one) ||
+		!PHRASE.test(count.one) ||
+		!isText(count.many) ||
+		!PHRASE.test(count.many)
+	)
+		return "a sign-up's count line is malformed";
+	return null;
+}
+
 const countSlot = (parts: unknown[], slot: string) =>
 	parts.filter((p) => isObject(p) && p.slot === slot).length;
 
@@ -1069,7 +1306,7 @@ const countSlot = (parts: unknown[], slot: string) =>
 function checkLayout(
 	l: Record<string, unknown>,
 	menus: number,
-	listings: number,
+	counts: SlotCounts,
 	post: WpShellPostLayout | null = null,
 ): string | null {
 	const { body, styles, parts } = l;
@@ -1081,7 +1318,7 @@ function checkLayout(
 	}
 	if (!Array.isArray(parts)) return "no parts";
 	for (const p of parts) {
-		const why = checkPart(p, menus, listings, post);
+		const why = checkPart(p, menus, counts, post);
 		if (why) return why;
 	}
 	if (countSlot(parts, "title") !== 1 || countSlot(parts, "content") !== 1) {
@@ -1401,11 +1638,31 @@ export function wpShellProblem(value: unknown): string | null {
 		const why = checkListing(l);
 		if (why) return why;
 	}
-	const layout = checkLayout({ body, styles, parts }, menus.length, listings.length);
+	const { archives = [], subscribe = [] } = value;
+	if (!Array.isArray(archives)) return "the archives are not a list";
+	for (const a of archives) {
+		const why = checkArchives(a);
+		if (why) return why;
+	}
+	if (value.dates !== undefined) {
+		const why = checkDates(value.dates);
+		if (why) return why;
+	}
+	if (!Array.isArray(subscribe)) return "the sign-ups are not a list";
+	for (const x of subscribe) {
+		const why = checkSubscribe(x);
+		if (why) return why;
+	}
+	const counts: SlotCounts = {
+		listings: listings.length,
+		archives: archives.length,
+		subscribe: subscribe.length,
+	};
+	const layout = checkLayout({ body, styles, parts }, menus.length, counts);
 	if (layout) return layout;
 	if (value.home !== undefined) {
 		const why = isObject(value.home)
-			? checkLayout(value.home, menus.length, listings.length)
+			? checkLayout(value.home, menus.length, counts)
 			: "not an object";
 		if (why) return `the home layout: ${why}`;
 	}
@@ -1416,7 +1673,7 @@ export function wpShellProblem(value: unknown): string | null {
 		if (!isObject(pg) || !isText(pg.slug) || !PAGE_SLUG.test(pg.slug) || slugs.has(pg.slug))
 			return "a page layout names no page";
 		slugs.add(pg.slug);
-		const why = checkLayout(pg, menus.length, listings.length);
+		const why = checkLayout(pg, menus.length, counts);
 		if (why) return `the ${pg.slug} page layout: ${why}`;
 	}
 	if (!Array.isArray(forms)) return "the forms are not a list";
@@ -1430,7 +1687,7 @@ export function wpShellProblem(value: unknown): string | null {
 		if (own) return `the post layout: ${own}`;
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- checkPost checked the post's own fields
 		const post = value.post as unknown as WpShellPostLayout;
-		const why = checkLayout(value.post, menus.length, listings.length, post);
+		const why = checkLayout(value.post, menus.length, counts, post);
 		if (why) return `the post layout: ${why}`;
 	}
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- every field was checked above
@@ -1614,21 +1871,6 @@ export function listingExcerpt(post: WpShellPost, rule: WpShellListing["excerpt"
 	return rule.paragraphs || out.length === 0 ? out : [out.join(" ")];
 }
 
-const MONTH_NAMES = [
-	"January",
-	"February",
-	"March",
-	"April",
-	"May",
-	"June",
-	"July",
-	"August",
-	"September",
-	"October",
-	"November",
-	"December",
-];
-
 const ordinal = (d: number) =>
 	d % 10 === 1 && d !== 11
 		? "st"
@@ -1637,29 +1879,6 @@ const ordinal = (d: number) =>
 			: d % 10 === 3 && d !== 13
 				? "rd"
 				: "th";
-
-/** The calendar day `date` falls on in the site's time zone (UTC when it has none, or an unknown one). */
-function dayIn(
-	date: Date,
-	zone: { timeZone?: string; utcOffset?: number },
-): { y: number; m: number; d: number } {
-	if (zone.timeZone) {
-		try {
-			const parts = new Intl.DateTimeFormat("en-US", {
-				timeZone: zone.timeZone,
-				year: "numeric",
-				month: "numeric",
-				day: "numeric",
-			}).formatToParts(date);
-			const part = (type: string) => Number(parts.find((x) => x.type === type)?.value);
-			return { y: part("year"), m: part("month"), d: part("day") };
-		} catch {
-			// An unknown zone: UTC, below.
-		}
-	}
-	const t = new Date(date.getTime() + (zone.utcOffset ?? 0) * 60_000);
-	return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
-}
 
 /** A date as PHP's date() prints it with `format`'s letters (F M j d m n Y S); anything else is literal. */
 export function formatWpDate(
@@ -1813,6 +2032,289 @@ export function renderListing(listing: WpShellListing, posts: readonly WpShellPo
 		heights[lane] = (heights[lane] ?? 0) + laneHeight(listing, post);
 	}
 	return lead + into.map((items) => `<div class="wp-shell-lane">${items.join("")}</div>`).join("");
+}
+
+// --- date archives -------------------------------------------------------------
+
+/** Where a site's date archives are and the time zone its months are taken in: the record's, else the site's setting. */
+export interface WpShellDateSite {
+	paths: WpDatePaths;
+	zone: WpZone;
+	titles: NonNullable<WpShellDates["title"]>;
+}
+
+/** An IANA zone name EmDash's timezone setting may hold. */
+const ZONE_NAME = /^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+){1,2}$/;
+
+export function wpShellDateSite(
+	shell: Pick<WpShell, "dates"> | null,
+	timezone?: string | null,
+): WpShellDateSite {
+	const d = shell?.dates;
+	const zone: WpZone = d?.timeZone
+		? { timeZone: d.timeZone }
+		: d?.utcOffset !== undefined
+			? { utcOffset: d.utcOffset }
+			: timezone && ZONE_NAME.test(timezone)
+				? { timeZone: timezone }
+				: {};
+	return {
+		paths: d ? { front: d.front, ...(d.plain ? { plain: true } : {}) } : { front: "/" },
+		zone,
+		titles: d?.title ?? {},
+	};
+}
+
+/**
+ * Arial's advance widths in thousandths of an em, for the printable ASCII
+ * characters (Liberation Sans shares them): how wide Chromium draws a list
+ * box, as wide as its longest line (Embark's builder measures the captured
+ * box the same way). Any other character is taken as a digit's width.
+ */
+const ARIAL_WIDTHS = [
+	278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+	556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667,
+	611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+	667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500,
+	222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+];
+/** A line of a list box, in Chromium's 13.333px control font, in pixels. */
+const listTextWidth = (text: string) =>
+	(Array.from(
+		text,
+		(c) => ARIAL_WIDTHS[c.charCodeAt(0) - 32] ?? (c === "\u00a0" ? 278 : 556),
+	).reduce((n, w) => n + w, 0) *
+		13.333) /
+	1000;
+/** What a list box draws beside its longest line: its border, its padding and its arrow (measured on Chromium). */
+const LIST_CHROME_PX = 34;
+
+/**
+ * An Archives widget with the months (or years) the site's published posts
+ * fall in, newest first, each a link to its archive. A list box is a
+ * `<details>`: its summary is the box as the theme drew it (showing its first
+ * line, as wide as its longest), and it opens on the months as links, in
+ * the order and words WordPress's list box had them.
+ */
+export function renderArchives(
+	a: WpShellArchives,
+	dates: readonly Date[] | null,
+	site: Pick<WpShellDateSite, "paths" | "zone">,
+): string {
+	const groups = archiveGroups(dates ?? [], a.type, site.zone);
+	const href = (g: { y: number; m?: number }) =>
+		escapeAttr(datePath({ y: g.y, ...(g.m ? { m: g.m } : {}), page: 1 }, site.paths));
+	if (a.as === "list") {
+		const items = groups.map(
+			(g) =>
+				`<li><a href="${href(g)}">${escapeHtml(archiveLabel(g))}</a>${a.count ? `&nbsp;(${g.count})` : ""}</li>`,
+		);
+		return `<ul${a.class ? ` class="${escapeAttr(a.class)}"` : ""}>${items.join("\n")}</ul>`;
+	}
+	// WordPress's option: ` July 2023 &nbsp;(1)`, which a list box draws as `July 2023 \u00a0(1)`.
+	const lines = groups.map((g) => `${archiveLabel(g)}${a.count ? ` \u00a0(${g.count})` : ""}`);
+	const label = a.label ?? "";
+	const width = Math.ceil(Math.max(0, ...[label, ...lines].map(listTextWidth)) + LIST_CHROME_PX);
+	const cls = [...(a.class ? [a.class] : []), "wp-shell-field", "wp-shell-select"].join(" ");
+	const items = groups.map(
+		(g, i) => `<li><a href="${href(g)}">${escapeHtml(lines[i] ?? "")}</a></li>`,
+	);
+	return (
+		`<details class="wp-shell-archives"><summary class="wp-shell-archives-summary">` +
+		`<span style="--wp-shell-select-width:${width}px;"${a.id ? ` id="${escapeAttr(a.id)}"` : ""} class="${escapeAttr(cls)}">${escapeHtml(label)}</span>` +
+		`</summary><ul class="wp-shell-archives-list">${items.join("")}</ul></details>`
+	);
+}
+
+/** WordPress's default excerpt: 55 words, and ` […]` after one it cut. */
+const ARCHIVE_EXCERPT: WpShellListing["excerpt"] = { words: 55, more: " [\u2026]" };
+
+/**
+ * An archive's posts, in the markup WordPress's classic themes print an entry
+ * of a list in (Underscores' content.php, which most classic themes start
+ * from): its title as a link, its date, and its excerpt. The theme's own
+ * archive template is not in the record; its rules for these classes are.
+ */
+export function renderArchivePosts(
+	posts: readonly WpShellPost[],
+	site: Pick<WpShellDateSite, "zone">,
+	dateFormat = "F j, Y",
+): string {
+	return posts
+		.map((post) => {
+			const href = escapeAttr(safeHref(post.url));
+			const date = post.date
+				? `<div class="entry-meta"><span class="posted-on"><a href="${href}" rel="bookmark"><time class="entry-date published" datetime="${escapeAttr(post.date.toISOString())}">${escapeHtml(formatWpDate(post.date, dateFormat, site.zone))}</time></a></span></div>`
+				: "";
+			const excerpt = listingExcerpt(post, ARCHIVE_EXCERPT)
+				.map((p) => `<p>${escapeHtml(p)}</p>`)
+				.join("");
+			return (
+				`<article class="post type-post status-publish format-standard hentry">` +
+				`<header class="entry-header"><h2 class="entry-title"><a href="${href}" rel="bookmark">${escapeHtml(post.title)}</a></h2>${date}</header>` +
+				(excerpt ? `<div class="entry-summary">${excerpt}</div>` : "") +
+				`</article>`
+			);
+		})
+		.join("");
+}
+
+/** The links to an archive's other pages, in WordPress's own markup (the_posts_navigation). */
+export function renderArchiveNav(
+	a: WpDateArchive,
+	older: boolean,
+	site: Pick<WpShellDateSite, "paths">,
+): string {
+	const newer = a.page > 1;
+	if (!older && !newer) return "";
+	const link = (page: number, words: string) =>
+		`<a href="${escapeAttr(datePath({ ...a, page }, site.paths))}">${words}</a>`;
+	return (
+		`<nav class="navigation posts-navigation" aria-label="Posts"><h2 class="screen-reader-text">Posts navigation</h2><div class="nav-links">` +
+		(older ? `<div class="nav-previous">${link(a.page + 1, "Older posts")}</div>` : "") +
+		(newer ? `<div class="nav-next">${link(a.page - 1, "Newer posts")}</div>` : "") +
+		`</div></nav>`
+	);
+}
+
+// --- a sign-up ---------------------------------------------------------------
+
+/** What the layout knows for a sign-up (renderWpShellSubscribe). */
+export interface WpShellSubscribeFill {
+	/** Where the form posts: the subscriptions plugin's route. */
+	action: string;
+	/** The page drawn, which the plugin sends the visitor back to. */
+	source: string;
+	/** What the plugin said the visitor's last try did (`?subscribe=`), or null. */
+	status: string | null;
+	/** How many confirmed subscribers the site has; null when it cannot say. */
+	count: number | null;
+}
+
+/**
+ * What a sign-up says after a try, by the plugin's status. Jetpack's own
+ * words where they are true of this site; where the site cannot send email
+ * yet, it says so rather than that an email was sent. `done`: the visitor is
+ * signed up (or confirmed), and the fields are not drawn again, as Jetpack
+ * draws none after a success.
+ */
+export const WP_SHELL_SUBSCRIBE_MESSAGES: Record<
+	string,
+	{ ok: boolean; done?: true; text: string }
+> = {
+	sent: {
+		ok: true,
+		done: true,
+		text: "Success! An email was just sent to confirm your subscription. Please find the email now and click 'Confirm' to start subscribing.",
+	},
+	saved: {
+		ok: true,
+		done: true,
+		text: "Thank you! Your subscription is saved. This site cannot send email yet, so no confirmation email was sent. It will send you one when it can, and new posts start once you confirm.",
+	},
+	pending: {
+		ok: false,
+		text: "It seems you already tried to subscribe with this email, but have not confirmed from the email link we sent. Please check your email inbox to confirm.",
+	},
+	pending_saved: {
+		ok: false,
+		text: "You already asked to subscribe with this email. This site cannot send email yet: it will send you a confirmation email when it can.",
+	},
+	already: {
+		ok: false,
+		text: "You have already subscribed to this site. Please check your email inbox.",
+	},
+	invalid_email: { ok: false, text: "Oops! The email you used is invalid. Please try again." },
+	error: { ok: false, text: "Oops! There was an error when subscribing. Please try again." },
+	confirmed: {
+		ok: true,
+		done: true,
+		text: "Your subscription is confirmed. Each new post will be emailed to you.",
+	},
+	unsubscribed: { ok: true, text: "You are unsubscribed. No more posts will be emailed to you." },
+	invalid_link: { ok: false, text: "This link is not valid, or it was already used." },
+};
+
+/** A number to one decimal place, with none when it is whole: PHP's floatval(number_format($n, 1)). */
+const tenth = (x: number) => String(Math.round(x * 10) / 10);
+
+/** A count as Jetpack's line prints it: `23`, `1,234`, `12.3K`, `1.5M` (Jetpack_Memberships::get_join_others_text). */
+function subscriberCount(n: number): string {
+	if (n >= 1_000_000) return `${tenth(n / 1_000_000)}M`;
+	if (n >= 10_000) return `${tenth(n / 1000)}K`;
+	return n.toLocaleString("en-US");
+}
+
+/**
+ * A sign-up in its plugin's markup, around EmDash's own form: it posts the
+ * visitor's address to the site's subscriptions plugin, which sends them
+ * back to this page with what it did (`?subscribe=`), said where Jetpack
+ * says it, before the form. A hidden box a person never fills (a honeypot)
+ * rides with it. The count line says how many confirmed subscribers the site
+ * has, and is drawn for one or more, as Jetpack draws it.
+ */
+export function renderWpShellSubscribe(x: WpShellSubscribe, fill: WpShellSubscribeFill): string {
+	const said = fill.status ? WP_SHELL_SUBSCRIBE_MESSAGES[fill.status] : undefined;
+	const message = !said
+		? ""
+		: said.ok
+			? `<div class="success"><p>${escapeHtml(said.text)}</p></div>`
+			: `<p class="error">${escapeHtml(said.text)}</p>`;
+	let fragment = "";
+	const field = (h: WpShellSubscribeHole): string => {
+		switch (h.s) {
+			case "label":
+				return `<label${attr("for", h.for)}${attr("class", h.class)}>`;
+			case "/label":
+				return "</label>";
+			case "control":
+				return `<input type="email" name="email" autocomplete="email" required${attr("id", h.id)}${attr("class", h.class)}${attr("placeholder", h.placeholder)}>`;
+			case "submit":
+				return h.tag === "input"
+					? `<input type="submit"${attr("id", h.id)}${attr("class", h.class)} value="${escapeAttr(h.label)}">`
+					: `<button type="submit"${attr("id", h.id)}${attr("class", h.class)}>${escapeHtml(h.label)}</button>`;
+			default:
+				return "";
+		}
+	};
+	const count = (): string => {
+		if (!x.count || fill.count === null || fill.count < 1) return "";
+		const phrase = (fill.count === 1 ? x.count.one : x.count.many).replace(
+			"%s",
+			subscriberCount(fill.count),
+		);
+		return x.count.item
+			.map((y) => (typeof y === "string" ? y : y.s === "phrase" ? escapeHtml(phrase) : ""))
+			.join("");
+	};
+	const body = x.parts
+		.map((y) => {
+			if (typeof y === "string") return y;
+			switch (y.s) {
+				case "form":
+					fragment = y.id ?? "";
+					return (
+						`<form method="post" action="${escapeAttr(fill.action)}" accept-charset="utf-8"${attr("id", y.id)}${attr("class", y.class)}>` +
+						`<input type="hidden" name="source" value="${escapeAttr(fill.source)}">` +
+						(fragment
+							? `<input type="hidden" name="fragment" value="${escapeAttr(fragment)}">`
+							: "") +
+						`<p aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;"><input type="text" name="website" value="" tabindex="-1" autocomplete="off"></p>`
+					);
+				case "/form":
+					return "</form>";
+				case "fields":
+					return said?.done
+						? ""
+						: x.fields.map((f) => (typeof f === "string" ? f : field(f))).join("");
+				case "count":
+					return count();
+				default:
+					return "";
+			}
+		})
+		.join("");
+	return message + body;
 }
 
 /** Portable Text as plain text: each text block's spans, a blank line between blocks. */
@@ -2324,6 +2826,12 @@ export interface WpShellFill {
 	posts?: readonly WpShellPost[] | null;
 	/** The single post being drawn, for the post layout's holes. */
 	post?: WpShellPostFill | null;
+	/** The publication dates of EmDash's published posts, for an archives slot; null when they could not be read. */
+	dates?: readonly Date[] | null;
+	/** Where the site's date archives are, for an archives slot's links. */
+	dateSite?: Pick<WpShellDateSite, "paths" | "zone">;
+	/** What a sign-up posts to and says; null or unset, and a subscribe slot draws nothing (the site takes no sign-ups). */
+	subscribe?: WpShellSubscribeFill | null;
 }
 
 /** A post's category or tag, as EmDash hydrates it. */
@@ -2616,6 +3124,13 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		else if (p.slot === "listing") {
 			const listing = shell.listings?.[p.listing];
 			if (listing) push(renderListing(listing, fill.posts ?? []));
+		} else if (p.slot === "archives") {
+			const archives = shell.archives?.[p.archives];
+			if (archives)
+				push(renderArchives(archives, fill.dates ?? null, fill.dateSite ?? wpShellDateSite(shell)));
+		} else if (p.slot === "subscribe") {
+			const sub = shell.subscribe?.[p.subscribe];
+			if (sub && fill.subscribe) push(renderWpShellSubscribe(sub, fill.subscribe));
 		} else {
 			const menu = shell.menus[p.menu];
 			push(renderMenu(menu, fill.menuItems(menu.location), fill.currentPath));
@@ -2633,15 +3148,20 @@ const KIND_CLASSES: Record<WpShellKind, readonly string[]> = {
 	home: ["home", "page", "page-template-default"],
 	page: ["page", "page-template-default"],
 	post: ["single", "single-post", "single-format-standard"],
+	archive: ["archive", "date"],
 };
 const ANY_KIND = new Set(Object.values(KIND_CLASSES).flat());
+/** The classes WordPress (and the themes that follow it) give a single entry's page, and never an archive. */
+const SINGULAR = new Set(["wp-singular", "singular"]);
 const WHITESPACE = /\s+/;
 
 export function bodyClassFor(shell: WpShell, kind: WpShellKind, slug?: string | null): string {
 	// The home layout was cut from the front page, a page layout from its page: their classes are their own.
 	const own = layoutFor(shell, kind, slug);
 	if (own !== shell) return own.body.class;
-	const kept = shell.body.class.split(WHITESPACE).filter((c) => c !== "" && !ANY_KIND.has(c));
+	const kept = shell.body.class
+		.split(WHITESPACE)
+		.filter((c) => c !== "" && !ANY_KIND.has(c) && !(kind === "archive" && SINGULAR.has(c)));
 	return [...KIND_CLASSES[kind], ...kept].join(" ");
 }
 
@@ -2669,9 +3189,18 @@ export function wpShellDocumentTitle(
 /** Which page a rewritten `/wp-shell/...` path draws, or null for any other path. */
 export function wpShellRoute(
 	path: string | undefined,
-): { kind: "home" } | { kind: "page" | "post"; slug: string } | null {
+):
+	| { kind: "home" }
+	| { kind: "page" | "post"; slug: string }
+	| { kind: "archive"; archive: WpDateArchive }
+	| null {
 	const segments = (path ?? "").split("/").filter(Boolean);
 	if (segments.length === 1 && segments[0] === "home") return { kind: "home" };
+	// `/wp-shell/archive/2023/07`, `/wp-shell/archive/2023/07/page/2`: a date archive, at WordPress's own shape.
+	if (segments[0] === "archive") {
+		const archive = parseDatePath(`/${segments.slice(1).join("/")}/`);
+		return archive ? { kind: "archive", archive } : null;
+	}
 	if (segments.length !== 2) return null;
 	const [collection, slug] = segments;
 	if (collection === "pages") return { kind: "page", slug };

@@ -2734,6 +2734,16 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
+  packages/plugins/subscriptions:
+    dependencies:
+      emdash:
+        specifier: workspace:>=0.11.0
+        version: link:../../core
+    devDependencies:
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@26.1.1)(jsdom@26.1.0)(vite@8.0.16(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.1))
+
   packages/plugins/webhook-notifier:
     dependencies:
       emdash:
@@ -3075,6 +3085,9 @@ importers:
       '@emdash-cms/plugin-forms':
         specifier: workspace:*
         version: link:../../packages/plugins/forms
+      '@emdash-cms/plugin-subscriptions':
+        specifier: workspace:*
+        version: link:../../packages/plugins/subscriptions
       astro:
         specifier: 'catalog:'
         version: 7.3.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.1.1)(aws4fetch@1.0.20)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.1)
