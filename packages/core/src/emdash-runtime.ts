@@ -254,6 +254,7 @@ import { CronExecutor, type InvokeCronHookFn } from "./plugins/cron.js";
 import { definePlugin } from "./plugins/define-plugin.js";
 import { DEV_CONSOLE_EMAIL_PLUGIN_ID, devConsoleEmailDeliver } from "./plugins/email-console.js";
 import { EmailPipeline } from "./plugins/email.js";
+import { executionPolicyRefusal } from "./plugins/execution-policy.js";
 import {
 	createHookPipeline,
 	getActiveContentSaveHookName,
@@ -1495,6 +1496,14 @@ export class EmDashRuntime {
 		// sandboxed entries the build has (plugins/sandbox-bypass.ts). With none,
 		// marketplace plugins would still be loaded in-process below.
 		assertSandboxBypassAllowed(deps.sandboxBypassed ?? false);
+		// The build's own record of what it lets run (plugins/execution-policy.ts),
+		// when its config has one: malformed, or naming another sandbox mode than
+		// the one this runtime was given, and nothing starts.
+		const policyRefused = executionPolicyRefusal(
+			Reflect.get(deps.config, "execution"),
+			deps.sandboxBypassed,
+		);
+		if (policyRefused) throw new Error(`EmDash: ${policyRefused}: refusing to start`);
 
 		// Helper: time a phase and push into the shared timings array when
 		// provided. Uses performance.now() — monotonic across async boundaries.

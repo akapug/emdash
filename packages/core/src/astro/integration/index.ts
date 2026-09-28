@@ -26,8 +26,13 @@ import {
 } from "../../migrations/integration-metadata.js";
 import { buildMigrationManifest } from "../../migrations/manifest-builder.js";
 import { writeMigrationManifest } from "../../migrations/manifest-writer.js";
+import { executionPolicyOf } from "../../plugins/execution-policy.js";
 import type { ResolvedPlugin } from "../../plugins/types.js";
-import { normalizeRegistryConfig, resolveRegistryConfigForSandbox } from "../../registry/config.js";
+import {
+	getRegistryConfigInput,
+	normalizeRegistryConfig,
+	resolveRegistryConfigForSandbox,
+} from "../../registry/config.js";
 import { VERSION } from "../../version.js";
 import { setDevTypegenRefresh } from "../dev-typegen.js";
 import { local } from "../storage/adapters.js";
@@ -322,6 +327,21 @@ export function buildMiddlewareEntries(
  * Create the EmDash Astro integration
  */
 export function emdash(config: EmDashConfig = {}): AstroIntegration {
+	// Whether plugin code runs isolated turns on these two: a value of another
+	// type is refused, never read as either answer (the build's execution
+	// policy below records what they decide).
+	if (config.sandbox !== undefined && typeof config.sandbox !== "boolean") {
+		throw new Error(`EmDash: sandbox must be true or false, got ${JSON.stringify(config.sandbox)}`);
+	}
+	if (
+		config.sandboxRunner !== undefined &&
+		(typeof config.sandboxRunner !== "string" || config.sandboxRunner === "")
+	) {
+		throw new Error(
+			`EmDash: sandboxRunner must name a module, got ${JSON.stringify(config.sandboxRunner)}`,
+		);
+	}
+
 	const registry = resolveRegistryConfigForSandbox({
 		registry: config.registry,
 		experimentalRegistry: config.experimental?.registry,
@@ -458,6 +478,18 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 		maxUploadSize: resolvedConfig.maxUploadSize,
 		admin: resolvedConfig.admin,
 		toolbar: resolvedConfig.toolbar,
+		// What this build lets run, and where (plugins/execution-policy.ts): read
+		// by a host as data, and held by the runtime to the sandbox mode it is given.
+		execution: executionPolicyOf({
+			plugins: pluginDescriptors,
+			sandboxed: sandboxedDescriptors,
+			sandboxRunner: resolvedConfig.sandboxRunner,
+			sandbox: resolvedConfig.sandbox,
+			marketplace: resolvedConfig.marketplace,
+			registry:
+				getRegistryConfigInput(resolvedConfig.registry, resolvedConfig.experimental?.registry) !==
+				undefined,
+		}),
 	};
 
 	// Determine auth mode for route injection
