@@ -4119,7 +4119,7 @@
 	},
 	{
 		"version": 1,
-		"id": "cb69833c19341951baa10bda",
+		"id": "a574b987b4ed0f77918a6dbb",
 		"source": {
 			"url": "https://www.example.org/about/",
 			"capturedAt": "2026-09-28T00:00:00.000Z"
@@ -4132,7 +4132,7 @@
 			"class": "page-template-default page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 		},
 		"styles": [
-			"/_emdash/api/media/file/wp-shell/c2364a3ba6868f2472fcb14d43e1fbf6.css"
+			"/_emdash/api/media/file/wp-shell/836d7a5f8e074f300294045acf653b0b.css"
 		],
 		"parts": [
 			{
@@ -4154,7 +4154,7 @@
 				"menu": 0
 			},
 			{
-				"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+				"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i><span class=\"wp-shell-label\">Menu Toggle</span></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
 			},
 			{
 				"slot": "menu",
@@ -4264,7 +4264,7 @@
 				"class": "home page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 			},
 			"styles": [
-				"/_emdash/api/media/file/wp-shell/ecd6402b53344da4a7747e8e449c04d0.css"
+				"/_emdash/api/media/file/wp-shell/925549db5f4cc73a938cd64209deb0e2.css"
 			],
 			"parts": [
 				{
@@ -4286,7 +4286,7 @@
 					"menu": 1
 				},
 				{
-					"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+					"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i><span class=\"wp-shell-label\">Menu Toggle</span></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
 				},
 				{
 					"slot": "menu",
@@ -4320,7 +4320,7 @@
 					"class": "page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 				},
 				"styles": [
-					"/_emdash/api/media/file/wp-shell/2403631fbbe3d37863cad0d946d121bc.css"
+					"/_emdash/api/media/file/wp-shell/76ceb1491784e8dcea058a3fca4610ed.css"
 				],
 				"parts": [
 					{
@@ -4342,7 +4342,7 @@
 						"menu": 0
 					},
 					{
-						"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+						"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i><span class=\"wp-shell-label\">Menu Toggle</span></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
 					},
 					{
 						"slot": "menu",
@@ -4372,7 +4372,7 @@
 				"class": "single single-post single-format-standard wp-custom-logo elementor-default elementor-kit-3 elementor-page-8"
 			},
 			"styles": [
-				"/_emdash/api/media/file/wp-shell/3c6481325ac92f0625d6830108f6bdb0.css"
+				"/_emdash/api/media/file/wp-shell/c243e9310af0853859b1e3045155aee9.css"
 			],
 			"parts": [
 				{
@@ -4394,7 +4394,7 @@
 					"menu": 0
 				},
 				{
-					"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+					"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i><span class=\"wp-shell-label\">Menu Toggle</span></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
 				},
 				{
 					"slot": "menu",
@@ -4423,6 +4423,10 @@
 			"meta": []
 		},
 		"pageOwn": [
+			{
+				"slug": "home",
+				"body": "page-id-2 elementor-page-2"
+			},
 			{
 				"slug": "about",
 				"styles": [

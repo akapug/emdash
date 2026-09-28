@@ -782,7 +782,10 @@ describe("the tripwire reads the writer's form", () => {
 			'"also":["privacy"]',
 			'"pageOwn"',
 			'"body":"page-id-21 elementor-page-21"',
+			// the home in a layout of its own: the body classes that name it alone
+			'{"slug":"home","body":"page-id-2 elementor-page-2"}',
 			'<details class=\\"wp-shell-toggle wp-shell-opens-0\\"><summary class=\\"elementor-menu-toggle wp-shell-control\\">',
+			'<span class=\\"wp-shell-label\\">Menu Toggle</span></summary>',
 		])
 			expect(all).toContain(shape);
 	});
