@@ -610,6 +610,211 @@
 	},
 	{
 		"version": 1,
+		"id": "7f61505d79730e19570b634a",
+		"source": {
+			"url": "https://www.example.org/team/",
+			"capturedAt": "2026-09-26T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": ""
+		},
+		"body": {
+			"class": "wp-singular page-template-default page singular two-column right-sidebar"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/903a3b44aadb0af0f7ead02e222d7e8d.css"
+		],
+		"parts": [
+			{
+				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></h2></div>\n\t<div id=\"header-menu-wrapper\" class=\"collapse navbar-collapse\"><ul id=\"menu-main-menu\" class=\"nav navbar-nav flip\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul></div></div></div>\n<div class=\"breadcrumbs-wrapper\"><div class=\"container breadcrumbs\"><span><a href=\"/\" class=\"home\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></span> &gt; <span>"
+			},
+			{
+				"slot": "titleText"
+			},
+			{
+				"html": "</span></div></div>\n<div class=\"container main\"><div class=\"row\">\n\t<div class=\"main col-md-9\">\n\t\t<div class=\"page type-page status-publish hentry\">\n\t\t\t"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "\n\t\t\t"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "entry-content clearfix"
+			},
+			{
+				"html": "\n\t\t</div>\n\t</div>\n\t<div class=\"sidebar col-md-3\"><div class=\"widget\"><h4 class=\"item-title\">Sidebar words</h4></div></div>\n</div></div>\n<div class=\"footer\"><div class=\"footer-lg\"><div id=\"archives-2\" class=\"clearfix item col-sm-6 col-md-3 widget_archive\"><h4 class=\"item-title\">Past posts</h4>\t\t<span class=\"screen-reader-text\">Past posts</span>\n\t\t"
+			},
+			{
+				"slot": "archives",
+				"archives": 0
+			},
+			{
+				"html": "\n\t\t\t\n</div><div id=\"blog_subscription-3\" class=\"clearfix item col-sm-6 col-md-3 widget_blog_subscription jetpack_subscription_widget\"><h4 class=\"item-title\">Follow by email</h4>\n\t\t\t"
+			},
+			{
+				"slot": "subscribe",
+				"subscribe": 0
+			},
+			{
+				"html": "\n</div></div><p class=\"copyright\">© <a href=\"/\">"
+			},
+			{
+				"slot": "siteTitle",
+				"fallback": "Example Site"
+			},
+			{
+				"html": "</a></p></div>\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"dropdown-toggle\">",
+					{
+						"s": "label"
+					},
+					" <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-home menu-item-has-children\"><a href=\"/\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">About Us <i class=\"fa fa-chevron-down\"></i></a>\n<ul class=\"dropdown-menu\">\n\t<li class=\"menu-item\"><a href=\"/team/\">Our Team</a></li>\n</ul>\n</li>\n<li class=\"menu-item\"><a href=\"/updates/\">Updates</a></li>\n",
+				"current": "current-menu-item current_page_item active"
+			}
+		],
+		"archives": [
+			{
+				"as": "dropdown",
+				"type": "monthly",
+				"count": true,
+				"id": "archives-dropdown-2",
+				"label": "Select Month"
+			}
+		],
+		"dates": {
+			"front": "/",
+			"timeZone": "America/Los_Angeles",
+			"title": {
+				"month": "Monthly Archive: %s",
+				"year": "Yearly Archive: %s"
+			}
+		},
+		"subscribe": [
+			{
+				"plugin": "jetpack",
+				"parts": [
+					"<div class=\"wp-block-jetpack-subscriptions__container\">\n\t\t\t",
+					{
+						"s": "form",
+						"id": "subscribe-blog-blog_subscription-3"
+					},
+					{
+						"s": "fields"
+					},
+					{
+						"s": "/form"
+					},
+					"\n\t\t\t",
+					{
+						"s": "count"
+					},
+					"\n\t\t\t</div>"
+				],
+				"fields": [
+					"\n\t\t\t\t<div id=\"subscribe-text\"><p>Enter your address to follow this site.</p></div>\n\t\t\t\t<p id=\"subscribe-email\">\n\t\t\t\t\t",
+					{
+						"s": "label",
+						"for": "subscribe-field-blog_subscription-3",
+						"class": "screen-reader-text"
+					},
+					"Email Address",
+					{
+						"s": "/label"
+					},
+					"\n\t\t\t\t\t",
+					{
+						"s": "control",
+						"id": "subscribe-field-blog_subscription-3",
+						"placeholder": "Email Address"
+					},
+					"\n\t\t\t\t</p>\n\t\t\t\t<p id=\"subscribe-submit\">\n\t\t\t\t\t\n\t\t\t\t\t\n\t\t\t\t\t\n\t\t\t\t\t\n\t\t\t\t\t",
+					{
+						"s": "submit",
+						"tag": "button",
+						"class": "wp-block-button__link",
+						"label": "Subscribe now"
+					},
+					"\n\t\t\t\t</p>\n\t\t\t"
+				],
+				"count": {
+					"item": [
+						"<div class=\"wp-block-jetpack-subscriptions__subscount\">",
+						{
+							"s": "phrase"
+						},
+						"</div>"
+					],
+					"one": "Join %s other subscriber",
+					"many": "Join %s other subscribers"
+				}
+			}
+		]
+	},
+	{
+		"version": 1,
 		"id": "3603eb083e20536de7e43acf",
 		"source": {
 			"url": "https://www.example.org/team/",
