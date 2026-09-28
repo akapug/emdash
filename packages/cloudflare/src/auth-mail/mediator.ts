@@ -10,10 +10,11 @@
  * site's forms cannot spend the day its login email needs. Whatever runs in
  * the tenant's Worker (its plugins, and anything that gets into it) holds that
  * Worker's credentials, so no flag, method name or second token inside it can
- * authorize the reserve. The reserve is a lane of the mail budget (protocol
- * 2) whose token only this mediator holds, with the only `send_email` binding
- * that sends system mail (EMAIL_SYSTEM). The tenant's Worker keeps its plugin
- * lane and asks here for OPERATIONS, never for a message.
+ * authorize the reserve. The reserve is a lane of the mail budget whose token
+ * only the broker holds (in its Durable Object's storage, one per generation),
+ * with the only `send_email` binding that sends system mail (EMAIL_SYSTEM).
+ * The tenant's Worker holds no token and no binding that sends, and asks for
+ * OPERATIONS, never for a message.
  *
  * WHAT IT ANSWERS. Four operations, each a fixed request shape (anything
  * more, a subject, a body, a link, a token or a recipient list, is refused):
@@ -23,7 +24,9 @@
  *   createInvite({ protocol, email, role, authorization, cookie })
  *   sendRecovery({ protocol, userId, authorization, cookie })
  *
- * and `status({ protocol })`, which sends nothing. Each operation, itself:
+ * Each also carries the site's capability, which the broker checks, and takes
+ * off, before the operation sees the request. What the broker is, and which
+ * generation counts, is the broker's own `status`. Each operation, itself:
  * parses the request; rate-limits it (by the IP it is given, and always by the
  * recipient); checks eligibility (a user who exists and is not disabled; a
  * sign-up domain that is allowed; an invitee who is not a user yet);
@@ -45,8 +48,8 @@
  * budget's system lane and per-recipient caps. Moving auth state out of the
  * tenant's database is the stronger boundary, and is not this.
  *
- * The site's URL, name and sender are this Worker's own configuration (the
- * operator's), never the tenant's.
+ * The site's URL, name and sender are the broker's own configuration (the
+ * operator's, ./broker.ts brokerConfigFromEnv), never the tenant's.
  */
 
 import {
@@ -120,7 +123,6 @@ export interface SystemBudgetService {
 		requestId: string;
 	}): Promise<unknown>;
 	refund(request: { protocol: number; token: string; takeId: string }): Promise<unknown>;
-	report?(request: { protocol: number; token: string }): Promise<unknown>;
 }
 
 /** The tenant's tables the mediator reads and writes: EmDash's auth tables, its API and OAuth tokens, and its rate limits. */
@@ -141,7 +143,7 @@ export interface AuthMailTables extends AuthTables {
 	_emdash_rate_limits: { key: string; window: string; count: number };
 }
 
-/** What the mediator works with; the Worker builds it from its env (authMailDepsFromEnv). */
+/** What the mediator works with: the broker builds it for each operation (./broker.ts), with the ACTIVE generation's system token. */
 export interface AuthMailDeps {
 	/** The tenant's database, through Kysely. */
 	db: Kysely<AuthMailTables>;
@@ -357,7 +359,7 @@ async function authenticate(
 		const id = sessionIdOf(credential.cookie);
 		if (!id) return { refused: "the cookie carries no session" };
 		if (!deps.sessions)
-			return { refused: "the mediator has no session store to read the session from" };
+			return { refused: "the broker has no session store (SESSION) to read the session from" };
 		const raw = await deps.sessions.get(id);
 		if (!raw) return { refused: "the session is not one the site knows" };
 		let stored: unknown = null;
@@ -525,7 +527,7 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 		if ("refused" in parsed) return answer.refused(parsed.refused);
 		if ("missing" in deps.site) return answer.refused(deps.site.missing);
 		if ("missing" in deps.budget) return answer.refused(deps.budget.missing);
-		if (!deps.send) return answer.refused("the mediator has no EMAIL_SYSTEM binding");
+		if (!deps.send) return answer.refused("the broker has no EMAIL_SYSTEM binding");
 		const budget = deps.budget;
 		const send = deps.send;
 		const site = deps.site;
@@ -638,103 +640,7 @@ export function createAuthMailMediator(deps: AuthMailDeps) {
 				await sendMagicLink({ baseUrl, siteName, email }, adapter, target.email, "recovery");
 				return null;
 			}),
-
-		/**
-		 * What the mediator is and whether it can send: its marker and protocol,
-		 * whether it has EMAIL_SYSTEM, its configuration, and the mail budget's
-		 * own report for its token (the tenant and lane it is registered to).
-		 * Sends nothing and takes nothing.
-		 */
-		async status(request: unknown) {
-			if (!isRecord(request) || request.protocol !== AUTH_MAIL_PROTOCOL) {
-				return answer.refused(`the mediator speaks protocol ${AUTH_MAIL_PROTOCOL}`);
-			}
-			let budget: Record<string, unknown> = { ok: false, why: "missing" };
-			if ("missing" in deps.budget) budget = { ok: false, why: deps.budget.missing };
-			else if (typeof deps.budget.service.report === "function") {
-				try {
-					const got = await within(
-						deps.budget.service.report({
-							protocol: MAIL_BUDGET_PROTOCOL,
-							token: deps.budget.token,
-						}),
-						BUDGET_TIMEOUT_MS,
-					);
-					const r = "late" in got ? null : got.answer;
-					budget =
-						isRecord(r) && r.ok === true && r.protocol === MAIL_BUDGET_PROTOCOL
-							? { ok: true, tenant: r.tenant, lane: r.lane }
-							: { ok: false, why: r === null ? "no answer in time" : "refused" };
-				} catch {
-					budget = { ok: false, why: "could not be asked" };
-				}
-			}
-			return {
-				protocol: AUTH_MAIL_PROTOCOL,
-				marker: AUTH_MAIL_MARKER,
-				send: deps.send !== null,
-				site: !("missing" in deps.site),
-				budget,
-			};
-		},
 	};
 }
 
 export type AuthMailMediator = ReturnType<typeof createAuthMailMediator>;
-
-/**
- * The mediator's dependencies from its Worker's env: DB (the tenant's D1,
- * as `db`), SESSION (the tenant's session KV), MAIL_BUDGET and
- * MAIL_BUDGET_TOKEN (the SYSTEM lane's), EMAIL_SYSTEM, and the operator's
- * AUTH_MAIL_SITE_URL, AUTH_MAIL_SITE_NAME and AUTH_MAIL_FROM.
- */
-export function authMailDepsFromEnv(
-	env: Record<string, unknown>,
-	{ db, extend, log }: Pick<AuthMailDeps, "db" | "extend" | "log">,
-): AuthMailDeps {
-	const service = env.MAIL_BUDGET;
-	const token = env.MAIL_BUDGET_TOKEN;
-	const callable =
-		isRecord(service) &&
-		typeof Reflect.get(service, "take") === "function" &&
-		typeof Reflect.get(service, "refund") === "function";
-	const sessions = env.SESSION;
-	const send = env.EMAIL_SYSTEM;
-	const url = env.AUTH_MAIL_SITE_URL;
-	const name = env.AUTH_MAIL_SITE_NAME;
-	const from = mailbox(env.AUTH_MAIL_FROM);
-	let siteUrl: URL | null = null;
-	try {
-		siteUrl = typeof url === "string" ? new URL(url) : null;
-	} catch {
-		siteUrl = null;
-	}
-	return {
-		db,
-		extend,
-		log,
-		sessions:
-			isRecord(sessions) && typeof Reflect.get(sessions, "get") === "function"
-				? // eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: get is callable
-					(sessions as unknown as { get(key: string): Promise<string | null> })
-				: null,
-		budget: !callable
-			? { missing: "the mediator has no service binding MAIL_BUDGET" }
-			: typeof token !== "string" || !token.trim()
-				? { missing: "the mediator has no MAIL_BUDGET_TOKEN" }
-				: // eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: take and refund are callable
-					{ service: service as unknown as SystemBudgetService, token: token.trim() },
-		send:
-			isRecord(send) && typeof Reflect.get(send, "send") === "function"
-				? // eslint-disable-next-line typescript/no-unsafe-type-assertion -- checked above: send is callable
-					(send as unknown as SystemSendBinding)
-				: null,
-		site:
-			siteUrl && siteUrl.protocol === "https:" && typeof name === "string" && name.trim() && from
-				? { url: siteUrl.origin, name: name.trim(), from }
-				: {
-						missing:
-							"the mediator's AUTH_MAIL_SITE_URL (an https URL), AUTH_MAIL_SITE_NAME and AUTH_MAIL_FROM (one address) are not all set",
-					},
-	};
-}

@@ -27,9 +27,7 @@ vi.mock("cloudflare:workers", () => {
 });
 
 import {
-	AUTH_MAIL_MARKER,
 	AUTH_MAIL_PROTOCOL,
-	authMailDepsFromEnv,
 	createAuthMailMediator,
 	parseRequest,
 	type AuthMailDeps,
@@ -562,57 +560,7 @@ describe("a recovery link", () => {
 	});
 });
 
-describe("the mediator's own configuration", () => {
-	it("comes from its Worker's env, never the request: without its bindings or a site configuration it sends nothing, and says what is missing", async () => {
-		const budget = systemBudget();
-		const mail = systemSend();
-		const full = {
-			MAIL_BUDGET: budget.service,
-			MAIL_BUDGET_TOKEN: "sys-token",
-			EMAIL_SYSTEM: mail.binding,
-			SESSION: sessionStore(),
-			AUTH_MAIL_SITE_URL: SITE.url,
-			AUTH_MAIL_SITE_NAME: SITE.name,
-			AUTH_MAIL_FROM: SITE.from,
-		};
-		const request = { protocol: P, email: "admin@example.org", ip: null };
-		expect(
-			await createAuthMailMediator(authMailDepsFromEnv(full, { db })).requestMagicLink(request),
-		).toMatchObject({ status: "sent" });
-		for (const [what, env, why] of [
-			["no budget", { ...full, MAIL_BUDGET: undefined }, /no service binding MAIL_BUDGET/],
-			["no token", { ...full, MAIL_BUDGET_TOKEN: "" }, /no MAIL_BUDGET_TOKEN/],
-			["no EMAIL_SYSTEM", { ...full, EMAIL_SYSTEM: undefined }, /no EMAIL_SYSTEM binding/],
-			[
-				"an http origin",
-				{ ...full, AUTH_MAIL_SITE_URL: "http://acme.example.org" },
-				/AUTH_MAIL_SITE_URL/,
-			],
-			["no sender", { ...full, AUTH_MAIL_FROM: "not an address" }, /AUTH_MAIL_FROM/],
-		] as const) {
-			await setup();
-			expect(
-				await createAuthMailMediator(authMailDepsFromEnv(env, { db })).requestMagicLink(request),
-				what,
-			).toMatchObject({ status: "refused", why: expect.stringMatching(why) });
-		}
-		expect(mail.sent).toHaveLength(1);
-	});
-
-	it("answers its status: its marker and protocol, and the budget's own report of the tenant and lane its token holds; it sends and takes nothing", async () => {
-		const { m, budget, mail } = mediator();
-		expect(await m.status({ protocol: P })).toEqual({
-			protocol: P,
-			marker: AUTH_MAIL_MARKER,
-			send: true,
-			site: true,
-			budget: { ok: true, tenant: "acme", lane: "system" },
-		});
-		expect(budget.takes).toEqual([]);
-		expect(mail.sent).toEqual([]);
-		expect(await m.status({ protocol: 9 })).toMatchObject({ status: "refused" });
-	});
-
+describe("the broker's Worker", () => {
 	it("exports its entrypoint and its Durable Object and nothing else, since workerd starts no main module with an export that is not one", async () => {
 		const mod: Record<string, unknown> = await import("../src/auth-mail/worker.js");
 		expect(Object.keys(mod).toSorted()).toEqual(["MailBroker", "default"]);

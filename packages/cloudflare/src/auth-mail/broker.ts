@@ -575,7 +575,6 @@ export function createMailBroker(deps: BrokerDeps) {
 												: a,
 										),
 								refund: (req) => budget.refund(req),
-								report: (req) => budget.report(req),
 							},
 							token: gen.tokens.system,
 						}

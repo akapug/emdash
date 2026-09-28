@@ -1031,6 +1031,7 @@ describe("the status", () => {
 		for (const v of [g2.capability, g2.plugin, g2.system]) expect(text).not.toContain(v);
 		expect(r.budget.takes).toEqual([]);
 		expect(r.plugin.sent).toEqual([]);
+		expect(r.system.sent).toEqual([]);
 		expect(await r.b.status({ protocol: 1 })).toMatchObject({ status: "refused" });
 	});
 });
@@ -1108,5 +1109,99 @@ describe("the broker's configuration", () => {
 			});
 		}
 		expect(plugin.sent).toEqual([]);
+	});
+
+	it("is the sign-in mail's too: a broker uploaded without MAIL_BUDGET, EMAIL_SYSTEM, DB, or the site's https URL, name and sender sends no sign-in mail and says what is missing, before any row, count, take or send", async () => {
+		const budget = fakeBudget();
+		const system = sendBinding();
+		const env = {
+			BROKER_TENANT: "acme",
+			BROKER_DEPLOYMENT: "a:b",
+			BROKER_RECIPIENTS: JSON.stringify(ALLOWED),
+			BROKER_ADMIN_SECRET: ADMIN,
+			AUTH_MAIL_SITE_URL: SITE.url,
+			AUTH_MAIL_SITE_NAME: SITE.name,
+			AUTH_MAIL_FROM: SITE.from,
+			EMAIL_PLUGIN: sendBinding().binding,
+			EMAIL_SYSTEM: system.binding,
+			MAIL_BUDGET: budget.service,
+		};
+		const store = mapStore();
+		const { sqlite, db } = authDb();
+		const counts = () => ({
+			tokens: sqlite.prepare("SELECT COUNT(*) AS n FROM auth_tokens").get(),
+			rates: sqlite.prepare("SELECT COUNT(*) AS n FROM _emdash_rate_limits").get(),
+		});
+		// One broker's storage, uploaded again with one thing missing at a time.
+		const upload = (over: Record<string, unknown>, withDb: Kysely<AuthMailTables> | null = db) =>
+			createMailBroker({
+				store,
+				config: brokerConfigFromEnv({ ...env, ...over }),
+				db: withDb,
+				sessions: null,
+			});
+		const c = creds();
+		const full = upload({});
+		budget.stage(1, c);
+		expect(
+			(
+				await admin(full, "stage", {
+					generation: 1,
+					capabilityHash: await sha256Hex(c.capability),
+					tokens: { plugin: c.plugin, system: c.system },
+					expectActive: null,
+				})
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await admin(full, "activate", {
+					generation: 1,
+					capabilityHash: await sha256Hex(c.capability),
+					expectActive: null,
+				})
+			).status,
+		).toBe(200);
+		budget.activate(1);
+		const request = {
+			protocol: P,
+			capability: c.capability,
+			email: "admin@example.org",
+			ip: "203.0.113.1",
+		};
+		const takes = budget.takes.length;
+		for (const { what, over, why, withDb = db } of [
+			{
+				what: "no MAIL_BUDGET",
+				over: { MAIL_BUDGET: undefined },
+				why: /no service binding MAIL_BUDGET/,
+			},
+			{
+				what: "no EMAIL_SYSTEM",
+				over: { EMAIL_SYSTEM: undefined },
+				why: /the broker has no EMAIL_SYSTEM binding/,
+			},
+			{
+				what: "an http origin",
+				over: { AUTH_MAIL_SITE_URL: "http://acme.example.org" },
+				why: /AUTH_MAIL_SITE_URL/,
+			},
+			{ what: "no site name", over: { AUTH_MAIL_SITE_NAME: " " }, why: /AUTH_MAIL_SITE_NAME/ },
+			{ what: "no sender", over: { AUTH_MAIL_FROM: "not an address" }, why: /AUTH_MAIL_FROM/ },
+			{ what: "no DB", over: {}, why: /the broker has no DB binding/, withDb: null },
+		]) {
+			expect(await upload(over, withDb).requestMagicLink(request), what).toMatchObject({
+				status: "refused",
+				why: expect.stringMatching(why),
+			});
+			expect(counts(), what).toEqual({ tokens: { n: 0 }, rates: { n: 0 } });
+		}
+		expect(budget.takes).toHaveLength(takes);
+		expect(system.sent).toEqual([]);
+		// THE CONTROL: the same storage and request, uploaded with everything, sends it.
+		expect(await upload({}).requestMagicLink(request)).toMatchObject({ status: "sent" });
+		expect(system.sent).toHaveLength(1);
+		expect(budget.takes.at(-1)).toMatchObject({ token: c.system, protocol: 3 });
+		await db.destroy();
 	});
 });
