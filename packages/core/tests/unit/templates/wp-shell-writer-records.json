@@ -4116,5 +4116,341 @@
 				"donate"
 			]
 		}
+	},
+	{
+		"version": 1,
+		"id": "56774b3952888e5a31f09072",
+		"source": {
+			"url": "https://www.example.org/about/",
+			"capturedAt": "2026-09-28T00:00:00.000Z"
+		},
+		"html": {
+			"lang": "en-US",
+			"class": ""
+		},
+		"body": {
+			"class": "page-template-default page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
+		},
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/77991b68ba6708d7f8fb35d06b70fce4.css"
+		],
+		"parts": [
+			{
+				"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
+			},
+			{
+				"slot": "logo",
+				"src": "/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png",
+				"alt": "",
+				"class": "attachment-full size-full wp-image-7",
+				"width": 300,
+				"height": 120
+			},
+			{
+				"html": "</a></div></div>\n<div class=\"elementor-element elementor-element-h4 elementor-nav-menu--dropdown-mobile elementor-nav-menu--toggle elementor-nav-menu--burger elementor-widget elementor-widget-nav-menu\" data-id=\"h4\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\">\n<nav class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal\"><ul id=\"menu-1-a1b2c3\" class=\"elementor-nav-menu\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+			},
+			{
+				"slot": "menu",
+				"menu": 0
+			},
+			{
+				"html": "</ul></nav></details>\n\n</div></div>\n<div class=\"elementor-element elementor-element-h5 elementor-widget elementor-widget-nav-menu\" data-id=\"h5\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\"><nav class=\"elementor-nav-menu--main elementor-nav-menu__container\"><ul id=\"menu-1-h5\" class=\"elementor-nav-menu\"><li class=\"menu-item\"><a href=\"/donate/\" class=\"elementor-item\">Donate</a></li></ul></nav></div></div>\n</div></div></div></section></header>\n<main id=\"content\" class=\"site-main page type-page status-publish hentry\"><div class=\"page-header\">"
+			},
+			{
+				"slot": "title",
+				"tag": "h1",
+				"class": "entry-title"
+			},
+			{
+				"html": "</div>"
+			},
+			{
+				"slot": "content",
+				"tag": "div",
+				"class": "page-content"
+			},
+			{
+				"html": "</main>\n<footer data-elementor-type=\"footer\" data-elementor-id=\"6\" class=\"elementor elementor-6 elementor-location-footer\"><section class=\"elementor-section elementor-element elementor-element-f1\"><div class=\"elementor-container\"><p>Example footer, long enough to be the site's own words.</p></div></section></footer>\n\n"
+			}
+		],
+		"menus": [
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"elementor-item\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"elementor-item\">",
+					{
+						"s": "label"
+					},
+					"<span class=\"sub-arrow\"><i class=\"fas fa-caret-down\"></i></span></a>\n<ul class=\"sub-menu elementor-nav-menu--dropdown\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a href=\"/\" class=\"elementor-item\">Home</a></li>\n<li class=\"menu-item menu-item-type-custom menu-item-has-children\"><a class=\"elementor-item\">Visit<span class=\"sub-arrow\"><i class=\"fas fa-caret-down\"></i></span></a>\n<ul class=\"sub-menu elementor-nav-menu--dropdown\">\n\t<li class=\"menu-item\"><a href=\"/about/\" class=\"elementor-sub-item\">About</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a href=\"/team/\" class=\"elementor-item\">Team</a></li>"
+			},
+			{
+				"location": "primary",
+				"leaf": [
+					"<li class=\"menu-item",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"elementor-item\">",
+					{
+						"s": "label"
+					},
+					"</a></li> "
+				],
+				"parent": [
+					"<li class=\"menu-item menu-item-has-children",
+					{
+						"s": "cls"
+					},
+					"\"><a href=\"",
+					{
+						"s": "href"
+					},
+					"\" class=\"elementor-item\">",
+					{
+						"s": "label"
+					},
+					"<span class=\"sub-arrow\"><i class=\"fas fa-caret-down\"></i></span></a>\n<ul class=\"sub-menu elementor-nav-menu--dropdown\">",
+					{
+						"s": "children"
+					},
+					"</ul>\n</li> "
+				],
+				"fallback": "<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a href=\"/\" class=\"elementor-item\">Home</a></li>\n<li class=\"menu-item menu-item-type-custom menu-item-has-children\"><a class=\"elementor-item\">Visit<span class=\"sub-arrow\"><i class=\"fas fa-caret-down\"></i></span></a>\n<ul class=\"sub-menu elementor-nav-menu--dropdown\">\n\t<li class=\"menu-item\"><a href=\"/about/\" class=\"elementor-sub-item\">About</a></li>\n</ul>\n</li>\n<li class=\"menu-item menu-item-type-post_type menu-item-object-page\"><a href=\"/team/\" class=\"elementor-item\">Team</a></li>",
+				"current": "current-menu-item current_page_item"
+			}
+		],
+		"home": {
+			"body": {
+				"class": "home page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/e5b6dae798e72069bf8d0d9bf0a99481.css"
+			],
+			"parts": [
+				{
+					"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
+				},
+				{
+					"slot": "logo",
+					"src": "/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png",
+					"alt": "",
+					"class": "attachment-full size-full wp-image-7",
+					"width": 300,
+					"height": 120
+				},
+				{
+					"html": "</a></div></div>\n<div class=\"elementor-element elementor-element-h4 elementor-nav-menu--dropdown-mobile elementor-nav-menu--toggle elementor-nav-menu--burger elementor-widget elementor-widget-nav-menu\" data-id=\"h4\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\">\n<nav class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal\"><ul id=\"menu-1-a1b2c3\" class=\"elementor-nav-menu\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 1
+				},
+				{
+					"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 1
+				},
+				{
+					"html": "</ul></nav></details>\n\n</div></div>\n<div class=\"elementor-element elementor-element-h5 elementor-widget elementor-widget-nav-menu\" data-id=\"h5\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\"><nav class=\"elementor-nav-menu--main elementor-nav-menu__container\"><ul id=\"menu-1-h5\" class=\"elementor-nav-menu\"><li class=\"menu-item\"><a href=\"/donate/\" class=\"elementor-item\">Donate</a></li></ul></nav></div></div>\n</div></div></div></section></header>\n"
+				},
+				{
+					"slot": "title",
+					"tag": "h1",
+					"class": "wp-shell-untitled"
+				},
+				{
+					"slot": "content",
+					"tag": "div",
+					"class": "elementor"
+				},
+				{
+					"html": "\n<footer data-elementor-type=\"footer\" data-elementor-id=\"6\" class=\"elementor elementor-6 elementor-location-footer\"><section class=\"elementor-section elementor-element elementor-element-f1\"><div class=\"elementor-container\"><p>Example footer, long enough to be the site's own words.</p></div></section></footer>\n\n"
+				}
+			]
+		},
+		"pages": [
+			{
+				"slug": "terms",
+				"also": [
+					"privacy"
+				],
+				"body": {
+					"class": "page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
+				},
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/d7f7fa6b4dbc663007790f953cf8cd9a.css"
+				],
+				"parts": [
+					{
+						"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
+					},
+					{
+						"slot": "logo",
+						"src": "/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png",
+						"alt": "",
+						"class": "attachment-full size-full wp-image-7",
+						"width": 300,
+						"height": 120
+					},
+					{
+						"html": "</a></div></div>\n<div class=\"elementor-element elementor-element-h4 elementor-nav-menu--dropdown-mobile elementor-nav-menu--toggle elementor-nav-menu--burger elementor-widget elementor-widget-nav-menu\" data-id=\"h4\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\">\n<nav class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal\"><ul id=\"menu-1-a1b2c3\" class=\"elementor-nav-menu\">"
+					},
+					{
+						"slot": "menu",
+						"menu": 0
+					},
+					{
+						"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+					},
+					{
+						"slot": "menu",
+						"menu": 0
+					},
+					{
+						"html": "</ul></nav></details>\n\n</div></div>\n<div class=\"elementor-element elementor-element-h5 elementor-widget elementor-widget-nav-menu\" data-id=\"h5\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\"><nav class=\"elementor-nav-menu--main elementor-nav-menu__container\"><ul id=\"menu-1-h5\" class=\"elementor-nav-menu\"><li class=\"menu-item\"><a href=\"/donate/\" class=\"elementor-item\">Donate</a></li></ul></nav></div></div>\n</div></div></div></section></header>\n"
+					},
+					{
+						"slot": "title",
+						"tag": "h1",
+						"class": "wp-shell-untitled"
+					},
+					{
+						"slot": "content",
+						"tag": "div",
+						"class": "elementor"
+					},
+					{
+						"html": "\n<footer data-elementor-type=\"footer\" data-elementor-id=\"6\" class=\"elementor elementor-6 elementor-location-footer\"><section class=\"elementor-section elementor-element elementor-element-f1\"><div class=\"elementor-container\"><p>Example footer, long enough to be the site's own words.</p></div></section></footer>\n\n"
+					}
+				]
+			}
+		],
+		"post": {
+			"body": {
+				"class": "single single-post single-format-standard wp-custom-logo elementor-default elementor-kit-3 elementor-page-8"
+			},
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/7e6be9983da6f8ffa8193bba04eab4c3.css"
+			],
+			"parts": [
+				{
+					"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
+				},
+				{
+					"slot": "logo",
+					"src": "/_emdash/api/media/file/wp-shell/d54b3430d0a403ca66e135f163434984.png",
+					"alt": "",
+					"class": "attachment-full size-full wp-image-7",
+					"width": 300,
+					"height": 120
+				},
+				{
+					"html": "</a></div></div>\n<div class=\"elementor-element elementor-element-h4 elementor-nav-menu--dropdown-mobile elementor-nav-menu--toggle elementor-nav-menu--burger elementor-widget elementor-widget-nav-menu\" data-id=\"h4\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\">\n<nav class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal\"><ul id=\"menu-1-a1b2c3\" class=\"elementor-nav-menu\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "</ul></nav>\n<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"elementor-menu-toggle wp-shell-control\"><i role=\"presentation\" class=\"elementor-menu-toggle__icon--open eicon-menu-bar\"></i><i role=\"presentation\" class=\"elementor-menu-toggle__icon--close eicon-close\"></i></summary><nav class=\"elementor-nav-menu--dropdown elementor-nav-menu__container\"><ul id=\"menu-2-a1b2c3\" class=\"elementor-nav-menu\">"
+				},
+				{
+					"slot": "menu",
+					"menu": 0
+				},
+				{
+					"html": "</ul></nav></details>\n\n</div></div>\n<div class=\"elementor-element elementor-element-h5 elementor-widget elementor-widget-nav-menu\" data-id=\"h5\" data-element_type=\"widget\" data-widget_type=\"nav-menu.default\"><div class=\"elementor-widget-container\"><nav class=\"elementor-nav-menu--main elementor-nav-menu__container\"><ul id=\"menu-1-h5\" class=\"elementor-nav-menu\"><li class=\"menu-item\"><a href=\"/donate/\" class=\"elementor-item\">Donate</a></li></ul></nav></div></div>\n</div></div></div></section></header>\n<div data-elementor-type=\"single-post\" data-elementor-id=\"8\" class=\"elementor elementor-8 elementor-location-single post type-post status-publish format-standard hentry\">\n<section class=\"elementor-section elementor-element elementor-element-p1\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-element elementor-element-p2\"><div class=\"elementor-widget-wrap\">\n<div class=\"elementor-element elementor-element-p3 elementor-widget elementor-widget-theme-post-title elementor-page-title elementor-widget-heading\" data-id=\"p3\" data-element_type=\"widget\" data-widget_type=\"theme-post-title.default\"><div class=\"elementor-widget-container\">"
+				},
+				{
+					"slot": "title",
+					"tag": "h1",
+					"class": "elementor-heading-title elementor-size-default"
+				},
+				{
+					"html": "</div></div>\n<div class=\"elementor-element elementor-element-p4 elementor-widget elementor-widget-theme-post-content\" data-id=\"p4\" data-element_type=\"widget\" data-widget_type=\"theme-post-content.default\">"
+				},
+				{
+					"slot": "content",
+					"tag": "div",
+					"class": "elementor-widget-container"
+				},
+				{
+					"html": "</div>\n\n\n</div></div></div></section></div>\n<footer data-elementor-type=\"footer\" data-elementor-id=\"6\" class=\"elementor elementor-6 elementor-location-footer\"><section class=\"elementor-section elementor-element elementor-element-f1\"><div class=\"elementor-container\"><p>Example footer, long enough to be the site's own words.</p></div></section></footer>\n\n"
+				}
+			],
+			"meta": []
+		},
+		"pageOwn": [
+			{
+				"slug": "about",
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/1f38b41eb09de65f956c780ad162c0e1.css"
+				],
+				"body": "page-id-21 elementor-page-21"
+			},
+			{
+				"slug": "team",
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/36ea322367d484f1585cd831d796e525.css"
+				],
+				"body": "page-id-22 elementor-page-22"
+			},
+			{
+				"slug": "terms",
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/3252108c7685a8802367768498cf0bb8.css"
+				],
+				"body": "page-id-30 elementor-page-30"
+			},
+			{
+				"slug": "privacy",
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/49086db4ece688676ad36cb9c824ce2a.css"
+				],
+				"body": "page-id-31 elementor-page-31"
+			}
+		]
 	}
 ]

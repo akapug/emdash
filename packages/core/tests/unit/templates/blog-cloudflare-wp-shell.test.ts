@@ -777,6 +777,12 @@ describe("the tripwire reads the writer's form", () => {
 			'"replies":[{"s":"items"}]',
 			'"time":"g:i a"',
 			'"many":"%d replies on \u201c%t\u201d"',
+			// Elementor's: the pages of its full-width template in one layout, each page's own rules and
+			// body classes, Pro's menu toggle as the summary of the details that holds its dropdown.
+			'"also":["privacy"]',
+			'"pageOwn"',
+			'"body":"page-id-21 elementor-page-21"',
+			'<details class=\\"wp-shell-toggle wp-shell-opens-0\\"><summary class=\\"elementor-menu-toggle wp-shell-control\\">',
 		])
 			expect(all).toContain(shape);
 	});
