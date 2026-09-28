@@ -529,7 +529,8 @@ async function sha256Hex(text: string): Promise<string> {
 /**
  * Hand one message to the broker: its envelope, this site's capability and a
  * request id. `sent`, `refused` (the broker said why; nothing was sent), or
- * `unknown` (no answer that says either: the broker may have sent it). A call
+ * `unknown` (no answer that says either, or the broker's own `unknown` for a
+ * first attempt that never finished: the broker may have sent it). A call
  * that throws is asked once more with the same request id, which the broker
  * answers as it answered the first: one request id is never sent twice.
  */
@@ -570,6 +571,12 @@ async function sendThroughBroker(
 	if (a.status === "sent") return { sent: true };
 	if ((a.status === "refused" || a.status === "skipped") && typeof a.why === "string") {
 		return { refused: redactAddresses(a.why, recipients) };
+	}
+	// A retry of a send whose first attempt never finished in the broker: it may have gone.
+	if (a.status === "unknown" && typeof a.why === "string") {
+		return {
+			unknown: `the mail broker says it is not known whether it was sent (${redactAddresses(a.why, recipients)})`,
+		};
 	}
 	return { unknown: "the mail broker answered neither sent nor refused" };
 }

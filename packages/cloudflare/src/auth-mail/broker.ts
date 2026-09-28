@@ -49,7 +49,8 @@
  * the move among them); the subject is header text; a reply-to that is not one
  * plain address is dropped. The take is the plugin lane's, with the request's
  * id, so a retry of it counts once; a request id seen already answers what it
- * came to the first time and sends nothing again. Sign-in mail is the four
+ * came to the first time and sends nothing again (`unknown` when that first
+ * attempt never finished, since it may have gone). Sign-in mail is the four
  * operations of ./mediator.ts, run in the same queue with the system lane's
  * token and EMAIL_SYSTEM.
  *
@@ -177,11 +178,16 @@ export interface GenerationView {
 	at: string;
 }
 
+/**
+ * What a call came to. `refused` and `skipped` say nothing was sent. `unknown`
+ * is a send whose first attempt did not finish (the object stopped inside it):
+ * it may have gone, so it is neither sent again nor said to be unsent.
+ */
 export type BrokerAnswer =
 	| { protocol: typeof AUTH_MAIL_PROTOCOL; status: "sent"; seq: number; replayed?: true }
 	| {
 			protocol: typeof AUTH_MAIL_PROTOCOL;
-			status: "skipped" | "refused";
+			status: "skipped" | "refused" | "unknown";
 			why: string;
 			seq: number;
 			replayed?: true;
@@ -536,14 +542,14 @@ export function createMailBroker(deps: BrokerDeps) {
 				return a;
 			}
 			// Written before the send: a retry of a send that never finished (the object
-			// restarted inside it) is not known to be unsent, so it is not sent again.
-			remember(
-				requestId,
-				refused(
-					"an earlier attempt with this request id did not finish: whether it was sent is not known, so it is not sent again",
-					seq,
-				),
-			);
+			// restarted inside it) is not known to be unsent, so it is not sent again,
+			// and its answer says so (`unknown`), never that nothing was sent.
+			remember(requestId, {
+				protocol: AUTH_MAIL_PROTOCOL,
+				status: "unknown",
+				why: "an earlier attempt with this request id did not finish: whether it was sent is not known, so it is not sent again",
+				seq,
+			});
 			try {
 				await config.plugin.send(env.out);
 			} catch (error) {

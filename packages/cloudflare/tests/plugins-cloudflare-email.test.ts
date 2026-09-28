@@ -1018,6 +1018,17 @@ describe("the site's mail broker", () => {
 			],
 			[() => ({ protocol: 2 }), /answered neither sent nor refused/],
 			[() => ({ protocol: 2, status: "refused" }), /answered neither sent nor refused/],
+			// The broker's own "not known": a retry of a first attempt that never finished there.
+			[
+				() => ({
+					protocol: 2,
+					status: "unknown",
+					why: "an earlier attempt with this request id did not finish (user@example.com)",
+					seq: 7,
+					replayed: true,
+				}),
+				/the mail broker says it is not known whether it was sent \(an earlier attempt with this request id did not finish \(<an address at example\.com>\)\)/,
+			],
 			[
 				() => ({ protocol: 1, status: "sent" }),
 				/answered in protocol 1, and this provider speaks 2/,

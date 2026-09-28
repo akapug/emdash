@@ -472,7 +472,7 @@ describe("a send", () => {
 		expect(r.budget.takes).toHaveLength(1);
 	});
 
-	it("whose first attempt never finished (the object restarted inside the send) is not sent again", async () => {
+	it("whose first attempt never finished (the object restarted inside the send) is not sent again, and is answered as not known to be sent, never as refused", async () => {
 		const store = mapStore();
 		const budget = fakeBudget();
 		const first = rig({ store, budget });
@@ -489,12 +489,16 @@ describe("a send", () => {
 		await hold.entered;
 		// The object is gone; a new one over the same storage gets the retry.
 		const second = rig({ store, budget });
+		// The first attempt's take stands and its message may have gone: a site that read
+		// "refused" would give its own places back for mail that may be out.
 		expect(await second.b.send(request)).toMatchObject({
-			status: "refused",
-			why: expect.stringMatching(/did not finish/),
+			status: "unknown",
+			why: expect.stringMatching(/did not finish: whether it was sent is not known/),
 			replayed: true,
 		});
 		expect(second.plugin.sent).toEqual([]);
+		expect(second.budget.takes).toHaveLength(1);
+		expect(second.budget.refunds).toEqual([]);
 		hold.release();
 	});
 
