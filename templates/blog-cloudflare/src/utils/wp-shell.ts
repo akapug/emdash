@@ -363,6 +363,8 @@ export interface WpShell extends WpShellLayout {
 	dates?: WpShellDates;
 	/** The sign-ups the layouts' `subscribe` slots draw. */
 	subscribe?: WpShellSubscribe[];
+	/** Each page's own, where it is drawn in a layout it shares (WpShellPageOwn): without it, a page draws its layout's alone. */
+	pageOwn?: WpShellPageOwn[];
 }
 
 /**
@@ -435,6 +437,26 @@ export interface WpShellSubscribe {
 /** A page's own layout, for the EmDash page of its slug. */
 export interface WpShellPageLayout extends WpShellLayout {
 	slug: string;
+	/**
+	 * Other pages drawn in this layout, by their slugs: the pages of the site on
+	 * the same page-builder template as the one it was cut from (a full-width
+	 * or blank-canvas template), which wear none of the default template's
+	 * wrapper. Each carries its own rules in `pageOwn`.
+	 */
+	also?: string[];
+}
+
+/**
+ * What a page drawn in a layout it shares with other pages carries of its
+ * own: its stylesheets (the rules its page builder writes for that page
+ * alone, which no shared layout carries) and the body classes that name it
+ * (`page-id-21`). Drawn for the page (or the home) of that slug, after its
+ * layout's own.
+ */
+export interface WpShellPageOwn {
+	slug: string;
+	styles?: string[];
+	body?: string;
 }
 
 /** The pages that print no title where the site prints it (`hidden`), or that print it where the site prints none (`shown`). */
@@ -442,6 +464,8 @@ export type WpShellTitles = { hidden: string[] } | { shown: string[] };
 
 /** The most pages a record's `titles` names: one REST API answer of WordPress's pages is at most 100. */
 const MAX_TITLED = 1000;
+/** The most stylesheets one page's own adds to its layout's. */
+const MAX_PAGE_STYLES = 8;
 
 /** The field types a form's skin draws. */
 export const WP_SHELL_FORM_TYPES = [
@@ -1204,6 +1228,31 @@ function checkForm(f: unknown): string | null {
 	return null;
 }
 
+/** Why a record's `pageOwn` is not a list of pages' own stylesheets and body classes, each page once, or null. */
+function checkPageOwn(v: unknown): string | null {
+	if (!Array.isArray(v) || v.length > MAX_TITLED) return "not a list";
+	const slugs = new Set<string>();
+	for (const o of v) {
+		if (!isObject(o) || !isText(o.slug) || !PAGE_SLUG.test(o.slug) || slugs.has(o.slug))
+			return "an entry names no page";
+		slugs.add(o.slug);
+		if (o.styles === undefined && o.body === undefined) return `${o.slug} carries nothing`;
+		if (
+			o.styles !== undefined &&
+			(!Array.isArray(o.styles) ||
+				o.styles.length > MAX_PAGE_STYLES ||
+				!o.styles.every((h) => typeof h === "string" && STYLE_HREF.test(h)))
+		)
+			return `a stylesheet of ${o.slug} is not one of the site's own files`;
+		if (
+			o.body !== undefined &&
+			(typeof o.body !== "string" || !TOKENS.test(o.body) || o.body.length > SHORT_TEXT)
+		)
+			return `the body classes of ${o.slug} are not tokens`;
+	}
+	return null;
+}
+
 /** Whether `t` is a record's titles: one list, `hidden` or `shown`, of distinct page slugs. */
 function checkTitles(t: unknown): t is WpShellTitles {
 	if (!isObject(t) || Object.keys(t).length !== 1) return false;
@@ -1700,8 +1749,22 @@ export function wpShellProblem(value: unknown): string | null {
 		if (!isObject(pg) || !isText(pg.slug) || !PAGE_SLUG.test(pg.slug) || slugs.has(pg.slug))
 			return "a page layout names no page";
 		slugs.add(pg.slug);
+		// The other pages drawn in it: each a page of its own slug, drawn in one layout only.
+		if (pg.also !== undefined) {
+			if (!Array.isArray(pg.also) || pg.also.length > MAX_TITLED)
+				return `the ${pg.slug} page layout: its other pages are not a list`;
+			for (const slug of pg.also) {
+				if (!isText(slug) || !PAGE_SLUG.test(slug) || slugs.has(slug))
+					return `the ${pg.slug} page layout: another page it draws names no page of its own`;
+				slugs.add(slug);
+			}
+		}
 		const why = checkLayout(pg, menus.length, counts);
 		if (why) return `the ${pg.slug} page layout: ${why}`;
+	}
+	if (value.pageOwn !== undefined) {
+		const why = checkPageOwn(value.pageOwn);
+		if (why) return `a page's own: ${why}`;
 	}
 	if (value.titles !== undefined && !checkTitles(value.titles)) return "the titles name no pages";
 	if (!Array.isArray(forms)) return "the forms are not a list";
@@ -2903,8 +2966,27 @@ export interface WpShellPostFill {
 export function layoutFor(shell: WpShell, kind: WpShellKind, slug?: string | null): WpShellLayout {
 	if (kind === "home" && shell.home) return shell.home;
 	if (kind === "post" && shell.post) return shell.post;
-	const own = kind === "page" && slug ? shell.pages?.find((p) => p.slug === slug) : undefined;
+	const own =
+		kind === "page" && slug
+			? shell.pages?.find((p) => p.slug === slug || p.also?.includes(slug))
+			: undefined;
 	return own ?? shell;
+}
+
+/** A page's own (WpShellPageOwn), for a page or the home of that slug; never a post's or an archive's. */
+function pageOwnFor(
+	shell: WpShell,
+	kind: WpShellKind,
+	slug?: string | null,
+): WpShellPageOwn | undefined {
+	return (kind === "page" || kind === "home") && slug
+		? shell.pageOwn?.find((o) => o.slug === slug)
+		: undefined;
+}
+
+/** The stylesheets a page is drawn with, in cascade order: its layout's, then its own (WpShellPageOwn). */
+export function stylesFor(shell: WpShell, kind: WpShellKind, slug?: string | null): string[] {
+	return [...layoutFor(shell, kind, slug).styles, ...(pageOwnFor(shell, kind, slug)?.styles ?? [])];
 }
 
 /**
@@ -3204,13 +3286,24 @@ const SINGULAR = new Set(["wp-singular", "singular"]);
 const WHITESPACE = /\s+/;
 
 export function bodyClassFor(shell: WpShell, kind: WpShellKind, slug?: string | null): string {
+	// The page's own classes (`page-id-21`), after its layout's.
+	const page = (pageOwnFor(shell, kind, slug)?.body ?? "")
+		.split(WHITESPACE)
+		.filter((c) => c !== "");
+	const withPage = (classes: readonly string[]) =>
+		[...classes, ...page.filter((c) => !classes.includes(c))].join(" ");
 	// The home layout was cut from the front page, a page layout from its page: their classes are their own.
 	const own = layoutFor(shell, kind, slug);
-	if (own !== shell) return own.body.class;
+	if (own !== shell)
+		return page.length > 0
+			? withPage(own.body.class.split(WHITESPACE).filter((c) => c !== ""))
+			: own.body.class;
 	const kept = shell.body.class
 		.split(WHITESPACE)
 		.filter((c) => c !== "" && !ANY_KIND.has(c) && !(kind === "archive" && SINGULAR.has(c)));
-	return [...KIND_CLASSES[kind], ...kept].join(" ");
+	return page.length > 0
+		? withPage([...KIND_CLASSES[kind], ...kept])
+		: [...KIND_CLASSES[kind], ...kept].join(" ");
 }
 
 /**

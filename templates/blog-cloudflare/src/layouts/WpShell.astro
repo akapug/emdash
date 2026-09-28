@@ -50,6 +50,7 @@ import {
 	imageRatio,
 	ownImagePath,
 	plainText,
+	stylesFor,
 	type WpShell,
 	type WpShellKind,
 	type WpShellMenuItem,
@@ -244,7 +245,7 @@ const pageCtx = createPublicPageContext({
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>{fullTitle}</title>
-		{layout.styles.map((href) => <link rel="stylesheet" href={href} />)}
+		{stylesFor(shell, kind, slug).map((href) => <link rel="stylesheet" href={href} />)}
 		<EmDashHead page={pageCtx} />
 		{/* The captured chrome carries no script by design: the site's analytics come from its setting. */}
 		<SiteAnalytics settings={settings} />
