@@ -18,7 +18,7 @@ const TEMPLATE: ExecutionPolicy = {
 		{ id: "emdash-forms", entrypoint: "@emdash-cms/plugin-forms", format: "native" },
 		{
 			id: "cloudflare-email",
-			entrypoint: "@emdash-cms/cloudflare/plugins/email",
+			entrypoint: "@emdash-cms/cloudflare/plugins/cloudflare-email",
 			format: "native",
 		},
 	],
