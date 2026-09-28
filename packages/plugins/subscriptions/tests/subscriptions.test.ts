@@ -370,6 +370,17 @@ describe("a new post", () => {
 		expect(outbox.rows.size).toBe(0);
 	});
 
+	it("logs why a message was not sent, and never the address it was for", async () => {
+		const { env, send } = site({ mail: true });
+		send.mockImplementation(async (m: { to: string }) => {
+			throw new Error(`550 mailbox ${m.to} unavailable`);
+		});
+		expect(await subscribe(env, { email: "reader@example.org", page: "/" })).toBe("queued");
+		const logged = JSON.stringify((env.log.warn as ReturnType<typeof vi.fn>).mock.calls);
+		expect(logged).toContain("550 mailbox <address> unavailable");
+		expect(logged).not.toContain("reader@example.org");
+	});
+
 	it("gives a message up after five failed tries", async () => {
 		const { env, outbox } = site({ mail: true, failing: true });
 		await subscribe(env, { email: "a@example.org", page: "/" });

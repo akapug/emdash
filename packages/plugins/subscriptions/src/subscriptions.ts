@@ -326,10 +326,12 @@ async function sendOne(env: SubscriptionsEnv, key: string): Promise<boolean> {
 			attempts,
 			status: attempts >= MAX_ATTEMPTS ? "failed" : "queued",
 		});
+		// A provider's error may name the recipient: the log never holds an address.
+		const why = error instanceof Error ? error.message : String(error);
 		env.log.warn("a subscription email was not sent", {
 			kind: m.kind,
 			attempts,
-			error: error instanceof Error ? error.message : String(error),
+			error: why.split(sub.email).join("<address>"),
 		});
 		return false;
 	}
