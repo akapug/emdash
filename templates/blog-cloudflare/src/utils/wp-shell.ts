@@ -327,6 +327,15 @@ export interface WpShell extends WpShellLayout {
 	home?: WpShellLayout;
 	/** Pages cut on their own (a page on a template of its own, a page with a form): each drawn for the page of its slug. */
 	pages?: WpShellPageLayout[];
+	/**
+	 * Which pages the record's own layout draws print their title, where the
+	 * site's pages differ (WordPress prints a page's title unless its theme's
+	 * option, its template or its own setting says not to): the layout draws
+	 * no title for a page `hidden` names, or for every page but the ones
+	 * `shown` names. Pages are named by their slug, the home by its page's.
+	 * A page drawn in a layout of its own keeps that layout's title.
+	 */
+	titles?: WpShellTitles;
 	/** The site's forms in their plugin's markup: an EmDash form imported from one is drawn in it (renderWpShellForm). */
 	forms?: WpShellForm[];
 	/** The layout every single post is drawn in; without it, posts wear the record's own layout. */
@@ -337,6 +346,12 @@ export interface WpShell extends WpShellLayout {
 export interface WpShellPageLayout extends WpShellLayout {
 	slug: string;
 }
+
+/** The pages that print no title where the site prints it (`hidden`), or that print it where the site prints none (`shown`). */
+export type WpShellTitles = { hidden: string[] } | { shown: string[] };
+
+/** The most pages a record's `titles` names: one REST API answer of WordPress's pages is at most 100. */
+const MAX_TITLED = 1000;
 
 /** The field types a form's skin draws. */
 export const WP_SHELL_FORM_TYPES = [
@@ -1062,6 +1077,18 @@ function checkForm(f: unknown): string | null {
 	return null;
 }
 
+/** Whether `t` is a record's titles: one list, `hidden` or `shown`, of distinct page slugs. */
+function checkTitles(t: unknown): t is WpShellTitles {
+	if (!isObject(t) || Object.keys(t).length !== 1) return false;
+	const list = "hidden" in t ? t.hidden : t.shown;
+	return (
+		Array.isArray(list) &&
+		list.length <= MAX_TITLED &&
+		list.every((s) => isText(s) && PAGE_SLUG.test(s)) &&
+		new Set(list).size === list.length
+	);
+}
+
 const countSlot = (parts: unknown[], slot: string) =>
 	parts.filter((p) => isObject(p) && p.slot === slot).length;
 
@@ -1419,6 +1446,7 @@ export function wpShellProblem(value: unknown): string | null {
 		const why = checkLayout(pg, menus.length, listings.length);
 		if (why) return `the ${pg.slug} page layout: ${why}`;
 	}
+	if (value.titles !== undefined && !checkTitles(value.titles)) return "the titles name no pages";
 	if (!Array.isArray(forms)) return "the forms are not a list";
 	for (const f of forms) {
 		const why = checkForm(f);
@@ -2316,7 +2344,7 @@ export interface WpShellFill {
 	currentPath: string;
 	/** What kind of page is drawn: the home draws the record's home layout when it has one. */
 	kind?: WpShellKind;
-	/** The page's slug: a page cut on its own draws its own layout. */
+	/** The page's slug (the home's page's, for the home): a page cut on its own draws its own layout, and `titles` names pages by it. */
 	slug?: string | null;
 	/** The entry's title, for the chrome that prints it as text (titleText). */
 	title?: string;
@@ -2364,6 +2392,19 @@ export function layoutFor(shell: WpShell, kind: WpShellKind, slug?: string | nul
 	if (kind === "post" && shell.post) return shell.post;
 	const own = kind === "page" && slug ? shell.pages?.find((p) => p.slug === slug) : undefined;
 	return own ?? shell;
+}
+
+/**
+ * Whether a page drawn in the record's own layout prints its title, as the
+ * record's `titles` says: the page (or the home) of a slug it names, and every
+ * other page and post by the site's choice. A page in a layout of its own draws
+ * that layout's title.
+ */
+export function drawsTitle(shell: WpShell, kind: WpShellKind, slug?: string | null): boolean {
+	const t = shell.titles;
+	if (!t || layoutFor(shell, kind, slug) !== shell) return true;
+	const named = kind !== "post" && !!slug && ("hidden" in t ? t.hidden : t.shown).includes(slug);
+	return "hidden" in t ? !named : named;
 }
 
 const element = (p: WpShellElement): WpShellElement => ({
@@ -2597,7 +2638,9 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 	for (const p of layout.parts) {
 		if ("html" in p) push(p.html);
 		else if (p.slot === "titleText") push(escapeHtml(fill.title ?? ""));
-		else if (p.slot === "title") out.push({ title: element(p) });
+		else if (p.slot === "title") {
+			if (drawsTitle(shell, fill.kind ?? "page", fill.slug)) out.push({ title: element(p) });
+		}
 		else if (p.slot === "content") {
 			const end = postHtml(post?.share);
 			out.push({ content: element(p), ...(end ? { end } : {}) });

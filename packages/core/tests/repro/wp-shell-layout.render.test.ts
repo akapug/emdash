@@ -41,6 +41,7 @@ const reads = vi.hoisted(() => ({
 	getCommentCount: vi.fn(),
 	getCollectionInfo: vi.fn(),
 	getComments: vi.fn(),
+	getHomepage: vi.fn(async (): Promise<unknown> => ({ entry: null, collection: "pages", cacheHint: {} })),
 }));
 
 /** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own. */
@@ -56,7 +57,7 @@ async function emdashReads() {
 		getCommentCount: reads.getCommentCount,
 		getCollectionInfo: reads.getCollectionInfo,
 		getComments: reads.getComments,
-		getHomepage: async () => ({ entry: null, collection: "pages", cacheHint: {} }),
+		getHomepage: reads.getHomepage,
 		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
 		getSiteSettings: async () => ({ title: "Example" }),
 		getSiteSettingsWithCacheHint: async () => ({
@@ -285,6 +286,8 @@ beforeEach(() => {
 	reads.getCollectionInfo.mockResolvedValue({ slug: "posts", commentsEnabled: true });
 	reads.getComments.mockReset();
 	reads.getComments.mockResolvedValue({ items: [], total: 0 });
+	reads.getHomepage.mockReset();
+	reads.getHomepage.mockResolvedValue({ entry: null, collection: "pages", cacheHint: {} });
 });
 
 describe("WpShellForm: a form in its plugin's markup", () => {
@@ -794,6 +797,54 @@ describe("the /wp-shell/ route: a page the record cut on its own", () => {
 		);
 		expect(html).toContain('<header id="site-header">');
 		expect(html).not.toMatch(/contact-own|contact\.css/);
+	});
+});
+
+describe("the /wp-shell/ route: the pages whose title the record's titles leave out", () => {
+	const entry = (slug: string) => ({
+		id: slug,
+		data: {
+			id: `01${slug.toUpperCase()}`,
+			title: `The ${slug} title`,
+			content: [],
+			translationGroup: `01${slug.toUpperCase()}`,
+			updatedAt: new Date("2026-09-01T00:00:00Z"),
+			publishedAt: null,
+		},
+		edit: { title: {}, content: {} },
+	});
+	async function draw(path: string, titles: unknown) {
+		// no home layout of its own: the home is drawn in the record's own layout, as a page is
+		const { home: _, ...own } = record();
+		reads.shell = { ...own, titles };
+		const slug = path === "home" ? "welcome" : path.split("/")[1]!;
+		reads.getEmDashEntry.mockResolvedValue({ entry: entry(slug), cacheHint: {} });
+		reads.getHomepage.mockResolvedValue({ entry: entry("welcome"), collection: "pages", cacheHint: {} });
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path },
+			request: new Request(`https://example.org/${path === "home" ? "" : path}`),
+		});
+	}
+	const TITLE = /<h1 class="entry-title"[^>]*>/;
+
+	it("draws no title for the page, or the home, whose slug `hidden` names, and the title of every other", async () => {
+		const titles = { hidden: ["app", "welcome"] };
+		expect(wpShellProblem({ ...record(), titles })).toBeNull();
+		for (const path of ["pages/app", "home", "pages/welcome"]) {
+			const html = await draw(path, titles);
+			expect(html, path).not.toMatch(TITLE);
+			expect(html, path).toContain('<div class="entry-content"');
+		}
+		const about = await draw("pages/about", titles);
+		expect(about).toMatch(TITLE);
+		expect(about).toContain("The about title</h1>");
+	});
+
+	it("draws the title of the pages `shown` names alone", async () => {
+		const titles = { shown: ["donate"] };
+		expect(await draw("pages/donate", titles)).toContain("The donate title</h1>");
+		for (const path of ["pages/about", "home"]) expect(await draw(path, titles), path).not.toMatch(TITLE);
 	});
 });
 

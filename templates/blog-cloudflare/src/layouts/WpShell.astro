@@ -55,7 +55,7 @@ interface Props {
 	kind: WpShellKind;
 	/** The path the visitor asked for (before the rewrite). */
 	path: string;
-	/** A page's slug: a page the record cut on its own is drawn in its own layout. */
+	/** A page's slug (the home's page's, for the home): a page the record cut on its own is drawn in its own layout, and the record's `titles` name pages by it. */
 	slug?: string | null;
 	title: string;
 	/** The entry's own SEO title, carried from WordPress: the document title, as written. */
