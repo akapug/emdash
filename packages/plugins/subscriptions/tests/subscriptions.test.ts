@@ -6,6 +6,8 @@ import {
 	confirm,
 	confirmedCount,
 	drain,
+	DRAIN_SCHEDULE,
+	DRAIN_TASK,
 	excerptOf,
 	fragmentOf,
 	importSubscribers,
@@ -86,6 +88,19 @@ function kv() {
 
 const NOW = new Date("2026-09-28T17:00:00.000Z");
 
+/** The plugin's scheduled tasks, as EmDash's cron keeps them: one per name, a second schedule replacing the first. */
+function cron() {
+	const tasks = new Map<string, string>();
+	return {
+		tasks,
+		schedule: vi.fn(async (name: string, o: { schedule: string }) => void tasks.set(name, o.schedule)),
+		cancel: vi.fn(async (name: string) => void tasks.delete(name)),
+		list: vi.fn(async () =>
+			[...tasks].map(([name, schedule]) => ({ name, schedule, nextRunAt: "", lastRunAt: null })),
+		),
+	};
+}
+
 function site(opts: { mail?: boolean; failing?: boolean } = {}) {
 	const subscribers = collection<Subscriber>();
 	const outbox = collection<OutboxMessage>();
@@ -94,17 +109,19 @@ function site(opts: { mail?: boolean; failing?: boolean } = {}) {
 		if (opts.failing) throw new Error("the provider refused");
 		sent.push(m);
 	});
+	const tasks = cron();
 	const env = {
 		subscribers,
 		outbox,
 		kv: kv(),
+		cron: tasks,
 		...(opts.mail ? { email: { send } } : {}),
 		site: { name: "Example Site", url: "https://example.org" },
 		url: (path: string) => new URL(path, "https://example.org").href,
 		log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 		now: () => NOW,
 	} as unknown as SubscriptionsEnv;
-	return { env, subscribers, outbox, sent, send };
+	return { env, subscribers, outbox, sent, send, cron: tasks };
 }
 
 const linkIn = (text: string, action: string) => {
@@ -198,6 +215,37 @@ describe("a visitor subscribes on the site's form", () => {
 		).toBe("saved");
 		expect(subscribers.rows.size).toBe(0);
 		expect(outbox.rows.size).toBe(0);
+	});
+});
+
+describe("the outbox's drain", () => {
+	it("is put on the schedule by whatever queues a message, once, for a site whose config declares the plugin", async () => {
+		// EmDash runs plugin:activate only when a plugin is turned on in the admin: nothing else schedules the drain.
+		const { env, cron: tasks } = site();
+		expect(tasks.tasks.size).toBe(0);
+		await subscribe(env, { email: "one@example.org", page: "/" });
+		expect([...tasks.tasks]).toEqual([[DRAIN_TASK, DRAIN_SCHEDULE]]);
+		await subscribe(env, { email: "two@example.org", page: "/" });
+		expect(tasks.schedule).toHaveBeenCalledTimes(1);
+		// a new post puts it back when it has gone
+		tasks.tasks.clear();
+		await confirmed(env, "three@example.org");
+		tasks.tasks.clear();
+		expect(
+			await queueNewPost(
+				env,
+				{ id: "p1", slug: "p1", title: "P1", excerpt: "", publishedAt: NOW },
+				(slug) => `/posts/${slug}`,
+			),
+		).toBe(1);
+		expect([...tasks.tasks]).toEqual([[DRAIN_TASK, DRAIN_SCHEDULE]]);
+	});
+
+	it("leaves the sign-up stored and its words true when the schedule cannot be written", async () => {
+		const { env, subscribers, cron: tasks } = site();
+		tasks.list.mockRejectedValueOnce(new Error("no table"));
+		expect(await subscribe(env, { email: "one@example.org", page: "/" })).toBe("saved");
+		expect(subscribers.rows.size).toBe(1);
 	});
 });
 

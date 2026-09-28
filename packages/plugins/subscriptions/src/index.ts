@@ -32,6 +32,8 @@ import {
 	confirm,
 	confirmedCount,
 	drain,
+	DRAIN_SCHEDULE,
+	DRAIN_TASK,
 	excerptOf,
 	fragmentOf,
 	pageOf,
@@ -95,6 +97,7 @@ async function envOf(ctx: PluginContext, request?: Request): Promise<Subscriptio
 		outbox: ctx.storage.outbox as SubscriptionsEnv["outbox"],
 		kv: ctx.kv,
 		...(ctx.email ? { email: ctx.email } : {}),
+		...(ctx.cron ? { cron: ctx.cron } : {}),
 		site: { name: ctx.site.name, url: origin },
 		url: (path) => (origin ? new URL(path, origin).href : path),
 		log: ctx.log,
@@ -129,12 +132,12 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 			"plugin:activate": {
 				handler: async (_event, ctx) => {
 					// What waits in the outbox goes out once the site can send.
-					if (ctx.cron) await ctx.cron.schedule("drain", { schedule: "*/5 * * * *" });
+					if (ctx.cron) await ctx.cron.schedule(DRAIN_TASK, { schedule: DRAIN_SCHEDULE });
 				},
 			},
 			cron: {
 				handler: async (event, ctx) => {
-					if (event.name === "drain") await drain(await envOf(ctx));
+					if (event.name === DRAIN_TASK) await drain(await envOf(ctx));
 				},
 			},
 			"content:afterPublish": {

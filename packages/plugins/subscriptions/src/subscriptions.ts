@@ -20,7 +20,8 @@
  * provider, a broker that budgets it) holds for these too. While the site
  * has no email provider, `ctx.email` is undefined: messages wait in the
  * outbox, and the visitor is told that no email was sent. The cron drains the
- * outbox once the site can send.
+ * outbox once the site can send; whatever queues a message puts the cron on
+ * the schedule (ensureDrain).
  */
 
 import type { KVAccess, LogAccess, PluginContext, StorageCollection } from "emdash";
@@ -29,6 +30,8 @@ import { parseCsv } from "./csv.js";
 
 /** The site's email, as a plugin with `email:send` reaches it (`ctx.email`). */
 type EmailAccess = NonNullable<PluginContext["email"]>;
+/** The plugin's scheduled tasks (`ctx.cron`). */
+type CronAccess = NonNullable<PluginContext["cron"]>;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -72,6 +75,8 @@ export interface SubscriptionsEnv {
 	outbox: StorageCollection<OutboxMessage>;
 	kv: KVAccess;
 	email?: EmailAccess;
+	/** The plugin's scheduled tasks; undefined where the runtime runs none. */
+	cron?: CronAccess;
 	site: { name: string; url: string };
 	/** An absolute URL on the site. */
 	url(path: string): string;
@@ -205,6 +210,30 @@ async function link(env: SubscriptionsEnv, action: "confirm" | "unsubscribe", id
 }
 
 // ─── The outbox and the seam ─────────────────────────────────────
+
+/** The task that drains the outbox, and how often it runs. */
+export const DRAIN_TASK = "drain";
+export const DRAIN_SCHEDULE = "*/5 * * * *";
+
+/**
+ * Put the outbox's drain on the schedule, once. EmDash runs `plugin:activate`
+ * only when a plugin is turned on in the admin, never for one the site's
+ * config declares, so a message queued while the site cannot send would wait
+ * for the next new post. Whatever queues a message calls this.
+ */
+async function ensureDrain(env: SubscriptionsEnv): Promise<void> {
+	if (!env.cron) return;
+	// The message is stored whatever happens here: a failure is the site's to see, not the visitor's.
+	try {
+		const tasks = await env.cron.list();
+		if (!tasks.some((t) => t.name === DRAIN_TASK))
+			await env.cron.schedule(DRAIN_TASK, { schedule: DRAIN_SCHEDULE });
+	} catch (error) {
+		env.log.warn("the outbox's drain could not be scheduled", {
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
 
 /** Tries before a message is given up on. */
 const MAX_ATTEMPTS = 5;
@@ -349,6 +378,7 @@ export async function subscribe(
 		return env.email ? "pending" : "pending_saved";
 	}
 	const key = await enqueue(env, id, "confirm");
+	await ensureDrain(env);
 	if (!env.email) return "saved";
 	return (await sendOne(env, key)) ? "sent" : "queued";
 }
@@ -490,6 +520,7 @@ export async function queueNewPost(
 		}
 		cursor = page.hasMore ? page.cursor : undefined;
 	} while (cursor);
+	if (queued > 0) await ensureDrain(env);
 	return queued;
 }
 
