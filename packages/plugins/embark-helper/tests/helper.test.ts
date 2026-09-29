@@ -58,7 +58,11 @@ interface Call {
 	signal: unknown;
 }
 
-/** A site with the plugin: its KV row, the signed-in user, and Embark's answers per op. */
+/**
+ * A site with the plugin: its KV rows, the signed-in user, and Embark's answers per op.
+ * The KV keeps rows as JSON, as the options table does; `compareAndSet` with a
+ * null revision creates a row only when it is absent.
+ */
 function site(
 	options: {
 		key?: unknown;
@@ -66,9 +70,17 @@ function site(
 		answers?: Record<string, Answer>;
 		http?: boolean;
 		kvThrows?: boolean;
+		claimThrows?: boolean;
+		rows?: Record<string, unknown>;
 	} = {},
 ) {
-	const { key = "link-key-example", answers = {}, http = true, kvThrows = false } = options;
+	const {
+		key = "link-key-example",
+		answers = {},
+		http = true,
+		kvThrows = false,
+		claimThrows = false,
+	} = options;
 	const user = "user" in options ? options.user : EDITOR;
 	const calls: Call[] = [];
 	const fetch = vi.fn(async (url: string, init: RequestInit = {}) => {
@@ -84,11 +96,30 @@ function site(
 		return (answers[op] ?? (() => json(OVERVIEW)))();
 	});
 	const warn = vi.fn();
+	const rows = new Map(
+		Object.entries(options.rows ?? {}).map(([name, v]) => [name, JSON.stringify(v)]),
+	);
 	const kv = {
 		get: async (name: string) => {
 			if (kvThrows) throw new Error("unreadable row");
-			return name === "linkKey" ? key : null;
+			if (name === "linkKey") return key;
+			const v = rows.get(name);
+			return v === undefined ? null : JSON.parse(v);
 		},
+		compareAndSet: async (name: string, revision: string | null, v: unknown) => {
+			if (claimThrows) throw new Error("the options table is locked");
+			if (revision !== null || rows.has(name)) return { applied: false };
+			rows.set(name, JSON.stringify(v));
+			return { applied: true, revision: `rev-${rows.size}` };
+		},
+		set: async (name: string, v: unknown) => {
+			rows.set(name, JSON.stringify(v));
+		},
+		delete: async (name: string) => rows.delete(name),
+		list: async (prefix = "") =>
+			[...rows]
+				.filter(([name]) => name.startsWith(prefix))
+				.map(([name, v]) => ({ key: name, value: JSON.parse(v) })),
 	};
 	const handle = (input: unknown) =>
 		createPlugin().routes.admin!.handler({
@@ -98,15 +129,18 @@ function site(
 			...(http ? { http: { fetch } } : {}),
 			log: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
 		} as unknown as RouteContext) as Promise<BlockResponse>;
-	return { calls, fetch, warn, handle };
+	return { calls, fetch, warn, handle, rows };
 }
 
 const PAGE = { type: "page_load", page: "/" };
 const WIDGET = { type: "page_load", page: "widget:allowance" };
-const ask = (message: unknown) => ({
+const ASK_FORM_ID = /^ask:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const DAY_MS = 86_400_000;
+/** A submit of one rendered ask form: its block id carries that form's nonce. */
+const ask = (message: unknown, nonce: string = crypto.randomUUID()) => ({
 	type: "form_submit",
 	action_id: "ask",
-	block_id: "ask",
+	block_id: `ask:${nonce}`,
 	values: { message },
 	page: "/",
 });
@@ -254,7 +288,10 @@ describe("the AI Helper page", () => {
 		expect(text(res)).not.toContain("Cents");
 
 		const [form] = ofType(res, "form");
-		expect(form).toMatchObject({ block_id: "ask", submit: { action_id: "ask" } });
+		expect(form).toMatchObject({
+			block_id: expect.stringMatching(ASK_FORM_ID),
+			submit: { action_id: "ask" },
+		});
 		expect(form!.fields[0]).toMatchObject({ type: "text_input", action_id: "message" });
 
 		const all = text(res);
@@ -389,6 +426,124 @@ describe("asking", () => {
 		expect(s.calls.map((c) => c.op)).toEqual(["overview"]);
 		expectValid(res);
 		expect(ofType(res, "banner")[0]).toMatchObject({ variant: "alert" });
+	});
+});
+
+describe("pressing Ask twice", () => {
+	/** Embark's answer to a turn, held until the test lets it go. */
+	function heldTurn(reply: unknown) {
+		let release = () => {};
+		const held = new Promise<void>((done) => {
+			release = done;
+		});
+		const answer = async () => {
+			await held;
+			return json(reply);
+		};
+		return { answer, release };
+	}
+	const turns = (s: ReturnType<typeof site>) => s.calls.filter((c) => c.op === "turn");
+	/** Only the clock the wait reads and sleeps on; Response bodies keep their own scheduling. */
+	const FAKE: Array<"setTimeout" | "clearTimeout" | "Date"> = ["setTimeout", "clearTimeout", "Date"];
+
+	it("renders a fresh ask form each time, so a sent question leaves an empty box", async () => {
+		const s = site();
+		const idOf = async () => ofType(await s.handle(PAGE), "form")[0]!.block_id;
+		const [a, b] = [await idOf(), await idOf()];
+		expect(a).toMatch(ASK_FORM_ID);
+		expect(b).toMatch(ASK_FORM_ID);
+		expect(a).not.toBe(b);
+	});
+
+	it("runs one turn for two submits of the same form, and both show its reply", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = heldTurn({
+				reply: "I drafted the fix.",
+				proposals: [{ id: "p7", kind: "text_change", summary: "Fix it", preview: "" }],
+			});
+			const s = site({ answers: { turn: t.answer } });
+			const form = ask("Fix the typo");
+			const pages = [s.handle(form), s.handle(form)];
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(turns(s)).toHaveLength(1);
+			t.release();
+			await vi.advanceTimersByTimeAsync(2_000);
+			for (const res of await Promise.all(pages)) {
+				expectValid(res);
+				expect(text(res)).toContain("I drafted the fix.");
+				const buttons = ofType(res, "actions").flatMap((a) => a.elements);
+				expect(buttons).toContainEqual(
+					expect.objectContaining({ action_id: "approve", value: "p7" }),
+				);
+			}
+			expect(turns(s)).toHaveLength(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("says the question is being answered, and runs no second turn, while the first outlasts the wait", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = heldTurn({ reply: "Late.", proposals: [] });
+			const s = site({ answers: { turn: t.answer } });
+			const form = ask("Rewrite the home page");
+			const first = s.handle(form);
+			const second = s.handle(form);
+			await vi.advanceTimersByTimeAsync(120_000);
+			const res = await second;
+			expectValid(res);
+			expect(ofType(res, "banner").map((b) => b.description)).toContain(
+				"That question is already being answered. Reload this page in a minute to see the reply.",
+			);
+			expect(text(res)).not.toContain("Late.");
+			t.release();
+			await vi.advanceTimersByTimeAsync(1_000);
+			await first;
+			expect(turns(s)).toHaveLength(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("sends nothing from a form without its nonce, and says to ask again", async () => {
+		const s = site();
+		for (const block_id of ["ask", "ask:", "ask:not-a-nonce", undefined]) {
+			const res = await s.handle({ ...ask("Hello"), block_id });
+			expectValid(res);
+			expect(ofType(res, "banner")[0]).toMatchObject({
+				variant: "alert",
+				description: "This page was out of date, so the question was not sent. Ask it again.",
+			});
+		}
+		expect(turns(s)).toEqual([]);
+	});
+
+	it("runs no turn when the question cannot be claimed, and says so readably", async () => {
+		const s = site({ claimThrows: true });
+		const res = await s.handle(ask("Hello"));
+		expect(s.calls.map((c) => c.op)).toEqual(["overview"]);
+		expectValid(res);
+		expect(ofType(res, "banner")[0]).toMatchObject({ variant: "error" });
+	});
+
+	it("records the turn's outcome on its claim, and clears claims older than a day", async () => {
+		const now = Date.now();
+		const s = site({
+			rows: {
+				"turn:old": { at: now - 2 * DAY_MS },
+				"turn:unreadable": "not a claim",
+				"turn:recent": { at: now - 60_000 },
+			},
+			answers: { turn: () => json({ reply: "Done.", proposals: [] }) },
+		});
+		const nonce = crypto.randomUUID();
+		await s.handle(ask("Hello", nonce));
+		expect([...s.rows.keys()].sort()).toEqual(["turn:recent", `turn:${nonce}`].sort());
+		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toMatchObject({
+			outcome: { turn: { message: "Hello", reply: "Done." } },
+		});
 	});
 });
 

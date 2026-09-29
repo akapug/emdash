@@ -1,13 +1,15 @@
 /**
  * The AI Helper's admin route: one Block Kit handler for the page and the
  * dashboard widget. Every answer comes from Embark's control plane; the
- * plugin keeps nothing of its own but the link key an Embark operator wrote.
+ * plugin keeps only the link key an Embark operator wrote and, for a day, a
+ * claim for each question asked.
  */
 
 import type { BlockResponse } from "@emdash-cms/blocks/server";
 import type { RouteContext } from "emdash";
 
 import {
+	ASK_FORM,
 	type Answer,
 	errorPage,
 	helperPage,
@@ -39,11 +41,24 @@ const ROLE_NAMES: Record<number, string> = {
 const TURN_TIMEOUT_MS = 90_000;
 const OP_TIMEOUT_MS = 20_000;
 const NON_ASCII = /[\u007f-￿]/g;
+/**
+ * A turn's claim on its form's nonce, the KV row `turn:<nonce>`: `{ at }`
+ * while the turn runs, `{ at, outcome }` once it is done. Only the request
+ * that creates the row asks Embark; a second submit of the same form waits
+ * for the first one's outcome and shows it. Rows older than a day are cleared.
+ */
+const CLAIM = "turn:";
+const CLAIM_KEPT_MS = 86_400_000;
+const CLAIM_POLL_MS = 1_000;
+const NONCE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const NO_KEY = "The AI Helper comes with Embark hosting.";
 const EDITORS_ONLY = "The AI Helper is for this site's editors and administrators.";
 const TRY_AGAIN = "Try again in a minute.";
 const UNREADABLE = `The AI Helper could not read Embark's answer. ${TRY_AGAIN}`;
+const OUT_OF_DATE = "This page was out of date, so the question was not sent. Ask it again.";
+const STILL_ANSWERING =
+	"That question is already being answered. Reload this page in a minute to see the reply.";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
@@ -125,19 +140,91 @@ async function call(
 	return isRecord(data) ? { data } : { failed: UNREADABLE };
 }
 
-/** Does what the interaction asked, and says how it went. */
-async function act(input: Record<string, unknown>, ask: Ask, admin: boolean): Promise<Outcome> {
-	const { type, action_id: action, value, values } = input;
-	if (type === "form_submit" && action === "ask") {
-		const raw = isRecord(values) ? values.message : undefined;
-		const message = typeof raw === "string" ? raw.trim() : "";
-		if (!message) return { banner: notice("Write a question or a request first.") };
-		const a = await ask("turn", { message });
-		if (!("data" in a)) return { answer: a };
-		const { reply, proposals } = a.data;
-		if (typeof reply !== "string") return { answer: { failed: UNREADABLE } };
-		return { turn: { message, reply, proposals: proposalsOf(proposals) } };
+async function turnOf(message: string, ask: Ask): Promise<Outcome> {
+	const a = await ask("turn", { message });
+	if (!("data" in a)) return { answer: a };
+	const { reply, proposals } = a.data;
+	if (typeof reply !== "string") return { answer: { failed: UNREADABLE } };
+	return { turn: { message, reply, proposals: proposalsOf(proposals) } };
+}
+
+/** The outcome the turn holding `claim` recorded, or `null` if none is recorded in time. */
+async function settledOf(ctx: HelperContext, claim: string): Promise<Outcome | null> {
+	const until = Date.now() + TURN_TIMEOUT_MS + OP_TIMEOUT_MS;
+	for (;;) {
+		const row = await ctx.kv.get<unknown>(claim).catch(() => null);
+		if (isRecord(row) && isRecord(row.outcome)) return row.outcome as Outcome;
+		if (Date.now() >= until) return null;
+		await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
 	}
+}
+
+/** Clears claims older than a day. A failure here is logged and never stops the turn. */
+async function sweepClaims(ctx: HelperContext): Promise<void> {
+	const oldest = Date.now() - CLAIM_KEPT_MS;
+	try {
+		const rows = await ctx.kv.list(CLAIM);
+		await Promise.all(
+			rows
+				.filter(({ value: v }) => !(isRecord(v) && typeof v.at === "number" && v.at >= oldest))
+				.map(({ key }) => ctx.kv.delete(key)),
+		);
+	} catch (error) {
+		ctx.log.warn("embark-helper: old question claims could not be cleared", {
+			error: messageOf(error),
+		});
+	}
+}
+
+/**
+ * Asks once per form: the request that claims the form's nonce runs the turn,
+ * and a second submit of that form shows the first one's outcome.
+ */
+async function asked(
+	ctx: HelperContext,
+	input: Record<string, unknown>,
+	ask: Ask,
+): Promise<Outcome> {
+	const { block_id: block, values } = input;
+	const raw = isRecord(values) ? values.message : undefined;
+	const message = typeof raw === "string" ? raw.trim() : "";
+	if (!message) return { banner: notice("Write a question or a request first.") };
+	const nonce =
+		typeof block === "string" && block.startsWith(ASK_FORM) ? block.slice(ASK_FORM.length) : "";
+	if (!NONCE.test(nonce)) return { banner: notice(OUT_OF_DATE) };
+	const claim = `${CLAIM}${nonce}`;
+	const at = Date.now();
+	const held = await ctx.kv.compareAndSet(claim, null, { at }).then(
+		(w) => w.applied,
+		(error: unknown) => {
+			ctx.log.warn("embark-helper: the question could not be claimed", {
+				error: messageOf(error),
+			});
+			return null;
+		},
+	);
+	if (held === null)
+		return { answer: { failed: `The AI Helper could not start this question. ${TRY_AGAIN}` } };
+	if (!held) return (await settledOf(ctx, claim)) ?? { banner: notice(STILL_ANSWERING) };
+	await sweepClaims(ctx);
+	const outcome = await turnOf(message, ask);
+	await ctx.kv.set(claim, { at, outcome }).catch((error: unknown) =>
+		ctx.log.warn("embark-helper: the answered question could not be recorded", {
+			error: messageOf(error),
+		}),
+	);
+	return outcome;
+}
+
+/** Does what the interaction asked, and says how it went. */
+async function act(
+	ctx: HelperContext,
+	input: Record<string, unknown>,
+	ask: Ask,
+	admin: boolean,
+): Promise<Outcome> {
+	const { type, action_id: action, value } = input;
+	if (type === "form_submit" && action === "ask") return asked(ctx, input, ask);
 	if (type !== "block_action") return {};
 	if (action === "approve" || action === "reject") {
 		if (typeof value !== "string" || value === "") return {};
@@ -168,6 +255,6 @@ export async function helperAdmin(ctx: HelperContext): Promise<BlockResponse> {
 	const ask: Ask = (op, body) => call(ctx, key, user, op, body);
 	if (widget) return helperWidget(await ask("overview", {}));
 	const admin = user.role >= ADMIN;
-	const outcome = await act(input, ask, admin);
+	const outcome = await act(ctx, input, ask, admin);
 	return helperPage(await ask("overview", {}), outcome, admin);
 }

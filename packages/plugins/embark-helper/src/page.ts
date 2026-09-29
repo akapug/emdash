@@ -295,9 +295,16 @@ function switchBlocks(enabled: boolean, admin: boolean): Block[] {
 		: off;
 }
 
-const ASK: Block = {
+/**
+ * The ask form's block id: this prefix and a nonce made fresh on every render.
+ * A turn claims the nonce before it runs, so one form asks once however often
+ * its button is pressed, and each new form mounts with an empty box.
+ */
+export const ASK_FORM = "ask:";
+
+const askForm = (): Block => ({
 	type: "form",
-	block_id: "ask",
+	block_id: `${ASK_FORM}${crypto.randomUUID()}`,
 	fields: [
 		{
 			type: "text_input",
@@ -308,7 +315,7 @@ const ASK: Block = {
 		},
 	],
 	submit: { label: "Ask", action_id: "ask" },
-};
+});
 
 /** The AI Helper page. */
 export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): BlockResponse {
@@ -324,7 +331,7 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 		? [
 				...switchBlocks(o.enabled, admin),
 				...allowanceBlocks(o.allowance),
-				...(o.enabled ? [{ type: "divider" as const }, ASK] : []),
+				...(o.enabled ? [{ type: "divider" as const }, askForm()] : []),
 				{ type: "divider" },
 				{ type: "header", text: "Recent conversation" },
 				...turnBlocks(o.turns),
