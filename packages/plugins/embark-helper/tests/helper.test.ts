@@ -575,6 +575,22 @@ describe("proposals", () => {
 		expect(res.toast).toEqual({ type: "success", message: "Discarded" });
 	});
 
+	for (const [label, body] of [
+		["{ ok: false }", { ok: false }],
+		["no ok at all", { approved: true }],
+	] as const) {
+		it(`shows no Approved toast when Embark answers ${label}`, async () => {
+			const s = site({ answers: { approve: () => json(body) } });
+			const res = await s.handle(press("approve", "p1"));
+			expectValid(res);
+			expect(res.toast).toBeUndefined();
+			expect(ofType(res, "banner")[0]).toMatchObject({
+				variant: "error",
+				description: "The AI Helper could not read Embark's answer.",
+			});
+		});
+	}
+
 	it("sends nothing for a button without a proposal id", async () => {
 		const s = site();
 		await s.handle(press("approve", ""));
@@ -596,6 +612,23 @@ describe("the on/off switch", () => {
 		const res = await s.handle(press("toggle", true));
 		expect(s.calls[0].body).toEqual({ enabled: true });
 		expect(res.toast).toEqual({ type: "success", message: "The AI Helper is on" });
+	});
+
+	it("shows no toast when Embark's answer does not say whether the Helper is on", async () => {
+		const s = site({ user: ADMIN, answers: { toggle: () => json({ ok: true }) } });
+		const res = await s.handle(press("toggle", true));
+		expectValid(res);
+		expect(res.toast).toBeUndefined();
+		expect(ofType(res, "banner")[0]).toMatchObject({
+			variant: "error",
+			description: "The AI Helper could not read Embark's answer.",
+		});
+	});
+
+	it("reports the state Embark confirms, not the one asked for", async () => {
+		const s = site({ user: ADMIN, answers: { toggle: () => json({ enabled: false }) } });
+		const res = await s.handle(press("toggle", true));
+		expect(res.toast).toEqual({ type: "success", message: "The AI Helper is off" });
 	});
 
 	it("an editor cannot switch it, and Embark is not asked to", async () => {

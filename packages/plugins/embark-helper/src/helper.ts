@@ -248,6 +248,7 @@ async function act(
 		if (typeof value !== "string" || value === "") return {};
 		const a = await ask(action, { proposalId: value });
 		if (!("data" in a)) return { answer: a };
+		if (a.data.ok !== true) return { answer: { failed: UNREADABLE } };
 		return { toast: action === "approve" ? "Approved" : "Discarded" };
 	}
 	if (action === "toggle") {
@@ -255,8 +256,9 @@ async function act(
 			return { banner: notice("Only an administrator can turn the AI Helper on or off.") };
 		const a = await ask("toggle", { enabled: value === true });
 		if (!("data" in a)) return { answer: a };
-		const on = typeof a.data.enabled === "boolean" ? a.data.enabled : value === true;
-		return { toast: on ? "The AI Helper is on" : "The AI Helper is off" };
+		const { enabled } = a.data;
+		if (typeof enabled !== "boolean") return { answer: { failed: UNREADABLE } };
+		return { toast: enabled ? "The AI Helper is on" : "The AI Helper is off" };
 	}
 	return {};
 }
