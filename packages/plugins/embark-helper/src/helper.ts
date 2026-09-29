@@ -40,7 +40,7 @@ const ROLE_NAMES: Record<number, string> = {
 /** A turn runs the model and its tools; every other op is one read or one write. */
 const TURN_TIMEOUT_MS = 90_000;
 const OP_TIMEOUT_MS = 20_000;
-const NON_ASCII = /[\u007f-￿]/g;
+const NON_ASCII = /[\u007f-\uffff]/g;
 /**
  * A turn's claim on its form's nonce, the KV row `turn:<nonce>`: `{ at }`
  * while the turn runs, `{ at, outcome }` once it is done. Only the request

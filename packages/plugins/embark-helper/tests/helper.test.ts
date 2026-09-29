@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+
 import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import type { Block, BlockResponse } from "@emdash-cms/blocks/server";
 import type { RouteContext } from "emdash";
@@ -272,6 +274,30 @@ describe("the request to Embark", () => {
 		const header = s.calls[0].headers.get("x-embark-user")!;
 		expect(header).toMatch(/^[\x20-\x7e]+$/);
 		expect(JSON.parse(header)).toEqual({ id: "user-50", email: "rené@example.org", role: "admin" });
+	});
+
+	it("escapes a user past the Basic Multilingual Plane too, and it reads back the same", async () => {
+		const user = person(50, "\u{1F600}@example.org");
+		const s = site({ user });
+		await s.handle(PAGE);
+		const header = s.calls[0].headers.get("x-embark-user")!;
+		expect(header).toMatch(/^[\x20-\x7e]+$/);
+		expect(JSON.parse(header).email).toBe("\u{1F600}@example.org");
+	});
+});
+
+describe("the plugin's source", () => {
+	it("spells every character a reader cannot see as an escape", () => {
+		// Noncharacters (U+FDD0..U+FDEF, U+xFFFE, U+xFFFF) are invisible in editors and diffs.
+		const invisible = /[\uFDD0-\uFDEF\uFFFE\uFFFF]/u;
+		const dir = new URL("../src/", import.meta.url);
+		const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+		expect(files.length).toBeGreaterThan(0);
+		for (const f of files) {
+			const lines = readFileSync(new URL(f, dir), "utf8").split("\n");
+			const found = lines.flatMap((l, n) => (invisible.test(l) ? [`${f}:${n + 1}`] : []));
+			expect(found).toEqual([]);
+		}
 	});
 });
 
