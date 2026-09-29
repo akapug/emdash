@@ -1,0 +1,35 @@
+{
+	"name": "@emdash-cms/plugin-embark-helper",
+	"version": "0.1.0",
+	"private": true,
+	"description": "The AI Helper inside the EmDash admin of a site Embark hosts: ask, review proposals, approve or discard them, and see this month's allowance",
+	"type": "module",
+	"main": "src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"files": [
+		"src"
+	],
+	"keywords": [
+		"emdash",
+		"cms",
+		"plugin",
+		"embark",
+		"assistant"
+	],
+	"license": "MIT",
+	"peerDependencies": {
+		"emdash": "workspace:>=0.11.0"
+	},
+	"dependencies": {
+		"@emdash-cms/blocks": "workspace:*"
+	},
+	"devDependencies": {
+		"vitest": "catalog:"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"typecheck": "tsgo --noEmit"
+	}
+}
