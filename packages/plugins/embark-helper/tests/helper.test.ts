@@ -611,38 +611,61 @@ describe("the on/off switch", () => {
 });
 
 describe("when Embark cannot answer", () => {
-	const failures: Array<[string, Answer, RegExp]> = [
-		["a 502", () => new Response("bad gateway", { status: 502 }), /502/],
-		["a 401 with an error body", () => json({ error: "bad link key" }, 401), /401/],
+	const RELINK = /Embark did not accept this site's link\. Embark support can relink it\.$/;
+	const UNREAD = /could not read Embark's answer\.$/;
+	const failures: Array<[string, Answer, RegExp, boolean]> = [
+		[
+			"a 502",
+			() => new Response("bad gateway", { status: 502 }),
+			/502\. Try again in a minute\./,
+			true,
+		],
+		["a 429", () => json({ error: "slow down" }, 429), /429\. Try again in a minute\./, true],
+		["a 401 with an error body", () => json({ error: "bad link key" }, 401), RELINK, false],
+		["a 403 with an error body", () => json({ error: "forbidden" }, 403), RELINK, false],
+		["a 404", () => new Response("not found", { status: 404 }), /status 404\.$/, false],
 		[
 			"a network error",
 			() => {
 				throw new TypeError("fetch failed");
 			},
-			/did not go through/,
+			/did not go through\. Try again in a minute\./,
+			true,
 		],
 		[
 			"a timeout",
 			() => {
 				throw new DOMException("The operation timed out.", "TimeoutError");
 			},
-			/in time/,
+			/in time\. Try again in a minute\./,
+			true,
 		],
-		["a 200 that is not JSON", () => new Response("<html>", { status: 200 }), /could not read/],
-		["a 200 that is not an object", () => json([1, 2]), /could not read/],
+		["a 200 that is not JSON", () => new Response("<html>", { status: 200 }), UNREAD, false],
+		["a 200 that is not an object", () => json([1, 2]), UNREAD, false],
 	];
-	for (const [label, answer, words] of failures) {
-		it(`shows a readable banner for ${label}, never a blank page`, async () => {
+	for (const [label, answer, words, retry] of failures) {
+		it(`shows a readable banner for ${label}, and offers to try again only where that can help`, async () => {
 			const s = site({ answers: { overview: answer } });
 			const res = await s.handle(PAGE);
 			expectValid(res);
 			const [banner] = ofType(res, "banner");
 			expect(banner).toMatchObject({ variant: "error" });
-			expect(`${banner!.title} ${banner!.description}`).toMatch(words);
+			expect(banner!.description).toMatch(words);
+			if (!retry) expect(text(res)).not.toMatch(/try again/i);
 			const buttons = ofType(res, "actions").flatMap((a) => a.elements);
-			expect(buttons).toContainEqual(expect.objectContaining({ action_id: "reload" }));
+			expect(buttons.some((b) => "action_id" in b && b.action_id === "reload")).toBe(retry);
 		});
 	}
+
+	it("says a message is too long when Embark refuses its size, and does not offer to try again", async () => {
+		const s = site({ answers: { turn: () => json({ error: "payload too large" }, 413) } });
+		const res = await s.handle(ask("A very long request"));
+		expectValid(res);
+		expect(ofType(res, "banner").map((b) => b.description)).toContain(
+			"That message is too long for the AI Helper.",
+		);
+		expect(text(res)).not.toMatch(/try again/i);
+	});
 
 	it("keeps the reply when the page cannot be refreshed after asking", async () => {
 		const s = site({

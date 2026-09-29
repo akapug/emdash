@@ -55,7 +55,13 @@ const NONCE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NO_KEY = "The AI Helper comes with Embark hosting.";
 const EDITORS_ONLY = "The AI Helper is for this site's editors and administrators.";
 const TRY_AGAIN = "Try again in a minute.";
-const UNREADABLE = `The AI Helper could not read Embark's answer. ${TRY_AGAIN}`;
+const UNREADABLE = "The AI Helper could not read Embark's answer.";
+/** What a non-2xx answer without a refusal means, where trying again cannot fix it. */
+const STATUS_WORDS: Record<number, string> = {
+	401: "Embark did not accept this site's link. Embark support can relink it.",
+	403: "Embark did not accept this site's link. Embark support can relink it.",
+	413: "That message is too long for the AI Helper.",
+};
 const OUT_OF_DATE = "This page was out of date, so the question was not sent. Ask it again.";
 const STILL_ANSWERING =
 	"That question is already being answered. Reload this page in a minute to see the reply.";
@@ -131,13 +137,23 @@ async function call(
 			failed: timedOut
 				? `Embark did not answer in time. ${TRY_AGAIN}`
 				: `The request to Embark did not go through. ${TRY_AGAIN}`,
+			retry: true,
 		};
 	}
 	const data: unknown = await res.json().catch(() => undefined);
 	const refused = refusalOf(data);
 	if (refused) return { refused };
-	if (!res.ok) return { failed: `Embark answered with status ${res.status}. ${TRY_AGAIN}` };
+	if (!res.ok) return statusFailure(res.status);
 	return isRecord(data) ? { data } : { failed: UNREADABLE };
+}
+
+/** A non-2xx answer: "Try again" only for a busy or broken Embark (429, 5xx), where it can help. */
+function statusFailure(status: number): Answer {
+	const words = STATUS_WORDS[status];
+	if (words) return { failed: words };
+	return status === 429 || status >= 500
+		? { failed: `Embark answered with status ${status}. ${TRY_AGAIN}`, retry: true }
+		: { failed: `Embark answered with status ${status}.` };
 }
 
 async function turnOf(message: string, ask: Ask): Promise<Outcome> {
@@ -204,7 +220,9 @@ async function asked(
 		},
 	);
 	if (held === null)
-		return { answer: { failed: `The AI Helper could not start this question. ${TRY_AGAIN}` } };
+		return {
+			answer: { failed: `The AI Helper could not start this question. ${TRY_AGAIN}`, retry: true },
+		};
 	if (!held) return (await settledOf(ctx, claim)) ?? { banner: notice(STILL_ANSWERING) };
 	await sweepClaims(ctx);
 	const outcome = await turnOf(message, ask);

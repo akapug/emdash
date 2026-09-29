@@ -5,11 +5,11 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks/server";
 
-/** What one call to the control plane came to. */
+/** What one call to the control plane came to. `retry` marks a failure that trying again can fix. */
 export type Answer =
 	| { data: Record<string, unknown> }
 	| { refused: { reason: string; message: string } }
-	| { failed: string };
+	| { failed: string; retry?: boolean };
 
 export interface Proposal {
 	id: string;
@@ -324,7 +324,8 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 		...(outcome.answer ? [answerBanner(outcome.answer)] : []),
 		...("data" in overview ? [] : [answerBanner(overview)]),
 	];
-	if (alerts.some((b) => b.type === "banner" && b.variant === "error")) alerts.push(RETRY);
+	const failures = [outcome.answer, "data" in overview ? undefined : overview];
+	if (failures.some((a) => a !== undefined && "failed" in a && a.retry === true)) alerts.push(RETRY);
 
 	const o = "data" in overview ? overviewOf(overview.data, outcome.turn) : null;
 	const body: Block[] = o
