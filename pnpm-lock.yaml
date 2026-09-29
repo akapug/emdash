@@ -3095,6 +3095,9 @@ importers:
       '@emdash-cms/cloudflare':
         specifier: workspace:*
         version: link:../../packages/cloudflare
+      '@emdash-cms/plugin-embark-helper':
+        specifier: workspace:*
+        version: link:../../packages/plugins/embark-helper
       '@emdash-cms/plugin-forms':
         specifier: workspace:*
         version: link:../../packages/plugins/forms

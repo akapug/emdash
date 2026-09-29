@@ -17,6 +17,7 @@
     "@astrojs/cloudflare": "catalog:",
     "@astrojs/react": "catalog:",
     "@emdash-cms/cloudflare": "workspace:*",
+    "@emdash-cms/plugin-embark-helper": "workspace:*",
     "@emdash-cms/plugin-forms": "workspace:*",
     "@emdash-cms/plugin-subscriptions": "workspace:*",
     "astro": "catalog:",
