@@ -83,15 +83,14 @@ const failure = (description: string): Block => ({
 	description,
 });
 
-/** A refusal shows the server's message as it came. */
-function answerBanner(a: Exclude<Answer, { data: Record<string, unknown> }>): Block {
+/** Over a refused request; a refused overview answers nobody's request. */
+const REFUSED = "The AI Helper did not do that";
+const UNAVAILABLE = "The AI Helper is not available";
+
+/** A refusal shows the server's message as it came, under `title`. */
+function answerBanner(a: Exclude<Answer, { data: Record<string, unknown> }>, title = REFUSED): Block {
 	return "refused" in a
-		? {
-				type: "banner",
-				variant: "alert",
-				title: "The AI Helper did not do that",
-				description: a.refused.message,
-			}
+		? { type: "banner", variant: "alert", title, description: a.refused.message }
 		: failure(a.failed);
 }
 
@@ -325,12 +324,14 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 	const alerts = [
 		...(outcome.banner ? [outcome.banner] : []),
 		...(outcome.answer ? [answerBanner(outcome.answer)] : []),
-		...("data" in overview ? [] : [answerBanner(overview)]),
+		...("data" in overview ? [] : [answerBanner(overview, UNAVAILABLE)]),
 	];
 	const failures = [outcome.answer, "data" in overview ? undefined : overview];
 	if (failures.some((a) => a !== undefined && "failed" in a && a.retry === true)) alerts.push(RETRY);
 
 	const o = "data" in overview ? overviewOf(overview.data, outcome.turn) : null;
+	// The switch is the one way back on for an administrator who turned the Helper off.
+	const switchOn = admin && "refused" in overview && overview.refused.reason === "helper_off";
 	const body: Block[] = o
 		? [
 				...switchBlocks(o.enabled, admin),
@@ -343,16 +344,19 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 				{ type: "header", text: "Waiting for approval" },
 				...proposalBlocks(o.proposals),
 			]
-		: // The page could not be refreshed: keep what the turn just answered.
-			outcome.turn
-			? [
-					...turnBlocks([
-						{ role: "user", text: outcome.turn.message, at: null },
-						{ role: "assistant", text: outcome.turn.reply, at: null },
-					]),
-					...(outcome.turn.proposals.length ? proposalBlocks(outcome.turn.proposals) : []),
-				]
-			: [];
+		: [
+				...(switchOn ? switchBlocks(false, true) : []),
+				// The page could not be refreshed: keep what the turn just answered.
+				...(outcome.turn
+					? [
+							...turnBlocks([
+								{ role: "user", text: outcome.turn.message, at: null },
+								{ role: "assistant", text: outcome.turn.reply, at: null },
+							]),
+							...(outcome.turn.proposals.length ? proposalBlocks(outcome.turn.proposals) : []),
+						]
+					: []),
+			];
 
 	const blocks: Block[] = [{ type: "header", text: "AI Helper" }, ...alerts, ...body];
 	return outcome.toast
@@ -362,7 +366,7 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 
 /** The dashboard widget: the allowance, and the way to the page. */
 export function helperWidget(overview: Answer): BlockResponse {
-	if (!("data" in overview)) return { blocks: [answerBanner(overview), OPEN_PAGE] };
+	if (!("data" in overview)) return { blocks: [answerBanner(overview, UNAVAILABLE), OPEN_PAGE] };
 	const o = overviewOf(overview.data);
 	return {
 		blocks: [

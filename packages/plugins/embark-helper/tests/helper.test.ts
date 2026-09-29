@@ -429,6 +429,64 @@ describe("asking", () => {
 	});
 });
 
+describe("when Embark refuses the overview", () => {
+	const refusal = (reason: string, message: string) => () =>
+		json({ refused: { reason, message } }, 403);
+	const toggles = (res: BlockResponse) =>
+		ofType(res, "actions")
+			.flatMap((a) => a.elements)
+			.filter((e) => e.type === "toggle");
+
+	it("titles its banner as not available on the page and the widget, since nobody asked anything", async () => {
+		const message = "This site's plan does not include the AI Helper.";
+		const s = site({ answers: { overview: refusal("helper_no_plan", message) } });
+		for (const input of [PAGE, WIDGET]) {
+			const res = await s.handle(input);
+			expectValid(res);
+			expect(ofType(res, "banner")[0]).toMatchObject({
+				variant: "alert",
+				title: "The AI Helper is not available",
+				description: message,
+			});
+			expect(text(res)).not.toContain("did not do that");
+		}
+	});
+
+	it("keeps the did-not-do-that title for a refused request", async () => {
+		const s = site({
+			answers: { turn: () => json({ refused: { reason: "helper_off", message: "Off." } }) },
+		});
+		const res = await s.handle(ask("Hello"));
+		expect(ofType(res, "banner")[0]).toMatchObject({ title: "The AI Helper did not do that" });
+	});
+
+	it("keeps the switch for an administrator while the Helper is off, so it can be turned back on", async () => {
+		const message = "The AI Helper is off for this site.";
+		const res = await site({
+			user: ADMIN,
+			answers: { overview: refusal("helper_off", message) },
+		}).handle(PAGE);
+		expectValid(res);
+		expect(ofType(res, "banner").map((b) => b.description)).toContain(message);
+		expect(toggles(res)).toEqual([
+			expect.objectContaining({ action_id: "toggle", initial_value: false }),
+		]);
+	});
+
+	it("shows no switch to an editor, nor to an administrator refused for another reason", async () => {
+		const off = refusal("helper_off", "Off.");
+		const noPlan = refusal("helper_no_plan", "No plan.");
+		for (const [user, overview] of [
+			[EDITOR, off],
+			[ADMIN, noPlan],
+		] as const) {
+			const res = await site({ user, answers: { overview } }).handle(PAGE);
+			expectValid(res);
+			expect(toggles(res)).toEqual([]);
+		}
+	});
+});
+
 describe("pressing Ask twice", () => {
 	/** Embark's answer to a turn, held until the test lets it go. */
 	function heldTurn(reply: unknown) {
