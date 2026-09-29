@@ -393,6 +393,74 @@ describe("asking", () => {
 		expect(buttons).toContainEqual(expect.objectContaining({ action_id: "approve", value: "p9" }));
 	});
 
+	const blankSections = (res: BlockResponse) =>
+		ofType(res, "section").filter((b) => b.text.trim() === "");
+	const labels = (res: BlockResponse) => ofType(res, "context").map((b) => b.text);
+
+	it("shows a blank reply that drafted changes as a count of them, never an empty bubble", async () => {
+		const p = (id: string) => ({ id, kind: "text_change", summary: `Change ${id}`, preview: "" });
+		for (const [proposals, words] of [
+			[[p("p8")], "Drafted 1 change for your approval below."],
+			[[p("p8"), p("p9")], "Drafted 2 changes for your approval below."],
+		] as const) {
+			for (const overview of [() => json(OVERVIEW), () => new Response("", { status: 503 })]) {
+				const s = site({ answers: { turn: () => json({ reply: "", proposals }), overview } });
+				const res = await s.handle(ask("Retitle the About page"));
+				expectValid(res);
+				expect(blankSections(res)).toEqual([]);
+				expect(ofType(res, "section").map((b) => b.text)).toContain(words);
+			}
+		}
+	});
+
+	it("leaves out a blank reply that drafted nothing", async () => {
+		const s = site({
+			answers: {
+				turn: () => json({ reply: "  \n ", proposals: [] }),
+				overview: () => json({ ...OVERVIEW, turns: [] }),
+			},
+		});
+		const res = await s.handle(ask("Retitle the About page"));
+		expectValid(res);
+		expect(blankSections(res)).toEqual([]);
+		expect(labels(res)).toContain("Asked");
+		expect(labels(res)).not.toContain("AI Helper");
+		expect(text(res)).toContain("Retitle the About page");
+	});
+
+	it("does not repeat a question the overview already has when its reply was blank", async () => {
+		const turns = [
+			...OVERVIEW.turns,
+			{ id: "t3", role: "user", text: "Retitle the About page", at: null },
+			{ id: "t4", role: "assistant", text: "", at: null },
+		];
+		const s = site({
+			answers: {
+				turn: () => json({ reply: "", proposals: [] }),
+				overview: () => json({ ...OVERVIEW, turns }),
+			},
+		});
+		const res = await s.handle(ask("Retitle the About page"));
+		expect(text(res).split("Retitle the About page")).toHaveLength(2);
+	});
+
+	it("gives each line of a reply its own block, so a list keeps its lines", async () => {
+		const reply = "Here are the steps:\n1. Open the About page.\n\n2. Fix the typo.\r\n3. Save it.";
+		const s = site({ answers: { turn: () => json({ reply, proposals: [] }) } });
+		const res = await s.handle(ask("How do I fix it?"));
+		expectValid(res);
+		const sections = ofType(res, "section").map((b) => b.text);
+		const at = sections.indexOf("Here are the steps:");
+		expect(at).toBeGreaterThan(-1);
+		expect(sections.slice(at, at + 4)).toEqual([
+			"Here are the steps:",
+			"1. Open the About page.",
+			"2. Fix the typo.",
+			"3. Save it.",
+		]);
+		expect(sections.filter((t) => /[\r\n]/.test(t))).toEqual([]);
+	});
+
 	it("shows a refusal's message verbatim", async () => {
 		const message = "You have used this month's Helper allowance. It resets on Oct 1.";
 		const s = site({

@@ -44,6 +44,7 @@ export interface Outcome {
 
 const LAST_TURNS = 10;
 const UNDERSCORES = /_+/g;
+const LINE_BREAK = /\r?\n/;
 const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const TIME = new Intl.DateTimeFormat("en-US", {
 	month: "short",
@@ -153,22 +154,42 @@ function allowanceOf(value: unknown): Allowance | null {
 	};
 }
 
+/**
+ * What a turn adds to the conversation: the question, and the reply. A blank
+ * reply is never an empty bubble: it names the changes it drafted, or is left
+ * out when it drafted none.
+ */
+function rowsOf(turn: NonNullable<Outcome["turn"]>): Turn[] {
+	const n = turn.proposals.length;
+	const reply =
+		turn.reply.trim() !== ""
+			? turn.reply
+			: n > 0
+				? `Drafted ${n} ${n === 1 ? "change" : "changes"} for your approval below.`
+				: "";
+	return [
+		{ role: "user", text: turn.message, at: null },
+		...(reply ? [{ role: "assistant", text: reply, at: null }] : []),
+	];
+}
+
+/** Does the overview have the last turn yet? A blank reply leaves no row to find, so its question is the sign. */
+function caughtUp(turns: Turn[], turn: NonNullable<Outcome["turn"]>): boolean {
+	return turn.reply.trim() === ""
+		? turns.findLast((t) => t.role === "user")?.text === turn.message
+		: turns.some((t) => t.role === "assistant" && t.text === turn.reply);
+}
+
 /** The overview, with the last turn's reply and proposals added if the overview does not have them yet. */
 function overviewOf(data: Record<string, unknown>, turn?: Outcome["turn"]) {
 	const turns = turnsOf(data.turns);
 	const proposals = proposalsOf(data.proposals);
-	const caughtUp = !turn || turns.some((t) => t.role === "assistant" && t.text === turn.reply);
 	return {
 		enabled: data.enabled !== false,
 		allowance: allowanceOf(data.allowance),
-		turns: (caughtUp
-			? turns
-			: [
-					...turns,
-					{ role: "user", text: turn.message, at: null },
-					{ role: "assistant", text: turn.reply, at: null },
-				]
-		).slice(-LAST_TURNS),
+		turns: (!turn || caughtUp(turns, turn) ? turns : [...turns, ...rowsOf(turn)]).slice(
+			-LAST_TURNS,
+		),
 		proposals: [
 			...proposals,
 			...(turn?.proposals ?? []).filter((p) => !proposals.some((q) => q.id === p.id)),
@@ -217,9 +238,11 @@ function turnBlocks(turns: Turn[]): Block[] {
 					? "AI Helper"
 					: t.role.charAt(0).toUpperCase() + t.role.slice(1) || "Note";
 		const when = whenOf(t.at);
+		// A section shows its text as one run, so each line of a turn gets its own.
+		const lines = t.text.split(LINE_BREAK).filter((l) => l.trim() !== "");
 		return [
 			{ type: "context", text: when ? `${who} · ${when}` : who },
-			{ type: "section", text: t.text },
+			...lines.map((l): Block => ({ type: "section", text: l })),
 		];
 	});
 }
@@ -349,10 +372,7 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 				// The page could not be refreshed: keep what the turn just answered.
 				...(outcome.turn
 					? [
-							...turnBlocks([
-								{ role: "user", text: outcome.turn.message, at: null },
-								{ role: "assistant", text: outcome.turn.reply, at: null },
-							]),
+							...turnBlocks(rowsOf(outcome.turn)),
 							...(outcome.turn.proposals.length ? proposalBlocks(outcome.turn.proposals) : []),
 						]
 					: []),
