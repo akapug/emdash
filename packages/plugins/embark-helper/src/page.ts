@@ -177,16 +177,19 @@ function overviewOf(data: Record<string, unknown>, turn?: Outcome["turn"]) {
 	};
 }
 
-/** The allowance, as a share of this month's: never an amount of money. */
+/**
+ * The allowance, as a share of this month's: never an amount of money. The
+ * share rounds down, so "100% used" means the allowance is used up; a plan
+ * with no allowance reads 100% and says so.
+ */
 function allowanceBlocks(a: Allowance | null): Block[] {
 	if (!a) return [];
-	const pct =
-		a.limitCents > 0
-			? Math.min(100, Math.max(0, Math.round((a.usedCents * 100) / a.limitCents)))
-			: a.usedCents > 0
-				? 100
-				: 0;
+	const none = a.limitCents <= 0;
+	const pct = none
+		? 100
+		: Math.min(100, Math.max(0, Math.floor((a.usedCents * 100) / a.limitCents)));
 	const line = [
+		none ? "No Helper allowance on this plan" : "",
 		a.plan ? `${a.plan} plan` : "",
 		a.resetsOn ? `Resets ${dayOf(a.resetsOn)}` : "",
 		a.earlyAdopter ? "Early adopter" : "",

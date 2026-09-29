@@ -282,7 +282,7 @@ describe("the AI Helper page", () => {
 		expect(ofType(res, "header")[0]!.text).toBe("AI Helper");
 
 		const [meter] = ofType(res, "meter");
-		expect(meter).toMatchObject({ value: 17, max: 100, custom_value: "17% used" });
+		expect(meter).toMatchObject({ value: 16, max: 100, custom_value: "16% used" });
 		expect(text(res)).toContain("Basic plan");
 		expect(text(res)).toContain("Resets Oct 1");
 		expect(text(res)).not.toContain("Cents");
@@ -742,7 +742,7 @@ describe("the dashboard widget", () => {
 		const res = await s.handle(WIDGET);
 		expect(s.calls.map((c) => c.op)).toEqual(["overview"]);
 		expectValid(res);
-		expect(ofType(res, "meter")[0]).toMatchObject({ value: 17, custom_value: "17% used" });
+		expect(ofType(res, "meter")[0]).toMatchObject({ value: 16, custom_value: "16% used" });
 		expect(text(res)).toContain("Resets Oct 1");
 		const links = ofType(res, "actions").flatMap((a) => a.elements);
 		expect(links).toContainEqual(
@@ -786,6 +786,24 @@ describe("the allowance meter", () => {
 
 	it("reads 100% on a plan with no allowance that has spent some", async () => {
 		expect(ofType(await at(5, 0), "meter")[0]).toMatchObject({ value: 100 });
+	});
+
+	it("reads 100% and says so on a plan with no allowance that has spent nothing", async () => {
+		const res = await at(0, 0);
+		expect(ofType(res, "meter")[0]).toMatchObject({ value: 100, custom_value: "100% used" });
+		expect(text(res)).toContain("No Helper allowance on this plan");
+	});
+
+	it("reads 100% only once the allowance is used up", async () => {
+		expect(ofType(await at(149.4, 150), "meter")[0]).toMatchObject({
+			value: 99,
+			custom_value: "99% used",
+		});
+		expect(ofType(await at(150, 150), "meter")[0]).toMatchObject({
+			value: 100,
+			custom_value: "100% used",
+		});
+		expect(text(await at(149.4, 150))).not.toContain("No Helper allowance");
 	});
 
 	it("marks an early adopter's plan", async () => {
