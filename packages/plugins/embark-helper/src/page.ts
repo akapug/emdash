@@ -19,7 +19,7 @@ export interface Proposal {
 }
 
 interface Turn {
-	role: string;
+	role: "user" | "assistant";
 	text: string;
 	at: unknown;
 }
@@ -131,11 +131,15 @@ export function proposalsOf(value: unknown): Proposal[] {
 	);
 }
 
+/** The conversation shows the user's and the Helper's rows only: never a tool, system or unnamed one. */
 function turnsOf(value: unknown): Turn[] {
 	if (!Array.isArray(value)) return [];
-	return value.flatMap((t) =>
-		isRecord(t) && typeof t.text === "string" && t.text.trim() !== ""
-			? [{ role: typeof t.role === "string" ? t.role : "", text: t.text, at: t.at }]
+	return value.flatMap((t): Turn[] =>
+		isRecord(t) &&
+		(t.role === "user" || t.role === "assistant") &&
+		typeof t.text === "string" &&
+		t.text.trim() !== ""
+			? [{ role: t.role, text: t.text, at: t.at }]
 			: [],
 	);
 }
@@ -169,7 +173,7 @@ function rowsOf(turn: NonNullable<Outcome["turn"]>): Turn[] {
 				: "";
 	return [
 		{ role: "user", text: turn.message, at: null },
-		...(reply ? [{ role: "assistant", text: reply, at: null }] : []),
+		...(reply ? [{ role: "assistant" as const, text: reply, at: null }] : []),
 	];
 }
 
@@ -231,12 +235,7 @@ function allowanceBlocks(a: Allowance | null): Block[] {
 function turnBlocks(turns: Turn[]): Block[] {
 	if (turns.length === 0) return [{ type: "context", text: "Nothing asked yet." }];
 	return turns.flatMap((t): Block[] => {
-		const who =
-			t.role === "user"
-				? "Asked"
-				: t.role === "assistant"
-					? "AI Helper"
-					: t.role.charAt(0).toUpperCase() + t.role.slice(1) || "Note";
+		const who = t.role === "user" ? "Asked" : "AI Helper";
 		const when = whenOf(t.at);
 		// A section shows its text as one run, so each line of a turn gets its own.
 		const lines = t.text.split(LINE_BREAK).filter((l) => l.trim() !== "");

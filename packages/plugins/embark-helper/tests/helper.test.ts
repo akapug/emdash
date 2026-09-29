@@ -345,6 +345,28 @@ describe("the AI Helper page", () => {
 		expect(text(res)).toContain("Nothing is waiting for approval.");
 	});
 
+	it("shows only the user's and the Helper's rows of the conversation", async () => {
+		const turns = [
+			{ id: "t1", role: "system", text: "You are the site's AI Helper.", at: null },
+			{ id: "t2", role: "user", text: "What is on the home page?", at: null },
+			{ id: "t3", role: "tool", text: '{"page":"home"}', at: null },
+			{ id: "t4", text: "A row with no role.", at: null },
+			{ id: "t5", role: "assistant", text: "A welcome and three posts.", at: null },
+		];
+		const res = await site({ answers: { overview: () => json({ ...OVERVIEW, turns }) } }).handle(
+			PAGE,
+		);
+		expectValid(res);
+		const sections = ofType(res, "section").map((b) => b.text);
+		expect(sections).toContain("What is on the home page?");
+		expect(sections).toContain("A welcome and three posts.");
+		for (const hidden of ["You are the site's AI Helper.", '{"page":"home"}', "A row with no role."])
+			expect(sections).not.toContain(hidden);
+		const labels = ofType(res, "context").map((b) => b.text);
+		expect(labels).toEqual(expect.arrayContaining(["Asked", "AI Helper"]));
+		for (const label of ["System", "Tool", "Note"]) expect(labels).not.toContain(label);
+	});
+
 	it("shows at most the last ten turns", async () => {
 		const turns = Array.from({ length: 14 }, (_, n) => ({
 			id: `t${n}`,
