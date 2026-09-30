@@ -641,6 +641,7 @@ describe("asking", () => {
 		const res = await s.handle(ask("Hello", nonce));
 		expect(text(res)).toContain("did not finish recording");
 		expect(text(res)).not.toContain("Done.");
+		expect(s.rows.get(`turn:${nonce}`)).toBe(JSON.stringify(replacement));
 		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toEqual(replacement);
 	});
 
@@ -659,6 +660,7 @@ describe("asking", () => {
 		});
 		const res = await s.handle(ask("Hello", nonce));
 		expect(text(res)).toContain("Owner answer.");
+		expect(s.rows.get(`turn:${nonce}`)).toBe(JSON.stringify(replacement));
 		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toEqual(replacement);
 	});
 
@@ -671,6 +673,7 @@ describe("asking", () => {
 			answers: { turn: () => json({ reply: "Done.", proposals: [] }) },
 		});
 		await s.handle(ask("Hello"));
+		expect(s.rows.get(key)).toBe(JSON.stringify(replacement));
 		expect(JSON.parse(s.rows.get(key)!)).toEqual(replacement);
 	});
 
