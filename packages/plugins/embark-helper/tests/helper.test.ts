@@ -1348,6 +1348,64 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 		},
 	);
 
+	it.each(["helper_failed", "helper_interrupted"] as const)(
+		"shows the durable %s replay while the original response remains open",
+		async (reason) => {
+			vi.useFakeTimers({ toFake: FAKE });
+			try {
+				const message = "The question ended without an answer.";
+				const t = slowTurn({ reply: "Not delivered.", proposals: [] }, () => {
+					const response = json({ refused: { reason, message } }, 502);
+					const requestId = (turns(s)[0].body as { request_id: string }).request_id;
+					response.headers.set("x-embark-helper-settled-request-id", requestId);
+					return response;
+				});
+				const s = site({ answers: { turn: t.answer } });
+				const page = tracked(s.handle(ask("Rewrite everything")));
+				await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+				await elapse(91_000);
+				expect(page.done()).toBe(true);
+				const res = await page.p;
+				expectValid(res);
+				expect(text(res)).toContain(message);
+				expect(text(res)).not.toContain("still working");
+				expect(turns(s)).toHaveLength(2);
+				expect(requestIds(s).size).toBe(1);
+				expect((turns(s)[0].signal as AbortSignal).aborted).toBe(true);
+			} finally {
+				vi.useRealTimers();
+			}
+		},
+	);
+
+	it.each(["missing", "wrong_id"] as const)(
+		"ignores a terminal-looking refusal with a %s settlement marker while the original response is open",
+		async (marker) => {
+			vi.useFakeTimers({ toFake: FAKE });
+			try {
+				const t = slowTurn({ reply: "The original question finished.", proposals: [] }, () => {
+					const response = json({ refused: { reason: "helper_failed", message: "Not this question." }, settled: true }, 502);
+					if (marker === "wrong_id") response.headers.set("x-embark-helper-settled-request-id", crypto.randomUUID());
+					return response;
+				});
+				const s = site({ answers: { turn: t.answer } });
+				const page = tracked(s.handle(ask("Rewrite everything")));
+				await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+				await elapse(120_000);
+				expect(page.done()).toBe(false);
+				expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
+				t.release();
+				await elapse(1_000);
+				const res = await page.p;
+				expectValid(res);
+				expect(text(res)).toContain("The original question finished.");
+				expect(text(res)).not.toContain("Not this question.");
+			} finally {
+				vi.useRealTimers();
+			}
+		},
+	);
+
 	it("shows a re-send's refusal once the original request has closed", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {

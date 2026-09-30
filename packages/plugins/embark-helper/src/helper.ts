@@ -35,6 +35,8 @@ type Turn = (body: Record<string, unknown>) => Promise<Answer>;
 interface Sent {
 	state: "answered" | "busy" | "lost";
 	answer: Answer;
+	/** The trusted route replayed a completed outcome for this exact request id. */
+	settled?: boolean;
 }
 
 interface ReplayTicket {
@@ -213,11 +215,15 @@ async function send(
 		};
 	}
 	const data: unknown = await res.json().catch(() => undefined);
+	const settled =
+		op === "turn" &&
+		typeof body.request_id === "string" &&
+		res.headers.get("x-embark-helper-settled-request-id") === body.request_id;
 	const refused = refusalOf(data);
-	if (refused) return { state: "answered", answer: { refused } };
+	if (refused) return { state: "answered", answer: { refused }, settled };
 	if (res.status === 429 && isRecord(data) && data.error === IN_PROGRESS)
 		return { state: "busy", answer: { failed: STILL_WORKING, retry: true } };
-	if (!res.ok) return { state: "answered", answer: statusFailure(res.status, data) };
+	if (!res.ok) return { state: "answered", answer: statusFailure(res.status, data), settled };
 	return { state: "answered", answer: isRecord(data) ? { data } : { failed: UNREADABLE } };
 }
 
@@ -253,12 +259,13 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 
 /**
  * A new preflight refusal or failed status check cannot settle the open
- * question: ending its wait would cut off work that already passed preflight.
+ * question. A completed replay bound to its request id can: the original
+ * connection may remain open after its outcome was durably recorded.
  */
 function resentAnswer(sent: Sent, keptOpen: boolean): Answer | null {
 	if (sent.state !== "answered") return null;
 	const a = sent.answer;
-	return keptOpen && !("data" in a) ? null : a;
+	return keptOpen && !("data" in a) && !sent.settled ? null : a;
 }
 
 /**
