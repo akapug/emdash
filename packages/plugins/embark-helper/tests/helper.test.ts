@@ -1045,6 +1045,51 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 		}
 	});
 
+	it("keeps waiting when a re-send fails with a 5xx while the kept request is still open", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = slowTurn({ reply: "The kept request still answered.", proposals: [] }, (n) =>
+				n === 2 ? new Response("bad gateway", { status: 502 }) : undefined,
+			);
+			const s = site({ answers: { turn: t.answer } });
+			const page = s.handle(ask("Tidy the sidebar"));
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			await elapse(96_000);
+			// The 502 at 90 s was a failed status check, not the turn's answer: 95 s asked again.
+			expect(turns(s)).toHaveLength(3);
+			t.release();
+			await elapse(1_000);
+			const res = await page;
+			expect(text(res)).toContain("The kept request still answered.");
+			expect(text(res)).not.toContain("502");
+			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("ends the wait at a re-send's 5xx once no request of the question is open", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			let n = 0;
+			const s = site({
+				answers: {
+					turn: () => (++n === 1 ? json(IN_PROGRESS, 429) : new Response("bad gateway", { status: 502 })),
+				},
+			});
+			const page = s.handle(ask("Tidy the footer"));
+			await vi.waitFor(() => expect(turns(s).length).toBeGreaterThan(0));
+			await elapse(10_000);
+			const res = await page;
+			expect(ofType(res, "banner").map((b) => b.description)).toContain(
+				"Embark answered with status 502. Try again in a minute.",
+			);
+			expect(turns(s)).toHaveLength(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("stops at a refusal a re-send gets, and shows it as it came", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
