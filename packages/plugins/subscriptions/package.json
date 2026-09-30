@@ -6,7 +6,9 @@
 	"type": "module",
 	"main": "src/index.ts",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./astro": "./src/astro/index.ts",
+		"./ui": "./src/astro/ui.ts"
 	},
 	"files": [
 		"src"
@@ -20,13 +22,15 @@
 	],
 	"license": "MIT",
 	"peerDependencies": {
+		"astro": ">=6.0.0-beta.0",
 		"emdash": "workspace:>=0.11.0"
 	},
 	"devDependencies": {
+		"astro": "catalog:",
 		"vitest": "catalog:"
 	},
 	"scripts": {
-		"test": "vitest run",
+		"test": "vitest run && vitest run --config vitest.render.config.ts",
 		"typecheck": "tsgo --noEmit"
 	}
 }

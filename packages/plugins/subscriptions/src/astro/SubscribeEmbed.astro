@@ -1,0 +1,79 @@
+---
+/**
+ * The sign-up block (`emdash-subscribe`) in a page's content: a form with no
+ * script that posts an address to the subscriptions plugin. The plugin sends
+ * the visitor back to this page with what it did (`?subscribe=`), which the
+ * block says above the form; once the visitor is signed up, the form is not
+ * drawn again. A box a person never fills (a honeypot) rides with it.
+ *
+ * The page to come back to is the one the visitor asked for
+ * (`Astro.originPathname`), not the path a layout rewrote it to.
+ */
+import { subscribeView, type SubscribeBlock } from "../block.js";
+
+interface Props {
+	node: Partial<SubscribeBlock>;
+}
+
+const view = subscribeView(
+	Astro.props.node,
+	Astro.originPathname,
+	Astro.url.searchParams.get("subscribe"),
+);
+const headingId = `${view.id}-heading`;
+const emailId = `${view.id}-email`;
+---
+
+<div class="ec-subscribe" id={view.id}>
+	<p class="ec-subscribe-heading" id={headingId}>{view.heading}</p>
+	{
+		view.message && (
+			<p
+				class:list={[
+					"ec-subscribe-message",
+					view.message.ok ? "ec-subscribe-message--ok" : "ec-subscribe-message--error",
+				]}
+				data-status={view.message.status}
+			>
+				{view.message.text}
+			</p>
+		)
+	}
+	{
+		!view.done && (
+			<form
+				class="ec-subscribe-form"
+				method="post"
+				action={view.action}
+				accept-charset="utf-8"
+				aria-labelledby={headingId}
+			>
+				<input type="hidden" name="source" value={view.source} />
+				<input type="hidden" name="fragment" value={view.id} />
+				<p
+					aria-hidden="true"
+					style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;"
+				>
+					<label>
+						Leave this box empty
+						<input type="text" name="website" value="" tabindex="-1" autocomplete="off" />
+					</label>
+				</p>
+				<label class="ec-subscribe-label" for={emailId}>
+					Email address
+				</label>
+				<input
+					class="ec-subscribe-email"
+					type="email"
+					id={emailId}
+					name="email"
+					autocomplete="email"
+					required
+				/>
+				<button class="ec-subscribe-submit" type="submit">
+					{view.button}
+				</button>
+			</form>
+		)
+	}
+</div>
