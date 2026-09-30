@@ -95,7 +95,8 @@ const NON_ASCII = /[\u007f-\uffff]/g;
  * A turn's claim on its form's nonce, the KV row `turn:<nonce>`: `{ at }`
  * while the turn runs, `{ at, outcome }` once it is done. Only the request
  * that creates the row asks Embark; a second submit of the same form waits
- * for the first one's outcome and shows it. Rendered rows are deleted, with a
+ * for the first one's outcome and shows it, or, past FIRST_WAIT_MS of its own
+ * wait, says to ask again and leaves the first one's claim. Rendered rows are deleted, with a
  * day-old sweep as the backstop when cleanup fails.
  */
 const CLAIM = "turn:";
@@ -349,11 +350,17 @@ function storedClaim(v: unknown): StoredClaim | null {
 	};
 }
 
-/** The outcome the turn holding `claim` recorded, or `null` if none is recorded in time. */
+/**
+ * The outcome the turn holding `claim` recorded, or `null` if none is recorded
+ * in time. A duplicate submit waits at most FIRST_WAIT_MS of its own, then
+ * leaves the owner's claim as it is (the form asks again); only the owner's
+ * deadline, `at + TURN_WAIT_MS`, deletes a claim that never got an outcome.
+ */
 async function settledOf(
 	ctx: HelperContext,
 	claim: string,
 ): Promise<(StoredClaim & { revision: string }) | null | undefined> {
+	const giveUpAt = Date.now() + FIRST_WAIT_MS;
 	for (;;) {
 		try {
 			const current = await ctx.kv.getVersioned<unknown>(claim);
@@ -364,6 +371,7 @@ async function settledOf(
 				if (!(await ctx.kv.compareAndDelete(claim, current.revision)).applied) continue;
 				return null;
 			}
+			if (Date.now() >= giveUpAt) return null;
 		} catch {
 			ctx.log.warn("embark-helper: the question claim could not be read");
 			return undefined;

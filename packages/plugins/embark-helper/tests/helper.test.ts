@@ -910,7 +910,7 @@ describe("pressing Ask twice", () => {
 		}
 	});
 
-	it("keeps the live owner's claim past 110 s and lets duplicate submits wait for its answer", async () => {
+	it("keeps the live owner's claim past 110 s; a duplicate submit stops waiting at 90 s and says to ask again", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
 			const t = heldTurn({ reply: "Late.", proposals: [] });
@@ -926,7 +926,7 @@ describe("pressing Ask twice", () => {
 			const claim = `turn:${form.block_id.slice(4)}`;
 			const owned = s.rows.get(claim);
 			await vi.advanceTimersByTimeAsync(120_000);
-			expect(duplicateDone).toBe(false);
+			expect(duplicateDone).toBe(true);
 			expect(s.rows.get(claim)).toBe(owned);
 			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
 			t.release();
@@ -934,7 +934,7 @@ describe("pressing Ask twice", () => {
 			const results = await Promise.all([first, second]);
 			for (const res of results) expectValid(res);
 			expect(text(results[0])).toContain("Late.");
-			// The owner rendered and cleared its outcome before the duplicate's next poll.
+			// The duplicate stopped waiting before the owner answered, and left its claim.
 			expect(text(results[1])).toContain("did not finish recording");
 			expect(ofType(results[1], "form")[0]!.block_id).toBe(form.block_id);
 			const sent = turns(s).length;
@@ -946,6 +946,39 @@ describe("pressing Ask twice", () => {
 			expect(new Set(turns(s).map((c) => (c.body as { request_id: string }).request_id)).size).toBe(
 				1,
 			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("caps a duplicate submit's own wait at 90 s: STILL_ANSWERING with its form, the live owner's claim not deleted", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const nonce = crypto.randomUUID();
+			const claim = `turn:${nonce}`;
+			// The owner asked 10 minutes ago; its deadline is 83 minutes after that.
+			const owner = { at: Date.now() - 600_000, requestId: crypto.randomUUID() };
+			const s = site({ rows: { [claim]: owner } });
+			const owned = s.rows.get(claim);
+			const started = Date.now();
+			let done = false;
+			const pending = s.handle(ask("Hello", nonce)).then((res) => {
+				done = true;
+				return res;
+			});
+			await vi.waitFor(() => expect(s.rows.has(`request:${nonce}`)).toBe(true));
+			await vi.advanceTimersByTimeAsync(88_000);
+			expect(done).toBe(false);
+			await vi.advanceTimersByTimeAsync(3_000);
+			const res = await pending;
+			// About 90 s (one 1 s claim poll past it at most), not the owner's 83-minute deadline.
+			expect(Date.now() - started).toBeLessThan(92_000);
+			expectValid(res);
+			expect(text(res)).toContain("did not finish recording");
+			expect(ofType(res, "form")[0]!.block_id).toBe(`ask:${nonce}`);
+			expect(s.rows.get(claim)).toBe(owned);
+			expect(JSON.parse(String(owned))).toEqual(owner);
+			expect(turns(s)).toHaveLength(0);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -1365,16 +1398,20 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 				duplicateDone = true;
 				return res;
 			});
-			await elapse(2_100_000 - 15 * 60_000, 5_000);
+			// A late duplicate waits 90 s of its own, not until the owner's deadline, and keeps the owner's claim and ticket.
+			await elapse(95_000, 5_000);
+			expect(duplicateDone).toBe(true);
+			const late = await duplicate;
+			expect(text(late)).toContain("did not finish recording");
+			expect(ofType(late, "form")[0]!.block_id).toBe(`ask:${nonce}`);
+			await elapse(2_100_000 - 15 * 60_000 - 95_000, 5_000);
 			expect(page.done()).toBe(false);
-			expect(duplicateDone).toBe(false);
 			expect(s.rows.get(`turn:${nonce}`)).toBe(ownerClaim);
 			expect(s.rows.get(`request:${nonce}`)).toBe(ownerTicket);
 			await elapse(4_920_000 - 2_100_000, 5_000);
 			expect(page.done()).toBe(false);
 			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
 			await elapse(65_000, 5_000);
-			await duplicate;
 			const res = await page.p;
 			expectValid(res);
 			expect(ofType(res, "banner").map((b) => b.description)).toContain(STILL_WORKING);
