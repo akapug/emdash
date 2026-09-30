@@ -7,6 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createPlugin, embarkHelperPlugin } from "../src/index.js";
 
+/** The real timer, taken before any test fakes the clock. */
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+
 const person = (role: number, email = `role${role}@example.com`) => ({
 	id: `user-${role}`,
 	email,
@@ -892,6 +895,20 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 	const turns = (s: ReturnType<typeof site>) => s.calls.filter((c) => c.op === "turn");
 	const requestIds = (s: ReturnType<typeof site>) =>
 		new Set(turns(s).map((c) => (c.body as { request_id: string }).request_id));
+	/** A real pause (the fake clock stands still), so the plugin's pending work runs to its next timer. */
+	const breathe = () => new Promise<void>((done) => REAL_SET_TIMEOUT(done, 1));
+	/**
+	 * Moves the fake clock `ms` in `step`s with a real pause before each, so a
+	 * timer the plugin sets only after a response is read is set before the
+	 * clock passes it.
+	 */
+	async function elapse(ms: number, step = 1_000) {
+		for (let left = ms; left > 0; left -= step) {
+			await breathe();
+			await vi.advanceTimersByTimeAsync(Math.min(step, left));
+		}
+		await breathe();
+	}
 	/**
 	 * A turn Embark is still answering: the first POST's response is held until
 	 * `release`, and each later POST of the question is "in progress" until
@@ -924,14 +941,10 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 	/** `p`, and whether it has settled yet, read without waiting for it. */
 	function tracked<T>(p: Promise<T>) {
 		let done = false;
-		void p.then(
-			() => {
-				done = true;
-			},
-			() => {
-				done = true;
-			},
-		);
+		const settle = () => {
+			done = true;
+		};
+		p.then(settle, settle);
 		return { p, done: () => done };
 	}
 
@@ -942,15 +955,15 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			const s = site({ answers: { turn: t.answer } });
 			const page = tracked(s.handle(ask("Rewrite the About page")));
 			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
-			await vi.advanceTimersByTimeAsync(89_999);
+			await elapse(88_000);
 			expect(turns(s)).toHaveLength(1);
-			await vi.advanceTimersByTimeAsync(1);
+			await elapse(3_000);
 			expect(turns(s)).toHaveLength(2);
 			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
-			await vi.advanceTimersByTimeAsync(30_000);
+			await elapse(30_000);
 			expect(page.done()).toBe(false);
 			t.finish();
-			await vi.advanceTimersByTimeAsync(30_000);
+			await elapse(30_000);
 			const res = await page.p;
 			expectValid(res);
 			expect(text(res)).toContain("Rewrote the About page after two minutes.");
@@ -974,10 +987,10 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			const s = site({ answers: { turn: t.answer } });
 			const page = s.handle(ask("Summarize the home page"));
 			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
-			await vi.advanceTimersByTimeAsync(110_000);
+			await elapse(110_000);
 			expect(turns(s).length).toBeGreaterThan(1);
 			t.release();
-			await vi.advanceTimersByTimeAsync(1);
+			await elapse(1_000);
 			const res = await page;
 			expectValid(res);
 			expect(text(res)).toContain("The kept request answered.");
@@ -998,7 +1011,8 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 				},
 			});
 			const page = s.handle(ask("Fix the footer"));
-			await vi.advanceTimersByTimeAsync(10_000);
+			await vi.waitFor(() => expect(turns(s).length).toBeGreaterThan(0));
+			await elapse(10_000);
 			const res = await page;
 			expect(text(res)).toContain("Answered on the third ask.");
 			expect(turns(s)).toHaveLength(3);
@@ -1017,9 +1031,11 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			});
 			const s = site({ answers: { turn: t.answer } });
 			const page = s.handle(ask("Find the broken link"));
-			await vi.advanceTimersByTimeAsync(90_000);
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			await elapse(91_000);
+			expect(turns(s)).toHaveLength(2);
 			t.finish();
-			await vi.advanceTimersByTimeAsync(10_000);
+			await elapse(10_000);
 			const res = await page;
 			expect(text(res)).toContain("Found it after the network blip.");
 			expect(turns(s)).toHaveLength(3);
@@ -1034,12 +1050,16 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 		try {
 			const t = slowTurn({ reply: "never shown", proposals: [] }, (n) =>
 				n === 3
-					? json({ refused: { reason: "helper_failed", message: "The model provider failed on that question." } }, 502)
+					? json(
+							{ refused: { reason: "helper_failed", message: "The model provider failed on that question." } },
+							502,
+						)
 					: undefined,
 			);
 			const s = site({ answers: { turn: t.answer } });
 			const page = s.handle(ask("Rewrite everything"));
-			await vi.advanceTimersByTimeAsync(100_000);
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			await elapse(100_000);
 			const res = await page;
 			expectValid(res);
 			expect(ofType(res, "banner").map((b) => b.description)).toContain(
@@ -1060,11 +1080,12 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			const nonce = crypto.randomUUID();
 			const form = ask("Rebuild the menu", nonce);
 			const page = tracked(s.handle(form));
-			await vi.advanceTimersByTimeAsync(15 * 60_000);
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			await elapse(15 * 60_000, 5_000);
 			expect(page.done()).toBe(false);
-			await vi.advanceTimersByTimeAsync(2_000_000 - 15 * 60_000);
+			await elapse(2_000_000 - 15 * 60_000, 5_000);
 			expect(page.done()).toBe(false);
-			await vi.advanceTimersByTimeAsync(60_000);
+			await elapse(60_000, 5_000);
 			const res = await page.p;
 			expectValid(res);
 			expect(ofType(res, "banner").map((b) => b.description)).toContain(STILL_WORKING);
@@ -1073,7 +1094,7 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			expect(buttons.some((b) => "action_id" in b && b.action_id === "reload")).toBe(true);
 			const [id] = requestIds(s);
 			// Ten minutes later the same form asks again: the same request id, so Embark replays the answer.
-			await vi.advanceTimersByTimeAsync(10 * 60_000);
+			await elapse(10 * 60_000, 60_000);
 			t.finish();
 			const again = await s.handle(form);
 			expect(text(again)).toContain("Finally done.");
