@@ -815,7 +815,9 @@ describe("pressing Ask twice", () => {
 			t.release();
 			await vi.advanceTimersByTimeAsync(1_000);
 			await first;
-			expect(turns(s)).toHaveLength(1);
+			// Only the first submit asks Embark: its question, and past its 90 s wait
+			// the same request id again. One request id is one turn, however often sent.
+			expect(new Set(turns(s).map((c) => (c.body as { request_id: string }).request_id)).size).toBe(1);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -875,6 +877,210 @@ describe("pressing Ask twice", () => {
 		await s.handle(ask("Hello", nonce));
 		expect([...s.rows.keys()].toSorted()).toEqual([`request:${nonce}`, "turn:recent"].toSorted());
 		expect(s.rows.has(`turn:${nonce}`)).toBe(false);
+	});
+});
+
+describe("a turn that runs past the plugin's 90 s wait", () => {
+	const FAKE: Array<"setTimeout" | "clearTimeout" | "Date"> = ["setTimeout", "clearTimeout", "Date"];
+	/** What the control plane answers a re-send of a request id whose turn is still running. */
+	const IN_PROGRESS = {
+		error: "idempotency_in_progress",
+		message: "This question is still being answered. Try again shortly.",
+	};
+	const STILL_WORKING =
+		"The AI Helper is still working on that question. Ask it again from this form in a minute to check for its reply.";
+	const turns = (s: ReturnType<typeof site>) => s.calls.filter((c) => c.op === "turn");
+	const requestIds = (s: ReturnType<typeof site>) =>
+		new Set(turns(s).map((c) => (c.body as { request_id: string }).request_id));
+	/**
+	 * A turn Embark is still answering: the first POST's response is held until
+	 * `release`, and each later POST of the question is "in progress" until
+	 * `finish`, then the saved answer. `resend` answers a re-send instead, by its
+	 * number (2 is the first re-send), when it returns a Response or throws.
+	 */
+	function slowTurn(reply: unknown, resend: (n: number) => Response | undefined = () => undefined) {
+		let finished = false;
+		let n = 0;
+		let release = () => {};
+		const held = new Promise<void>((done) => {
+			release = done;
+		});
+		const answer = async () => {
+			n++;
+			if (n === 1) {
+				await held;
+				return json(reply);
+			}
+			return resend(n) ?? (finished ? json(reply) : json(IN_PROGRESS, 429));
+		};
+		return {
+			answer,
+			release,
+			finish: () => {
+				finished = true;
+			},
+		};
+	}
+	/** `p`, and whether it has settled yet, read without waiting for it. */
+	function tracked<T>(p: Promise<T>) {
+		let done = false;
+		void p.then(
+			() => {
+				done = true;
+			},
+			() => {
+				done = true;
+			},
+		);
+		return { p, done: () => done };
+	}
+
+	it("does not give up at 90 s: it keeps the question open, re-sends the same request id, and shows the answer that comes later", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = slowTurn({ reply: "Rewrote the About page after two minutes.", proposals: [] });
+			const s = site({ answers: { turn: t.answer } });
+			const page = tracked(s.handle(ask("Rewrite the About page")));
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			await vi.advanceTimersByTimeAsync(89_999);
+			expect(turns(s)).toHaveLength(1);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(turns(s)).toHaveLength(2);
+			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(page.done()).toBe(false);
+			t.finish();
+			await vi.advanceTimersByTimeAsync(30_000);
+			const res = await page.p;
+			expectValid(res);
+			expect(text(res)).toContain("Rewrote the About page after two minutes.");
+			expect(text(res)).not.toMatch(/in time|try again/i);
+			expect(requestIds(s).size).toBe(1);
+			expect(turns(s).map((c) => (c.body as { message: string }).message)).toEqual(
+				turns(s).map(() => "Rewrite the About page"),
+			);
+			// Once the answer is in, the request that was kept open is let go.
+			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(true);
+			expect(s.calls.at(-1)!.op).toBe("overview");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows the first request's own answer when it arrives after 90 s", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = slowTurn({ reply: "The kept request answered.", proposals: [] });
+			const s = site({ answers: { turn: t.answer } });
+			const page = s.handle(ask("Summarize the home page"));
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			await vi.advanceTimersByTimeAsync(110_000);
+			expect(turns(s).length).toBeGreaterThan(1);
+			t.release();
+			await vi.advanceTimersByTimeAsync(1);
+			const res = await page;
+			expectValid(res);
+			expect(text(res)).toContain("The kept request answered.");
+			expect(requestIds(s).size).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("waits for the answer when the first send is already \"in progress\"", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			let n = 0;
+			const s = site({
+				answers: {
+					turn: () =>
+						++n < 3 ? json(IN_PROGRESS, 429) : json({ reply: "Answered on the third ask.", proposals: [] }),
+				},
+			});
+			const page = s.handle(ask("Fix the footer"));
+			await vi.advanceTimersByTimeAsync(10_000);
+			const res = await page;
+			expect(text(res)).toContain("Answered on the third ask.");
+			expect(turns(s)).toHaveLength(3);
+			expect(requestIds(s).size).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps asking after a re-send is lost", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = slowTurn({ reply: "Found it after the network blip.", proposals: [] }, (n) => {
+				if (n === 2) throw new TypeError("network connection lost");
+				return undefined;
+			});
+			const s = site({ answers: { turn: t.answer } });
+			const page = s.handle(ask("Find the broken link"));
+			await vi.advanceTimersByTimeAsync(90_000);
+			t.finish();
+			await vi.advanceTimersByTimeAsync(10_000);
+			const res = await page;
+			expect(text(res)).toContain("Found it after the network blip.");
+			expect(turns(s)).toHaveLength(3);
+			expect(requestIds(s).size).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("stops at a refusal a re-send gets, and shows it as it came", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = slowTurn({ reply: "never shown", proposals: [] }, (n) =>
+				n === 3
+					? json({ refused: { reason: "helper_failed", message: "The model provider failed on that question." } }, 502)
+					: undefined,
+			);
+			const s = site({ answers: { turn: t.answer } });
+			const page = s.handle(ask("Rewrite everything"));
+			await vi.advanceTimersByTimeAsync(100_000);
+			const res = await page;
+			expectValid(res);
+			expect(ofType(res, "banner").map((b) => b.description)).toContain(
+				"The model provider failed on that question.",
+			);
+			expect(text(res)).not.toContain("never shown");
+			expect(turns(s)).toHaveLength(3);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("says the Helper is still working once Embark's longest turn has passed, keeps the form, and a later ask of it reuses the request id", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const t = slowTurn({ reply: "Finally done.", proposals: [] });
+			const s = site({ answers: { turn: t.answer } });
+			const nonce = crypto.randomUUID();
+			const form = ask("Rebuild the menu", nonce);
+			const page = tracked(s.handle(form));
+			await vi.advanceTimersByTimeAsync(15 * 60_000);
+			expect(page.done()).toBe(false);
+			await vi.advanceTimersByTimeAsync(2_000_000 - 15 * 60_000);
+			expect(page.done()).toBe(false);
+			await vi.advanceTimersByTimeAsync(60_000);
+			const res = await page.p;
+			expectValid(res);
+			expect(ofType(res, "banner").map((b) => b.description)).toContain(STILL_WORKING);
+			expect(ofType(res, "form")[0]!.block_id).toBe(`ask:${nonce}`);
+			const buttons = ofType(res, "actions").flatMap((a) => a.elements);
+			expect(buttons.some((b) => "action_id" in b && b.action_id === "reload")).toBe(true);
+			const [id] = requestIds(s);
+			// Ten minutes later the same form asks again: the same request id, so Embark replays the answer.
+			await vi.advanceTimersByTimeAsync(10 * 60_000);
+			t.finish();
+			const again = await s.handle(form);
+			expect(text(again)).toContain("Finally done.");
+			expect([...requestIds(s)]).toEqual([id]);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 
