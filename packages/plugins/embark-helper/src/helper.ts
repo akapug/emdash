@@ -237,21 +237,31 @@ async function within<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): 
 /** Waits `ms`, or less if `signal` aborts first. */
 function pause(ms: number, signal: AbortSignal): Promise<void> {
 	if (signal.aborted) return Promise.resolve();
-	return new Promise((done) => {
-		const timer = setTimeout(done, ms);
-		signal.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timer);
-				done();
-			},
-			{ once: true },
-		);
-	});
+	const { promise, resolve } = Promise.withResolvers<void>();
+	const timer = setTimeout(resolve, ms);
+	signal.addEventListener(
+		"abort",
+		() => {
+			clearTimeout(timer);
+			resolve();
+		},
+		{ once: true },
+	);
+	return promise;
 }
 
-/** A send's answer when Embark gave one; `null` while the turn runs or the send was lost. */
-const answered = (sent: Sent) => (sent.state === "answered" ? sent.answer : null);
+/**
+ * A re-send's answer, or `null` to keep waiting: while the turn runs, when
+ * the re-send was lost, and, while the question's own request is still open,
+ * when the re-send failed in a way trying again can fix (a 5xx, another
+ * 429). That is a failed status check: the turn is still the kept request's
+ * to answer, and ending the wait would cut that request off.
+ */
+function resentAnswer(sent: Sent, keptOpen: boolean): Answer | null {
+	if (sent.state !== "answered") return null;
+	const a = sent.answer;
+	return keptOpen && "failed" in a && a.retry === true ? null : a;
+}
 
 /**
  * A turn's answer, however long Embark takes to give it. A customer never
@@ -266,8 +276,8 @@ const answered = (sent: Sent) => (sent.state === "answered" ? sent.answer : null
  *   same request id is sent again, one re-send at a time and 5 s apart,
  *   doubling to 30 s. Embark answers it "in progress" (429) while the turn
  *   runs, and with the saved answer once it is done, without another model
- *   call or charge. The first answer that is not "in progress" or lost, from
- *   the kept request or a re-send, ends the wait.
+ *   call or charge. The kept request's own answer ends the wait, and so does
+ *   a re-send's answer, refusal or failure (see resentAnswer).
  * - Past TURN_BOUND_MS, Embark's longest turn, the answer says the Helper is
  *   still working, and the same form asks after it again.
  */
@@ -278,16 +288,21 @@ async function turnAnswer(post: (signal: AbortSignal) => Promise<Sent>): Promise
 		TURN_BOUND_MS,
 	);
 	const { promise: settled, resolve: settle } = Promise.withResolvers<Answer>();
+	let keptOpen = true;
 	try {
 		const first = post(stop.signal);
 		void first.then((sent) => {
+			keptOpen = false;
 			if (sent.state === "answered") settle(sent.answer);
 			return sent;
 		});
 		const early = await Promise.race([first, pause(FIRST_WAIT_MS, stop.signal)]);
 		if (early && early.state !== "busy") return early.answer;
 		for (let gap = RESEND_FIRST_MS; !stop.signal.aborted; gap = Math.min(gap * 2, RESEND_MAX_MS)) {
-			const resent = await Promise.race([settled, post(stop.signal).then(answered)]);
+			const resent = await Promise.race([
+				settled,
+				post(stop.signal).then((sent) => resentAnswer(sent, keptOpen)),
+			]);
 			if (resent) return resent;
 			const meanwhile = await Promise.race([settled, pause(gap, stop.signal).then(() => null)]);
 			if (meanwhile) return meanwhile;
