@@ -50,7 +50,7 @@ interface StoredClaim {
 }
 
 interface ActionResult {
-	claim?: string;
+	claim?: { key: string; revision: string };
 	outcome: Outcome;
 }
 
@@ -72,17 +72,17 @@ const ROLE_NAMES: Record<number, string> = {
  */
 const FIRST_WAIT_MS = 90_000;
 /**
- * The longest a turn runs in Embark's control plane, from its own limits
- * (akapug/embark packages/embark-helper: llm-route.ts MAX_RECURSION,
- * PROVIDER_STREAM_DEADLINE_MS and MAX_TOOL_CALLS_PER_ROUND; mcp.ts
- * DEFAULT_TIMEOUT_MS): at most 6 model rounds, each provider stream cut at
- * 100 s, each round at most 8 tool calls, each call to the site cut at 30 s.
- * 6 × (100 s + 8 × 30 s) is 34 minutes. Past it no answer is coming to this
- * request, and the page says the Helper is still working.
+ * The control plane's nominal model/tool budget: six rounds of a 100 s stream
+ * and eight absolute 90 s tool scopes. A scope can make several site calls;
+ * the MCP transport's 30 s timeout is not the whole tool's deadline.
+ * Database waits are not hard bounded by this budget.
  */
-const TURN_LIMITS = { rounds: 6, streamMs: 100_000, toolCalls: 8, siteCallMs: 30_000 };
+const TURN_LIMITS = { rounds: 6, streamMs: 100_000, toolCalls: 8, toolScopeMs: 90_000 };
 const TURN_BOUND_MS =
-	TURN_LIMITS.rounds * (TURN_LIMITS.streamMs + TURN_LIMITS.toolCalls * TURN_LIMITS.siteCallMs);
+	TURN_LIMITS.rounds * (TURN_LIMITS.streamMs + TURN_LIMITS.toolCalls * TURN_LIMITS.toolScopeMs);
+/** Allow two serialized 30 s heartbeat intervals for coordination and settlement. */
+const COORDINATION_GRACE_MS = 60_000;
+const TURN_WAIT_MS = TURN_BOUND_MS + COORDINATION_GRACE_MS;
 /** The pause after a re-send that Embark answered "in progress", or that was lost: 5 s, doubling to 30 s. */
 const RESEND_FIRST_MS = 5_000;
 const RESEND_MAX_MS = 30_000;
@@ -251,16 +251,13 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * A re-send's answer, or `null` to keep waiting: while the turn runs, when
- * the re-send was lost, and, while the question's own request is still open,
- * when the re-send failed in a way trying again can fix (a 5xx, another
- * 429). That is a failed status check: the turn is still the kept request's
- * to answer, and ending the wait would cut that request off.
+ * A new preflight refusal or failed status check cannot settle the open
+ * question: ending its wait would cut off work that already passed preflight.
  */
 function resentAnswer(sent: Sent, keptOpen: boolean): Answer | null {
 	if (sent.state !== "answered") return null;
 	const a = sent.answer;
-	return keptOpen && "failed" in a && a.retry === true ? null : a;
+	return keptOpen && !("data" in a) ? null : a;
 }
 
 /**
@@ -278,14 +275,20 @@ function resentAnswer(sent: Sent, keptOpen: boolean): Answer | null {
  *   runs, and with the saved answer once it is done, without another model
  *   call or charge. The kept request's own answer ends the wait, and so does
  *   a re-send's answer, refusal or failure (see resentAnswer).
- * - Past TURN_BOUND_MS, Embark's longest turn, the answer says the Helper is
- *   still working, and the same form asks after it again.
+ * - Past the nominal model/tool budget plus coordination grace, the answer
+ *   says the Helper is still working, and the same form asks after it again.
  */
 async function turnAnswer(post: (signal: AbortSignal) => Promise<Sent>): Promise<Answer> {
 	const stop = new AbortController();
 	const bound = setTimeout(
-		() => stop.abort(new DOMException("Embark's longest turn has passed.", "TimeoutError")),
-		TURN_BOUND_MS,
+		() =>
+			stop.abort(
+				new DOMException(
+					"The model/tool budget and coordination grace have passed.",
+					"TimeoutError",
+				),
+			),
+		TURN_WAIT_MS,
 	);
 	const { promise: settled, resolve: settle } = Promise.withResolvers<Answer>();
 	let keptOpen = true;
@@ -350,27 +353,20 @@ function storedClaim(v: unknown): StoredClaim | null {
 async function settledOf(
 	ctx: HelperContext,
 	claim: string,
-): Promise<StoredClaim | null | undefined> {
-	const until = Date.now() + FIRST_WAIT_MS + OP_TIMEOUT_MS;
+): Promise<(StoredClaim & { revision: string }) | null | undefined> {
 	for (;;) {
-		let row: unknown;
 		try {
-			row = await ctx.kv.get<unknown>(claim);
+			const current = await ctx.kv.getVersioned<unknown>(claim);
+			if (!current) return null;
+			const stored = storedClaim(current.value);
+			if (stored?.outcome) return { ...stored, revision: current.revision };
+			if (!stored || Date.now() >= stored.at + TURN_WAIT_MS) {
+				if (!(await ctx.kv.compareAndDelete(claim, current.revision)).applied) continue;
+				return null;
+			}
 		} catch {
 			ctx.log.warn("embark-helper: the question claim could not be read");
-			await ctx.kv
-				.delete(claim)
-				.catch(() => ctx.log.warn("embark-helper: the broken question claim could not be cleared"));
 			return undefined;
-		}
-		if (row === null) return null;
-		const stored = storedClaim(row);
-		if (stored?.outcome) return stored;
-		if (Date.now() >= until) {
-			await ctx.kv
-				.delete(claim)
-				.catch(() => ctx.log.warn("embark-helper: the broken question claim could not be cleared"));
-			return null;
 		}
 		await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
 	}
@@ -389,7 +385,25 @@ async function sweepClaims(ctx: HelperContext): Promise<void> {
 					const oldest = key.startsWith(CLAIM) ? oldestClaim : oldestReplay;
 					return !(isRecord(v) && typeof v.at === "number" && v.at >= oldest);
 				})
-				.map(({ key }) => ctx.kv.delete(key)),
+				.map(async ({ key }) => {
+					const current = await ctx.kv.getVersioned<unknown>(key);
+					if (!current) return;
+					const v = current.value;
+					const oldest = key.startsWith(CLAIM) ? oldestClaim : oldestReplay;
+					if (isRecord(v) && typeof v.at === "number" && v.at >= oldest) return;
+					const owner = key.startsWith(REPLAY)
+						? storedClaim(await ctx.kv.get<unknown>(`${CLAIM}${key.slice(REPLAY.length)}`))
+						: null;
+					if (
+						owner &&
+						!owner.outcome &&
+						isRecord(v) &&
+						owner.requestId === v.requestId &&
+						Date.now() < owner.at + TURN_WAIT_MS
+					)
+						return;
+					await ctx.kv.compareAndDelete(key, current.revision);
+				}),
 		);
 	} catch {
 		ctx.log.warn("embark-helper: old question state could not be cleared");
@@ -410,7 +424,7 @@ async function ticketOf(
 	nonce: string,
 	user: NonNullable<HelperContext["user"]>,
 	message: string,
-): Promise<ReplayTicket | null> {
+): Promise<(ReplayTicket & { revision: string }) | null> {
 	const key = `${REPLAY}${nonce}`;
 	const fingerprint = await fingerprintOf(user, message);
 	for (;;) {
@@ -420,22 +434,34 @@ async function ticketOf(
 			if (
 				isRecord(ticket) &&
 				typeof ticket.at === "number" &&
-				Date.now() - ticket.at < REPLAY_KEPT_MS &&
 				typeof ticket.fingerprint === "string" &&
 				typeof ticket.requestId === "string" &&
 				NONCE.test(ticket.requestId)
-			)
-				return ticket.fingerprint === fingerprint
-					? {
-							at: ticket.at,
-							fingerprint,
-							requestId: ticket.requestId,
-						}
-					: null;
+			) {
+				const owner =
+					Date.now() - ticket.at >= REPLAY_KEPT_MS
+						? storedClaim(await ctx.kv.get<unknown>(`${CLAIM}${nonce}`))
+						: null;
+				const live =
+					owner &&
+					!owner.outcome &&
+					owner.requestId === ticket.requestId &&
+					Date.now() < owner.at + TURN_WAIT_MS;
+				if (Date.now() - ticket.at < REPLAY_KEPT_MS || live)
+					return ticket.fingerprint === fingerprint
+						? {
+								at: ticket.at,
+								fingerprint,
+								requestId: ticket.requestId,
+								revision: current.revision,
+							}
+						: null;
+			}
 			if (!(await ctx.kv.compareAndDelete(key, current.revision)).applied) continue;
 		}
 		const ticket: ReplayTicket = { at: Date.now(), fingerprint, requestId: crypto.randomUUID() };
-		if ((await ctx.kv.compareAndSet(key, null, ticket)).applied) return ticket;
+		const created = await ctx.kv.compareAndSet(key, null, ticket);
+		if (created.applied) return { ...ticket, revision: created.revision };
 	}
 }
 
@@ -461,7 +487,7 @@ async function asked(
 	const nonce =
 		typeof block === "string" && block.startsWith(ASK_FORM) ? block.slice(ASK_FORM.length) : "";
 	if (!NONCE.test(nonce)) return { outcome: { banner: notice(OUT_OF_DATE) } };
-	let ticket: ReplayTicket | null;
+	let ticket: (ReplayTicket & { revision: string }) | null;
 	try {
 		ticket = await ticketOf(ctx, nonce, user, message);
 	} catch {
@@ -480,7 +506,7 @@ async function asked(
 	const claim = `${CLAIM}${nonce}`;
 	const row: StoredClaim = { at: Date.now(), requestId: ticket.requestId };
 	const held = await ctx.kv.compareAndSet(claim, null, row).then(
-		(w) => w.applied,
+		(w) => w,
 		() => {
 			ctx.log.warn("embark-helper: the question could not be claimed");
 			return null;
@@ -496,7 +522,7 @@ async function asked(
 				},
 			},
 		};
-	if (!held) {
+	if (!held.applied) {
 		const stored = await settledOf(ctx, claim);
 		if (stored === undefined)
 			return {
@@ -504,26 +530,36 @@ async function asked(
 			};
 		if (!stored?.outcome)
 			return { outcome: { askNonce: nonce, answer: { failed: STILL_ANSWERING, retry: true } } };
-		return { claim, outcome: retryForm(stored.outcome, nonce) };
+		return {
+			claim: { key: claim, revision: stored.revision },
+			outcome: retryForm(stored.outcome, nonce),
+		};
 	}
 	await sweepClaims(ctx);
 	const outcome = await turnOf(message, ticket.requestId, turn);
-	// Embark keeps a request id's answer 15 minutes from the turn's end, and a
-	// turn can run longer than that: the ticket's 15 minutes start now, so the
-	// same form asks after the same request id for as long as Embark keeps it.
-	await ctx.kv
-		.set(`${REPLAY}${nonce}`, { ...ticket, at: Date.now() })
-		.catch(() => ctx.log.warn("embark-helper: the question id could not be kept"));
 	try {
-		await ctx.kv.set(claim, { ...row, outcome });
+		const saved = await ctx.kv.compareAndSet(claim, held.revision, { ...row, outcome });
+		// A delayed owner must not publish over, refresh the ticket of, or clear a replacement.
+		if (!saved.applied)
+			return { outcome: { askNonce: nonce, answer: { failed: STILL_ANSWERING, retry: true } } };
+		// Embark keeps the answer 15 minutes from settlement. Refresh only our ticket revision.
+		await ctx.kv
+			.compareAndSet(`${REPLAY}${nonce}`, ticket.revision, {
+				at: Date.now(),
+				fingerprint: ticket.fingerprint,
+				requestId: ticket.requestId,
+			})
+			.catch(() => ctx.log.warn("embark-helper: the question id could not be kept"));
+		return { claim: { key: claim, revision: saved.revision }, outcome: retryForm(outcome, nonce) };
 	} catch {
 		ctx.log.warn("embark-helper: the answered question could not be recorded");
-		await ctx.kv
-			.delete(claim)
+		const cleared = await ctx.kv
+			.compareAndDelete(claim, held.revision)
 			.catch(() => ctx.log.warn("embark-helper: the broken question claim could not be cleared"));
+		if (cleared && !cleared.applied)
+			return { outcome: { askNonce: nonce, answer: { failed: STILL_ANSWERING, retry: true } } };
 		return { outcome: { ...outcome, askNonce: nonce, banner: notice(SAVE_FAILED) } };
 	}
-	return { claim, outcome: retryForm(outcome, nonce) };
 }
 
 /** Does what the interaction asked, and says how it went. */
@@ -577,7 +613,7 @@ export async function helperAdmin(ctx: HelperContext): Promise<BlockResponse> {
 	const page = helperPage(await ask("overview", {}), action.outcome, admin);
 	if (action.claim) {
 		await ctx.kv
-			.delete(action.claim)
+			.compareAndDelete(action.claim.key, action.claim.revision)
 			.catch(() => ctx.log.warn("embark-helper: the rendered question claim could not be cleared"));
 	}
 	return page;

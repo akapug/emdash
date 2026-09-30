@@ -78,6 +78,9 @@ function site(
 		kvError?: string;
 		claimThrows?: boolean;
 		claimReadThrows?: boolean;
+		claimDeleteOutcome?: unknown;
+		readReplacement?: { key: string; value: unknown };
+		claimSaveReplacement?: unknown;
 		deleteThrows?: boolean;
 		setThrows?: boolean;
 		rows?: Record<string, unknown>;
@@ -114,6 +117,7 @@ function site(
 	);
 	const revisions = new Map(Array.from(rows.keys(), (name, n) => [name, `rev-${n + 1}`]));
 	let nextRevision = revisions.size + 1;
+	let raced = false;
 	const kv = {
 		get: async (name: string) => {
 			if (kvThrows || (claimReadThrows && name.startsWith("turn:"))) {
@@ -124,13 +128,26 @@ function site(
 			return v === undefined ? null : JSON.parse(v);
 		},
 		getVersioned: async (name: string) => {
-			if (kvThrows) throw new Error(kvError);
+			if (kvThrows || (claimReadThrows && name.startsWith("turn:"))) throw new Error(kvError);
 			const v = rows.get(name);
-			return v === undefined ? null : { value: JSON.parse(v), revision: revisions.get(name)! };
+			const revision = revisions.get(name)!;
+			if (options.readReplacement?.key === name && !raced) {
+				raced = true;
+				rows.set(name, JSON.stringify(options.readReplacement.value));
+				revisions.set(name, `rev-${nextRevision++}`);
+			}
+			return v === undefined ? null : { value: JSON.parse(v), revision };
 		},
 		compareAndSet: async (name: string, revision: string | null, v: unknown) => {
 			if (claimThrows) throw new Error("the options table is locked");
-			if (revision !== null || rows.has(name)) return { applied: false };
+			if (revision !== null && name.startsWith("turn:") && options.claimSaveReplacement && !raced) {
+				raced = true;
+				rows.set(name, JSON.stringify(options.claimSaveReplacement));
+				revisions.set(name, `rev-${nextRevision++}`);
+			}
+			if (revision !== null && setThrows) throw new Error("set failed");
+			if (revision === null ? rows.has(name) : revisions.get(name) !== revision)
+				return { applied: false };
 			const next = `rev-${nextRevision++}`;
 			rows.set(name, JSON.stringify(v));
 			revisions.set(name, next);
@@ -138,6 +155,14 @@ function site(
 		},
 		compareAndDelete: async (name: string, revision: string) => {
 			if (deleteThrows) throw new Error("delete failed");
+			if (name.startsWith("turn:") && options.claimDeleteOutcome && !raced) {
+				raced = true;
+				rows.set(
+					name,
+					JSON.stringify({ ...JSON.parse(rows.get(name)!), outcome: options.claimDeleteOutcome }),
+				);
+				revisions.set(name, `rev-${nextRevision++}`);
+			}
 			if (revisions.get(name) !== revision) return { applied: false };
 			revisions.delete(name);
 			rows.delete(name);
@@ -166,7 +191,7 @@ function site(
 			...(http ? { http: { fetch } } : {}),
 			log: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
 		} as unknown as RouteContext) as Promise<BlockResponse>;
-	return { calls, fetch, warn, handle, rows };
+	return { calls, fetch, warn, handle, rows, kv };
 }
 
 const PAGE = { type: "page_load", page: "/" };
@@ -565,6 +590,90 @@ describe("asking", () => {
 		expect(replay).not.toHaveProperty("message");
 	});
 
+	it("fences a delayed owner's outcome publication after its claim was replaced", async () => {
+		const nonce = crypto.randomUUID();
+		const replacement = { at: Date.now(), requestId: crypto.randomUUID() };
+		const s = site({
+			answers: {
+				turn: async () => {
+					const current = await s.kv.getVersioned(`turn:${nonce}`);
+					await s.kv.compareAndSet(`turn:${nonce}`, current!.revision, replacement);
+					return json({ reply: "Stale owner answer.", proposals: [] });
+				},
+			},
+		});
+		const res = await s.handle(ask("Hello", nonce));
+		expectValid(res);
+		expect(text(res)).not.toContain("Stale owner answer.");
+		expect(text(res)).toContain("did not finish recording");
+		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toEqual(replacement);
+	});
+
+	it("fences replay refresh when a newer ticket replaces the admitted owner's ticket", async () => {
+		const nonce = crypto.randomUUID();
+		const replacement = {
+			at: Date.now(),
+			fingerprint: "new question",
+			requestId: crypto.randomUUID(),
+		};
+		const s = site({
+			answers: {
+				turn: async () => {
+					const current = await s.kv.getVersioned(`request:${nonce}`);
+					await s.kv.compareAndSet(`request:${nonce}`, current!.revision, replacement);
+					return json({ reply: "Owner answer.", proposals: [] });
+				},
+			},
+		});
+		const res = await s.handle(ask("Hello", nonce));
+		expect(text(res)).toContain("Owner answer.");
+		expect(JSON.parse(s.rows.get(`request:${nonce}`)!)).toEqual(replacement);
+	});
+
+	it("fences a delayed owner's error cleanup after its claim was replaced", async () => {
+		const nonce = crypto.randomUUID();
+		const replacement = { at: Date.now(), requestId: crypto.randomUUID() };
+		const s = site({
+			claimSaveReplacement: replacement,
+			setThrows: true,
+			answers: { turn: () => json({ reply: "Done.", proposals: [] }) },
+		});
+		const res = await s.handle(ask("Hello", nonce));
+		expect(text(res)).toContain("did not finish recording");
+		expect(text(res)).not.toContain("Done.");
+		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toEqual(replacement);
+	});
+
+	it("fences rendered owner cleanup when a new claim replaces the saved outcome", async () => {
+		const nonce = crypto.randomUUID();
+		const replacement = { at: Date.now(), requestId: crypto.randomUUID() };
+		const s = site({
+			answers: {
+				turn: () => json({ reply: "Owner answer.", proposals: [] }),
+				overview: async () => {
+					const current = await s.kv.getVersioned(`turn:${nonce}`);
+					await s.kv.compareAndSet(`turn:${nonce}`, current!.revision, replacement);
+					return json(OVERVIEW);
+				},
+			},
+		});
+		const res = await s.handle(ask("Hello", nonce));
+		expect(text(res)).toContain("Owner answer.");
+		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toEqual(replacement);
+	});
+
+	it("fences sweep deletion when an expired replay ticket is replaced", async () => {
+		const key = `request:${crypto.randomUUID()}`;
+		const replacement = { at: Date.now(), fingerprint: "new", requestId: crypto.randomUUID() };
+		const s = site({
+			rows: { [key]: { ...replacement, at: Date.now() - DAY_MS } },
+			readReplacement: { key, value: replacement },
+			answers: { turn: () => json({ reply: "Done.", proposals: [] }) },
+		});
+		await s.handle(ask("Hello"));
+		expect(JSON.parse(s.rows.get(key)!)).toEqual(replacement);
+	});
+
 	it("shows the reply and its proposals even when the overview has not caught up", async () => {
 		const s = site({
 			answers: {
@@ -798,32 +907,86 @@ describe("pressing Ask twice", () => {
 		}
 	});
 
-	it("clears a broken claim with a readable retry path, and runs no second turn while polling", async () => {
+	it("keeps the live owner's claim past 110 s and lets duplicate submits wait for its answer", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
 			const t = heldTurn({ reply: "Late.", proposals: [] });
 			const s = site({ answers: { turn: t.answer } });
 			const form = ask("Rewrite the home page");
 			const first = s.handle(form);
-			const second = s.handle(form);
+			let duplicateDone = false;
+			const second = s.handle(form).then((res) => {
+				duplicateDone = true;
+				return res;
+			});
 			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+			const claim = `turn:${form.block_id.slice(4)}`;
+			const owned = s.rows.get(claim);
 			await vi.advanceTimersByTimeAsync(120_000);
-			const res = await second;
-			expectValid(res);
-			expect(ofType(res, "banner").map((b) => b.description)).toContain(
-				"The AI Helper did not finish recording that question. Ask it again to safely check for its reply.",
-			);
-			expect(s.rows.has(`turn:${form.block_id.slice(4)}`)).toBe(false);
-			expect(text(res)).not.toContain("Late.");
+			expect(duplicateDone).toBe(false);
+			expect(s.rows.get(claim)).toBe(owned);
+			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
 			t.release();
-			await vi.advanceTimersByTimeAsync(1_000);
-			await first;
+			await vi.advanceTimersByTimeAsync(2_000);
+			const results = await Promise.all([first, second]);
+			for (const res of results) expectValid(res);
+			expect(text(results[0])).toContain("Late.");
+			// The owner rendered and cleared its outcome before the duplicate's next poll.
+			expect(text(results[1])).toContain("did not finish recording");
+			expect(ofType(results[1], "form")[0]!.block_id).toBe(form.block_id);
+			const sent = turns(s).length;
+			const recovered = await s.handle(form);
+			expect(text(recovered)).toContain("Late.");
+			expect(turns(s)).toHaveLength(sent + 1);
 			// Only the first submit asks Embark: its question, and past its 90 s wait
 			// the same request id again. One request id is one turn, however often sent.
-			expect(new Set(turns(s).map((c) => (c.body as { request_id: string }).request_id)).size).toBe(1);
+			expect(new Set(turns(s).map((c) => (c.body as { request_id: string }).request_id)).size).toBe(
+				1,
+			);
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("expires a late duplicate at the owner's deadline, not a new wait from arrival", async () => {
+		vi.useFakeTimers({ toFake: FAKE });
+		try {
+			const nonce = crypto.randomUUID();
+			const claim = `turn:${nonce}`;
+			const s = site({
+				rows: { [claim]: { at: Date.now() - 4_979_000, requestId: crypto.randomUUID() } },
+			});
+			let done = false;
+			const pending = s.handle(ask("Hello", nonce)).then((res) => {
+				done = true;
+				return res;
+			});
+			await vi.waitFor(() => expect(s.rows.has(`request:${nonce}`)).toBe(true));
+			await vi.advanceTimersByTimeAsync(500);
+			expect(done).toBe(false);
+			expect(s.rows.has(claim)).toBe(true);
+			await vi.advanceTimersByTimeAsync(1_500);
+			const res = await pending;
+			expect(text(res)).toContain("did not finish recording");
+			expect(s.rows.has(claim)).toBe(false);
+			expect(turns(s)).toHaveLength(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("reads an outcome that wins the race with claim expiration instead of deleting it", async () => {
+		const nonce = crypto.randomUUID();
+		const s = site({
+			rows: { [`turn:${nonce}`]: { at: Date.now() - 5_000_000, requestId: crypto.randomUUID() } },
+			claimDeleteOutcome: {
+				turn: { message: "Hello", reply: "Saved at the deadline.", proposals: [] },
+			},
+		});
+		const res = await s.handle(ask("Hello", nonce));
+		expect(text(res)).toContain("Saved at the deadline.");
+		expect(text(res)).not.toContain("did not finish recording");
+		expect(turns(s)).toHaveLength(0);
 	});
 
 	it("sends nothing from a form without its nonce, and says to ask again", async () => {
@@ -856,9 +1019,26 @@ describe("pressing Ask twice", () => {
 		const second = await s.handle(form);
 		expect(text(second)).toContain("could not read the saved state");
 		expect(ofType(second, "form")[0]!.block_id).toBe(form.block_id);
-		expect(s.rows.has(`turn:${form.block_id.slice(4)}`)).toBe(false);
+		expect(s.rows.has(`turn:${form.block_id.slice(4)}`)).toBe(true);
 		t.release();
 		await first;
+	});
+
+	it("does not sweep a live owner's expired replay ticket when another form submits", async () => {
+		const nonce = crypto.randomUUID();
+		const requestId = crypto.randomUUID();
+		const at = Date.now() - 16 * 60_000;
+		const s = site({
+			rows: {
+				[`turn:${nonce}`]: { at, requestId },
+				[`request:${nonce}`]: { at, requestId, fingerprint: "owner" },
+			},
+			answers: { turn: () => json({ reply: "Another question answered.", proposals: [] }) },
+		});
+		const ticket = s.rows.get(`request:${nonce}`);
+		await s.handle(ask("Another question"));
+		expect(s.rows.get(`request:${nonce}`)).toBe(ticket);
+		expect(s.rows.has(`turn:${nonce}`)).toBe(true);
 	});
 
 	it("deletes a rendered claim and keeps the 24-hour sweep as a cleanup backstop", async () => {
@@ -884,7 +1064,11 @@ describe("pressing Ask twice", () => {
 });
 
 describe("a turn that runs past the plugin's 90 s wait", () => {
-	const FAKE: Array<"setTimeout" | "clearTimeout" | "Date"> = ["setTimeout", "clearTimeout", "Date"];
+	const FAKE: Array<"setTimeout" | "clearTimeout" | "Date"> = [
+		"setTimeout",
+		"clearTimeout",
+		"Date",
+	];
 	/** What the control plane answers a re-send of a request id whose turn is still running. */
 	const IN_PROGRESS = {
 		error: "idempotency_in_progress",
@@ -1000,14 +1184,16 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 		}
 	});
 
-	it("waits for the answer when the first send is already \"in progress\"", async () => {
+	it('waits for the answer when the first send is already "in progress"', async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
 			let n = 0;
 			const s = site({
 				answers: {
 					turn: () =>
-						++n < 3 ? json(IN_PROGRESS, 429) : json({ reply: "Answered on the third ask.", proposals: [] }),
+						++n < 3
+							? json(IN_PROGRESS, 429)
+							: json({ reply: "Answered on the third ask.", proposals: [] }),
 				},
 			});
 			const page = s.handle(ask("Fix the footer"));
@@ -1074,7 +1260,8 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			let n = 0;
 			const s = site({
 				answers: {
-					turn: () => (++n === 1 ? json(IN_PROGRESS, 429) : new Response("bad gateway", { status: 502 })),
+					turn: () =>
+						++n === 1 ? json(IN_PROGRESS, 429) : new Response("bad gateway", { status: 502 }),
 				},
 			});
 			const page = s.handle(ask("Tidy the footer"));
@@ -1090,34 +1277,74 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 		}
 	});
 
-	it("stops at a refusal a re-send gets, and shows it as it came", async () => {
+	it.each([
+		[
+			"a refusal",
+			() => json({ refused: { reason: "helper_off", message: "The Helper is now off." } }, 403),
+		],
+		["a 401", () => json({ error: "unauthorized" }, 401)],
+		["a 403", () => json({ error: "forbidden" }, 403)],
+		["a nonretryable failure", () => json({ error: "bad_request" }, 400)],
+	] as const)(
+		"ignores %s from a re-send while the original request is open",
+		async (_label, refusal) => {
+			vi.useFakeTimers({ toFake: FAKE });
+			try {
+				const t = slowTurn({ reply: "The original question finished.", proposals: [] }, () =>
+					refusal(),
+				);
+				const s = site({ answers: { turn: t.answer } });
+				const page = tracked(s.handle(ask("Rewrite everything")));
+				await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+				await elapse(120_000);
+				expect(page.done()).toBe(false);
+				expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
+				t.release();
+				await elapse(1_000);
+				const res = await page.p;
+				expectValid(res);
+				expect(text(res)).toContain("The original question finished.");
+				expect(text(res)).not.toMatch(/now off|relink|status 400/);
+				expect(requestIds(s).size).toBe(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		},
+	);
+
+	it("shows a re-send's refusal once the original request has closed", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
-			const t = slowTurn({ reply: "never shown", proposals: [] }, (n) =>
-				n === 3
-					? json(
-							{ refused: { reason: "helper_failed", message: "The model provider failed on that question." } },
-							502,
-						)
-					: undefined,
-			);
-			const s = site({ answers: { turn: t.answer } });
+			let n = 0;
+			const s = site({
+				answers: {
+					turn: () =>
+						++n === 1
+							? json(IN_PROGRESS, 429)
+							: json(
+									{
+										refused: {
+											reason: "helper_failed",
+											message: "The model provider failed on that question.",
+										},
+									},
+									502,
+								),
+				},
+			});
 			const page = s.handle(ask("Rewrite everything"));
-			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
-			await elapse(100_000);
+			await vi.waitFor(() => expect(turns(s).length).toBeGreaterThan(0));
+			await elapse(10_000);
 			const res = await page;
 			expectValid(res);
-			expect(ofType(res, "banner").map((b) => b.description)).toContain(
-				"The model provider failed on that question.",
-			);
-			expect(text(res)).not.toContain("never shown");
-			expect(turns(s)).toHaveLength(3);
+			expect(text(res)).toContain("The model provider failed on that question.");
+			expect(turns(s)).toHaveLength(2);
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it("says the Helper is still working once Embark's longest turn has passed, keeps the form, and a later ask of it reuses the request id", async () => {
+	it("waits through the nominal model/tool budget and grace, keeps the live ticket for late duplicates, and reuses the request id", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
 			const t = slowTurn({ reply: "Finally done.", proposals: [] });
@@ -1128,9 +1355,23 @@ describe("a turn that runs past the plugin's 90 s wait", () => {
 			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
 			await elapse(15 * 60_000, 5_000);
 			expect(page.done()).toBe(false);
-			await elapse(2_000_000 - 15 * 60_000, 5_000);
+			const ownerClaim = s.rows.get(`turn:${nonce}`);
+			const ownerTicket = s.rows.get(`request:${nonce}`);
+			let duplicateDone = false;
+			const duplicate = s.handle(form).then((res) => {
+				duplicateDone = true;
+				return res;
+			});
+			await elapse(2_100_000 - 15 * 60_000, 5_000);
 			expect(page.done()).toBe(false);
-			await elapse(60_000, 5_000);
+			expect(duplicateDone).toBe(false);
+			expect(s.rows.get(`turn:${nonce}`)).toBe(ownerClaim);
+			expect(s.rows.get(`request:${nonce}`)).toBe(ownerTicket);
+			await elapse(4_920_000 - 2_100_000, 5_000);
+			expect(page.done()).toBe(false);
+			expect((turns(s)[0].signal as AbortSignal).aborted).toBe(false);
+			await elapse(65_000, 5_000);
+			await duplicate;
 			const res = await page.p;
 			expectValid(res);
 			expect(ofType(res, "banner").map((b) => b.description)).toContain(STILL_WORKING);
