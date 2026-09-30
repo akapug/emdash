@@ -72,7 +72,11 @@ function site(
 		answers?: Record<string, Answer>;
 		http?: boolean;
 		kvThrows?: boolean;
+		kvError?: string;
 		claimThrows?: boolean;
+		claimReadThrows?: boolean;
+		deleteThrows?: boolean;
+		setThrows?: boolean;
 		rows?: Record<string, unknown>;
 	} = {},
 ) {
@@ -81,7 +85,11 @@ function site(
 		answers = {},
 		http = true,
 		kvThrows = false,
+		kvError = "unreadable row",
 		claimThrows = false,
+		claimReadThrows = false,
+		deleteThrows = false,
+		setThrows = false,
 	} = options;
 	const user = "user" in options ? options.user : EDITOR;
 	const calls: Call[] = [];
@@ -101,23 +109,47 @@ function site(
 	const rows = new Map(
 		Object.entries(options.rows ?? {}).map(([name, v]) => [name, JSON.stringify(v)]),
 	);
+	const revisions = new Map(Array.from(rows.keys(), (name, n) => [name, `rev-${n + 1}`]));
+	let nextRevision = revisions.size + 1;
 	const kv = {
 		get: async (name: string) => {
-			if (kvThrows) throw new Error("unreadable row");
+			if (kvThrows || (claimReadThrows && name.startsWith("turn:"))) {
+				throw new Error(kvError);
+			}
 			if (name === "linkKey") return key;
 			const v = rows.get(name);
 			return v === undefined ? null : JSON.parse(v);
 		},
+		getVersioned: async (name: string) => {
+			if (kvThrows) throw new Error(kvError);
+			const v = rows.get(name);
+			return v === undefined ? null : { value: JSON.parse(v), revision: revisions.get(name)! };
+		},
 		compareAndSet: async (name: string, revision: string | null, v: unknown) => {
 			if (claimThrows) throw new Error("the options table is locked");
 			if (revision !== null || rows.has(name)) return { applied: false };
+			const next = `rev-${nextRevision++}`;
 			rows.set(name, JSON.stringify(v));
-			return { applied: true, revision: `rev-${rows.size}` };
+			revisions.set(name, next);
+			return { applied: true, revision: next };
+		},
+		compareAndDelete: async (name: string, revision: string) => {
+			if (deleteThrows) throw new Error("delete failed");
+			if (revisions.get(name) !== revision) return { applied: false };
+			revisions.delete(name);
+			rows.delete(name);
+			return { applied: true };
 		},
 		set: async (name: string, v: unknown) => {
+			if (setThrows) throw new Error("set failed");
 			rows.set(name, JSON.stringify(v));
+			revisions.set(name, `rev-${nextRevision++}`);
 		},
-		delete: async (name: string) => rows.delete(name),
+		delete: async (name: string) => {
+			if (deleteThrows) throw new Error("delete failed");
+			revisions.delete(name);
+			return rows.delete(name);
+		},
 		list: async (prefix = "") =>
 			[...rows]
 				.filter(([name]) => name.startsWith(prefix))
@@ -136,6 +168,7 @@ function site(
 
 const PAGE = { type: "page_load", page: "/" };
 const WIDGET = { type: "page_load", page: "widget:allowance" };
+const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ASK_FORM_ID = /^ask:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DAY_MS = 86_400_000;
 /** A submit of one rendered ask form: its block id carries that form's nonce. */
@@ -210,12 +243,15 @@ describe("a site Embark has not linked", () => {
 		});
 	}
 
-	it("says so readably when the link key row cannot be read, and asks Embark nothing", async () => {
-		const s = site({ kvThrows: true });
+	it("says so readably when the link key row cannot be read without logging its value", async () => {
+		const secret = "embark-link-key-that-must-not-be-logged";
+		const s = site({ kvThrows: true, kvError: `invalid JSON near ${secret}` });
 		const res = await s.handle(PAGE);
 		expectValid(res);
 		expect(ofType(res, "banner")[0]).toMatchObject({ variant: "error" });
 		expect(s.fetch).not.toHaveBeenCalled();
+		expect(JSON.stringify(s.warn.mock.calls)).not.toContain(secret);
+		expect(s.warn).toHaveBeenCalledWith("embark-helper: the link key row could not be read");
 	});
 });
 
@@ -265,6 +301,20 @@ describe("the request to Embark", () => {
 		const s = site({ key: "  link-key-example\n" });
 		await s.handle(PAGE);
 		expect(s.calls[0].headers.get("authorization")).toBe("Bearer link-key-example");
+	});
+
+	it("does not log a link key embedded in an HTTP provider error", async () => {
+		const secret = "link-key-example";
+		const s = site({
+			answers: {
+				overview: () => {
+					throw new Error(`request failed with Authorization: Bearer ${secret}`);
+				},
+			},
+		});
+		await s.handle(PAGE);
+		expect(JSON.stringify(s.warn.mock.calls)).not.toContain(secret);
+		expect(s.warn).toHaveBeenCalledWith("embark-helper: overview did not reach Embark");
 	});
 
 	it("keeps a user header with a non-ASCII address sendable, and it reads back the same", async () => {
@@ -386,7 +436,11 @@ describe("the AI Helper page", () => {
 		const sections = ofType(res, "section").map((b) => b.text);
 		expect(sections).toContain("What is on the home page?");
 		expect(sections).toContain("A welcome and three posts.");
-		for (const hidden of ["You are the site's AI Helper.", '{"page":"home"}', "A row with no role."])
+		for (const hidden of [
+			"You are the site's AI Helper.",
+			'{"page":"home"}',
+			"A row with no role.",
+		])
 			expect(sections).not.toContain(hidden);
 		const labels = ofType(res, "context").map((b) => b.text);
 		expect(labels).toEqual(expect.arrayContaining(["Asked", "AI Helper"]));
@@ -418,9 +472,94 @@ describe("asking", () => {
 		});
 		const res = await s.handle(ask("  Fix the typo on the About page "));
 		expect(s.calls.map((c) => c.op)).toEqual(["turn", "overview"]);
-		expect(s.calls[0].body).toEqual({ message: "Fix the typo on the About page" });
+		expect(s.calls[0].body).toEqual({
+			message: "Fix the typo on the About page",
+			request_id: expect.stringMatching(UUID_ID),
+		});
 		expectValid(res);
 		expect(text(res).split("I found one typo and drafted a fix.")).toHaveLength(2);
+	});
+
+	it("reuses the request id after a lost response, so retry cannot create another charge", async () => {
+		let attempts = 0;
+		const s = site({
+			answers: {
+				turn: () => {
+					attempts++;
+					if (attempts === 1) throw new TypeError("response lost");
+					return json({ reply: "Recovered the existing reply.", proposals: [] });
+				},
+			},
+		});
+		const nonce = crypto.randomUUID();
+		const form = ask("Fix the typo", nonce);
+		const first = await s.handle(form);
+		expect(text(first)).toContain("did not go through");
+		expect(ofType(first, "form")[0]!.block_id).toBe(`ask:${nonce}`);
+		const replay = JSON.parse(s.rows.get(`request:${nonce}`)!);
+		expect(replay).toMatchObject({ requestId: expect.stringMatching(UUID_ID) });
+		expect(replay).not.toHaveProperty("message");
+
+		const second = await s.handle(form);
+		const turns = s.calls.filter((c) => c.op === "turn");
+		expect(turns.map((c) => c.body)).toEqual([
+			{ message: "Fix the typo", request_id: replay.requestId },
+			{ message: "Fix the typo", request_id: replay.requestId },
+		]);
+		expect(text(second)).toContain("Recovered the existing reply.");
+		expect(s.rows.has(`request:${nonce}`)).toBe(true);
+	});
+
+	it("does not reuse a form's request id for different words", async () => {
+		const s = site({
+			answers: {
+				turn: () => {
+					throw new TypeError("response lost");
+				},
+			},
+		});
+		const nonce = crypto.randomUUID();
+		await s.handle(ask("First question", nonce));
+		const changed = await s.handle(ask("Changed question", nonce));
+		expect(text(changed)).toContain("page was out of date");
+		expect(s.calls.filter((c) => c.op === "turn")).toHaveLength(1);
+	});
+
+	it("mints a new request id when the same words come from a newly rendered form", async () => {
+		let attempts = 0;
+		const s = site({
+			answers: {
+				turn: () => {
+					attempts++;
+					if (attempts === 1) throw new TypeError("response lost");
+					return json({ reply: "Done.", proposals: [] });
+				},
+			},
+		});
+		await s.handle(ask("Repeat this question", crypto.randomUUID()));
+		await s.handle(ask("Repeat this question", crypto.randomUUID()));
+		const turns = s.calls.filter((c) => c.op === "turn");
+		expect(turns[0].body).toMatchObject({ message: "Repeat this question" });
+		expect(turns[1].body).toMatchObject({ message: "Repeat this question" });
+		expect((turns[0].body as { request_id: string }).request_id).not.toBe(
+			(turns[1].body as { request_id: string }).request_id,
+		);
+	});
+
+	it("shows a readable recovery error and clears a claim when its final outcome cannot be saved", async () => {
+		const s = site({
+			setThrows: true,
+			answers: { turn: () => json({ reply: "Done, but the response was lost.", proposals: [] }) },
+		});
+		const nonce = crypto.randomUUID();
+		const res = await s.handle(ask("Fix the typo", nonce));
+		expect(text(res)).toContain("could not save its coordination state");
+		expect(text(res)).toContain("Done, but the response was lost.");
+		expect(ofType(res, "form")[0]!.block_id).toBe(`ask:${nonce}`);
+		expect(s.rows.has(`turn:${nonce}`)).toBe(false);
+		const replay = JSON.parse(s.rows.get(`request:${nonce}`)!);
+		expect(replay).toMatchObject({ requestId: expect.stringMatching(UUID_ID) });
+		expect(replay).not.toHaveProperty("message");
 	});
 
 	it("shows the reply and its proposals even when the overview has not caught up", async () => {
@@ -618,7 +757,11 @@ describe("pressing Ask twice", () => {
 	}
 	const turns = (s: ReturnType<typeof site>) => s.calls.filter((c) => c.op === "turn");
 	/** Only the clock the wait reads and sleeps on; Response bodies keep their own scheduling. */
-	const FAKE: Array<"setTimeout" | "clearTimeout" | "Date"> = ["setTimeout", "clearTimeout", "Date"];
+	const FAKE: Array<"setTimeout" | "clearTimeout" | "Date"> = [
+		"setTimeout",
+		"clearTimeout",
+		"Date",
+	];
 
 	it("renders a fresh ask form each time, so a sent question leaves an empty box", async () => {
 		const s = site();
@@ -629,7 +772,7 @@ describe("pressing Ask twice", () => {
 		expect(a).not.toBe(b);
 	});
 
-	it("runs one turn for two submits of the same form, and both show its reply", async () => {
+	it("runs one turn for two submits of the same form without leaving a completed claim", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
 			const t = heldTurn({
@@ -639,25 +782,20 @@ describe("pressing Ask twice", () => {
 			const s = site({ answers: { turn: t.answer } });
 			const form = ask("Fix the typo");
 			const pages = [s.handle(form), s.handle(form)];
-			await vi.advanceTimersByTimeAsync(5_000);
-			expect(turns(s)).toHaveLength(1);
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
 			t.release();
 			await vi.advanceTimersByTimeAsync(2_000);
-			for (const res of await Promise.all(pages)) {
-				expectValid(res);
-				expect(text(res)).toContain("I drafted the fix.");
-				const buttons = ofType(res, "actions").flatMap((a) => a.elements);
-				expect(buttons).toContainEqual(
-					expect.objectContaining({ action_id: "approve", value: "p7" }),
-				);
-			}
+			const results = await Promise.all(pages);
+			for (const res of results) expectValid(res);
+			expect(results.some((res) => text(res).includes("I drafted the fix."))).toBe(true);
 			expect(turns(s)).toHaveLength(1);
+			expect(s.rows.has(`turn:${form.block_id.slice(4)}`)).toBe(false);
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it("says the question is being answered, and runs no second turn, while the first outlasts the wait", async () => {
+	it("clears a broken claim with a readable retry path, and runs no second turn while polling", async () => {
 		vi.useFakeTimers({ toFake: FAKE });
 		try {
 			const t = heldTurn({ reply: "Late.", proposals: [] });
@@ -665,12 +803,14 @@ describe("pressing Ask twice", () => {
 			const form = ask("Rewrite the home page");
 			const first = s.handle(form);
 			const second = s.handle(form);
+			await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
 			await vi.advanceTimersByTimeAsync(120_000);
 			const res = await second;
 			expectValid(res);
 			expect(ofType(res, "banner").map((b) => b.description)).toContain(
-				"That question is already being answered. Reload this page in a minute to see the reply.",
+				"The AI Helper did not finish recording that question. Ask it again to safely check for its reply.",
 			);
+			expect(s.rows.has(`turn:${form.block_id.slice(4)}`)).toBe(false);
 			expect(text(res)).not.toContain("Late.");
 			t.release();
 			await vi.advanceTimersByTimeAsync(1_000);
@@ -702,10 +842,29 @@ describe("pressing Ask twice", () => {
 		expect(ofType(res, "banner")[0]).toMatchObject({ variant: "error" });
 	});
 
-	it("records the turn's outcome on its claim, and clears claims older than a day", async () => {
+	it("reports a claim read failure promptly instead of polling until the deadline", async () => {
+		const t = heldTurn({ reply: "Done.", proposals: [] });
+		const s = site({ claimReadThrows: true, answers: { turn: t.answer } });
+		const form = ask("Hello");
+		const first = s.handle(form);
+		await vi.waitFor(() => expect(turns(s)).toHaveLength(1));
+		const second = await s.handle(form);
+		expect(text(second)).toContain("could not read the saved state");
+		expect(ofType(second, "form")[0]!.block_id).toBe(form.block_id);
+		expect(s.rows.has(`turn:${form.block_id.slice(4)}`)).toBe(false);
+		t.release();
+		await first;
+	});
+
+	it("deletes a rendered claim and keeps the 24-hour sweep as a cleanup backstop", async () => {
 		const now = Date.now();
 		const s = site({
 			rows: {
+				"request:old": {
+					at: now - 16 * 60_000,
+					fingerprint: "old",
+					requestId: crypto.randomUUID(),
+				},
 				"turn:old": { at: now - 2 * DAY_MS },
 				"turn:unreadable": "not a claim",
 				"turn:recent": { at: now - 60_000 },
@@ -714,10 +873,8 @@ describe("pressing Ask twice", () => {
 		});
 		const nonce = crypto.randomUUID();
 		await s.handle(ask("Hello", nonce));
-		expect([...s.rows.keys()].sort()).toEqual(["turn:recent", `turn:${nonce}`].sort());
-		expect(JSON.parse(s.rows.get(`turn:${nonce}`)!)).toMatchObject({
-			outcome: { turn: { message: "Hello", reply: "Done." } },
-		});
+		expect([...s.rows.keys()].toSorted()).toEqual([`request:${nonce}`, "turn:recent"].toSorted());
+		expect(s.rows.has(`turn:${nonce}`)).toBe(false);
 	});
 });
 
@@ -863,6 +1020,20 @@ describe("when Embark cannot answer", () => {
 			expect(buttons.some((b) => "action_id" in b && b.action_id === "reload")).toBe(retry);
 		});
 	}
+
+	it("shows the control plane's idempotency conflict message without offering another retry", async () => {
+		const message = "That request id belongs to a different question.";
+		const s = site({
+			answers: {
+				turn: () => json({ error: "idempotency_conflict", message }, 409),
+			},
+		});
+		const nonce = crypto.randomUUID();
+		const res = await s.handle(ask("A different question", nonce));
+		expect(ofType(res, "banner").map((b) => b.description)).toContain(message);
+		expect(text(res)).not.toContain("Try again in a minute");
+		expect(s.rows.has(`request:${nonce}`)).toBe(true);
+	});
 
 	it("says a message is too long when Embark refuses its size, and does not offer to try again", async () => {
 		const s = site({ answers: { turn: () => json({ error: "payload too large" }, 413) } });

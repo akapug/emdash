@@ -136,6 +136,7 @@ export async function buildOriginSite(db: Kysely<Database>, storage: Storage): P
 		"magic-link-hash-secret-0003",
 		"preview-secret-value-0004",
 		"plugin-api-key-value-0005",
+		"embark-helper-link-key-value-0006",
 		"ip-hash-value-0006",
 		"Mozilla/5.0 (origin-user-agent)",
 		"voter-hash-value-0007",
@@ -970,6 +971,7 @@ export async function buildOriginSite(db: Kysely<Database>, storage: Storage): P
 				option("emdash:setup_complete", true),
 				option("emdash:preview_secret", "preview-secret-value-0004"),
 				option("plugin:seo-plus:api_key", "plugin-api-key-value-0005"),
+				option("plugin:embark-helper:linkKey", "embark-helper-link-key-value-0006"),
 			]),
 		)
 		.onConflict((conflict) => conflict.column("name").doNothing())

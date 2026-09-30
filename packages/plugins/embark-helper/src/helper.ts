@@ -1,8 +1,8 @@
 /**
  * The AI Helper's admin route: one Block Kit handler for the page and the
  * dashboard widget. Every answer comes from Embark's control plane; the
- * plugin keeps only the link key an Embark operator wrote and, for a day, a
- * claim for each question asked.
+ * plugin keeps only the link key an Embark operator wrote, a pending request
+ * id for safe retries, and short-lived coordination claims while turns run.
  */
 
 import type { BlockResponse } from "@emdash-cms/blocks/server";
@@ -25,6 +25,23 @@ export type HelperContext = Pick<RouteContext, "input" | "user" | "kv" | "http" 
 type Op = "overview" | "turn" | "approve" | "reject" | "toggle";
 type Ask = (op: Op, body: Record<string, unknown>) => Promise<Answer>;
 
+interface ReplayTicket {
+	at: number;
+	fingerprint: string;
+	requestId: string;
+}
+
+interface StoredClaim {
+	at: number;
+	outcome?: Outcome;
+	requestId: string;
+}
+
+interface ActionResult {
+	claim?: string;
+	outcome: Outcome;
+}
+
 const CONTROL_PLANE = "https://embarkeasy.com/api/tenant-helper/";
 /** The plugin's KV row an Embark operator writes: the options row `plugin:embark-helper:linkKey`. */
 export const LINK_KEY = "linkKey";
@@ -45,10 +62,13 @@ const NON_ASCII = /[\u007f-\uffff]/g;
  * A turn's claim on its form's nonce, the KV row `turn:<nonce>`: `{ at }`
  * while the turn runs, `{ at, outcome }` once it is done. Only the request
  * that creates the row asks Embark; a second submit of the same form waits
- * for the first one's outcome and shows it. Rows older than a day are cleared.
+ * for the first one's outcome and shows it. Rendered rows are deleted, with a
+ * day-old sweep as the backstop when cleanup fails.
  */
 const CLAIM = "turn:";
+const REPLAY = "request:";
 const CLAIM_KEPT_MS = 86_400_000;
+const REPLAY_KEPT_MS = 15 * 60_000;
 const CLAIM_POLL_MS = 1_000;
 const NONCE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -64,12 +84,14 @@ const STATUS_WORDS: Record<number, string> = {
 };
 const OUT_OF_DATE = "This page was out of date, so the question was not sent. Ask it again.";
 const STILL_ANSWERING =
-	"That question is already being answered. Reload this page in a minute to see the reply.";
+	"The AI Helper did not finish recording that question. Ask it again to safely check for its reply.";
+const CLAIM_UNREADABLE =
+	"The AI Helper could not read the saved state for that question. Ask it again in a minute.";
+const SAVE_FAILED =
+	"The AI Helper received an answer but could not save its coordination state. The reply is shown below, and retrying this form is safe.";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
-
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** JSON a header can carry: every character past ASCII as a `\u` escape, which parses back the same. */
 const asciiJson = (value: unknown) =>
@@ -83,8 +105,8 @@ async function linkKeyOf(ctx: HelperContext): Promise<string | null | { failed: 
 	try {
 		const v = await ctx.kv.get<unknown>(LINK_KEY);
 		return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
-	} catch (error) {
-		ctx.log.warn("embark-helper: the link key row could not be read", { error: messageOf(error) });
+	} catch {
+		ctx.log.warn("embark-helper: the link key row could not be read");
 		return {
 			failed: "This site's link to Embark could not be read. Embark support can relink it.",
 		};
@@ -131,7 +153,7 @@ async function call(
 			signal: AbortSignal.timeout(op === "turn" ? TURN_TIMEOUT_MS : OP_TIMEOUT_MS),
 		});
 	} catch (error) {
-		ctx.log.warn(`embark-helper: ${op} did not reach Embark`, { error: messageOf(error) });
+		ctx.log.warn(`embark-helper: ${op} did not reach Embark`);
 		const timedOut = isRecord(error) && error.name === "TimeoutError";
 		return {
 			failed: timedOut
@@ -143,52 +165,132 @@ async function call(
 	const data: unknown = await res.json().catch(() => undefined);
 	const refused = refusalOf(data);
 	if (refused) return { refused };
-	if (!res.ok) return statusFailure(res.status);
+	if (!res.ok) return statusFailure(res.status, data);
 	return isRecord(data) ? { data } : { failed: UNREADABLE };
 }
 
 /** A non-2xx answer: "Try again" only for a busy or broken Embark (429, 5xx), where it can help. */
-function statusFailure(status: number): Answer {
+function statusFailure(status: number, body?: unknown): Answer {
 	const words = STATUS_WORDS[status];
 	if (words) return { failed: words };
+	const message =
+		isRecord(body) && typeof body.message === "string" && body.message.trim() !== ""
+			? body.message.trim()
+			: `Embark answered with status ${status}.`;
 	return status === 429 || status >= 500
-		? { failed: `Embark answered with status ${status}. ${TRY_AGAIN}`, retry: true }
-		: { failed: `Embark answered with status ${status}.` };
+		? { failed: `${message} ${TRY_AGAIN}`, retry: true }
+		: { failed: message };
 }
 
-async function turnOf(message: string, ask: Ask): Promise<Outcome> {
-	const a = await ask("turn", { message });
+async function turnOf(message: string, requestId: string, ask: Ask): Promise<Outcome> {
+	const a = await ask("turn", { message, request_id: requestId });
 	if (!("data" in a)) return { answer: a };
 	const { reply, proposals } = a.data;
 	if (typeof reply !== "string") return { answer: { failed: UNREADABLE } };
 	return { turn: { message, reply, proposals: proposalsOf(proposals) } };
 }
 
+function storedClaim(v: unknown): StoredClaim | null {
+	if (!isRecord(v)) return null;
+	const { at, outcome, requestId } = v;
+	if (typeof at !== "number" || typeof requestId !== "string") return null;
+	return {
+		at,
+		requestId,
+		...(isRecord(outcome) ? { outcome } : {}),
+	};
+}
+
 /** The outcome the turn holding `claim` recorded, or `null` if none is recorded in time. */
-async function settledOf(ctx: HelperContext, claim: string): Promise<Outcome | null> {
+async function settledOf(
+	ctx: HelperContext,
+	claim: string,
+): Promise<StoredClaim | null | undefined> {
 	const until = Date.now() + TURN_TIMEOUT_MS + OP_TIMEOUT_MS;
 	for (;;) {
-		const row = await ctx.kv.get<unknown>(claim).catch(() => null);
-		if (isRecord(row) && isRecord(row.outcome)) return row.outcome as Outcome;
-		if (Date.now() >= until) return null;
+		let row: unknown;
+		try {
+			row = await ctx.kv.get<unknown>(claim);
+		} catch {
+			ctx.log.warn("embark-helper: the question claim could not be read");
+			await ctx.kv
+				.delete(claim)
+				.catch(() => ctx.log.warn("embark-helper: the broken question claim could not be cleared"));
+			return undefined;
+		}
+		if (row === null) return null;
+		const stored = storedClaim(row);
+		if (stored?.outcome) return stored;
+		if (Date.now() >= until) {
+			await ctx.kv
+				.delete(claim)
+				.catch(() => ctx.log.warn("embark-helper: the broken question claim could not be cleared"));
+			return null;
+		}
 		await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
 	}
 }
 
-/** Clears claims older than a day. A failure here is logged and never stops the turn. */
+/** Clears day-old claims and pending retries past the control plane's 15-minute window. */
 async function sweepClaims(ctx: HelperContext): Promise<void> {
-	const oldest = Date.now() - CLAIM_KEPT_MS;
+	const oldestClaim = Date.now() - CLAIM_KEPT_MS;
+	const oldestReplay = Date.now() - REPLAY_KEPT_MS;
 	try {
-		const rows = await ctx.kv.list(CLAIM);
+		const rows = await Promise.all([ctx.kv.list(CLAIM), ctx.kv.list(REPLAY)]);
 		await Promise.all(
 			rows
-				.filter(({ value: v }) => !(isRecord(v) && typeof v.at === "number" && v.at >= oldest))
+				.flat()
+				.filter(({ key, value: v }) => {
+					const oldest = key.startsWith(CLAIM) ? oldestClaim : oldestReplay;
+					return !(isRecord(v) && typeof v.at === "number" && v.at >= oldest);
+				})
 				.map(({ key }) => ctx.kv.delete(key)),
 		);
-	} catch (error) {
-		ctx.log.warn("embark-helper: old question claims could not be cleared", {
-			error: messageOf(error),
-		});
+	} catch {
+		ctx.log.warn("embark-helper: old question state could not be cleared");
+	}
+}
+
+async function fingerprintOf(
+	user: NonNullable<HelperContext["user"]>,
+	message: string,
+): Promise<string> {
+	const bytes = new TextEncoder().encode(JSON.stringify([user.id, user.email, user.role, message]));
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function ticketOf(
+	ctx: HelperContext,
+	nonce: string,
+	user: NonNullable<HelperContext["user"]>,
+	message: string,
+): Promise<ReplayTicket | null> {
+	const key = `${REPLAY}${nonce}`;
+	const fingerprint = await fingerprintOf(user, message);
+	for (;;) {
+		const current = await ctx.kv.getVersioned<unknown>(key);
+		if (current) {
+			const ticket = current.value;
+			if (
+				isRecord(ticket) &&
+				typeof ticket.at === "number" &&
+				Date.now() - ticket.at < REPLAY_KEPT_MS &&
+				typeof ticket.fingerprint === "string" &&
+				typeof ticket.requestId === "string" &&
+				NONCE.test(ticket.requestId)
+			)
+				return ticket.fingerprint === fingerprint
+					? {
+							at: ticket.at,
+							fingerprint,
+							requestId: ticket.requestId,
+						}
+					: null;
+			if (!(await ctx.kv.compareAndDelete(key, current.revision)).applied) continue;
+		}
+		const ticket: ReplayTicket = { at: Date.now(), fingerprint, requestId: crypto.randomUUID() };
+		if ((await ctx.kv.compareAndSet(key, null, ticket)).applied) return ticket;
 	}
 }
 
@@ -196,42 +298,81 @@ async function sweepClaims(ctx: HelperContext): Promise<void> {
  * Asks once per form: the request that claims the form's nonce runs the turn,
  * and a second submit of that form shows the first one's outcome.
  */
+const retryForm = (outcome: Outcome, nonce: string): Outcome =>
+	outcome.answer && "failed" in outcome.answer && outcome.answer.retry === true
+		? { ...outcome, askNonce: nonce }
+		: outcome;
+
 async function asked(
 	ctx: HelperContext,
 	input: Record<string, unknown>,
 	ask: Ask,
-): Promise<Outcome> {
+	user: NonNullable<HelperContext["user"]>,
+): Promise<ActionResult> {
 	const { block_id: block, values } = input;
 	const raw = isRecord(values) ? values.message : undefined;
 	const message = typeof raw === "string" ? raw.trim() : "";
-	if (!message) return { banner: notice("Write a question or a request first.") };
+	if (!message) return { outcome: { banner: notice("Write a question or a request first.") } };
 	const nonce =
 		typeof block === "string" && block.startsWith(ASK_FORM) ? block.slice(ASK_FORM.length) : "";
-	if (!NONCE.test(nonce)) return { banner: notice(OUT_OF_DATE) };
+	if (!NONCE.test(nonce)) return { outcome: { banner: notice(OUT_OF_DATE) } };
+	let ticket: ReplayTicket | null;
+	try {
+		ticket = await ticketOf(ctx, nonce, user, message);
+	} catch {
+		ctx.log.warn("embark-helper: the question id could not be saved");
+		return {
+			outcome: {
+				askNonce: nonce,
+				answer: {
+					failed: `The AI Helper could not start this question. ${TRY_AGAIN}`,
+					retry: true,
+				},
+			},
+		};
+	}
+	if (!ticket) return { outcome: { banner: notice(OUT_OF_DATE) } };
 	const claim = `${CLAIM}${nonce}`;
-	const at = Date.now();
-	const held = await ctx.kv.compareAndSet(claim, null, { at }).then(
+	const row: StoredClaim = { at: Date.now(), requestId: ticket.requestId };
+	const held = await ctx.kv.compareAndSet(claim, null, row).then(
 		(w) => w.applied,
-		(error: unknown) => {
-			ctx.log.warn("embark-helper: the question could not be claimed", {
-				error: messageOf(error),
-			});
+		() => {
+			ctx.log.warn("embark-helper: the question could not be claimed");
 			return null;
 		},
 	);
 	if (held === null)
 		return {
-			answer: { failed: `The AI Helper could not start this question. ${TRY_AGAIN}`, retry: true },
+			outcome: {
+				askNonce: nonce,
+				answer: {
+					failed: `The AI Helper could not start this question. ${TRY_AGAIN}`,
+					retry: true,
+				},
+			},
 		};
-	if (!held) return (await settledOf(ctx, claim)) ?? { banner: notice(STILL_ANSWERING) };
+	if (!held) {
+		const stored = await settledOf(ctx, claim);
+		if (stored === undefined)
+			return {
+				outcome: { askNonce: nonce, answer: { failed: CLAIM_UNREADABLE, retry: true } },
+			};
+		if (!stored?.outcome)
+			return { outcome: { askNonce: nonce, answer: { failed: STILL_ANSWERING, retry: true } } };
+		return { claim, outcome: retryForm(stored.outcome, nonce) };
+	}
 	await sweepClaims(ctx);
-	const outcome = await turnOf(message, ask);
-	await ctx.kv.set(claim, { at, outcome }).catch((error: unknown) =>
-		ctx.log.warn("embark-helper: the answered question could not be recorded", {
-			error: messageOf(error),
-		}),
-	);
-	return outcome;
+	const outcome = await turnOf(message, ticket.requestId, ask);
+	try {
+		await ctx.kv.set(claim, { ...row, outcome });
+	} catch {
+		ctx.log.warn("embark-helper: the answered question could not be recorded");
+		await ctx.kv
+			.delete(claim)
+			.catch(() => ctx.log.warn("embark-helper: the broken question claim could not be cleared"));
+		return { outcome: { ...outcome, askNonce: nonce, banner: notice(SAVE_FAILED) } };
+	}
+	return { claim, outcome: retryForm(outcome, nonce) };
 }
 
 /** Does what the interaction asked, and says how it went. */
@@ -240,27 +381,30 @@ async function act(
 	input: Record<string, unknown>,
 	ask: Ask,
 	admin: boolean,
-): Promise<Outcome> {
+	user: NonNullable<HelperContext["user"]>,
+): Promise<ActionResult> {
 	const { type, action_id: action, value } = input;
-	if (type === "form_submit" && action === "ask") return asked(ctx, input, ask);
-	if (type !== "block_action") return {};
+	if (type === "form_submit" && action === "ask") return asked(ctx, input, ask, user);
+	if (type !== "block_action") return { outcome: {} };
 	if (action === "approve" || action === "reject") {
-		if (typeof value !== "string" || value === "") return {};
+		if (typeof value !== "string" || value === "") return { outcome: {} };
 		const a = await ask(action, { proposalId: value });
-		if (!("data" in a)) return { answer: a };
-		if (a.data.ok !== true) return { answer: { failed: UNREADABLE } };
-		return { toast: action === "approve" ? "Approved" : "Discarded" };
+		if (!("data" in a)) return { outcome: { answer: a } };
+		if (a.data.ok !== true) return { outcome: { answer: { failed: UNREADABLE } } };
+		return { outcome: { toast: action === "approve" ? "Approved" : "Discarded" } };
 	}
 	if (action === "toggle") {
 		if (!admin)
-			return { banner: notice("Only an administrator can turn the AI Helper on or off.") };
+			return {
+				outcome: { banner: notice("Only an administrator can turn the AI Helper on or off.") },
+			};
 		const a = await ask("toggle", { enabled: value === true });
-		if (!("data" in a)) return { answer: a };
+		if (!("data" in a)) return { outcome: { answer: a } };
 		const { enabled } = a.data;
-		if (typeof enabled !== "boolean") return { answer: { failed: UNREADABLE } };
-		return { toast: enabled ? "The AI Helper is on" : "The AI Helper is off" };
+		if (typeof enabled !== "boolean") return { outcome: { answer: { failed: UNREADABLE } } };
+		return { outcome: { toast: enabled ? "The AI Helper is on" : "The AI Helper is off" } };
 	}
-	return {};
+	return { outcome: {} };
 }
 
 /** The admin route: the page (`/`) and the dashboard widget (`widget:allowance`). */
@@ -275,6 +419,12 @@ export async function helperAdmin(ctx: HelperContext): Promise<BlockResponse> {
 	const ask: Ask = (op, body) => call(ctx, key, user, op, body);
 	if (widget) return helperWidget(await ask("overview", {}));
 	const admin = user.role >= ADMIN;
-	const outcome = await act(ctx, input, ask, admin);
-	return helperPage(await ask("overview", {}), outcome, admin);
+	const action = await act(ctx, input, ask, admin, user);
+	const page = helperPage(await ask("overview", {}), action.outcome, admin);
+	if (action.claim) {
+		await ctx.kv
+			.delete(action.claim)
+			.catch(() => ctx.log.warn("embark-helper: the rendered question claim could not be cleared"));
+	}
+	return page;
 }

@@ -52,6 +52,7 @@ describeEachDialect("site export", (dialect) => {
 		for (const forbidden of site.forbidden) {
 			expect(text, forbidden).not.toContain(forbidden);
 		}
+		expect(text).not.toContain("plugin:embark-helper:linkKey");
 		expect(result.operation.packageDigest).toBe(await reader.digest());
 	});
 

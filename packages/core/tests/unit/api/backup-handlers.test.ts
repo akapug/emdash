@@ -136,6 +136,7 @@ describe("backup handlers", () => {
 			await options.set("emdash:site_tagline", "Tagline");
 			await options.set("emdash:preview_secret", "super-secret-value");
 			await options.set("plugin:some-plugin:api_key", "plugin-secret");
+			await options.set("plugin:embark-helper:linkKey", "embark-link-key-secret");
 			await options.set("emdash:passkey_pending:user1", { challenge: "abc" });
 
 			const backup = JSON.parse(await generateBackupJson(db));
@@ -146,12 +147,14 @@ describe("backup handlers", () => {
 			expect(optionNames).toContain("emdash:site_tagline");
 			expect(optionNames).not.toContain("emdash:preview_secret");
 			expect(optionNames).not.toContain("plugin:some-plugin:api_key");
+			expect(optionNames).not.toContain("plugin:embark-helper:linkKey");
 			expect(optionNames).not.toContain("emdash:passkey_pending:user1");
 
 			// Raw string check: no secret value anywhere in the payload
 			const raw = await generateBackupJson(db);
 			expect(raw).not.toContain("super-secret-value");
 			expect(raw).not.toContain("plugin-secret");
+			expect(raw).not.toContain("embark-link-key-secret");
 
 			// Auth tables excluded entirely
 			expect(backup.schema).not.toHaveProperty("users");

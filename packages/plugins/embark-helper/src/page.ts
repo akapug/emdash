@@ -34,6 +34,8 @@ interface Allowance {
 
 /** What the interaction before this render did. */
 export interface Outcome {
+	/** Reuse this form nonce when a retriable turn may already have reached Embark. */
+	askNonce?: string;
 	/** A notice the plugin raised itself, before asking Embark anything. */
 	banner?: Block;
 	/** Embark's refusal, or the failure to reach it. */
@@ -89,7 +91,10 @@ const REFUSED = "The AI Helper did not do that";
 const UNAVAILABLE = "The AI Helper is not available";
 
 /** A refusal shows the server's message as it came, under `title`. */
-function answerBanner(a: Exclude<Answer, { data: Record<string, unknown> }>, title = REFUSED): Block {
+function answerBanner(
+	a: Exclude<Answer, { data: Record<string, unknown> }>,
+	title = REFUSED,
+): Block {
 	return "refused" in a
 		? { type: "banner", variant: "alert", title, description: a.refused.message }
 		: failure(a.failed);
@@ -326,9 +331,9 @@ function switchBlocks(enabled: boolean, admin: boolean): Block[] {
  */
 export const ASK_FORM = "ask:";
 
-const askForm = (): Block => ({
+const askForm = (nonce: string = crypto.randomUUID()): Block => ({
 	type: "form",
-	block_id: `${ASK_FORM}${crypto.randomUUID()}`,
+	block_id: `${ASK_FORM}${nonce}`,
 	fields: [
 		{
 			type: "text_input",
@@ -349,7 +354,8 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 		...("data" in overview ? [] : [answerBanner(overview, UNAVAILABLE)]),
 	];
 	const failures = [outcome.answer, "data" in overview ? undefined : overview];
-	if (failures.some((a) => a !== undefined && "failed" in a && a.retry === true)) alerts.push(RETRY);
+	if (failures.some((a) => a !== undefined && "failed" in a && a.retry === true))
+		alerts.push(RETRY);
 
 	const o = "data" in overview ? overviewOf(overview.data, outcome.turn) : null;
 	// The switch is the one way back on for an administrator who turned the Helper off.
@@ -358,7 +364,7 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 		? [
 				...switchBlocks(o.enabled, admin),
 				...allowanceBlocks(o.allowance),
-				...(o.enabled ? [{ type: "divider" as const }, askForm()] : []),
+				...(o.enabled ? [{ type: "divider" as const }, askForm(outcome.askNonce)] : []),
 				{ type: "divider" },
 				{ type: "header", text: "Recent conversation" },
 				...turnBlocks(o.turns),
@@ -368,6 +374,7 @@ export function helperPage(overview: Answer, outcome: Outcome, admin: boolean): 
 			]
 		: [
 				...(switchOn ? switchBlocks(false, true) : []),
+				...(outcome.askNonce ? [askForm(outcome.askNonce), { type: "divider" as const }] : []),
 				// The page could not be refreshed: keep what the turn just answered.
 				...(outcome.turn
 					? [
