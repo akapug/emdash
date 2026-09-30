@@ -24,6 +24,18 @@ export type HelperContext = Pick<RouteContext, "input" | "user" | "kv" | "http" 
 
 type Op = "overview" | "turn" | "approve" | "reject" | "toggle";
 type Ask = (op: Op, body: Record<string, unknown>) => Promise<Answer>;
+/** A turn asked of Embark, however long it takes: see turnAnswer. */
+type Turn = (body: Record<string, unknown>) => Promise<Answer>;
+
+/**
+ * What one POST came to: Embark's answer; `busy` when Embark says the turn
+ * this request id names is still running; or `lost` when no answer came back
+ * (the request failed or was cut off), so the turn may still be running.
+ */
+interface Sent {
+	state: "answered" | "busy" | "lost";
+	answer: Answer;
+}
 
 interface ReplayTicket {
 	at: number;
@@ -54,8 +66,29 @@ const ROLE_NAMES: Record<number, string> = {
 	40: "editor",
 	50: "admin",
 };
-/** A turn runs the model and its tools; every other op is one read or one write. */
-const TURN_TIMEOUT_MS = 90_000;
+/**
+ * How long a turn is waited on before the plugin asks after it: past this the
+ * question's request stays open and the same request id is sent again.
+ */
+const FIRST_WAIT_MS = 90_000;
+/**
+ * The longest a turn runs in Embark's control plane, from its own limits
+ * (akapug/embark packages/embark-helper: llm-route.ts MAX_RECURSION,
+ * PROVIDER_STREAM_DEADLINE_MS and MAX_TOOL_CALLS_PER_ROUND; mcp.ts
+ * DEFAULT_TIMEOUT_MS): at most 6 model rounds, each provider stream cut at
+ * 100 s, each round at most 8 tool calls, each call to the site cut at 30 s.
+ * 6 × (100 s + 8 × 30 s) is 34 minutes. Past it no answer is coming to this
+ * request, and the page says the Helper is still working.
+ */
+const TURN_LIMITS = { rounds: 6, streamMs: 100_000, toolCalls: 8, siteCallMs: 30_000 };
+const TURN_BOUND_MS =
+	TURN_LIMITS.rounds * (TURN_LIMITS.streamMs + TURN_LIMITS.toolCalls * TURN_LIMITS.siteCallMs);
+/** The pause after a re-send that Embark answered "in progress", or that was lost: 5 s, doubling to 30 s. */
+const RESEND_FIRST_MS = 5_000;
+const RESEND_MAX_MS = 30_000;
+/** Embark's error code for a request id whose turn is still running (a 429). */
+const IN_PROGRESS = "idempotency_in_progress";
+/** Every op but a turn is one read or one write. */
 const OP_TIMEOUT_MS = 20_000;
 const NON_ASCII = /[\u007f-\uffff]/g;
 /**
@@ -85,6 +118,10 @@ const STATUS_WORDS: Record<number, string> = {
 const OUT_OF_DATE = "This page was out of date, so the question was not sent. Ask it again.";
 const STILL_ANSWERING =
 	"The AI Helper did not finish recording that question. Ask it again to safely check for its reply.";
+const STILL_WORKING =
+	"The AI Helper is still working on that question. Ask it again from this form in a minute to check for its reply.";
+/** Why a turn's requests are let go once it is settled: not a failure, so it is not logged as one. */
+const SETTLED = "the turn is settled";
 const CLAIM_UNREADABLE =
 	"The AI Helper could not read the saved state for that question. Ask it again in a minute.";
 const SAVE_FAILED =
@@ -127,14 +164,23 @@ function refusalOf(body: unknown): { reason: string; message: string } | null {
 	};
 }
 
-async function call(
+/**
+ * One POST of `op` to Embark, cut off when `signal` aborts. A request that got
+ * no answer is `lost`; Embark's "in progress" for a turn is `busy`.
+ */
+async function send(
 	ctx: HelperContext,
 	key: string,
 	user: NonNullable<HelperContext["user"]>,
 	op: Op,
 	body: Record<string, unknown>,
-): Promise<Answer> {
-	if (!ctx.http) return { failed: "This site does not let the AI Helper reach Embark." };
+	signal: AbortSignal,
+): Promise<Sent> {
+	if (!ctx.http)
+		return {
+			state: "answered",
+			answer: { failed: "This site does not let the AI Helper reach Embark." },
+		};
 	let res: Response;
 	try {
 		res = await ctx.http.fetch(`${CONTROL_PLANE}${op}`, {
@@ -150,23 +196,107 @@ async function call(
 				}),
 			},
 			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(op === "turn" ? TURN_TIMEOUT_MS : OP_TIMEOUT_MS),
+			signal,
 		});
 	} catch (error) {
-		ctx.log.warn(`embark-helper: ${op} did not reach Embark`);
+		if (signal.reason !== SETTLED) ctx.log.warn(`embark-helper: ${op} did not reach Embark`);
 		const timedOut = isRecord(error) && error.name === "TimeoutError";
 		return {
-			failed: timedOut
-				? `Embark did not answer in time. ${TRY_AGAIN}`
-				: `The request to Embark did not go through. ${TRY_AGAIN}`,
-			retry: true,
+			state: "lost",
+			answer: {
+				failed: timedOut
+					? `Embark did not answer in time. ${TRY_AGAIN}`
+					: `The request to Embark did not go through. ${TRY_AGAIN}`,
+				retry: true,
+			},
 		};
 	}
 	const data: unknown = await res.json().catch(() => undefined);
 	const refused = refusalOf(data);
-	if (refused) return { refused };
-	if (!res.ok) return statusFailure(res.status, data);
-	return isRecord(data) ? { data } : { failed: UNREADABLE };
+	if (refused) return { state: "answered", answer: { refused } };
+	if (res.status === 429 && isRecord(data) && data.error === IN_PROGRESS)
+		return { state: "busy", answer: { failed: STILL_WORKING, retry: true } };
+	if (!res.ok) return { state: "answered", answer: statusFailure(res.status, data) };
+	return { state: "answered", answer: isRecord(data) ? { data } : { failed: UNREADABLE } };
+}
+
+/** `run` with a signal that aborts as a TimeoutError after `ms`. */
+async function within<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+	const deadline = new AbortController();
+	const timer = setTimeout(
+		() => deadline.abort(new DOMException("The operation timed out.", "TimeoutError")),
+		ms,
+	);
+	try {
+		return await run(deadline.signal);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** Waits `ms`, or less if `signal` aborts first. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+	if (signal.aborted) return Promise.resolve();
+	return new Promise((done) => {
+		const timer = setTimeout(done, ms);
+		signal.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timer);
+				done();
+			},
+			{ once: true },
+		);
+	});
+}
+
+/** A send's answer when Embark gave one; `null` while the turn runs or the send was lost. */
+const answered = (sent: Sent) => (sent.state === "answered" ? sent.answer : null);
+
+/**
+ * A turn's answer, however long Embark takes to give it. A customer never
+ * loses an answer that was paid for:
+ *
+ * - The question's request is never cut off while the turn may run. Embark
+ *   runs a turn only while its caller is connected, and 30 s after (Workers
+ *   waitUntil), so cutting it would stop the paid work halfway.
+ * - An answer, a refusal or a failure Embark gives within FIRST_WAIT_MS is
+ *   the answer, as before.
+ * - Past FIRST_WAIT_MS, or once Embark says the turn is "in progress", the
+ *   same request id is sent again, one re-send at a time and 5 s apart,
+ *   doubling to 30 s. Embark answers it "in progress" (429) while the turn
+ *   runs, and with the saved answer once it is done, without another model
+ *   call or charge. The first answer that is not "in progress" or lost, from
+ *   the kept request or a re-send, ends the wait.
+ * - Past TURN_BOUND_MS, Embark's longest turn, the answer says the Helper is
+ *   still working, and the same form asks after it again.
+ */
+async function turnAnswer(post: (signal: AbortSignal) => Promise<Sent>): Promise<Answer> {
+	const stop = new AbortController();
+	const bound = setTimeout(
+		() => stop.abort(new DOMException("Embark's longest turn has passed.", "TimeoutError")),
+		TURN_BOUND_MS,
+	);
+	const { promise: settled, resolve: settle } = Promise.withResolvers<Answer>();
+	try {
+		const first = post(stop.signal);
+		void first.then((sent) => {
+			if (sent.state === "answered") settle(sent.answer);
+			return sent;
+		});
+		const early = await Promise.race([first, pause(FIRST_WAIT_MS, stop.signal)]);
+		if (early && early.state !== "busy") return early.answer;
+		for (let gap = RESEND_FIRST_MS; !stop.signal.aborted; gap = Math.min(gap * 2, RESEND_MAX_MS)) {
+			const resent = await Promise.race([settled, post(stop.signal).then(answered)]);
+			if (resent) return resent;
+			const meanwhile = await Promise.race([settled, pause(gap, stop.signal).then(() => null)]);
+			if (meanwhile) return meanwhile;
+		}
+		return { failed: STILL_WORKING, retry: true };
+	} finally {
+		clearTimeout(bound);
+		stop.abort(SETTLED);
+	}
 }
 
 /** A non-2xx answer: "Try again" only for a busy or broken Embark (429, 5xx), where it can help. */
@@ -182,8 +312,8 @@ function statusFailure(status: number, body?: unknown): Answer {
 		: { failed: message };
 }
 
-async function turnOf(message: string, requestId: string, ask: Ask): Promise<Outcome> {
-	const a = await ask("turn", { message, request_id: requestId });
+async function turnOf(message: string, requestId: string, turn: Turn): Promise<Outcome> {
+	const a = await turn({ message, request_id: requestId });
 	if (!("data" in a)) return { answer: a };
 	const { reply, proposals } = a.data;
 	if (typeof reply !== "string") return { answer: { failed: UNREADABLE } };
@@ -206,7 +336,7 @@ async function settledOf(
 	ctx: HelperContext,
 	claim: string,
 ): Promise<StoredClaim | null | undefined> {
-	const until = Date.now() + TURN_TIMEOUT_MS + OP_TIMEOUT_MS;
+	const until = Date.now() + FIRST_WAIT_MS + OP_TIMEOUT_MS;
 	for (;;) {
 		let row: unknown;
 		try {
@@ -306,7 +436,7 @@ const retryForm = (outcome: Outcome, nonce: string): Outcome =>
 async function asked(
 	ctx: HelperContext,
 	input: Record<string, unknown>,
-	ask: Ask,
+	turn: Turn,
 	user: NonNullable<HelperContext["user"]>,
 ): Promise<ActionResult> {
 	const { block_id: block, values } = input;
@@ -362,7 +492,13 @@ async function asked(
 		return { claim, outcome: retryForm(stored.outcome, nonce) };
 	}
 	await sweepClaims(ctx);
-	const outcome = await turnOf(message, ticket.requestId, ask);
+	const outcome = await turnOf(message, ticket.requestId, turn);
+	// Embark keeps a request id's answer 15 minutes from the turn's end, and a
+	// turn can run longer than that: the ticket's 15 minutes start now, so the
+	// same form asks after the same request id for as long as Embark keeps it.
+	await ctx.kv
+		.set(`${REPLAY}${nonce}`, { ...ticket, at: Date.now() })
+		.catch(() => ctx.log.warn("embark-helper: the question id could not be kept"));
 	try {
 		await ctx.kv.set(claim, { ...row, outcome });
 	} catch {
@@ -380,11 +516,12 @@ async function act(
 	ctx: HelperContext,
 	input: Record<string, unknown>,
 	ask: Ask,
+	turn: Turn,
 	admin: boolean,
 	user: NonNullable<HelperContext["user"]>,
 ): Promise<ActionResult> {
 	const { type, action_id: action, value } = input;
-	if (type === "form_submit" && action === "ask") return asked(ctx, input, ask, user);
+	if (type === "form_submit" && action === "ask") return asked(ctx, input, turn, user);
 	if (type !== "block_action") return { outcome: {} };
 	if (action === "approve" || action === "reject") {
 		if (typeof value !== "string" || value === "") return { outcome: {} };
@@ -416,10 +553,12 @@ export async function helperAdmin(ctx: HelperContext): Promise<BlockResponse> {
 	if (typeof key !== "string") return errorPage(key.failed, widget);
 	const user = ctx.user;
 	if (!user || user.role < EDITOR) return sentence(EDITORS_ONLY);
-	const ask: Ask = (op, body) => call(ctx, key, user, op, body);
+	const ask: Ask = (op, body) =>
+		within(OP_TIMEOUT_MS, (signal) => send(ctx, key, user, op, body, signal)).then((s) => s.answer);
+	const turn: Turn = (body) => turnAnswer((signal) => send(ctx, key, user, "turn", body, signal));
 	if (widget) return helperWidget(await ask("overview", {}));
 	const admin = user.role >= ADMIN;
-	const action = await act(ctx, input, ask, admin, user);
+	const action = await act(ctx, input, ask, turn, admin, user);
 	const page = helperPage(await ask("overview", {}), action.outcome, admin);
 	if (action.claim) {
 		await ctx.kv
