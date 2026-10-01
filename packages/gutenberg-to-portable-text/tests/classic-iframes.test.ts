@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import { gutenbergToPortableText } from "../src/index.js";
-import type { PortableTextBlock } from "../src/types.js";
+import type { PortableTextBlock, PortableTextTextBlock } from "../src/types.js";
 
 const VIDEO_ID = "dQw4w9WgXcQ";
 const WATCH_URL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
@@ -56,19 +56,13 @@ describe("classic iframes: a provider's player becomes an embed of its page", ()
 			"youtube",
 		],
 		[
-			"a YouTube playlist",
-			"https://www.youtube.com/embed/videoseries?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG",
-			"https://www.youtube.com/playlist?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG",
+			"a YouTube video in a playlist",
+			`https://www.youtube.com/embed/${VIDEO_ID}?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG`,
+			WATCH_URL,
 			"youtube",
 		],
 		["YouTube on the page's scheme", `//www.youtube.com/embed/${VIDEO_ID}`, WATCH_URL, "youtube"],
 		["Vimeo", "https://player.vimeo.com/video/76979871", "https://vimeo.com/76979871", "vimeo"],
-		[
-			"an unlisted Vimeo video",
-			"https://player.vimeo.com/video/76979871?h=8272103f6e&amp;badge=0",
-			"https://vimeo.com/76979871/8272103f6e",
-			"vimeo",
-		],
 		...["track", "episode", "show", "playlist", "album"].map((kind) => [
 			`a Spotify ${kind}`,
 			`https://open.spotify.com/embed/${kind}/4cOdK2wGLETKBW3PvgPWqT?utm_source=generator`,
@@ -88,9 +82,15 @@ describe("classic iframes: a provider's player becomes an embed of its page", ()
 			"instagram",
 		],
 		[
+			"an Instagram post with its caption",
+			"https://www.instagram.com/p/CxYz123AbC/embed/captioned/",
+			"https://www.instagram.com/p/CxYz123AbC/",
+			"instagram",
+		],
+		[
 			"a CodePen pen",
-			"https://codepen.io/team/embed/abcXYZ?default-tab=result",
-			"https://codepen.io/team/pen/abcXYZ",
+			"https://codepen.io/someone/embed/abcXYZ?default-tab=result",
+			"https://codepen.io/someone/pen/abcXYZ",
 			"codepen",
 		],
 		[
@@ -98,13 +98,6 @@ describe("classic iframes: a provider's player becomes an embed of its page", ()
 			"https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Fexample%2Fvideos%2F10153231379946729%2F&amp;show_text=0",
 			"https://www.facebook.com/example/videos/10153231379946729/",
 			"facebook",
-		],
-		// A player from a provider EmDash knows, with no page URL to read from it: its own URL
-		[
-			"a TikTok video",
-			"https://www.tiktok.com/embed/v2/7211234567890123456",
-			"https://www.tiktok.com/embed/v2/7211234567890123456",
-			"tiktok",
 		],
 	])("embeds %s from its player", (_, src, url, provider) => {
 		expect(gutenbergToPortableText(iframe(src))).toEqual([
@@ -117,6 +110,60 @@ describe("classic iframes: a provider's player becomes an embed of its page", ()
 		const [fromUrl] = gutenbergToPortableText(WATCH_URL, { keyGenerator: keys() });
 
 		expect(fromIframe).toEqual(fromUrl);
+	});
+
+	// EmDash's embed component draws a player for a YouTube video or a public Vimeo video,
+	// and a link for a page it has no player for. A player whose page it cannot draw, or
+	// whose page URL cannot be read from it, keeps its iframe, which plays where it did.
+	it.each([
+		[
+			"a YouTube live stream",
+			"https://www.youtube.com/embed/live_stream?channel=UCabcdefghijklmnopqrstuv",
+		],
+		[
+			"a YouTube playlist",
+			"https://www.youtube.com/embed/videoseries?list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG",
+		],
+		[
+			"a YouTube playlist by its query",
+			"https://www.youtube.com/embed?listType=playlist&amp;list=PLabc",
+		],
+		["YouTube's player with no video", "https://www.youtube.com/embed/"],
+		["an unlisted Vimeo video", "https://player.vimeo.com/video/76979871?h=8272103f6e&amp;badge=0"],
+		["an unlisted Vimeo video with any hash", "https://player.vimeo.com/video/123?h=ab-cd"],
+		["a Vimeo showcase", "https://vimeo.com/showcase/123/embed"],
+		["a Spotify artist", "https://open.spotify.com/embed/artist/0OdUWJ0sBjDrqHygGUXeCF"],
+		[
+			"an old Spotify podcast player",
+			"https://open.spotify.com/embed-podcast/episode/4rOoJ6Egrf8K2IrywzwOMk",
+		],
+		[
+			"Spotify by its URI",
+			"https://open.spotify.com/embed?uri=spotify:track:4cOdK2wGLETKBW3PvgPWqT",
+		],
+		[
+			"a private SoundCloud track",
+			"https://w.soundcloud.com/player/?url=https://api.soundcloud.com/tracks/293&amp;secret_token=s-abc",
+		],
+		[
+			"a SoundCloud player for a page elsewhere",
+			"https://w.soundcloud.com/player/?url=https://evil.example/x",
+		],
+		[
+			"a Facebook page",
+			"https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fexample",
+		],
+		[
+			"a Facebook video of a page elsewhere",
+			"https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fevil.example%2Fx",
+		],
+		["a tweet", "https://platform.twitter.com/embed/Tweet.html?id=123"],
+		["a CodePen team pen", "https://codepen.io/team/acme/embed/abcXYZ"],
+		["a TikTok video", "https://www.tiktok.com/embed/v2/7211234567890123456"],
+	])("keeps the iframe of %s", (_, src) => {
+		expect(gutenbergToPortableText(iframe(src))).toEqual([
+			{ _type: "htmlBlock", _key: expect.any(String), html: iframe(src) },
+		]);
 	});
 });
 
@@ -169,6 +216,30 @@ describe("classic iframes: where the iframe stands, it stays", () => {
 		expect(after).toMatchObject({
 			children: [{ text: "then " }, { text: "read on" }, { text: "." }],
 			markDefs: [{ _type: "link", href: "https://example.com/" }],
+		});
+	});
+
+	it("keeps a link or a bold run around it on the text either side of it", () => {
+		const link = gutenbergToPortableText(
+			`<p>Watch <a href="https://example.com/">this ${YOUTUBE} clip</a> now.</p>`,
+		);
+		expect(shape(link)).toEqual(["Watch this", `[embed youtube ${WATCH_URL}]`, "clip now."]);
+		const [before, , after] = link;
+		const href = [{ _type: "link", href: "https://example.com/" }];
+		expect(before).toMatchObject({
+			children: [{ text: "Watch " }, { text: "this" }],
+			markDefs: href,
+		});
+		expect(after).toMatchObject({
+			children: [{ text: "clip" }, { text: " now." }],
+			markDefs: href,
+		});
+		expect((after as PortableTextTextBlock).children[0]!.marks).toHaveLength(1);
+
+		const bold = gutenbergToPortableText(`<p><strong>Bold ${YOUTUBE} still bold</strong> end</p>`);
+		expect(shape(bold)).toEqual(["Bold", `[embed youtube ${WATCH_URL}]`, "still bold end"]);
+		expect(bold[2]).toMatchObject({
+			children: [{ text: "still bold", marks: ["strong"] }, { text: " end" }],
 		});
 	});
 
@@ -230,7 +301,7 @@ describe("classic iframes: where the iframe stands, it stays", () => {
 	});
 });
 
-describe("classic iframes: an iframe from any other host is kept as written", () => {
+describe("classic iframes: an iframe from any other host is kept", () => {
 	it("keeps a Google map on a line of its own as an HTML block", () => {
 		const content = `<p>Find us.</p>\n${MAP}\n<p>Open daily.</p>`;
 		const result = gutenbergToPortableText(content);
@@ -248,10 +319,18 @@ describe("classic iframes: an iframe from any other host is kept as written", ()
 		]);
 	});
 
-	it("keeps a form inside a div as an HTML block", () => {
-		const form = `<iframe src="https://docs.google.com/forms/d/e/1FAIpQLSf/viewform?embedded=true" width="640" height="800">Loading…</iframe>`;
-		expect(shape(gutenbergToPortableText(`<div class="form">${form}</div>`))).toEqual([
-			`[html ${form}]`,
+	it("keeps a form inside a div as an HTML block, without the fallback text a browser never shows", () => {
+		const form = `<iframe src="https://docs.google.com/forms/d/e/1FAIpQLSf/viewform?embedded=true" width="640" height="800">`;
+		expect(
+			shape(gutenbergToPortableText(`<div class="form">${form}Loading…</iframe></div>`)),
+		).toEqual([`[html ${form}</iframe>]`]);
+	});
+
+	it("keeps only the attributes that draw the frame", () => {
+		// srcdoc would replace the page the src names, and on* attributes run script: neither is kept
+		const content = `<p><iframe src="https://maps.example.com/x?a=1&amp;b=2" srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;" onload="alert(2)" title='Say "hi"' loading="lazy" referrerpolicy="no-referrer" allow="fullscreen" class="wide" style="border:0"><script>alert(3)</script></iframe></p>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			`[html <iframe src="https://maps.example.com/x?a=1&amp;b=2" title="Say &quot;hi&quot;" loading="lazy" referrerpolicy="no-referrer" allow="fullscreen"></iframe>]`,
 		]);
 	});
 
@@ -262,10 +341,19 @@ describe("classic iframes: an iframe from any other host is kept as written", ()
 	});
 
 	it("keeps an iframe a page builder closed in its start tag", () => {
-		const unclosed = `<iframe src="https://www.google.com/maps/embed?pb=abc" />`;
-		expect(shape(gutenbergToPortableText(`${unclosed}\n\n<p>After.</p>`))).toEqual([
-			`[html ${unclosed}]`,
-			"After.",
+		const closed = `<iframe src="https://www.google.com/maps/embed?pb=abc"></iframe>`;
+		const content = `<iframe src="https://www.google.com/maps/embed?pb=abc" />\n\n<p>After.</p>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([`[html ${closed}]`, "After."]);
+	});
+
+	it("keeps what follows an iframe closed in its start tag, up to the next iframe's end tag", () => {
+		const map = `<iframe src="https://www.google.com/maps/embed?pb=a" />`;
+		const content = `${map}\n\n<p>Middle text.</p>\n\n${YOUTUBE}\n\n<p>Last.</p>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			`[html <iframe src="https://www.google.com/maps/embed?pb=a"></iframe>]`,
+			"Middle text.",
+			`[embed youtube ${WATCH_URL}]`,
+			"Last.",
 		]);
 	});
 });
@@ -283,9 +371,9 @@ describe("classic iframes: what a browser does not draw is not lifted", () => {
 
 	it("drops an iframe whose src is not a web URL inside a paragraph, and keeps its text one block", () => {
 		const content = `<p>Before ${iframe("javascript:alert(1)")} after.</p>`;
-		const result = gutenbergToPortableText(content);
+		const text = shape(gutenbergToPortableText(content)).map((t) => t.replace(/\s+/g, " "));
 
-		expect(result.map((b) => b._type)).toEqual(["block"]);
+		expect(text).toEqual(["Before after."]);
 	});
 
 	it("leaves an iframe in a comment alone", () => {
