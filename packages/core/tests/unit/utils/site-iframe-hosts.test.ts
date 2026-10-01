@@ -119,12 +119,12 @@ describe("siteIframeHosts: the site's own iframe hosts at render", () => {
 		});
 	});
 
-	// THE COMPOSITION: the row exactly as Embark's tenant writer stores it
-	// (scripts/tenant/lib/iframe-hosts.mjs writeIframeHosts: sql.setOption, so
-	// JSON.stringify of fixup 7's canonical sorted siteHosts; this string is its
-	// test's stored value), read by the render-side settings reader, fed to the
-	// sanitizer.
-	it("draws the maps and forms a row written by Embark's tenant writer names, and links the rest", async () => {
+	// A seeded options row matching the serialization Embark's tenant writer uses
+	// (scripts/tenant/lib/iframe-hosts.mjs writeIframeHosts: JSON.stringify of the
+	// canonical sorted hosts). It exercises this repository's settings reader and
+	// sanitizer on that shape; it does not run the writer, which lives in another
+	// repository and is proven on a real tenant.
+	it("draws the maps and forms a seeded row in Embark's serialization names, and links the rest", async () => {
 		const EMBARK_ROW = '["calendly.com","www.google.com"]';
 		await db
 			.updateTable("options")
