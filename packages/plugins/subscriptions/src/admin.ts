@@ -11,9 +11,9 @@ import {
 	type SubscriptionsEnv,
 } from "./subscriptions.js";
 
-/** How to get the list out of WordPress.com, in the owner's steps. */
+/** How to get the list out of the platform that kept it, in the owner's steps. */
 const EXPORT_STEPS =
-	"On WordPress.com (or in the WordPress admin: Jetpack, then Newsletter), open Subscribers and download the subscriber list as a CSV file. Paste the file's text here. Each address in it becomes a confirmed subscriber, its consent recorded as brought over from WordPress; a row the file marks as not subscribed is left out. No email is sent.";
+	"From WordPress.com (or the WordPress admin: Jetpack, then Newsletter): open Subscribers and download the list as a CSV file. From Substack: Settings, then Exports, then download a zip of all your data, and open the email_list file inside it. Paste the file's text here. Each address becomes a confirmed subscriber, its consent recorded as brought over; a reader the file marks as not subscribed, or as having turned email off, is left out. No email is sent.";
 
 async function page(env: SubscriptionsEnv, report?: ImportReport) {
 	const s = await stats(env);
@@ -41,9 +41,9 @@ async function page(env: SubscriptionsEnv, report?: ImportReport) {
 						description:
 							"Sign-ups are saved and visitors are told no email was sent. Confirmations and new posts wait, and go out once the site's email is set up.",
 					},
-			...(report ? [reportBlock(report)] : []),
+			...(report ? [reportBlock(report)].flat() : []),
 			{ type: "divider" },
-			{ type: "header", text: "Import the list WordPress kept" },
+			{ type: "header", text: "Import a subscriber list from another platform" },
 			{ type: "context", text: EXPORT_STEPS },
 			{
 				type: "form",
@@ -70,6 +70,21 @@ function reportBlock(r: ImportReport) {
 			title: "Nothing was imported",
 			description: r.refused,
 		};
+	return r.paid > 0 ? [reportFields(r), paidBanner(r)] : [reportFields(r)];
+}
+
+/** Paying readers' payments stay where they were: a person moves them. */
+function paidBanner(r: ImportReport) {
+	return {
+		type: "banner",
+		variant: "alert",
+		title: `${r.paid} reader(s) pay for this newsletter`,
+		description:
+			"This import moves addresses, not payments: paid subscriptions keep running where they were until a person moves them. Ask whoever hosts your site for help before you stop the old one.",
+	};
+}
+
+function reportFields(r: ImportReport) {
 	const skipped = Object.entries(r.notSubscribed)
 		.map(([state, n]) => `${n} marked "${state || "blank"}"`)
 		.join(", ");

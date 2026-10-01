@@ -44,8 +44,10 @@ export interface Subscriber {
 	confirmedAt?: string;
 	/** How the address was given, to which site, on which page, and when. */
 	consent: {
-		/** On this site's form, or brought over with the list WordPress kept. */
+		/** On this site's form, or brought over with a list another platform kept. */
 		source: "form" | "import";
+		/** An imported address: the platform whose list it came from, when the file says (Substack's does). */
+		from?: string;
 		/** The site it was given to: its host. */
 		site: string;
 		/** The page the form was on (a path). */
@@ -560,11 +562,24 @@ const DATE_HEADER = /date|subscribed|created|since/i;
 const STATUS_HEADER = /^(?:status|state|subscription[ _-]?status)$/i;
 /** States that are a subscription: anything else in a status column is not imported. */
 const SUBSCRIBED = /^(?:|active|subscribed|confirmed|free|paid|email[ _-]?subscriber)$/i;
+/** A column saying the reader turned email off (Substack's `email_disabled`): a true value there is no consent. */
+const DISABLED_HEADER = /^(?:e-?mail[ _-]?disabled|unsubscribed)$/i;
+/** A paid plan's columns: Substack's `active_subscription`, and its `plan`. */
+const ACTIVE_HEADER = /^active[ _-]?subscription$/i;
+const PLAN_HEADER = /^plan$/i;
+/** Substack writes a free reader's plan as `other`. */
+const FREE_PLAN = /^(?:|other|free|none)$/i;
+const TRUE = /^(?:true|yes|y|1)$/i;
+/** The address Substack puts in place of a reader who asked for their data to be deleted. */
+const DELETION_REQUEST = /@deletion-request\.substack\.com$/i;
 
 /** A date and time with no zone, as exports write them: taken as UTC. */
 const NAIVE_DATE = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?))?$/;
 /** A date and time with its zone. */
 const ZONED_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+/** A row's field in a column, trimmed; "" for a column the file does not have. */
+const cell = (row: string[], at: number): string => (at >= 0 ? (row[at] ?? "").trim() : "");
 
 /** When a file's date says, as an ISO string; none for a date it does not write as ISO 8601. */
 function dateOf(text: string): string | undefined {
@@ -592,18 +607,30 @@ export interface ImportReport {
 	invalid: number;
 	/** Rows the file's status column says are not subscribed, by that status. */
 	notSubscribed: Record<string, number>;
+	/**
+	 * Rows the file marks as paying (an active subscription, or a plan that is
+	 * not free), whether or not they get email: this list moves addresses, not
+	 * payments, so a person has to move those.
+	 */
+	paid: number;
+	/** The platform the file is from, when its columns say (Substack's do). */
+	from?: string;
 	/** Why nothing was read, when nothing was. */
 	refused?: string;
 }
 
 /**
- * The subscriber list a WordPress site kept elsewhere (Jetpack keeps it on
- * WordPress.com), as the CSV its export writes: a header line naming an
- * address column (`email`, `email_address`, ...), and, when it has them, a
- * date and a status column. Each address becomes a confirmed subscriber,
- * with its consent recorded as brought over from WordPress; a row whose
- * status says it is not subscribed (unsubscribed, pending, blocked) is not
- * imported. Nothing is sent to anyone.
+ * The subscriber list a site kept on another platform, as the CSV its export
+ * writes: WordPress.com's (Jetpack keeps the list there) or the email_list
+ * file in Substack's export. A header line names an address column (`email`,
+ * `email_address`, ...), and, when it has them, a date and a status column.
+ * Each address becomes a confirmed subscriber, its consent recorded as
+ * brought over (and from which platform, when the file says). A row is not
+ * imported when its status says it is not subscribed (unsubscribed,
+ * pending, blocked), when it says the reader turned email off (Substack's
+ * `email_disabled`), or when it is the address Substack leaves for a reader
+ * who asked to be deleted. Paying readers are counted: their payments do not
+ * move with the list. Nothing is sent to anyone.
  */
 export async function importSubscribers(env: SubscriptionsEnv, csv: string): Promise<ImportReport> {
 	const report: ImportReport = {
@@ -613,6 +640,7 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 		already: 0,
 		invalid: 0,
 		notSubscribed: {},
+		paid: 0,
 	};
 	const rows = parseCsv(csv);
 	let header = (rows[0] ?? []).map((h) => h.trim());
@@ -645,19 +673,40 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 		};
 	const dateAt = header.findIndex((h, i) => i !== emailAt && DATE_HEADER.test(h));
 	const statusAt = header.findIndex((h, i) => i !== emailAt && STATUS_HEADER.test(h));
+	const disabledAt = header.findIndex((h) => DISABLED_HEADER.test(h));
+	const activeAt = header.findIndex((h) => ACTIVE_HEADER.test(h));
+	const planAt = header.findIndex((h) => PLAN_HEADER.test(h));
+	const from = disabledAt >= 0 && (activeAt >= 0 || planAt >= 0) ? "substack" : undefined;
+	if (from) report.from = from;
 	const site = hostOf(env.site.url);
 	const now = env.now().toISOString();
+	const skip = (key: string) => {
+		report.notSubscribed[key] = (report.notSubscribed[key] ?? 0) + 1;
+	};
 	for (const row of data) {
 		report.rows++;
-		const state = statusAt >= 0 ? (row[statusAt] ?? "").trim() : "";
+		// An active subscription decides when the file has one; a plan alone, when it has not.
+		const paying =
+			activeAt >= 0
+				? TRUE.test(cell(row, activeAt))
+				: planAt >= 0 && !FREE_PLAN.test(cell(row, planAt));
+		if (paying) report.paid++;
+		const state = cell(row, statusAt);
 		if (!SUBSCRIBED.test(state)) {
-			const key = state.toLowerCase().slice(0, 40);
-			report.notSubscribed[key] = (report.notSubscribed[key] ?? 0) + 1;
+			skip(state.toLowerCase().slice(0, 40));
+			continue;
+		}
+		if (TRUE.test(cell(row, disabledAt))) {
+			skip("email turned off");
 			continue;
 		}
 		const email = normalizeEmail(row[emailAt]);
 		if (!email) {
 			report.invalid++;
+			continue;
+		}
+		if (DELETION_REQUEST.test(email)) {
+			skip("asked to be deleted");
 			continue;
 		}
 		const subscribedAt = dateAt >= 0 ? dateOf(row[dateAt] ?? "") : undefined;
@@ -667,7 +716,13 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 			status: "confirmed",
 			createdAt: now,
 			confirmedAt: now,
-			consent: { source: "import", site, at: now, ...(subscribedAt ? { subscribedAt } : {}) },
+			consent: {
+				source: "import",
+				...(from ? { from } : {}),
+				site,
+				at: now,
+				...(subscribedAt ? { subscribedAt } : {}),
+			},
 		};
 		const made = await env.subscribers.compareAndSet(id, null, imported);
 		if (made.applied) {
