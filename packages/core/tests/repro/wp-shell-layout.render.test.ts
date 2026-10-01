@@ -25,8 +25,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import WpShellComments from "../../../../templates/blog-cloudflare/src/components/WpShellComments.astro";
 import WpShellForm from "../../../../templates/blog-cloudflare/src/components/WpShellForm.astro";
 import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.astro";
+import PostsIndexRoute from "../../../../templates/blog-cloudflare/src/pages/posts/index.astro";
 import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/[...path].astro";
-import { wpShellProblem } from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
+import WpShellListingRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/listing.astro";
+import {
+	wpShellIndexRoute,
+	wpShellProblem,
+} from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
 import FormEmbed from "../../../plugins/forms/src/astro/FormEmbed.astro";
 import type { PublicFormDefinition } from "../../../plugins/forms/src/public-definition.js";
 import { createCommentBody } from "../../src/api/schemas/comments.js";
@@ -41,7 +46,9 @@ const reads = vi.hoisted(() => ({
 	getCommentCount: vi.fn(),
 	getCollectionInfo: vi.fn(),
 	getComments: vi.fn(),
-	getHomepage: vi.fn(async (): Promise<unknown> => ({ entry: null, collection: "pages", cacheHint: {} })),
+	getHomepage: vi.fn(
+		async (): Promise<unknown> => ({ entry: null, collection: "pages", cacheHint: {} }),
+	),
 }));
 
 /** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own. */
@@ -53,6 +60,8 @@ async function emdashReads() {
 		getContentSeo: seo.getContentSeo,
 		decodeSlug: slug.decodeSlug,
 		getEmDashCollection: reads.getEmDashCollection,
+		getTermsForEntries: async () => new Map(),
+		createNoop: () => ({}),
 		getEmDashEntry: reads.getEmDashEntry,
 		getCommentCount: reads.getCommentCount,
 		getCollectionInfo: reads.getCollectionInfo,
@@ -88,6 +97,10 @@ async function commentComponents() {
 	};
 }
 vi.mock("emdash/ui/comments", commentComponents);
+// The template's own Base layout, stood in for: its fonts need the site's build (the posts index draws in it).
+vi.mock("../../../../templates/blog-cloudflare/src/layouts/Base.astro", async () => ({
+	default: (await import("./StubBase.astro")).default,
+}));
 vi.mock("../../src/ui-comments.ts", commentComponents);
 
 const HOLE = (s: string) => ({ s });
@@ -819,7 +832,11 @@ describe("the /wp-shell/ route: the pages whose title the record's titles leave 
 		reads.shell = { ...own, titles };
 		const slug = path === "home" ? "welcome" : path.split("/")[1]!;
 		reads.getEmDashEntry.mockResolvedValue({ entry: entry(slug), cacheHint: {} });
-		reads.getHomepage.mockResolvedValue({ entry: entry("welcome"), collection: "pages", cacheHint: {} });
+		reads.getHomepage.mockResolvedValue({
+			entry: entry("welcome"),
+			collection: "pages",
+			cacheHint: {},
+		});
 		const c = await AstroContainer.create();
 		return c.renderToString(WpShellRoute, {
 			params: { path },
@@ -844,7 +861,8 @@ describe("the /wp-shell/ route: the pages whose title the record's titles leave 
 	it("draws the title of the pages `shown` names alone", async () => {
 		const titles = { shown: ["donate"] };
 		expect(await draw("pages/donate", titles)).toContain("The donate title</h1>");
-		for (const path of ["pages/about", "home"]) expect(await draw(path, titles), path).not.toMatch(TITLE);
+		for (const path of ["pages/about", "home"])
+			expect(await draw(path, titles), path).not.toMatch(TITLE);
 	});
 });
 
@@ -1421,5 +1439,170 @@ describe("the /wp-shell/ route: a post's comments in the theme's comment area", 
 		// a record with no post layout draws no comments wrapper either
 		const html = await route({ ...record() });
 		expect(html).not.toContain("comments-wrapper");
+	});
+});
+
+describe("a slot map's site: the subtitle and the posts index, drawn as a page is", () => {
+	/** The record with a subtitle slot after its title, and a posts index cut from the site's listing page. */
+	const slotMapped = (index: "listing" | "plain" | "none" = "listing") => {
+		const r = record();
+		r.parts.splice(2, 0, { slot: "subtitle", tag: "h3", class: "subtitle" } as never);
+		return {
+			...r,
+			...(index === "none"
+				? {}
+				: {
+						index: {
+							body: { class: "archive-page" },
+							styles: ["/_emdash/api/media/file/wp-shell/index1.css"],
+							parts: [
+								{ html: '<header id="site-header"></header><main class="archive">' },
+								{ slot: "title", tag: "h1", class: "wp-shell-untitled" },
+								{ slot: "content", tag: "div", class: "cards" },
+								{ html: "</main>" },
+							],
+							...(index === "listing" ? { listing: 0 } : {}),
+						},
+					}),
+		};
+	};
+	const entries = (n: number) =>
+		Array.from({ length: n }, (_, i) => ({
+			id: `post-${i + 1}`,
+			data: {
+				title: `Post <${i + 1}>`,
+				excerpt: `Excerpt ${i + 1}`,
+				content: [],
+				publishedAt: new Date(Date.UTC(2023, 6, 20 - i, 12)),
+			},
+			edit: { title: {}, excerpt: {} },
+		}));
+
+	async function post(excerpt: string) {
+		reads.shell = slotMapped();
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "ice-roads",
+				data: {
+					id: "01POST",
+					title: "Ice roads",
+					excerpt,
+					content: [],
+					translationGroup: "01POST",
+					updatedAt: new Date("2026-02-01T00:00:00Z"),
+					publishedAt: new Date("2026-01-15T08:30:00Z"),
+				},
+				edit: { title: {}, content: {}, excerpt: { "data-emdash-ref": "excerpt" } },
+			},
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellRoute, {
+			params: { path: "posts/ice-roads" },
+			request: new Request("https://example.org/posts/ice-roads"),
+		});
+	}
+
+	it("draws the post's excerpt, escaped, in the subtitle element after its title, with the excerpt's edit markers", async () => {
+		const html = await post("The road & the <sea>");
+		expect(html).toMatch(
+			/<h1 class="entry-title"[^>]*>Ice roads<\/h1>\s*<h3 class="subtitle" data-emdash-ref="excerpt">The road &amp; the &lt;sea&gt;<\/h3>/,
+		);
+	});
+
+	it("draws no subtitle element for a post with no excerpt", async () => {
+		const html = await post("");
+		expect(html).not.toContain('class="subtitle"');
+		expect(html).toContain('class="entry-title"');
+	});
+
+	async function postsIndex(
+		shell: unknown,
+		url = "https://example.org/posts",
+		next: string | null = null,
+	) {
+		reads.shell = shell;
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: entries(2),
+			cacheHint: {},
+			...(next ? { nextCursor: next } : {}),
+		});
+		const c = await AstroContainer.create();
+		return c.renderToString(WpShellListingRoute, { request: new Request(url) });
+	}
+
+	it("draws the posts index in its own layout, each post in the cards' markup where the cards were, a page of the site's posts", async () => {
+		const html = await postsIndex(slotMapped("listing"));
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			orderBy: { published_at: "desc" },
+			limit: 10,
+		});
+		expect(html).toContain(
+			'<link rel="stylesheet" href="/_emdash/api/media/file/wp-shell/index1.css">',
+		);
+		expect(html).toMatch(/<body class="archive-page">/);
+		expect(html).toContain('<div class="cards"');
+		expect(html).toContain(
+			'<div class="item"><h3 class="item-title"><a href="/posts/post-1">Post &lt;1&gt;</a></h3><p class="excerpt">Excerpt 1</p><span class="date">July 20, 2023</span></div>',
+		);
+		expect(html).toContain('<a href="/posts/post-2">Post &lt;2&gt;</a>');
+		expect(html).toContain("<title>All Posts");
+		expect(html).not.toContain("wp-shell-index-nav");
+	});
+
+	it("draws plain items where the record's index has no listing, never a card of the source's", async () => {
+		const html = await postsIndex(slotMapped("plain"));
+		expect(html).toContain(
+			'<article class="wp-shell-index-post"><h2 class="wp-shell-index-title"><a href="/posts/post-1">Post &lt;1&gt;</a></h2>',
+		);
+		expect(html).not.toContain('class="item-title"');
+	});
+
+	it("takes the page asked for by its cursor, and links the newest page and the next older one", async () => {
+		const html = await postsIndex(
+			slotMapped("listing"),
+			"https://example.org/posts?cursor=c1",
+			"c2",
+		);
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			orderBy: { published_at: "desc" },
+			limit: 10,
+			cursor: "c1",
+		});
+		expect(html).toContain(
+			'<a class="wp-shell-index-newest" href="/posts">Newest posts</a><a class="wp-shell-index-older" rel="next" href="/posts?cursor=c2">Older posts</a>',
+		);
+		// EmDash's head writes the canonical address in its own form.
+		expect(html).toContain('<link rel="canonical" href="https://example.org/posts/?cursor=c1">');
+	});
+
+	it("goes to the record's index route only for a record with an index, the query along", () => {
+		expect(wpShellIndexRoute(slotMapped("listing") as never, "?cursor=c1")).toBe(
+			"/wp-shell/listing?cursor=c1",
+		);
+		expect(wpShellIndexRoute(slotMapped("plain") as never)).toBe("/wp-shell/listing");
+		for (const shell of [slotMapped("none"), record(), null])
+			expect(wpShellIndexRoute(shell as never, "?cursor=c1")).toBeNull();
+	});
+
+	it("is the template's own posts index for a record without an index, a WordPress record too: no rewrite, its own query", async () => {
+		for (const shell of [slotMapped("none"), record(), null]) {
+			reads.shell = shell;
+			reads.getEmDashCollection.mockReset();
+			reads.getEmDashCollection.mockResolvedValue({ entries: entries(1), cacheHint: {} });
+			const c = await AstroContainer.create();
+			const html = await c.renderToString(PostsIndexRoute, {
+				request: new Request("https://example.org/posts"),
+			});
+			expect(html).toMatch(/<h1 class="page-title"[^>]*>All Posts<\/h1>/);
+			expect(html).not.toContain("wp-shell");
+			expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+				orderBy: { published_at: "desc" },
+				limit: 20,
+				cursor: undefined,
+			});
+		}
 	});
 });

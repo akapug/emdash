@@ -1,0 +1,74 @@
+---
+/**
+ * The posts index of a site whose record carries one (a site that is not
+ * WordPress, cut from its own listing page): the site's header and footer
+ * around the region its cards were in, EmDash's posts drawn there, newest
+ * first, in pages of the site's posts-per-page setting, each in the markup of
+ * the source's cards where the record carries it, else as plain items
+ * (utils/wp-shell.ts renderIndexPosts).
+ *
+ * Reached ONLY through Astro.rewrite() from pages/posts/index.astro, which
+ * rewrites here when the record has an index: the visitor's URL stays /posts
+ * (where the site's old listing paths, such as /archive, redirect). A request
+ * for /wp-shell/listing itself is a 404, as for every /wp-shell/ path. Its own
+ * route, as the date archive's is, because it draws no entry.
+ */
+import { createNoop, getEmDashCollection, getSiteSettings } from "emdash";
+import WpShell from "../../layouts/WpShell.astro";
+import {
+	imageRatio,
+	ownImagePath,
+	plainText,
+	renderIndexNav,
+	renderIndexPosts,
+	wpShellDateSite,
+	type WpShellPost,
+} from "../../utils/wp-shell";
+import { loadWpShell } from "../../utils/wp-shell-loader";
+
+const origin = Astro.originPathname;
+if (origin.startsWith("/wp-shell")) return new Response(null, { status: 404 });
+
+const [{ shell, cacheHint: shellHint }, settings] = await Promise.all([
+	loadWpShell(),
+	getSiteSettings(),
+]);
+// The record, or its index, went away between the posts route's read and this one: that route draws the
+// posts index in this template's own design, and does not come back here.
+if (!shell?.index) return Astro.rewrite(`${origin}${Astro.url.search}`);
+if (Astro.cache?.enabled) Astro.cache.set(shellHint);
+
+const perPage = Math.min(50, Math.max(1, settings.postsPerPage || 10));
+const cursor = Astro.url.searchParams.get("cursor") || null;
+const result = await getEmDashCollection("posts", {
+	orderBy: { published_at: "desc" },
+	limit: perPage,
+	...(cursor ? { cursor } : {}),
+});
+if (Astro.cache?.enabled) Astro.cache.set(result.cacheHint);
+
+const posts: WpShellPost[] = result.entries.map((e) => ({
+	title: e.data.title,
+	url: `/posts/${e.id}`,
+	excerpt: e.data.excerpt,
+	text: plainText(e.data.content),
+	date: e.data.publishedAt,
+	image: ownImagePath(e.data.featured_image),
+	imageRatio: imageRatio(e.data.featured_image),
+}));
+const site = wpShellDateSite(shell, settings.timezone);
+const html = renderIndexPosts(shell, posts, site) + renderIndexNav(cursor, result.nextCursor ?? null);
+const title = "All Posts";
+---
+
+<WpShell
+	shell={shell}
+	kind="index"
+	path={origin}
+	title={title}
+	pageTitle={title}
+	canonical={new URL(`${origin}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, Astro.url.origin).href}
+	entry={{ title, edit: createNoop() }}
+	contentHtml={html}
+	comments={false}
+/>

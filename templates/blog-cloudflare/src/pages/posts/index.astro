@@ -2,6 +2,13 @@
 import { getEmDashCollection, getTermsForEntries } from "emdash";
 import Base from "../../layouts/Base.astro";
 import { getReadingTime } from "../../utils/reading-time";
+import { wpShellIndexRoute } from "../../utils/wp-shell";
+import { loadWpShell } from "../../utils/wp-shell-loader";
+
+// A site whose record carries a posts index (cut from its own listing page) keeps its own design here: the
+// query goes along (`?cursor=`, `?subscribe=`). Any other site, a WordPress one too, draws this template's.
+const shellIndex = wpShellIndexRoute((await loadWpShell()).shell, Astro.url.search);
+if (shellIndex) return Astro.rewrite(shellIndex);
 
 // Sort in the database rather than in JS — lets the DB use its index on
 // published_at and avoids a full-table scan on the client.
