@@ -417,3 +417,23 @@ ${YOUTUBE}
 		]);
 	});
 });
+
+describe("the kept iframe's src and a player's host", () => {
+	it("writes back the src it read, never a value a browser takes for a relative URL", () => {
+		const [block] = gutenbergToPortableText(
+			`<iframe src="&nbsp;//maps.example.com/m?pb=1" width="600"></iframe>`,
+		);
+		expect(block).toMatchObject({ _type: "htmlBlock" });
+		expect((block as { html: string }).html).toBe(
+			`<iframe src="https://maps.example.com/m?pb=1" width="600"></iframe>`,
+		);
+	});
+
+	it("reads the host of the page a player names as a browser does: a backslash ends it", () => {
+		const href = encodeURIComponent("https://evil.example\\.facebook.com/x");
+		const [block] = gutenbergToPortableText(
+			`<iframe src="https://www.facebook.com/plugins/video.php?href=${href}"></iframe>`,
+		);
+		expect(block).toMatchObject({ _type: "htmlBlock" });
+	});
+});
