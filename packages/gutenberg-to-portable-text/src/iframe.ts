@@ -8,7 +8,9 @@
  * EmDash's embed component draws it: a YouTube video or a public Vimeo video
  * as a player, a Spotify, SoundCloud, Instagram, CodePen or Facebook page as
  * a link to it. Any other iframe is kept in an HTML block, as a
- * `<!-- wp:html -->` iframe is, so it plays where it did.
+ * `<!-- wp:html -->` iframe is, so it plays where it did. WordPress.com's own
+ * page furniture pasted with a post (a Jetpack Likes button) is no content of
+ * the post and is dropped: the post converts as if the iframe were absent.
  */
 
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
@@ -49,6 +51,19 @@ const ATTRIBUTE_ESCAPES: Readonly<Record<string, string>> = {
 	">": "&gt;",
 };
 const ATTRIBUTE_ESCAPE_PATTERN = /[&"<>]/g;
+/**
+ * WordPress.com platform chrome: page furniture WordPress.com draws in an
+ * iframe from its widget host, which works only on a WordPress.com page (a
+ * Likes button reads the reader's WordPress.com login and the post's blog id).
+ * A post copied from a rendered page carries it; it is no content of the post,
+ * so it is dropped, never kept or linked. Only what was measured on real posts
+ * is here: the Likes button (`widgets.wp.com/likes/`). A WordPress.com host
+ * that serves content (VideoPress, a WordPress.com media embed) is not chrome.
+ * EmDash's renderer drops the same iframes (core `utils/iframe-hosts.ts`).
+ */
+const PLATFORM_CHROME: ReadonlyArray<readonly [host: string, path: RegExp]> = [
+	["widgets.wp.com", /^\/likes(?:\/|$)/],
+];
 
 const startTime = (query: URLSearchParams) => {
 	const t = query.get("start") ?? query.get("t");
@@ -132,8 +147,10 @@ export interface Iframe {
  * The iframes a browser draws in `html` that have a web URL for their src, in
  * document order. An iframe in a comment, a script or other raw text is none.
  * One whose src is not a web URL (javascript:, data:, a relative path) shows
- * nothing an import can keep, so it is not found, and the text around it drops
- * it as before.
+ * nothing an import can keep, so it is not found, and the text around it
+ * drops it as before. One that is WordPress.com platform chrome
+ * (isPlatformChrome) is no content of the post, so it is not found either,
+ * and the post converts as if it were absent.
  */
 export function findIframes(html: string, offset = 0): Iframe[] {
 	if (!IFRAME_TAG_PATTERN.test(html)) return [];
@@ -160,10 +177,10 @@ export function findIframes(html: string, offset = 0): Iframe[] {
 			const open = !endTag || html[startTag.endOffset - 2] === "/";
 			const end = open ? startTag.endOffset : endTag.endOffset;
 			const raw = node.attrs.find((a) => a.name === "src")?.value.trim() ?? "";
-			if (WEB_URL_PATTERN.test(raw)) {
-				// The src the block keeps is the one read here, so what a browser would take
-				// for a relative URL (a leading no-break space) is never written back.
-				const src = raw.startsWith("//") ? `https:${raw}` : raw;
+			// The src the block keeps is the one read here, so what a browser would take
+			// for a relative URL (a leading no-break space) is never written back.
+			const src = raw.startsWith("//") ? `https:${raw}` : raw;
+			if (WEB_URL_PATTERN.test(raw) && !isPlatformChrome(src)) {
 				const attrs = node.attrs
 					.filter((a) => KEPT_ATTRIBUTES.has(a.name))
 					.map((a) => {
@@ -187,6 +204,19 @@ export function findIframes(html: string, offset = 0): Iframe[] {
 	};
 	walk(parseFragment(html, { sourceCodeLocationInfo: true }).childNodes, []);
 	return found;
+}
+
+/**
+ * An iframe src that is WordPress.com platform chrome (PLATFORM_CHROME), read
+ * as a browser reads it, one on the page's own scheme (`//host/path`) as
+ * https: `https://widgets.wp.com/likes/#…` is, and
+ * `https://widgets.wp.com.example/likes/` is not
+ */
+export function isPlatformChrome(src: string): boolean {
+	const absolute = src.startsWith("//") ? `https:${src}` : src;
+	if (!URL.canParse(absolute)) return false;
+	const { hostname, pathname } = new URL(absolute);
+	return PLATFORM_CHROME.some(([host, path]) => hostname === host && path.test(pathname));
 }
 
 /**

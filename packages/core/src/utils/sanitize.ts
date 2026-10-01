@@ -1,6 +1,6 @@
 import sanitizeHtml from "sanitize-html";
 
-import { canonicalIframeHosts } from "./iframe-hosts.js";
+import { canonicalIframeHosts, isPlatformChrome } from "./iframe-hosts.js";
 
 /**
  * Iframe hosts allowed out of the box.
@@ -92,7 +92,8 @@ function readIframeSrc(src: string): IframeSrc | undefined {
 /**
  * What becomes of one iframe src, from that one reading: kept as an iframe of
  * `url` (YouTube and Vimeo as before; an added host only over https, never
- * protocol-relative), drawn as a link to `url`, or removed (no reading). Both
+ * protocol-relative), drawn as a link to `url`, or removed (no reading, or
+ * WordPress.com platform chrome, which is no embed and links nowhere useful). Both
  * gates ask this: the transform that draws the iframe or the link, and the
  * filter that re-reads the src it drew.
  */
@@ -100,7 +101,7 @@ type IframeVerdict = { keep: boolean; url: URL } | undefined;
 
 function iframeVerdict(src: string, added: ReadonlySet<string>): IframeVerdict {
 	const read = readIframeSrc(src);
-	if (!read) return undefined;
+	if (!read || isPlatformChrome(read.url)) return undefined;
 	const { url, protocolRelative } = read;
 	const keep =
 		DEFAULT_HOSTS.has(url.hostname) ||
@@ -147,7 +148,8 @@ export interface SanitizeOptions {
  * iframe's title or "Open the embedded content" and the host, so a refused map
  * is a link, never an empty box. An iframe with no usable src (none,
  * path-relative, another scheme such as `javascript:`, or one holding a
- * backslash, whitespace or a control character) is removed.
+ * backslash, whitespace or a control character) is removed, and so is
+ * WordPress.com platform chrome (a Jetpack Likes button), whatever the lists say.
  *
  * A `<noscript>` goes whole, with everything in it, as a `<script>` or a
  * `<style>` does: the browser draws what it holds only with scripts off, and

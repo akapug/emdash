@@ -233,3 +233,45 @@ describe("sanitizeContent: iframe hosts", () => {
 		expect(String(warn.mock.calls[0]?.[0])).toContain(`"once.example.com"`);
 	});
 });
+
+// A post copied from a rendered WordPress.com page carries its Jetpack Likes
+// button, an iframe from widgets.wp.com/likes/ that works only on WordPress.com.
+// Imported before the WordPress import dropped it, or pasted into an HTML
+// block, it is neither drawn nor linked, whatever the site's list holds.
+describe("sanitizeContent: WordPress.com platform chrome", () => {
+	const likes = (src: string) =>
+		`<div class="sharedaddy"><iframe class="post-likes-widget" src="${src}" width="100%" height="55px" frameborder="0"></iframe></div>`;
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it.each([
+		"https://widgets.wp.com/likes/#blog_id=1&amp;post_id=5&amp;origin=example.wordpress.com",
+		"//widgets.wp.com/likes/#blog_id=1",
+		"http://widgets.wp.com/likes/master.html?ver=1",
+		"https://WIDGETS.WP.COM/likes",
+	])("draws nothing of %s, not even a link, and says nothing", (src) => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		for (const allowedIframeHostnames of [[], ["widgets.wp.com"]]) {
+			expect(sanitizeContent(likes(src), { allowedIframeHostnames })).toBe(
+				`<div class="sharedaddy"></div>`,
+			);
+		}
+		expect(warn).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		"https://videopress.com/embed/AbCdEfGh",
+		"https://video.wordpress.com/embed/AbCdEfGh",
+		"https://widgets.wp.com/other/",
+		"https://widgets.wp.com.example/likes/",
+	])("treats %s as any other host: a link, or the iframe once allowed", (src) => {
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		expect(sanitizeContent(likes(src))).toContain(`class="emdash-iframe-link"`);
+		const host = new URL(src).hostname;
+		expect(sanitizeContent(likes(src), { allowedIframeHostnames: [host] })).toContain(
+			`<iframe class="post-likes-widget" src="${src}"`,
+		);
+	});
+});

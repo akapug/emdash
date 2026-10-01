@@ -17,6 +17,26 @@ const IFRAME_HOSTNAME =
  */
 export const RESERVED_IFRAME_HOST_DOMAINS = ["workers.dev", "pages.dev", "embarkeasy.com"] as const;
 
+/**
+ * WordPress.com platform chrome: page furniture WordPress.com draws in an
+ * iframe from its widget host, which works only on a WordPress.com page (a
+ * Likes button reads the reader's WordPress.com login). A post copied from a
+ * rendered WordPress.com page carries it; on any other site it is neither an
+ * embed nor a link to one, so it is dropped. Only what was measured on real
+ * posts is here: the Likes button (`widgets.wp.com/likes/`); a WordPress.com
+ * host that serves content (VideoPress, a media embed) is not chrome. The
+ * WordPress import drops the same iframes (gutenberg-to-portable-text
+ * `iframe.ts`), so this covers content imported before it did, and one pasted
+ * into an HTML block.
+ */
+const PLATFORM_CHROME: ReadonlyArray<readonly [host: string, path: RegExp]> = [
+	["widgets.wp.com", /^\/likes(?:\/|$)/],
+];
+
+/** `url` is WordPress.com platform chrome (PLATFORM_CHROME). */
+export const isPlatformChrome = (url: URL): boolean =>
+	PLATFORM_CHROME.some(([host, path]) => url.hostname === host && path.test(url.pathname));
+
 /** `host` is `domain` or a subdomain of it. */
 export const isUnderDomain = (host: string, domain: string): boolean =>
 	host === domain || host.endsWith(`.${domain}`);
