@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isIframeHostname } from "../../utils/iframe-hosts.js";
 import { httpUrl } from "./common.js";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,22 @@ const seoSettingsInput = z.object({
 	bingVerification: z.string().max(100).optional(),
 });
 
+/**
+ * The site's own iframe hosts: each an exact lowercase hostname (no wildcard,
+ * scheme, port or path), added to the defaults at render time, never in place
+ * of them.
+ */
+export const iframeHostsSetting = z
+	.array(
+		z
+			.string()
+			.refine(
+				isIframeHostname,
+				"Must be an exact lowercase hostname: no wildcard, scheme, port or path",
+			),
+	)
+	.max(100);
+
 export const settingsUpdateBody = z
 	.object({
 		title: z.string().optional(),
@@ -51,6 +68,7 @@ export const settingsUpdateBody = z
 		timezone: z.string().optional(),
 		social: socialSettings.optional(),
 		seo: seoSettingsInput.optional(),
+		iframeHosts: iframeHostsSetting.optional(),
 	})
 	.meta({ id: "SettingsUpdateBody" });
 
@@ -111,5 +129,6 @@ export const siteSettingsSchema = z
 		timezone: z.string().optional(),
 		social: socialSettings.optional(),
 		seo: seoSettingsResponse.optional(),
+		iframeHosts: z.array(z.string()).optional(),
 	})
 	.meta({ id: "SiteSettings" });

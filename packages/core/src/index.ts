@@ -145,6 +145,12 @@ export type {
 export { ulid } from "ulidx";
 export { computeContentHash, hashString } from "./utils/hash.js";
 export { sanitizeHref, isSafeHref } from "./utils/url.js";
+export {
+	configureIframeHostnames,
+	getAllowedIframeHostnames,
+	sanitizeContent,
+	DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
+} from "./utils/sanitize.js";
 export { decodeSlug, slugify } from "./utils/slugify.js";
 
 // Live Collections query functions (loader is in emdash/runtime)

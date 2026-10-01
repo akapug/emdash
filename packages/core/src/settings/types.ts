@@ -107,6 +107,14 @@ export interface SiteSettings {
 
 	// SEO
 	seo?: SeoSettings;
+
+	// Embeds
+	/**
+	 * Hosts this site's content may embed iframes from, beyond YouTube and
+	 * Vimeo: exact lowercase hostnames, no wildcard, scheme or port. An iframe
+	 * from one of them is kept only when its src is https.
+	 */
+	iframeHosts?: string[];
 }
 
 /** Partial SEO update. `null` removes the configured default image. */

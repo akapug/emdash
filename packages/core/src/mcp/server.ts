@@ -28,6 +28,7 @@ import {
 	updateBlockTypeBody,
 	updateFieldBody,
 	updateTaxonomyDefBody,
+	iframeHostsSetting,
 } from "#api/schemas.js";
 
 import { claimEntryLockForWrite } from "../api/handlers/entry-lock.js";
@@ -3716,6 +3717,11 @@ export function createMcpServer(
 				timezone: z.string().optional().describe("IANA timezone identifier"),
 				social: settingsSocialSchema.optional().describe("Social handles / URLs"),
 				seo: settingsSeoSchema.optional().describe("Site-wide SEO defaults"),
+				iframeHosts: iframeHostsSetting
+					.optional()
+					.describe(
+						"Hosts content may embed iframes from beyond YouTube and Vimeo: exact lowercase hostnames, https src only",
+					),
 			}),
 		},
 		async (args, extra) => {
