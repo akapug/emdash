@@ -413,10 +413,181 @@ describe("the list WordPress kept, imported", () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
+	it("does not treat the dashboard's subscription types as permission to send every post", async () => {
+		const { env, subscribers, outbox, send } = site({ mail: true });
+		const csv = [
+			"email,type",
+			"free@example.org,free",
+			"paid@example.org,paid",
+			"comp@example.org,comp",
+			"gift@example.org,gift",
+			"founding@example.org,founding",
+		].join("\n");
+		expect(await importSubscribers(env, csv)).toEqual({
+			rows: 5,
+			imported: 0,
+			confirmed: 0,
+			already: 0,
+			invalid: 0,
+			notSubscribed: { "email preference missing": 5 },
+			paid: 2,
+		});
+		expect(subscribers.rows.size).toBe(0);
+		expect(
+			await queueNewPost(
+				env,
+				{
+					id: "dashboard",
+					slug: "dashboard",
+					title: "Dashboard",
+					excerpt: "",
+					publishedAt: NOW,
+				},
+				(slug) => `/posts/${slug}`,
+			),
+		).toBe(0);
+		expect(outbox.rows.size).toBe(0);
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other,false,true",
+			"digest enabled",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other,FALSE,TRUE",
+			"digest enabled",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other,false,",
+			"digest preference missing",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other,false,unknown",
+			"digest preference missing",
+		],
+		[
+			"email,active_subscription,plan,email_disabled",
+			"false,other,false",
+			"digest preference missing",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"true,monthly,true,true",
+			"email turned off",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other,,false",
+			"email preference missing",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other",
+			"email preference missing",
+		],
+		[
+			"email,active_subscription,plan,email_disabled,digest_enabled",
+			"false,other,unknown,false",
+			"email preference missing",
+		],
+		[
+			"email,email_disabled,unsubscribed,active_subscription,digest_enabled",
+			"false,true,true,false",
+			"email turned off",
+		],
+		[
+			"email,unsubscribed,email_disabled,active_subscription,digest_enabled",
+			"false,true,true,false",
+			"email turned off",
+		],
+		["email,status,subscription_status", "active,unsubscribed", "unsubscribed"],
+		["email,subscription_status,status", "active,unsubscribed", "unsubscribed"],
+		["email,email_disabled,digest_enabled,digest-enabled", "false,false,true", "digest enabled"],
+		[
+			"email,email_disabled,digest_enabled,digest-enabled",
+			"false,false,",
+			"digest preference missing",
+		],
+		["email,type,email_disabled,digest_enabled", "unsubscribed,false,false", "unsubscribed"],
+		["email,type,email_disabled,digest_enabled", "unknown,false,false", "unknown"],
+	])(
+		"leaves out an address whose preferences forbid confirmation: %s / %s",
+		async (header, fields, reason) => {
+			const { env, subscribers, outbox, send } = site({ mail: true });
+			const report = await importSubscribers(env, `${header}\nreader@example.org,${fields}\n`);
+			expect(report).toMatchObject({ imported: 0, confirmed: 0, notSubscribed: { [reason]: 1 } });
+			expect(subscribers.rows.size).toBe(0);
+			expect(
+				await queueNewPost(
+					env,
+					{
+						id: "excluded",
+						slug: "excluded",
+						title: "Excluded",
+						excerpt: "",
+						publishedAt: NOW,
+					},
+					(slug) => `/posts/${slug}`,
+				),
+			).toBe(0);
+			expect(outbox.rows.size).toBe(0);
+			expect(send).not.toHaveBeenCalled();
+		},
+	);
+
+	it("imports explicit email-on and digest-off types, without treating comp or gift as paying", async () => {
+		const { env, subscribers, send } = site({ mail: true });
+		const csv = [
+			"email,type,email_disabled,digest_enabled",
+			...["free", "paid", "comp", "gift", "founding"].map(
+				(type) => `${type}@example.org,${type},false,false`,
+			),
+		].join("\n");
+		expect(await importSubscribers(env, csv)).toMatchObject({
+			imported: 5,
+			paid: 2,
+			from: "substack",
+		});
+		for (const subscriber of subscribers.rows.values()) {
+			expect(subscriber.status).toBe("confirmed");
+			expect(subscriber.consent.from).toBe("substack");
+		}
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		"email_address,status,plan\nwp@example.org,active,annual-newsletter\n",
+		"email_address,status,plan,unsubscribed\nwp@example.org,active,annual-newsletter,false\n",
+	])("does not mistake a WordPress plan for a Substack paid plan: %s", async (csv) => {
+		const { env, subscribers } = site();
+		const report = await importSubscribers(env, csv);
+		expect(report).toMatchObject({ imported: 1, paid: 0 });
+		expect(report.from).toBeUndefined();
+		expect(
+			subscribers.rows.get(await subscriberId(env, "wp@example.org"))?.consent.from,
+		).toBeUndefined();
+	});
+
+	it("keeps active_subscription authoritative over a stale paid type and plan", async () => {
+		const { env } = site();
+		expect(
+			await importSubscribers(
+				env,
+				"email,active_subscription,type,plan,email_disabled,digest_enabled\nlapsed@example.org,false,paid,yearly,false,false\n",
+			),
+		).toMatchObject({ imported: 1, paid: 0, from: "substack" });
+	});
+
 	it("says on the admin page how many readers pay, and that their payments do not move", async () => {
 		const { env } = site();
 		const csv =
-			"email,active_subscription,plan,email_disabled\npays@example.org,true,yearly,false\n";
+			"email,active_subscription,plan,email_disabled,digest_enabled\npays@example.org,true,yearly,false,false\n";
 		const out = (await adminPage(env, {
 			type: "form_submit",
 			action_id: "import",

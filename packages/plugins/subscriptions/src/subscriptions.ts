@@ -570,6 +570,12 @@ const PLAN_HEADER = /^plan$/i;
 /** Substack writes a free reader's plan as `other`. */
 const FREE_PLAN = /^(?:|other|free|none)$/i;
 const TRUE = /^(?:true|yes|y|1)$/i;
+const FALSE = /^(?:false|no|n|0)$/i;
+const TYPE_HEADER = /^type$/i;
+const SUBSTACK_TYPE = /^(?:free|paid|comp|gift|founding)$/i;
+const PAID_TYPE = /^(?:paid|founding)$/i;
+const SUBSTACK_DISABLED_HEADER = /^e-?mail[ _-]?disabled$/i;
+const DIGEST_HEADER = /^digest[ _-]?enabled$/i;
 /** The address Substack puts in place of a reader who asked for their data to be deleted. */
 const DELETION_REQUEST = /@deletion-request\.substack\.com$/i;
 
@@ -608,8 +614,9 @@ export interface ImportReport {
 	/** Rows the file's status column says are not subscribed, by that status. */
 	notSubscribed: Record<string, number>;
 	/**
-	 * Rows the file marks as paying (an active subscription, or a plan that is
-	 * not free), whether or not they get email: this list moves addresses, not
+	 * Rows the file marks as paying (an active subscription, paid/founding type,
+	 * or a paid plan in Substack's data export), whether or not they get email:
+	 * this list moves addresses, not
 	 * payments, so a person has to move those.
 	 */
 	paid: number;
@@ -628,8 +635,10 @@ export interface ImportReport {
  * brought over (and from which platform, when the file says). A row is not
  * imported when its status says it is not subscribed (unsubscribed,
  * pending, blocked), when it says the reader turned email off (Substack's
- * `email_disabled`), or when it is the address Substack leaves for a reader
- * who asked to be deleted. Paying readers are counted: their payments do not
+ * `email_disabled`), when digests are enabled, or when it is the address
+ * Substack leaves for a reader who asked to be deleted. Substack-shaped lists
+ * need explicit email-on and digest-off preferences; missing or unknown values
+ * do not authorize every-post mail. Paying readers are counted: their payments do not
  * move with the list. Nothing is sent to anyone.
  */
 export async function importSubscribers(env: SubscriptionsEnv, csv: string): Promise<ImportReport> {
@@ -672,12 +681,17 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 			refused: "no column of the file holds the addresses (a header named email or email_address)",
 		};
 	const dateAt = header.findIndex((h, i) => i !== emailAt && DATE_HEADER.test(h));
-	const statusAt = header.findIndex((h, i) => i !== emailAt && STATUS_HEADER.test(h));
-	const disabledAt = header.findIndex((h) => DISABLED_HEADER.test(h));
+	const columns = (pattern: RegExp) => header.flatMap((h, i) => (pattern.test(h) ? [i] : []));
+	const statusAts = columns(STATUS_HEADER);
+	const disabledAts = columns(DISABLED_HEADER);
+	const emailDisabledAts = columns(SUBSTACK_DISABLED_HEADER);
 	const activeAt = header.findIndex((h) => ACTIVE_HEADER.test(h));
 	const planAt = header.findIndex((h) => PLAN_HEADER.test(h));
-	const from = disabledAt >= 0 && (activeAt >= 0 || planAt >= 0) ? "substack" : undefined;
-	if (from) report.from = from;
+	const typeAts = columns(TYPE_HEADER);
+	const digestAts = columns(DIGEST_HEADER);
+	const dataExport = emailDisabledAts.length > 0 && (activeAt >= 0 || planAt >= 0);
+	const needsPreferences = emailDisabledAts.length > 0 || activeAt >= 0 || typeAts.length > 0;
+	if (dataExport) report.from = "substack";
 	const site = hostOf(env.site.url);
 	const now = env.now().toISOString();
 	const skip = (key: string) => {
@@ -685,19 +699,49 @@ export async function importSubscribers(env: SubscriptionsEnv, csv: string): Pro
 	};
 	for (const row of data) {
 		report.rows++;
-		// An active subscription decides when the file has one; a plan alone, when it has not.
+		const knownType = typeAts.length > 0 && typeAts.every((i) => SUBSTACK_TYPE.test(cell(row, i)));
+		const from =
+			dataExport || (knownType && emailDisabledAts.length > 0 && digestAts.length > 0)
+				? "substack"
+				: undefined;
+		if (from) report.from = from;
 		const paying =
 			activeAt >= 0
 				? TRUE.test(cell(row, activeAt))
-				: planAt >= 0 && !FREE_PLAN.test(cell(row, planAt));
+				: typeAts.length > 0
+					? typeAts.some((i) => PAID_TYPE.test(cell(row, i)))
+					: dataExport && !FREE_PLAN.test(cell(row, planAt));
 		if (paying) report.paid++;
-		const state = cell(row, statusAt);
-		if (!SUBSCRIBED.test(state)) {
-			skip(state.toLowerCase().slice(0, 40));
+		const rejectedState = statusAts.find((i) => !SUBSCRIBED.test(cell(row, i)));
+		if (rejectedState !== undefined) {
+			skip(cell(row, rejectedState).toLowerCase().slice(0, 40));
 			continue;
 		}
-		if (TRUE.test(cell(row, disabledAt))) {
+		const rejectedType = typeAts.find((i) => !SUBSTACK_TYPE.test(cell(row, i)));
+		if (rejectedType !== undefined) {
+			skip(cell(row, rejectedType).toLowerCase().slice(0, 40));
+			continue;
+		}
+		if (disabledAts.some((i) => TRUE.test(cell(row, i)))) {
 			skip("email turned off");
+			continue;
+		}
+		if (
+			(needsPreferences && emailDisabledAts.length === 0) ||
+			disabledAts.some((i) => !FALSE.test(cell(row, i)))
+		) {
+			skip("email preference missing");
+			continue;
+		}
+		if (digestAts.some((i) => TRUE.test(cell(row, i)))) {
+			skip("digest enabled");
+			continue;
+		}
+		if (
+			(needsPreferences && digestAts.length === 0) ||
+			digestAts.some((i) => !FALSE.test(cell(row, i)))
+		) {
+			skip("digest preference missing");
 			continue;
 		}
 		const email = normalizeEmail(row[emailAt]);

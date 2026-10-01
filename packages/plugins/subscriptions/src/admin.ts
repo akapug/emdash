@@ -13,7 +13,7 @@ import {
 
 /** How to get the list out of the platform that kept it, in the owner's steps. */
 const EXPORT_STEPS =
-	"From WordPress.com (or the WordPress admin: Jetpack, then Newsletter): open Subscribers and download the list as a CSV file. From Substack: Settings, then Exports, then download a zip of all your data, and open the email_list file inside it. Paste the file's text here. Each address becomes a confirmed subscriber, its consent recorded as brought over; a reader the file marks as not subscribed, or as having turned email off, is left out. No email is sent.";
+	"From WordPress.com (or the WordPress admin: Jetpack, then Newsletter): open Subscribers and download the list as a CSV file. From Substack: Settings, then Exports, then download a zip of all your data, and open the email_list file inside it. Paste the file's text here. Each address becomes a confirmed subscriber, its consent recorded as brought over; readers marked as not subscribed, with email turned off or digests enabled, or with missing or unrecognized required email preferences, are left out. Use Substack's email_list file, not a Subscribers CSV with payment types but no email preferences. No email is sent.";
 
 async function page(env: SubscriptionsEnv, report?: ImportReport) {
 	const s = await stats(env);
