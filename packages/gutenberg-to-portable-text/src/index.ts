@@ -11,6 +11,7 @@ import { parse } from "@wordpress/block-serialization-default-parser";
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
+import { findIframes, iframeBlock, reopened } from "./iframe.js";
 import {
 	drawsLine,
 	extractDisplaySize,
@@ -54,6 +55,9 @@ const LIST_ITEM_PATTERN = /<li[^>]*>([\s\S]*?)<\/li>/gu;
 const CODE_TAG_PATTERN = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const HTML_TAG_PATTERN = /<[^>]+>/g;
 const FIGCAPTION_TAG_PATTERN = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i;
+/** A line break beside an iframe lifted out of an element: the iframe's own block stands for it */
+const LEADING_BREAK_PATTERN = /^\s*<br\s*\/?>/i;
+const TRAILING_BREAK_PATTERN = /<br\s*\/?>\s*$/i;
 const AMP_ENTITY_PATTERN = /&amp;/g;
 const LESS_THAN_ENTITY_PATTERN = /&lt;/g;
 const GREATER_THAN_ENTITY_PATTERN = /&gt;/g;
@@ -324,17 +328,41 @@ export function htmlToPortableText(
 		}
 	};
 
-	// Text outside block elements, split around the URLs WordPress autoembeds
+	// What stands in a run of text as a block of its own, in document order:
+	// the URLs WordPress autoembeds, and the iframes it prints as written
+	const iframes = findIframes(html);
+	const lifted = [
+		...autoembeds.map((e) => ({ ...e, within: [], block: () => autoembedBlock(e, generateKey) })),
+		...iframes.map((f) => ({ ...f, block: () => iframeBlock(f, generateKey) })),
+	].toSorted((a, b) => a.start - b.start);
+
+	// Text outside block elements, split around what is lifted out of it. One that starts before the
+	// cursor lies before this text, or inside the last one lifted. The text after an iframe opens
+	// again the elements the iframe stood in, so a link or bold run around it carries on.
 	const pushText = (from: number, to: number) => {
 		let cursor = from;
-		for (const autoembed of autoembeds) {
-			if (autoembed.start < from || autoembed.end > to) continue;
-			pushParagraph(html.slice(cursor, autoembed.start).trim());
-			blocks.push(autoembedBlock(autoembed, generateKey));
-			cursor = autoembed.end;
+		let reopen = "";
+		for (const lift of lifted) {
+			if (lift.start < cursor || lift.end > to) continue;
+			pushParagraph(reopen + html.slice(cursor, lift.start).trim());
+			blocks.push(lift.block());
+			cursor = lift.end;
+			reopen = reopened(lift, from);
 		}
-		pushParagraph(html.slice(cursor, to).trim());
+		pushParagraph(reopen + html.slice(cursor, to).trim());
 	};
+
+	// A part of this HTML converted on its own. The block pattern is shared and global,
+	// so its place in this HTML is kept across the call.
+	const pushPart = (part: string) => {
+		const at = BLOCK_ELEMENT_PATTERN.lastIndex;
+		BLOCK_ELEMENT_PATTERN.lastIndex = 0;
+		blocks.push(...htmlToPortableText(part, { ...options, keyGenerator: generateKey }));
+		BLOCK_ELEMENT_PATTERN.lastIndex = at;
+	};
+
+	// The HTML after a lifted iframe, without the line break and white space that led up to it
+	const after = (part: string) => part.replace(LEADING_BREAK_PATTERN, "").trimStart();
 
 	// Split on block-level elements (including standalone img tags)
 	let lastIndex = 0;
@@ -374,6 +402,33 @@ export function htmlToPortableText(
 			blocks.push(...htmlToPortableText(content, { ...options, keyGenerator: generateKey }));
 			BLOCK_ELEMENT_PATTERN.lastIndex = at;
 			continue;
+		}
+
+		// An iframe in a paragraph, a div or a figure stands where it is: the text before it,
+		// the iframe, and the text after keep their order. The parts around it are converted as
+		// the element would be (a figure's on their own, so its caption stays as text). A part's
+		// end beside an iframe loses its line break, and the part after an iframe opens again the
+		// elements the iframe stood in, so a link or bold run around it carries on.
+		if (tag === "p" || tag === "div" || tag === "figure") {
+			const contentEnd = lastIndex - `</${tag}>`.length;
+			const contentStart = contentEnd - content.length;
+			const inside = iframes.filter((f) => f.start >= contentStart && f.end <= contentEnd);
+			if (inside.length > 0) {
+				const open = tag === "figure" ? "" : fullMatch.slice(0, fullMatch.indexOf(">") + 1);
+				const close = tag === "figure" ? "" : `</${tag}>`;
+				let cursor = contentStart;
+				let reopen = "";
+				for (const iframe of inside) {
+					const before = html.slice(cursor, iframe.start).replace(TRAILING_BREAK_PATTERN, "");
+					const part = cursor === contentStart ? before : after(before);
+					pushPart(open + reopen + part + close);
+					blocks.push(iframeBlock(iframe, generateKey));
+					cursor = iframe.end;
+					reopen = reopened(iframe, contentStart);
+				}
+				pushPart(open + reopen + after(html.slice(cursor, contentEnd)) + close);
+				continue;
+			}
 		}
 
 		// Transform based on tag
