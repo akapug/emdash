@@ -294,6 +294,13 @@ export interface WpShellListing {
 	classes: string[];
 	/** How an item prints its date, in PHP date() letters (`F j, Y`). */
 	date?: string;
+	/**
+	 * How an item prints the date of a post of the current year, in the
+	 * listing's zone, where the source prints no year on one (a Substack
+	 * archive: `Aug 23` this year, `Aug 23, 2024` in another, which is `date`).
+	 * The current year is the one the page is drawn in.
+	 */
+	dateThisYear?: string;
 	/** The site's time zone: an IANA name, or a fixed offset from UTC in minutes. */
 	timeZone?: string;
 	utcOffset?: number;
@@ -1107,7 +1114,7 @@ function checkListing(l: unknown): string | null {
 	if (!checkListingTemplate(l.item, ITEM_HOLES)) return "a listing's item template is malformed";
 	if (l.thumb !== undefined && !checkListingTemplate(l.thumb, THUMB_HOLES))
 		return "a listing's thumbnail template is malformed";
-	const { classes, date, timeZone, utcOffset, excerpt } = l;
+	const { classes, date, dateThisYear, timeZone, utcOffset, excerpt } = l;
 	if (
 		!Array.isArray(classes) ||
 		classes.length === 0 ||
@@ -1116,6 +1123,11 @@ function checkListing(l: unknown): string | null {
 		return "a listing's classes are not tokens";
 	if (date !== undefined && (typeof date !== "string" || !DATE_FORMAT.test(date)))
 		return "a listing's date format is not one";
+	if (
+		dateThisYear !== undefined &&
+		(date === undefined || typeof dateThisYear !== "string" || !DATE_FORMAT.test(dateThisYear))
+	)
+		return "a listing's date format for the current year is not one";
 	if (timeZone !== undefined && (typeof timeZone !== "string" || !TIME_ZONE.test(timeZone)))
 		return "a listing's time zone is not one";
 	if (
@@ -2080,11 +2092,18 @@ export function formatWpTime(
 /** A template piece's markup; a hole has none. */
 const markup = (y: WpShellListingPart | undefined) => (typeof y === "string" ? y : "");
 
+/** The format a listed post's date prints in: the listing's own for a post of the current year (`now`'s, in the listing's zone) where it has one. */
+const listingDateFormat = (listing: WpShellListing, date: Date, now: Date): string | undefined =>
+	listing.dateThisYear && dayIn(date, listing).y === dayIn(now, listing).y
+		? listing.dateThisYear
+		: listing.date;
+
 function fillListing(
 	t: readonly WpShellListingPart[],
 	listing: WpShellListing,
 	post: WpShellPost,
 	at: number,
+	now: Date,
 ): string {
 	let out = "";
 	for (const [i, x] of t.entries()) {
@@ -2105,13 +2124,13 @@ function fillListing(
 			out += listingExcerpt(post, listing.excerpt)
 				.map(escapeHtml)
 				.join(inP ? "</p><p>" : " ");
-		} else if (x.s === "date")
-			out +=
-				post.date && listing.date ? escapeHtml(formatWpDate(post.date, listing.date, listing)) : "";
-		else if (x.s === "src") out += escapeAttr(post.image ?? "");
+		} else if (x.s === "date") {
+			const format = post.date && listingDateFormat(listing, post.date, now);
+			out += post.date && format ? escapeHtml(formatWpDate(post.date, format, listing)) : "";
+		} else if (x.s === "src") out += escapeAttr(post.image ?? "");
 		// The thumbnail only for an image that is one of the site's own files.
 		else if (listing.thumb && thumbDrawn(listing, post))
-			out += fillListing(listing.thumb, listing, post, at);
+			out += fillListing(listing.thumb, listing, post, at, now);
 	}
 	return out;
 }
@@ -2146,17 +2165,24 @@ export function laneHeight(listing: WpShellListing, post: WpShellPost): number {
  * theme's markup. In lanes (the theme's masonry), the first `from` items,
  * then each lane with the posts the theme's rule puts in it: each post in
  * turn into the lane whose estimated height is the least, the leftmost of
- * equals.
+ * equals. A post of `now`'s year (in the listing's zone; the moment the page
+ * is drawn) prints its date in the listing's current-year format, where the
+ * listing has one.
  */
-export function renderListing(listing: WpShellListing, posts: readonly WpShellPost[]): string {
+export function renderListing(
+	listing: WpShellListing,
+	posts: readonly WpShellPost[],
+	now: Date = new Date(),
+): string {
 	const shown = posts.slice(0, listing.count);
 	const lanes = listing.lanes;
-	if (!lanes) return shown.map((post, i) => fillListing(listing.item, listing, post, i)).join("");
+	if (!lanes)
+		return shown.map((post, i) => fillListing(listing.item, listing, post, i, now)).join("");
 	const heights: number[] = Array.from<number>({ length: lanes.columns }).fill(0);
 	const into: string[][] = heights.map(() => []);
 	let lead = "";
 	for (const [i, post] of shown.entries()) {
-		const html = fillListing(listing.item, listing, post, i);
+		const html = fillListing(listing.item, listing, post, i, now);
 		if (i < lanes.from) {
 			lead += html;
 			continue;

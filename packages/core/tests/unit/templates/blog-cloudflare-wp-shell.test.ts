@@ -588,6 +588,50 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 		);
 	});
 
+	it("prints a post of the current year in the listing's current-year format, another's in its own, the year taken when the page is drawn", () => {
+		// As a Substack archive prints them: `Aug 23` this year, `Dec 14, 2025` in another, the day UTC's.
+		const listing = { ...listingOf(), date: "M j, Y", dateThisYear: "M j", utcOffset: 0 };
+		const posts: WpShellPost[] = [
+			{ title: "A", url: "/posts/a", date: new Date("2026-08-23T12:13:44Z") },
+			{ title: "B", url: "/posts/b", date: new Date("2025-12-14T19:22:44Z") },
+			{ title: "C", url: "/posts/c", date: new Date("2026-12-31T23:30:00Z") },
+		];
+		const dates = (now: string, l: WpShellListing = listing) =>
+			Array.from(
+				renderListing(l, posts, new Date(now)).matchAll(
+					/<p class="date"><a href="[^"]*">([^<]*)<\/a>/g,
+				),
+				(m) => m[1],
+			);
+		expect(dates("2026-10-01T15:27:00Z")).toEqual(["Aug 23", "Dec 14, 2025", "Dec 31"]);
+		// The year's last moment, and the next year's first: the same posts, another current year.
+		expect(dates("2026-12-31T23:59:59Z")).toEqual(["Aug 23", "Dec 14, 2025", "Dec 31"]);
+		expect(dates("2027-01-01T00:00:00Z")).toEqual(["Aug 23, 2026", "Dec 14, 2025", "Dec 31, 2026"]);
+		// In the listing's zone: 23:30 UTC on 31 December is 1 January 2027 at UTC+1, and so is the drawing's moment.
+		expect(dates("2026-12-31T23:45:00Z", { ...listing, utcOffset: 60 })).toEqual([
+			"Aug 23, 2026",
+			"Dec 14, 2025",
+			"Jan 1",
+		]);
+		// No current-year format: every post in the listing's own, as before.
+		const plain = { ...listing };
+		delete (plain as { dateThisYear?: string }).dateThisYear;
+		expect(dates("2026-10-01T15:27:00Z", plain)).toEqual([
+			"Aug 23, 2026",
+			"Dec 14, 2025",
+			"Dec 31, 2026",
+		]);
+		expect(wpShellProblem(withListing(listing))).toBeNull();
+		expect(wpShellProblem(withListing({ ...listing, dateThisYear: "M <j>" }))).toBe(
+			"a listing's date format for the current year is not one",
+		);
+		const undated = { ...listing };
+		delete (undated as { date?: string }).date;
+		expect(wpShellProblem(withListing(undated))).toBe(
+			"a listing's date format for the current year is not one",
+		);
+	});
+
 	it("prints an excerpt's paragraphs in the item's own <p>s where the theme does, escaped", () => {
 		const listing = {
 			...listingOf(),
