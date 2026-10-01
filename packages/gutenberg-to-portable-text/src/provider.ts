@@ -17,6 +17,8 @@ const PROVIDERS: ReadonlyArray<readonly [domain: string, provider: string]> = [
 	["codepen.io", "codepen"],
 	["gist.github.com", "gist"],
 ];
+const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
+const LEADING_SLASHES_PATTERN = /^\/\//u;
 
 /**
  * Detect embed provider from URL, by its host: a URL that only contains a
@@ -27,7 +29,9 @@ const PROVIDERS: ReadonlyArray<readonly [domain: string, provider: string]> = [
 export function detectProvider(url: string): string | undefined {
 	if (!url) return undefined;
 	const trimmed = url.trim();
-	const absolute = /^[a-z][a-z0-9+.-]*:/iu.test(trimmed) ? trimmed : `https://${trimmed.replace(/^\/\//u, "")}`;
+	const absolute = SCHEME_PATTERN.test(trimmed)
+		? trimmed
+		: `https://${trimmed.replace(LEADING_SLASHES_PATTERN, "")}`;
 	let host: string;
 	try {
 		host = new URL(absolute).hostname;
@@ -38,9 +42,8 @@ export function detectProvider(url: string): string | undefined {
 }
 
 /**
- * The provider whose domain `host` is, or is under. Unlike detectProvider, a
- * host that only contains a provider's domain ("api.mapbox.com" holds "x.com")
- * is not that provider.
+ * The provider whose domain `host` is, or is under. A host that only contains
+ * a provider's domain ("api.mapbox.com" holds "x.com") is not that provider.
  */
 export function providerOfHost(host: string): string | undefined {
 	const h = host.toLowerCase();
