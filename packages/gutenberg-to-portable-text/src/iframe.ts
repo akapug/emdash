@@ -21,7 +21,6 @@ type Node = DefaultTreeAdapterMap["node"];
 const IFRAME_TAG_PATTERN = /<iframe\b/i;
 /** A web URL: http(s), or one on the page's own scheme (`//host/path`) */
 const WEB_URL_PATTERN = /^(?:https?:)?\/\/[^/\s]/i;
-const HOST_PATTERN = /^https?:\/\/([^/?#:]+)/i;
 const QUERY_PATTERN = /\?([^#]*)/;
 /** A YouTube start time: seconds, or a run of hours, minutes and seconds (`1m30s`) */
 const START_TIME_PATTERN = /^(?:\d+[hms]?)+$/;
@@ -160,16 +159,22 @@ export function findIframes(html: string, offset = 0): Iframe[] {
 			// and what follows is kept and searched on its own.
 			const open = !endTag || html[startTag.endOffset - 2] === "/";
 			const end = open ? startTag.endOffset : endTag.endOffset;
-			const src = node.attrs.find((a) => a.name === "src")?.value.trim() ?? "";
-			if (WEB_URL_PATTERN.test(src)) {
+			const raw = node.attrs.find((a) => a.name === "src")?.value.trim() ?? "";
+			if (WEB_URL_PATTERN.test(raw)) {
+				// The src the block keeps is the one read here, so what a browser would take
+				// for a relative URL (a leading no-break space) is never written back.
+				const src = raw.startsWith("//") ? `https:${raw}` : raw;
 				const attrs = node.attrs
 					.filter((a) => KEPT_ATTRIBUTES.has(a.name))
-					.map((a) => (a.value ? ` ${a.name}="${escapeAttribute(a.value)}"` : ` ${a.name}`));
+					.map((a) => {
+						const value = a.name === "src" ? src : a.value;
+						return value ? ` ${a.name}="${escapeAttribute(value)}"` : ` ${a.name}`;
+					});
 				found.push({
 					start: offset + startTag.startOffset,
 					end: offset + end,
 					html: `<iframe${attrs.join("")}></iframe>`,
-					src: src.startsWith("//") ? `https:${src}` : src,
+					src,
 					within,
 				});
 			}
@@ -216,11 +221,20 @@ function pageOf(src: string): { url: string; provider: string } | undefined {
 	for (const [provider, player, page] of PLAYERS) {
 		const m = player.exec(src);
 		const url = m && page(m, query);
-		if (url && providerOfHost(HOST_PATTERN.exec(url)?.[1] ?? "") === provider) {
+		if (url && providerOfHost(hostOf(url)) === provider) {
 			return { url, provider };
 		}
 	}
 	return undefined;
+}
+
+/** A URL's host as a browser reads it (`a\.facebook.com` is not facebook.com), or "" */
+function hostOf(url: string): string {
+	try {
+		return new URL(url).hostname;
+	} catch {
+		return "";
+	}
 }
 
 function escapeAttribute(value: string): string {
