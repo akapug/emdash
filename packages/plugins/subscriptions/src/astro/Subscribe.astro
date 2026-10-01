@@ -1,0 +1,27 @@
+---
+/**
+ * A sign-up outside Portable Text content: in a layout's footer or sidebar.
+ * It draws what the `emdash-subscribe` block draws.
+ *
+ * @example
+ * ```astro
+ * ---
+ * import { Subscribe } from "@emdash-cms/plugin-subscriptions/ui";
+ * ---
+ *
+ * <Subscribe id="footer" heading="Get new posts by email" />
+ * ```
+ */
+import SubscribeEmbed from "./SubscribeEmbed.astro";
+
+interface Props {
+	/** The sign-up's name on the page: its element id is `subscribe-<id>`. */
+	id?: string;
+	heading?: string;
+	button?: string;
+}
+
+const { id = "site", heading, button } = Astro.props;
+---
+
+<SubscribeEmbed node={{ _type: "emdash-subscribe", _key: id, heading, button }} />

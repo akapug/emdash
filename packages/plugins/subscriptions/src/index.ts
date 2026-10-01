@@ -21,12 +21,17 @@
  *
  * The form posts `email` (and `source`, the page's path, and `fragment`, the
  * form's id, to come back to) to `/_emdash/api/plugins/emdash-subscriptions/subscribe`.
+ *
+ * The plugin draws that form itself as an `emdash-subscribe` Portable Text
+ * block (block.ts, astro/SubscribeEmbed.astro): an owner adds one anywhere in
+ * the editor, and a layout can draw one with `Subscribe` from `./ui`.
  */
 
 import type { PluginContext, PluginDescriptor, ResolvedPlugin, RouteContext } from "emdash";
 import { definePlugin, pluginResponse } from "emdash";
 
 import { adminPage } from "./admin.js";
+import { SUBSCRIBE_BLOCK, SUBSCRIBE_DEFAULTS } from "./block.js";
 import {
 	backTo,
 	confirm,
@@ -45,6 +50,7 @@ import {
 } from "./subscriptions.js";
 
 export type { ImportReport, OutboxMessage, Subscriber } from "./subscriptions.js";
+export type { SubscribeBlock } from "./block.js";
 
 export interface SubscriptionsPluginOptions {
 	/** Where a post is on the site, `{slug}` its slug: the link each new-post email carries. */
@@ -68,6 +74,7 @@ export function subscriptionsPlugin(
 		id: PLUGIN_ID,
 		version: VERSION,
 		entrypoint: "@emdash-cms/plugin-subscriptions",
+		componentsEntry: "@emdash-cms/plugin-subscriptions/astro",
 		options,
 		capabilities: ["email:send", "content:read"],
 		adminPages: [{ path: "/", label: "Subscribers", icon: "envelope" }],
@@ -248,6 +255,29 @@ export function createPlugin(options: SubscriptionsPluginOptions = {}): Resolved
 
 		admin: {
 			pages: [{ path: "/", label: "Subscribers", icon: "envelope" }],
+			// Each field starts with the words the block says without it, so an owner can insert one as it is.
+			portableTextBlocks: [
+				{
+					type: SUBSCRIBE_BLOCK,
+					label: "Email sign-up",
+					icon: "form",
+					description: "A form that subscribes a visitor to new posts by email",
+					fields: [
+						{
+							type: "text_input",
+							action_id: "heading",
+							label: "Heading",
+							initial_value: SUBSCRIBE_DEFAULTS.heading,
+						},
+						{
+							type: "text_input",
+							action_id: "button",
+							label: "Button label",
+							initial_value: SUBSCRIBE_DEFAULTS.button,
+						},
+					],
+				},
+			],
 		},
 	});
 }
