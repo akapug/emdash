@@ -123,7 +123,7 @@ describe("siteIframeHosts: the site's own iframe hosts at render", () => {
 	// (scripts/tenant/lib/iframe-hosts.mjs writeIframeHosts: JSON.stringify of the
 	// canonical sorted hosts). It exercises this repository's settings reader and
 	// sanitizer on that shape; it does not run the writer, which lives in another
-	// repository and is proven on a real tenant.
+	// repository and is to be checked on a real tenant at fold time.
 	it("draws the maps and forms a seeded row in Embark's serialization names, and links the rest", async () => {
 		const EMBARK_ROW = '["calendly.com","www.google.com"]';
 		await db
