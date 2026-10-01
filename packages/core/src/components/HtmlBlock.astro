@@ -6,6 +6,7 @@
  * Sanitizes HTML to prevent XSS attacks.
  */
 import { sanitizeContent } from "../utils/sanitize.js";
+import { siteIframeHosts } from "../utils/site-iframe-hosts.js";
 
 export interface Props {
 	node: {
@@ -21,7 +22,9 @@ if (!node?.html) {
 	return null;
 }
 
-const sanitized = sanitizeContent(node.html);
+const sanitized = sanitizeContent(node.html, {
+	allowedIframeHostnames: await siteIframeHosts(node.html, Astro.locals as Record<string, unknown>),
+});
 ---
 
 <div class="emdash-html-block" set:html={sanitized} />

@@ -1,6 +1,7 @@
 ---
 import { sanitizeHref } from "../utils/url.js";
 import { sanitizeContent } from "../utils/sanitize.js";
+import { siteIframeHosts } from "../utils/site-iframe-hosts.js";
 
 /**
  * Portable Text Embed block component
@@ -47,6 +48,11 @@ const vimeoId = getVimeoId(url);
 // Check if this is a self-hosted video or audio
 const isSelfHostedVideo = provider === "video";
 const isSelfHostedAudio = provider === "audio";
+
+// The site's own iframe hosts, for the provider HTML drawn below.
+const iframeHosts = html
+	? await siteIframeHosts(html, Astro.locals as Record<string, unknown>)
+	: undefined;
 ---
 
 <figure class="emdash-embed">
@@ -84,7 +90,7 @@ const isSelfHostedAudio = provider === "audio";
 				/>
 			</div>
 		) : html ? (
-			<div class="emdash-embed-html" set:html={sanitizeContent(html)} />
+			<div class="emdash-embed-html" set:html={sanitizeContent(html, { allowedIframeHostnames: iframeHosts })} />
 		) : (
 			<a href={url} target="_blank" rel="noopener noreferrer">
 				{url}
