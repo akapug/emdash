@@ -24,6 +24,10 @@ export const isUnderDomain = (host: string, domain: string): boolean =>
 export function isIframeHostname(value: unknown): value is string {
 	return (
 		typeof value === "string" &&
+		// Exactly its trimmed self: a reader that trims and lowercases must never turn a refused
+		// entry (" host", "host\n") into an accepted one. The anchored pattern already refuses
+		// those (a JS `$` without the m flag is the end of the input); this says it outright.
+		value === value.trim() &&
 		IFRAME_HOSTNAME.test(value) &&
 		!RESERVED_IFRAME_HOST_DOMAINS.some((domain) => isUnderDomain(value, domain))
 	);
