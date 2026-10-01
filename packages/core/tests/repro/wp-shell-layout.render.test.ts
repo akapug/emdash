@@ -16,6 +16,12 @@
  *   a page the record cut on its own in its own layout, the entry's form in
  *   its plugin's markup and a classic video as WordPress's player, and a
  *   listing's lanes by the shape EmDash stores for each post's image.
+ * - A slot map's generic sign-up, drawn and submitted: the page asks the
+ *   subscriptions plugin only its count; what a browser posts from it reaches
+ *   the plugin's route through EmDash's route wire, and the plugin's email (a
+ *   stub that sends nothing) is asked for exactly one confirmation for an
+ *   address it accepts and none for one it refuses; a site with no slot map
+ *   draws no sign-up and asks the plugin nothing.
  */
 import { readFileSync } from "node:fs";
 
@@ -29,15 +35,23 @@ import PostsIndexRoute from "../../../../templates/blog-cloudflare/src/pages/pos
 import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/[...path].astro";
 import WpShellListingRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/listing.astro";
 import {
+	WP_SHELL_SUBSCRIBE_MESSAGES,
 	wpShellIndexRoute,
 	wpShellProblem,
 } from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
 import FormEmbed from "../../../plugins/forms/src/astro/FormEmbed.astro";
 import type { PublicFormDefinition } from "../../../plugins/forms/src/public-definition.js";
+import { createPlugin as createSubscriptions } from "../../../plugins/subscriptions/src/index.js";
+import type {
+	OutboxMessage,
+	Subscriber,
+} from "../../../plugins/subscriptions/src/subscriptions.js";
+import { collection, cron, kv } from "../../../plugins/subscriptions/tests/fakes.js";
 import { createCommentBody } from "../../src/api/schemas/comments.js";
 import { initCommentForms } from "../../src/components/comment-form-client.js";
 import CommentForm from "../../src/components/CommentForm.astro";
 import EmDashComments from "../../src/components/Comments.astro";
+import { parseDeclaredPluginRouteInput } from "../../src/plugins/route-wire.js";
 
 const reads = vi.hoisted(() => ({
 	shell: null as unknown,
@@ -51,11 +65,15 @@ const reads = vi.hoisted(() => ({
 	),
 }));
 
-/** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own. */
+/** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own, and so are a plugin's helpers. */
 async function emdashReads() {
 	const seo = await import("../../src/seo/index.js");
 	const slug = await import("../../src/utils/slugify.js");
+	const plugins = await import("../../src/plugins/define-plugin.js");
+	const responses = await import("../../src/plugin-types.js");
 	return {
+		definePlugin: plugins.definePlugin,
+		pluginResponse: responses.pluginResponse,
 		getSeoMeta: seo.getSeoMeta,
 		getContentSeo: seo.getContentSeo,
 		decodeSlug: slug.decodeSlug,
@@ -1604,5 +1622,213 @@ describe("a slot map's site: the subtitle and the posts index, drawn as a page i
 				cursor: undefined,
 			});
 		}
+	});
+});
+
+describe("a slot map's site: its generic sign-up, drawn and submitted", () => {
+	const SITE = "https://example.org";
+	const ACTION = "/_emdash/api/plugins/emdash-subscriptions/subscribe";
+	/** The record with a generic sign-up after its content, as Embark's writer cuts one from a Substack's sign-up. */
+	const signedUp = () => {
+		const r = record();
+		r.parts.splice(r.parts.length - 1, 0, { slot: "subscribe", subscribe: 0 } as never);
+		return {
+			...r,
+			subscribe: [
+				{
+					plugin: "generic",
+					parts: [
+						'<div class="subscribe-widget">',
+						{ s: "form", class: "form" },
+						{ s: "fields" },
+						{ s: "/form" },
+						"</div>",
+					],
+					fields: [
+						{ s: "control", class: "email-input", placeholder: "Type your email..." },
+						{ s: "submit", tag: "button", class: "button primary", label: "Subscribe" },
+					],
+				},
+			],
+		};
+	};
+
+	/**
+	 * The site's subscriptions plugin, its storage in memory and its email a stub
+	 * that sends nothing: the page asks it through EmDash's public route handler,
+	 * and the visitor's form post reaches its route read as EmDash's route wire
+	 * reads one.
+	 */
+	function site() {
+		const plugin = createSubscriptions();
+		const subscribers = collection<Subscriber>();
+		const outbox = collection<OutboxMessage>();
+		const store = kv();
+		const tasks = cron();
+		const send = vi.fn(
+			async (_m: { to: string; subject: string; text: string; html: string }) => {},
+		);
+		const ctxOf = (request: Request, input: unknown) => ({
+			input,
+			request,
+			storage: { subscribers, outbox },
+			kv: store,
+			cron: tasks,
+			site: { name: "Example", url: SITE, locale: "en" },
+			log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+			email: { send },
+		});
+		const handle = vi.fn(
+			async (pluginId: string, method: string, path: string, request: Request) => {
+				const route = pluginId === plugin.id ? plugin.routes[path] : undefined;
+				if (!route?.public || !route.methods?.includes(method as never))
+					return {
+						success: false,
+						error: { code: "NOT_FOUND", message: "Plugin route not found" },
+					};
+				const input = await parseDeclaredPluginRouteInput(
+					request,
+					route.request ?? { body: "none" },
+				);
+				return { success: true, data: await route.handler(ctxOf(request, input) as never) };
+			},
+		);
+		/** A post drawn in the record's layout, the plugin answering the page. */
+		async function draw(shell: unknown, query = "") {
+			reads.shell = shell;
+			reads.getEmDashEntry.mockResolvedValue({
+				entry: {
+					id: "ice-roads",
+					data: {
+						id: "01POST",
+						title: "Ice roads",
+						excerpt: "",
+						content: [],
+						translationGroup: "01POST",
+						updatedAt: new Date("2026-02-01T00:00:00Z"),
+						publishedAt: new Date("2026-01-15T08:30:00Z"),
+					},
+					edit: { title: {}, content: {}, excerpt: {} },
+				},
+				cacheHint: {},
+			});
+			const c = await AstroContainer.create();
+			return c.renderToString(WpShellRoute, {
+				params: { path: "posts/ice-roads" },
+				request: new Request(`${SITE}/posts/ice-roads${query}`),
+				locals: { emdash: { handlePublicPluginApiRoute: handle } },
+			});
+		}
+		/** What a browser posts from the page's sign-up, `fill` typed in, through the route wire to the form's route. */
+		async function submit(html: string, fill: Record<string, string>) {
+			const form = new RegExp(`<form\\b[^>]*action="${ACTION}"[^>]*>([\\s\\S]*?)</form>`).exec(
+				html,
+			);
+			if (!form) throw new Error("the page drew no sign-up posting to the plugin");
+			const body = new URLSearchParams();
+			for (const [, tag] of form[1]!.matchAll(/<input\b([^>]*)>/g)) {
+				const name = /\sname="([^"]*)"/.exec(tag!)?.[1];
+				const type = /\stype="([^"]*)"/.exec(tag!)?.[1];
+				if (name)
+					body.append(
+						name,
+						type === "email"
+							? (fill.email ?? "")
+							: (fill[name] ?? /\svalue="([^"]*)"/.exec(tag!)?.[1] ?? ""),
+					);
+			}
+			const request = new Request(new URL(ACTION, SITE), { method: "POST", body });
+			const route = plugin.routes.subscribe!;
+			expect(route.public).toBe(true);
+			const res = (await route.handler(
+				ctxOf(request, await parseDeclaredPluginRouteInput(request, route.request!)) as never,
+			)) as { status: number; headers: Array<[string, string]> };
+			return {
+				status: res.status,
+				location: new Map(res.headers).get("location") ?? "",
+				posted: [...body.keys()],
+				source: body.get("source") ?? "",
+			};
+		}
+		return { draw, submit, handle, send, subscribers, outbox };
+	}
+
+	it("draws the sign-up asking the plugin only its count, and an address it accepts dispatches exactly one confirmation", async () => {
+		const s = site();
+		const html = await s.draw(signedUp());
+		expect(html).toContain(`<div class="subscribe-widget"><form method="post" action="${ACTION}"`);
+		// Drawing the page asks the plugin's count and nothing else: no subscriber, no message.
+		expect(s.handle.mock.calls.map(([id, method, path]) => [id, method, path])).toEqual([
+			["emdash-subscriptions", "GET", "status"],
+		]);
+		expect(s.send).not.toHaveBeenCalled();
+		expect(s.subscribers.rows.size).toBe(0);
+
+		const sent = await s.submit(html, { email: "reader@example.org" });
+		expect(sent.posted).toEqual(["source", "website", "email"]);
+		// The page drawn, as the layout writes its path: the plugin sends the visitor back there.
+		expect(sent.source).toMatch(/^\/posts\/ice-roads\/?$/);
+		expect(sent.status).toBe(303);
+		expect(sent.location).toBe(`${sent.source}?subscribe=sent`);
+		expect(s.send).toHaveBeenCalledTimes(1);
+		const [message] = s.send.mock.calls[0]!;
+		expect(message.to).toBe("reader@example.org");
+		expect(message.text).toMatch(
+			/https:\/\/example\.org\/_emdash\/api\/plugins\/emdash-subscriptions\/confirm\?s=[0-9a-f]+&t=[0-9a-f]+/,
+		);
+		expect([...s.subscribers.rows.values()]).toMatchObject([
+			{ email: "reader@example.org", status: "pending", consent: { page: sent.source } },
+		]);
+
+		// The page the visitor is sent back to says so in the layout's own markup, and draws no form again.
+		const back = await s.draw(signedUp(), "?subscribe=sent");
+		expect(back).toContain(
+			`<p class="wp-shell-subscribe-status wp-shell-subscribe-ok" role="status">${WP_SHELL_SUBSCRIBE_MESSAGES.sent!.text}</p>`,
+		);
+		expect(back).not.toContain('name="email"');
+		// The same address again is not sent a second confirmation.
+		expect((await s.submit(html, { email: "reader@example.org" })).location).toBe(
+			`${sent.source}?subscribe=pending`,
+		);
+		expect(s.send).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([
+		["an address that is not one", { email: "not an address" }, "invalid_email"],
+		["an empty address", { email: "" }, "invalid_email"],
+		["an address with no dot in its domain", { email: "reader@localhost" }, "invalid_email"],
+		[
+			"the honeypot filled, as a bot fills it",
+			{ email: "reader@example.org", website: "https://spam.example" },
+			"sent",
+		],
+	])("dispatches nothing and stores nothing for %s", async (_, fill, status) => {
+		const s = site();
+		const html = await s.draw(signedUp());
+		const { location, source } = await s.submit(html, fill);
+		expect(location).toBe(`${source}?subscribe=${status}`);
+		expect(s.send).not.toHaveBeenCalled();
+		expect(s.subscribers.rows.size).toBe(0);
+		expect(s.outbox.rows.size).toBe(0);
+	});
+
+	it("leaves a site with no slot map as it was: no sign-up drawn, the plugin never asked, nothing dispatched", async () => {
+		const s = site();
+		// A WordPress record with no sign-up, in its layout.
+		const wordpress = await s.draw(record());
+		expect(wordpress).not.toContain(ACTION);
+		// No record at all: the template's own posts index.
+		reads.shell = null;
+		reads.getEmDashCollection.mockResolvedValue({ entries: [], cacheHint: {} });
+		const c = await AstroContainer.create();
+		const plain = await c.renderToString(PostsIndexRoute, {
+			request: new Request(`${SITE}/posts`),
+			locals: { emdash: { handlePublicPluginApiRoute: s.handle } },
+		});
+		expect(plain).not.toContain(ACTION);
+		expect(plain).not.toContain("wp-shell");
+		expect(s.handle).not.toHaveBeenCalled();
+		expect(s.send).not.toHaveBeenCalled();
+		expect(s.subscribers.rows.size).toBe(0);
 	});
 });
