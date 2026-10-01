@@ -65,6 +65,17 @@ describe("siteIframeHosts: the site's own iframe hosts at render", () => {
 					"acme.org",
 					"shop.acme.org",
 					"www.acme.org",
+					// mixed case is the same host
+					"Shop.ACME.org",
+					"CDN.Acme.Example.Net",
+					// padded, upper-case or LF-ended rows (no schema stood in front of
+					// this write) are read canonically, then excluded or kept
+					" blog.acme.org ",
+					"maps.acme.org\n",
+					"BLOG.ACME.ORG",
+					"WWW.GOOGLE.COM ",
+					"*.acme.org",
+					42,
 					"evilacme.org",
 					"acme.example.net",
 					"cdn.acme.example.net",

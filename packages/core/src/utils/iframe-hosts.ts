@@ -6,7 +6,7 @@
  * exact hostname match is the whole check.
  */
 const IFRAME_HOSTNAME =
-	/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
+	/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?)$/;
 
 /**
  * Domains no site may add a host under, whatever its setting says: the shared
@@ -30,8 +30,22 @@ export function isIframeHostname(value: unknown): value is string {
 }
 
 /**
+ * The one canonical form of a list of iframe hosts, for every reader (the
+ * render-side settings reader, the sanitizer, the env var and
+ * `configureIframeHostnames`): each entry trimmed and lowercased, kept only when
+ * it is then exactly one host (`isIframeHostname`), duplicates dropped. A value
+ * that is not a list, and an entry that is not a string, give nothing. A stored
+ * row is read through this whatever wrote it, schema or not.
+ */
+export function canonicalIframeHosts(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const hosts = value.map((raw) => (typeof raw === "string" ? raw.trim().toLowerCase() : ""));
+	return [...new Set(hosts.filter(isIframeHostname))];
+}
+
+/**
  * `hosts` without the site's own: a host that is one of `siteHosts` (or its
- * www-less form) or a subdomain of it. An iframe from the site's own origin
+ * www-less form) or a subdomain of it, both sides compared lowercased. An iframe from the site's own origin
  * runs as the site, with its session, so it is never allowed by a list.
  */
 const LEADING_WWW = /^www\./;
@@ -41,5 +55,5 @@ export function withoutSiteHosts(
 	siteHosts: readonly (string | undefined)[],
 ): string[] {
 	const own = siteHosts.flatMap((h) => (h ? [h.toLowerCase().replace(LEADING_WWW, "")] : []));
-	return hosts.filter((host) => !own.some((domain) => isUnderDomain(host, domain)));
+	return hosts.filter((host) => !own.some((domain) => isUnderDomain(host.toLowerCase(), domain)));
 }

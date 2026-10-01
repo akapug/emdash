@@ -1,6 +1,6 @@
 import sanitizeHtml from "sanitize-html";
 
-import { isIframeHostname } from "./iframe-hosts.js";
+import { canonicalIframeHosts } from "./iframe-hosts.js";
 
 /**
  * Iframe hosts allowed out of the box.
@@ -18,20 +18,6 @@ const DEFAULT_HOSTS: ReadonlySet<string> = new Set(DEFAULT_ALLOWED_IFRAME_HOSTNA
 let configuredHostnames: string[] = [];
 
 /**
- * Trimmed and lowercased, and kept only when it names exactly one host (see
- * `isIframeHostname`): a wildcard, a scheme, a port, a path or a non-string is
- * ignored, never widened into something that matches more.
- */
-function normalizeHostnames(hostnames: Iterable<unknown>): string[] {
-	const out: string[] = [];
-	for (const raw of hostnames) {
-		const host = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-		if (isIframeHostname(host)) out.push(host);
-	}
-	return out;
-}
-
-/**
  * Add iframe hosts the renderer must not strip.
  *
  * Additive on purpose — the defaults cannot be removed by configuration, so a
@@ -39,7 +25,9 @@ function normalizeHostnames(hostnames: Iterable<unknown>): string[] {
  * this from an integration or a plugin's setup hook.
  */
 export function configureIframeHostnames(hostnames: Iterable<string>): void {
-	configuredHostnames = [...new Set([...configuredHostnames, ...normalizeHostnames(hostnames)])];
+	configuredHostnames = [
+		...new Set([...configuredHostnames, ...canonicalIframeHosts([...hostnames])]),
+	];
 }
 
 /** Test seam: forget everything `configureIframeHostnames` was given. */
@@ -50,7 +38,7 @@ export function resetIframeHostnames(): void {
 function addedHostnames(): string[] {
 	const fromEnv =
 		typeof process !== "undefined" && typeof process.env?.EMDASH_IFRAME_HOSTNAMES === "string"
-			? normalizeHostnames(process.env.EMDASH_IFRAME_HOSTNAMES.split(","))
+			? canonicalIframeHosts(process.env.EMDASH_IFRAME_HOSTNAMES.split(","))
 			: [];
 	return [...fromEnv, ...configuredHostnames];
 }
@@ -168,9 +156,7 @@ export interface SanitizeOptions {
  * and a tracking pixel's `<img>` loaded on every page view.
  */
 export function sanitizeContent(html: string, options: SanitizeOptions = {}): string {
-	const perCall = Array.isArray(options.allowedIframeHostnames)
-		? normalizeHostnames(options.allowedIframeHostnames)
-		: [];
+	const perCall = canonicalIframeHosts(options.allowedIframeHostnames);
 	const added = new Set([...addedHostnames(), ...perCall].filter((h) => !DEFAULT_HOSTS.has(h)));
 	const allowed = [...DEFAULT_HOSTS, ...added];
 	return sanitizeHtml(html, {
