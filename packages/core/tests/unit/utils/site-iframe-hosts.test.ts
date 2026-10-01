@@ -5,7 +5,10 @@ import type { Database } from "../../../src/database/types.js";
 import { runWithContext } from "../../../src/request-context.js";
 import { getSiteSettingsWithDb, invalidateSiteSettingsCache } from "../../../src/settings/index.js";
 import { sanitizeContent } from "../../../src/utils/sanitize.js";
-import { siteIframeHosts } from "../../../src/utils/site-iframe-hosts.js";
+import {
+	IFRAME_HOSTS_SETTING_MARKER,
+	siteIframeHosts,
+} from "../../../src/utils/site-iframe-hosts.js";
 import { setupTestDatabase } from "../../utils/test-db.js";
 
 // A page EmDash's middleware set up carries the page-contribution methods.
@@ -43,6 +46,25 @@ describe("siteIframeHosts: the site's own iframe hosts at render", () => {
 			expect(await siteIframeHosts(mapBlock.toUpperCase(), pageLocals, page)).toEqual([
 				"www.google.com",
 			]);
+		});
+	});
+
+	it("reads the list once per request, under the mark a host finds in the built bundle", async () => {
+		// Embark's tenant tool looks for exactly this string in an artifact's dist/server.
+		expect(IFRAME_HOSTS_SETTING_MARKER).toBe("emdash-iframe-hosts-setting-v1");
+		await runWithContext({ editMode: false, db }, async () => {
+			expect(await siteIframeHosts(mapBlock, pageLocals, page)).toEqual(["www.google.com"]);
+			await db
+				.updateTable("options")
+				.set({ value: JSON.stringify(["calendly.com"]) })
+				.where("name", "=", "site:iframeHosts")
+				.execute();
+			invalidateSiteSettingsCache();
+			// the same request keeps the list it read
+			expect(await siteIframeHosts(mapBlock, pageLocals, page)).toEqual(["www.google.com"]);
+		});
+		await runWithContext({ editMode: false, db }, async () => {
+			expect(await siteIframeHosts(mapBlock, pageLocals, page)).toEqual(["calendly.com"]);
 		});
 	});
 
@@ -94,6 +116,38 @@ describe("siteIframeHosts: the site's own iframe hosts at render", () => {
 				"www.google.com",
 				"evilacme.org",
 			]);
+		});
+	});
+
+	// THE COMPOSITION: the row exactly as Embark's tenant writer stores it
+	// (scripts/tenant/lib/iframe-hosts.mjs writeIframeHosts: sql.setOption, so
+	// JSON.stringify of fixup 7's canonical sorted siteHosts; this string is its
+	// test's stored value), read by the render-side settings reader, fed to the
+	// sanitizer.
+	it("draws the maps and forms a row written by Embark's tenant writer names, and links the rest", async () => {
+		const EMBARK_ROW = '["calendly.com","www.google.com"]';
+		await db
+			.updateTable("options")
+			.set({ value: EMBARK_ROW })
+			.where("name", "=", "site:iframeHosts")
+			.execute();
+		invalidateSiteSettingsCache();
+		const body =
+			`<iframe src="https://www.google.com/maps/embed?pb=1" width="600" height="450"></iframe>` +
+			`<iframe src="https://calendly.com/acme/30min"></iframe>` +
+			`<iframe src="http://calendly.com/acme/30min"></iframe>` +
+			`<iframe src="https://forms.example.net/f"></iframe>` +
+			`<iframe src="https://www.acme.org/contact"></iframe>`;
+		await runWithContext({ editMode: false, db }, async () => {
+			const hosts = await siteIframeHosts(body, pageLocals, page);
+			expect(hosts).toEqual(["calendly.com", "www.google.com"]);
+			expect(sanitizeContent(body, { allowedIframeHostnames: hosts })).toBe(
+				`<iframe src="https://www.google.com/maps/embed?pb=1" width="600" height="450"></iframe>` +
+					`<iframe src="https://calendly.com/acme/30min"></iframe>` +
+					`<a href="http://calendly.com/acme/30min" class="emdash-iframe-link">Open the embedded content (calendly.com)</a>` +
+					`<a href="https://forms.example.net/f" class="emdash-iframe-link">Open the embedded content (forms.example.net)</a>` +
+					`<a href="https://www.acme.org/contact" class="emdash-iframe-link">Open the embedded content (www.acme.org)</a>`,
+			);
 		});
 	});
 });
