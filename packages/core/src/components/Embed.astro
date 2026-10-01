@@ -51,7 +51,7 @@ const isSelfHostedAudio = provider === "audio";
 
 // The site's own iframe hosts, for the provider HTML drawn below.
 const iframeHosts = html
-	? await siteIframeHosts(html, Astro.locals as Record<string, unknown>)
+	? await siteIframeHosts(html, Astro.locals as Record<string, unknown>, Astro.url)
 	: undefined;
 ---
 

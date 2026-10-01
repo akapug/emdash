@@ -25,6 +25,7 @@ describe("settings schemas", () => {
 			"calendly.com",
 			"forms.xn--80ak6aa92e.com",
 			"xn--p1ai.xn--p1ai",
+			"evilembarkeasy.com",
 		];
 		expect(settingsUpdateBody.parse({ iframeHosts: hosts })).toEqual({ iframeHosts: hosts });
 		expect(settingsUpdateBody.parse({ iframeHosts: [] })).toEqual({ iframeHosts: [] });
@@ -45,6 +46,12 @@ describe("settings schemas", () => {
 			"[::1]",
 			" www.google.com",
 			"",
+			// shared platforms and our own: never a host a site adds
+			"workers.dev",
+			"acme.workers.dev",
+			"acme.pages.dev",
+			"embarkeasy.com",
+			"acme.embarkeasy.com",
 		]) {
 			expect(settingsUpdateBody.safeParse({ iframeHosts: [bad] }).success, bad).toBe(false);
 		}

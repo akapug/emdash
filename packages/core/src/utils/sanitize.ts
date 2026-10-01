@@ -68,29 +68,56 @@ export function getAllowedIframeHostnames(): string[] {
 }
 
 /**
- * sanitize-html's own reading of an iframe src (its `parseUrl`): the same
- * slash and whitespace folding, the same refusal of a `relative:` src, and a
- * `relative:` base, so the host decided here is the host sanitize-html checks
- * after it. A protocol-relative src comes back with the `relative:` protocol.
+ * How the browser reads an iframe src, read strictly, and the one reading
+ * every iframe decision here is made on.
+ *
+ * The raw value, trimmed as the browser trims it, is refused outright when it
+ * holds a backslash, whitespace or a control character. A browser folds those
+ * (in an https URL a backslash is a slash, and a tab or newline is dropped),
+ * and sanitize-html's own check reads a protocol-relative src against a
+ * non-special `relative:` base, where `//evil.example\@www.youtube.com/x`
+ * names www.youtube.com while the browser loads evil.example. What is left is
+ * parsed as an absolute URL, or as https when it is protocol-relative; a
+ * path-relative src is refused (no host to allow).
  */
-const SLASH_FOLD = /^(\w+:)?\s*[\\/]\s*[\\/]/;
-const RELATIVE_BASE = "relative://relative-site/";
-const DEFAULT_HOST_PROTOCOLS: ReadonlySet<string> = new Set(["https:", "http:", "relative:"]);
+const UNSAFE_SRC_CHAR = /[\\\s\p{Cc}]/u;
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const LINK_TEXT_MAX = 200;
 
-function parseIframeSrc(src: string): URL | undefined {
-	const value = src.replace(SLASH_FOLD, "$1//");
-	if (value.startsWith("relative:") || !URL.canParse(value, RELATIVE_BASE)) return undefined;
-	return new URL(value, RELATIVE_BASE);
+interface IframeSrc {
+	url: URL;
+	protocolRelative: boolean;
 }
 
-/** Where a link to a refused iframe goes: an absolute http(s) URL, or a protocol-relative one as https. */
-function linkTarget(src: string, url: URL): URL | undefined {
-	if (url.protocol === "https:" || url.protocol === "http:") return url;
-	const value = src.replace(SLASH_FOLD, "$1//");
-	if (url.protocol !== "relative:" || !value.startsWith("//")) return undefined;
-	const https = `https:${value}`;
-	return URL.canParse(https) ? new URL(https) : undefined;
+function readIframeSrc(src: string): IframeSrc | undefined {
+	const raw = src.trim();
+	if (UNSAFE_SRC_CHAR.test(raw)) return undefined;
+	const protocolRelative = raw.startsWith("//");
+	const absolute = protocolRelative ? `https:${raw}` : raw;
+	if (!SCHEME.test(absolute) || !URL.canParse(absolute)) return undefined;
+	const url = new URL(absolute);
+	return url.protocol === "https:" || url.protocol === "http:"
+		? { url, protocolRelative }
+		: undefined;
+}
+
+/**
+ * What becomes of one iframe src, from that one reading: kept as an iframe of
+ * `url` (YouTube and Vimeo as before; an added host only over https, never
+ * protocol-relative), drawn as a link to `url`, or removed (no reading). Both
+ * gates ask this: the transform that draws the iframe or the link, and the
+ * filter that re-reads the src it drew.
+ */
+type IframeVerdict = { keep: boolean; url: URL } | undefined;
+
+function iframeVerdict(src: string, added: ReadonlySet<string>): IframeVerdict {
+	const read = readIframeSrc(src);
+	if (!read) return undefined;
+	const { url, protocolRelative } = read;
+	const keep =
+		DEFAULT_HOSTS.has(url.hostname) ||
+		(added.has(url.hostname) && url.protocol === "https:" && !protocolRelative);
+	return { keep, url };
 }
 
 const warnedHostnames = new Set<string>();
@@ -126,10 +153,13 @@ export interface SanitizeOptions {
  * and basic attributes.
  *
  * An iframe is kept when its host is YouTube's or Vimeo's (as before), or an
- * added host and its src is https. Any other iframe with an http(s) src is
- * drawn as a link to that src, titled with the iframe's title or "Open the
- * embedded content" and the host, so a refused map is a link, never an empty
- * box. An iframe with no usable src (none, relative, `javascript:`) is removed.
+ * added host and its src is https (not protocol-relative); a kept iframe's src
+ * is drawn as the URL the decision read. Any other iframe with an http(s) or
+ * protocol-relative src is drawn as a link to that src, titled with the
+ * iframe's title or "Open the embedded content" and the host, so a refused map
+ * is a link, never an empty box. An iframe with no usable src (none,
+ * path-relative, another scheme such as `javascript:`, or one holding a
+ * backslash, whitespace or a control character) is removed.
  *
  * A `<noscript>` goes whole, with everything in it, as a `<script>` or a
  * `<style>` does: the browser draws what it holds only with scripts off, and
@@ -154,28 +184,27 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		},
 		allowedIframeHostnames: allowed,
 		transformTags: {
-			iframe: (tagName, attribs) => {
-				const src = attribs.src ?? "";
-				const url = parseIframeSrc(src);
-				if (!url) return { tagName, attribs: {} };
-				const host = url.hostname;
-				if (DEFAULT_HOSTS.has(host) && DEFAULT_HOST_PROTOCOLS.has(url.protocol)) {
-					return { tagName, attribs };
-				}
-				if (added.has(host) && url.protocol === "https:") return { tagName, attribs };
-				const link = linkTarget(src, url);
-				if (!link) return { tagName, attribs: {} };
-				warnRefused(link.hostname, allowed);
+			iframe: (tagName, attribs): sanitizeHtml.Tag => {
+				const verdict = iframeVerdict(attribs.src ?? "", added);
+				if (!verdict) return { tagName, attribs: {} };
+				// The src drawn is the URL decided on, so the browser loads what was checked.
+				if (verdict.keep) return { tagName, attribs: { ...attribs, src: verdict.url.href } };
+				const host = verdict.url.hostname;
+				warnRefused(host, allowed);
 				const title = (attribs.title ?? "").trim().slice(0, LINK_TEXT_MAX);
 				return {
 					tagName: "a",
-					attribs: { href: link.href, class: "emdash-iframe-link" },
-					text: title || `Open the embedded content (${link.hostname})`,
+					attribs: { href: verdict.url.href, class: "emdash-iframe-link" },
+					text: title || `Open the embedded content (${host})`,
 				};
 			},
 		},
-		// An iframe left with no src (refused above, or by sanitize-html's own
-		// host and scheme checks) goes whole, so it never draws an empty box.
-		exclusiveFilter: (frame) => frame.tag === "iframe" && !frame.attribs.src && !frame.attribs.href,
+		// The second gate: an iframe still standing is re-read from the src it
+		// drew, with the same reading, and goes whole (never an empty box) unless
+		// that src is kept. sanitize-html's own host check stays as a third.
+		exclusiveFilter: (frame) =>
+			frame.tag === "iframe" &&
+			frame.attribs.href === undefined &&
+			iframeVerdict(frame.attribs.src ?? "", added)?.keep !== true,
 	});
 }

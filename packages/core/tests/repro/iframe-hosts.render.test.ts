@@ -65,6 +65,23 @@ describe("an imported iframe on the page", () => {
 		}
 	});
 
+	it("draws a link, not the iframe, for the site's own host even when the setting names it", async () => {
+		settings.iframeHosts = ["www.google.com", "example.com"];
+		try {
+			const own = `<iframe src="https://example.com/page" width="600" height="450"></iframe>`;
+			const c = await AstroContainer.create();
+			const html = await c.renderToString(HtmlBlock, {
+				props: { node: { _type: "htmlBlock", _key: "o", html: own } },
+				locals: pageLocals,
+				request: new Request("https://example.com/visit-us/"),
+			});
+			expect(html).not.toContain("<iframe");
+			expect(html).toContain(`<a href="https://example.com/page" class="emdash-iframe-link">`);
+		} finally {
+			settings.iframeHosts = ["www.google.com"];
+		}
+	});
+
 	it("reads no settings for a block with no iframe, or off a page the middleware set up", async () => {
 		const before = settings.read;
 		await draw(HtmlBlock, { _type: "htmlBlock", _key: "p", html: "<p>Text.</p>" });

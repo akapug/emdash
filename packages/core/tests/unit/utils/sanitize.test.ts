@@ -61,9 +61,10 @@ describe("sanitizeContent: iframe hosts", () => {
 			expect(sanitizeContent(youtube, { allowedIframeHostnames })).toBe(youtube);
 			expect(sanitizeContent(vimeo, { allowedIframeHostnames })).toBe(vimeo);
 		}
-		// as before: a protocol-relative or http src from a default host is kept
+		// as before: a protocol-relative or http src from a default host is kept,
+		// a protocol-relative one drawn as the https URL it was read as
 		expect(sanitizeContent(map("//www.youtube.com/embed/abcdefghijk"))).toContain(
-			`<iframe src="//www.youtube.com/embed/abcdefghijk"`,
+			`<iframe src="https://www.youtube.com/embed/abcdefghijk"`,
 		);
 		expect(sanitizeContent(map("http://player.vimeo.com/video/1"))).toContain(
 			`<iframe src="http://player.vimeo.com/video/1"`,
@@ -91,6 +92,7 @@ describe("sanitizeContent: iframe hosts", () => {
 			"www.google.com.",
 			"google",
 			"1.2.3.4",
+			"localhost",
 			"",
 			42,
 			null,
@@ -104,6 +106,16 @@ describe("sanitizeContent: iframe hosts", () => {
 		expect(sanitizeContent(map(mapsUrl), { allowedIframeHostnames: notAList })).not.toContain(
 			"<iframe",
 		);
+	});
+
+	it("never allows a host under a shared platform domain or our own", () => {
+		for (const host of ["acme.workers.dev", "acme.pages.dev", "acme.embarkeasy.com"]) {
+			const html = sanitizeContent(map(`https://${host}/embed`), {
+				allowedIframeHostnames: [host],
+			});
+			expect(html, host).not.toContain("<iframe");
+			expect(html, host).toContain(`(${host})</a>`);
+		}
 	});
 
 	it("draws a refused iframe as a link to its src, titled by the iframe or by its host", () => {
@@ -134,6 +146,13 @@ describe("sanitizeContent: iframe hosts", () => {
 			"/embed/local",
 			"relative://relative-site/x",
 			"",
+			// a browser folds a backslash, a tab or a newline; such a src is never read
+			"//evil.example\\@www.youtube.com/x",
+			"https://evil.example\\@www.youtube.com/x",
+			"https:\\\\evil.example\\@www.google.com/maps",
+			"https://www.you\ttube.com/embed/abcdefghijk",
+			"https://www.youtube.com\n.evil.example/x",
+			"//www.youtube.com\u0000.evil.example/x",
 		]) {
 			expect(sanitizeContent(`<p>a</p>${map(src)}<p>b</p>`), src).toBe("<p>a</p><p>b</p>");
 		}
@@ -142,12 +161,40 @@ describe("sanitizeContent: iframe hosts", () => {
 		);
 	});
 
+	it("never draws an iframe of evil.example from //evil.example\\@www.youtube.com/x", () => {
+		// sanitize-html reads this src against a non-special base and finds
+		// www.youtube.com; an https page's browser loads evil.example
+		const html = sanitizeContent(`<p>a</p>${map("//evil.example\\@www.youtube.com/x")}<p>b</p>`);
+		expect(html).toBe("<p>a</p><p>b</p>");
+		expect(html).not.toContain("evil.example");
+	});
+
+	it("hands sanitize-html the canonical URL it decided on, so both gates read one string", () => {
+		expect(sanitizeContent(map("HTTPS://WWW.YOUTUBE.COM/embed/abcdefghijk"))).toContain(
+			`<iframe src="https://www.youtube.com/embed/abcdefghijk"`,
+		);
+		expect(
+			sanitizeContent(map(" https://www.google.com/maps/embed?pb=1&amp;z=2 "), {
+				allowedIframeHostnames: ["www.google.com"],
+			}),
+		).toContain(`<iframe src="https://www.google.com/maps/embed?pb=1&amp;z=2"`);
+	});
+
+	it("matches a domain only at a dot, so evilembarkeasy.com is no embarkeasy.com host", () => {
+		expect(
+			sanitizeContent(map("https://evilembarkeasy.com/x"), {
+				allowedIframeHostnames: ["evilembarkeasy.com"],
+			}),
+		).toContain(`<iframe src="https://evilembarkeasy.com/x"`);
+	});
+
 	it("reads the host the browser reads, so a lookalike src is a link to the real host", () => {
 		const opts = { allowedIframeHostnames: ["www.google.com"] };
 		for (const [src, host] of [
 			["https://www.google.com.evil.example/maps", "www.google.com.evil.example"],
 			["https://www.google.com@evil.example/maps", "evil.example"],
-			["https:\\\\evil.example\\@www.google.com/maps", "evil.example"],
+			["//www.google.com.evil.example/maps", "www.google.com.evil.example"],
+			["//evil.example/@www.youtube.com/x", "evil.example"],
 			["https://evil.example/?u=https://www.google.com/", "evil.example"],
 		] as const) {
 			const html = sanitizeContent(map(src), opts);

@@ -23,7 +23,7 @@ if (!node?.html) {
 }
 
 const sanitized = sanitizeContent(node.html, {
-	allowedIframeHostnames: await siteIframeHosts(node.html, Astro.locals as Record<string, unknown>),
+	allowedIframeHostnames: await siteIframeHosts(node.html, Astro.locals as Record<string, unknown>, Astro.url),
 });
 ---
 
