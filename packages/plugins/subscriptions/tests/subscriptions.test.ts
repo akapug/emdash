@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { adminPage } from "../src/admin.js";
 import { parseCsv } from "../src/csv.js";
 import {
 	backTo,
@@ -339,6 +340,7 @@ describe("the list WordPress kept, imported", () => {
 			already: 1,
 			invalid: 1,
 			notSubscribed: { unsubscribed: 1, pending: 1 },
+			paid: 0,
 		});
 		const imported = subscribers.rows.get(await subscriberId(env, "new@example.org"))!;
 		expect(imported.status).toBe("confirmed");
@@ -355,6 +357,74 @@ describe("the list WordPress kept, imported", () => {
 		expect([...outbox.rows.values()].filter((m) => m.kind === "confirm")).toHaveLength(0);
 		expect(send).not.toHaveBeenCalled();
 		expect(await confirmedCount(env)).toBe(4);
+	});
+
+	// The email_list file in Substack's export, with the columns its real exports carry
+	// (email, active_subscription, expiry, plan, email_disabled, digest_enabled,
+	// created_at): a free reader's plan is "other", true and false come in either case.
+	it("imports Substack's list: a reader who turned email off or asked to be deleted is left out, and paying readers are counted", async () => {
+		const { env, subscribers, outbox, send } = site({ mail: true });
+		const csv = [
+			"email,active_subscription,expiry,plan,email_disabled,digest_enabled,created_at",
+			"free@example.org,false,,other,false,false,2023-04-01T09:30:00.000Z",
+			"FREE-CAPS@example.org,FALSE,,other,FALSE,FALSE,2023-04-02T09:30:00.000Z",
+			"off@example.org,false,,other,true,false,2023-04-03T09:30:00.000Z",
+			"off-caps@example.org,FALSE,,other,TRUE,FALSE,2023-04-03T09:30:00.000Z",
+			"yearly@example.org,true,2027-01-01T00:00:00.000Z,yearly,false,false,2024-01-01T00:00:00.000Z",
+			"paid-off@example.org,true,2027-01-01T00:00:00.000Z,monthly,true,false,2024-01-01T00:00:00.000Z",
+			"lapsed@example.org,false,2023-01-01T00:00:00.000Z,yearly,false,false,2022-01-01T00:00:00.000Z",
+			"8f1c2b@deletion-request.substack.com,false,,other,false,false,2022-06-01T00:00:00.000Z",
+		].join("\n");
+		const report = await importSubscribers(env, csv);
+		expect(report).toEqual({
+			rows: 8,
+			imported: 4,
+			confirmed: 0,
+			already: 0,
+			invalid: 0,
+			notSubscribed: { "email turned off": 3, "asked to be deleted": 1 },
+			paid: 2,
+			from: "substack",
+		});
+		for (const kept of [
+			"free@example.org",
+			"free-caps@example.org",
+			"yearly@example.org",
+			"lapsed@example.org",
+		]) {
+			expect(subscribers.rows.get(await subscriberId(env, kept))?.status).toBe("confirmed");
+		}
+		for (const left of [
+			"off@example.org",
+			"off-caps@example.org",
+			"paid-off@example.org",
+			"8f1c2b@deletion-request.substack.com",
+		]) {
+			expect(subscribers.rows.has(await subscriberId(env, left))).toBe(false);
+		}
+		expect(subscribers.rows.get(await subscriberId(env, "free@example.org"))!.consent).toEqual({
+			source: "import",
+			from: "substack",
+			site: "example.org",
+			at: NOW.toISOString(),
+			subscribedAt: "2023-04-01T09:30:00.000Z",
+		});
+		expect([...outbox.rows.values()].filter((m) => m.kind === "confirm")).toHaveLength(0);
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it("says on the admin page how many readers pay, and that their payments do not move", async () => {
+		const { env } = site();
+		const csv =
+			"email,active_subscription,plan,email_disabled\npays@example.org,true,yearly,false\n";
+		const out = (await adminPage(env, {
+			type: "form_submit",
+			action_id: "import",
+			values: { csv },
+		})) as { blocks: { type: string; title?: string; description?: string }[] };
+		const banner = out.blocks.find((b) => b.type === "banner" && b.title?.includes("pay"));
+		expect(banner?.title).toBe("1 reader(s) pay for this newsletter");
+		expect(banner?.description).toMatch(/moves addresses, not payments/);
 	});
 
 	it("refuses a file with no column of addresses, and takes the one column of them when no header names it", async () => {
