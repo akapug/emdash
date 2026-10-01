@@ -19,13 +19,22 @@ const PROVIDERS: ReadonlyArray<readonly [domain: string, provider: string]> = [
 ];
 
 /**
- * Detect embed provider from URL
+ * Detect embed provider from URL, by its host: a URL that only contains a
+ * provider's domain (dropbox.com and wix.com hold "x.com") is not that
+ * provider. A URL written without a scheme ("youtube.com/watch?v=…", or
+ * "//www.youtube.com/embed/…") is read as https.
  */
 export function detectProvider(url: string): string | undefined {
 	if (!url) return undefined;
-
-	const urlLower = url.toLowerCase();
-	return PROVIDERS.find(([domain]) => urlLower.includes(domain))?.[1];
+	const trimmed = url.trim();
+	const absolute = /^[a-z][a-z0-9+.-]*:/iu.test(trimmed) ? trimmed : `https://${trimmed.replace(/^\/\//u, "")}`;
+	let host: string;
+	try {
+		host = new URL(absolute).hostname;
+	} catch {
+		return undefined;
+	}
+	return providerOfHost(host);
 }
 
 /**
