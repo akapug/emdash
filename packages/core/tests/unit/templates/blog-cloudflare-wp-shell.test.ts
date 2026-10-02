@@ -21,6 +21,8 @@ import {
 	renderArchiveNav,
 	renderArchivePosts,
 	renderArchives,
+	renderIndexNav,
+	renderIndexPosts,
 	renderListing,
 	renderMenu,
 	renderWpShellComments,
@@ -32,6 +34,7 @@ import {
 	WP_SHELL_SUBSCRIBE_MESSAGES,
 	wpShellDateSite,
 	wpShellDocumentTitle,
+	wpShellIndexRoute,
 	wpShellPostFill,
 	wpShellProblem,
 	wpShellRoute,
@@ -148,6 +151,13 @@ describe("wp-shell declared reader features", () => {
 			"record.post.commentArea.list",
 			"record.post.commentArea.respond",
 			"record.post.commentArea.fields",
+			"record.subscribe[].generic",
+			"record.slot.subtitle",
+			"record.index",
+			"record.index.body",
+			"record.index.listing",
+			"record.index.parts",
+			"record.index.styles",
 		])
 			expect(WP_SHELL_FEATURES, name).toContain(name);
 	});
@@ -575,6 +585,50 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 				item("item-wrap col-md-3 col-sm-6", text("/posts/third", "Third", "Short.", "")),
 				// and only as many as WordPress listed
 			].join(""),
+		);
+	});
+
+	it("prints a post of the current year in the listing's current-year format, another's in its own, the year taken when the page is drawn", () => {
+		// As a Substack archive prints them: `Aug 23` this year, `Dec 14, 2025` in another, the day UTC's.
+		const listing = { ...listingOf(), date: "M j, Y", dateThisYear: "M j", utcOffset: 0 };
+		const posts: WpShellPost[] = [
+			{ title: "A", url: "/posts/a", date: new Date("2026-08-23T12:13:44Z") },
+			{ title: "B", url: "/posts/b", date: new Date("2025-12-14T19:22:44Z") },
+			{ title: "C", url: "/posts/c", date: new Date("2026-12-31T23:30:00Z") },
+		];
+		const dates = (now: string, l: WpShellListing = listing) =>
+			Array.from(
+				renderListing(l, posts, new Date(now)).matchAll(
+					/<p class="date"><a href="[^"]*">([^<]*)<\/a>/g,
+				),
+				(m) => m[1],
+			);
+		expect(dates("2026-10-01T15:27:00Z")).toEqual(["Aug 23", "Dec 14, 2025", "Dec 31"]);
+		// The year's last moment, and the next year's first: the same posts, another current year.
+		expect(dates("2026-12-31T23:59:59Z")).toEqual(["Aug 23", "Dec 14, 2025", "Dec 31"]);
+		expect(dates("2027-01-01T00:00:00Z")).toEqual(["Aug 23, 2026", "Dec 14, 2025", "Dec 31, 2026"]);
+		// In the listing's zone: 23:30 UTC on 31 December is 1 January 2027 at UTC+1, and so is the drawing's moment.
+		expect(dates("2026-12-31T23:45:00Z", { ...listing, utcOffset: 60 })).toEqual([
+			"Aug 23, 2026",
+			"Dec 14, 2025",
+			"Jan 1",
+		]);
+		// No current-year format: every post in the listing's own, as before.
+		const plain = { ...listing };
+		delete (plain as { dateThisYear?: string }).dateThisYear;
+		expect(dates("2026-10-01T15:27:00Z", plain)).toEqual([
+			"Aug 23, 2026",
+			"Dec 14, 2025",
+			"Dec 31, 2026",
+		]);
+		expect(wpShellProblem(withListing(listing))).toBeNull();
+		expect(wpShellProblem(withListing({ ...listing, dateThisYear: "M <j>" }))).toBe(
+			"a listing's date format for the current year is not one",
+		);
+		const undated = { ...listing };
+		delete (undated as { date?: string }).date;
+		expect(wpShellProblem(withListing(undated))).toBe(
+			"a listing's date format for the current year is not one",
 		);
 	});
 
@@ -3182,4 +3236,314 @@ describe("the sign-up", () => {
 			'<h4 class="item-title">Follow by email</h4><div class="wp-block-jetpack-subscriptions__container"><form method="post"',
 		);
 	});
+});
+
+// --- a site that is not WordPress, cut from its slot map ----------------------
+
+/** A Substack-shaped record, as Embark's writer cuts one from a slot map: a generic sign-up, a subtitle slot, a posts index. */
+function slotMapped(): WpShell {
+	const s = sample();
+	const at = s.parts.findIndex((p) => "slot" in p && p.slot === "title");
+	s.parts.splice(at + 1, 0, { slot: "subtitle", tag: "h3", class: "subtitle" });
+	s.parts.push(
+		{ html: '<div class="footer-wrap">' },
+		{ slot: "subscribe", subscribe: 0 },
+		{ html: "</div>" },
+	);
+	return {
+		...s,
+		subscribe: [
+			{
+				plugin: "generic",
+				parts: [
+					'<div class="subscribe-widget">',
+					{ s: "form", class: "form" },
+					{ s: "fields" },
+					{ s: "/form" },
+					"</div>",
+				],
+				fields: [
+					{ s: "control", class: "email-input", placeholder: "Type your email..." },
+					{ s: "submit", tag: "button", class: "button primary", label: "Subscribe" },
+				],
+			},
+		],
+		listings: [
+			{
+				count: 3,
+				item: [
+					'<div class="',
+					{ s: "cls" },
+					'"><h2 class="article__title"><a href="',
+					{ s: "href" },
+					'">',
+					{ s: "title" },
+					'</a></h2><time class="article__date">',
+					{ s: "date" },
+					'</time><p class="article__excerpt">',
+					{ s: "excerpt" },
+					"</p></div>",
+				],
+				classes: ["article col"],
+				date: "F j, Y",
+				utcOffset: -420,
+				excerpt: { words: 55, more: " […]" },
+			},
+		],
+		index: {
+			body: { class: "archive-page" },
+			styles: ["/_emdash/api/media/file/wp-shell/index1.css"],
+			parts: [
+				{ html: '<header id="site-header"><nav><ul class="primary-menu">' },
+				{ slot: "menu", menu: 0 },
+				{ html: '</ul></nav></header><main class="container">' },
+				{ slot: "title", tag: "h1", class: "wp-shell-untitled" },
+				{ slot: "content", tag: "div", class: "row animate" },
+				{ html: "</main>" },
+			],
+			listing: 0,
+		},
+	};
+}
+
+const drawnPieces = (pieces: ReturnType<typeof composeWpShell>) =>
+	pieces
+		.map((p) =>
+			"html" in p
+				? p.html
+				: "subtitle" in p
+					? `[subtitle ${p.subtitle.tag}.${p.subtitle.class ?? ""}]`
+					: "title" in p
+						? "[title]"
+						: "content" in p
+							? "[content]"
+							: "[comments]",
+		)
+		.join("");
+
+describe("a slot map's site: its sign-up, its subtitle and its posts index", () => {
+	it("leaves every WordPress record the writer produces as it was: no index route, no subtitle, a Jetpack sign-up", () => {
+		for (const r of writerRecords as unknown as WpShell[]) {
+			expect(wpShellIndexRoute(r, "?cursor=x")).toBeNull();
+			expect(layoutFor(r, "index")).toBe(r);
+			expect(JSON.stringify(r)).not.toContain('"subtitle"');
+			for (const x of r.subscribe ?? []) expect(x.plugin).toBe("jetpack");
+		}
+	});
+
+	it("accepts the record the writer cuts from a slot map", () => {
+		expect(wpShellProblem(slotMapped())).toBeNull();
+	});
+
+	it("draws a generic sign-up posting to the subscriptions plugin, its status line in this layout's own markup, not Jetpack's", () => {
+		const x = slotMapped().subscribe![0]!;
+		const draw = (status: string | null) =>
+			renderWpShellSubscribe(x, { ...SUBSCRIBE, status, count: 12 });
+		expect(draw(null)).toBe(
+			'<div class="subscribe-widget"><form method="post" action="/_emdash/api/plugins/emdash-subscriptions/subscribe" accept-charset="utf-8" class="form">' +
+				'<input type="hidden" name="source" value="/about/">' +
+				'<p aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;"><input type="text" name="website" value="" tabindex="-1" autocomplete="off"></p>' +
+				'<input type="email" name="email" autocomplete="email" required class="email-input" placeholder="Type your email..."><button type="submit" class="button primary">Subscribe</button></form></div>',
+		);
+		const sent = draw("sent");
+		expect(
+			sent.startsWith(
+				`<p class="wp-shell-subscribe-status wp-shell-subscribe-ok" role="status">${WP_SHELL_SUBSCRIBE_MESSAGES.sent!.text}</p><div class="subscribe-widget">`,
+			),
+		).toBe(true);
+		expect(sent).not.toContain('name="email"');
+		expect(sent).not.toContain('class="success"');
+		expect(
+			draw("invalid_email").startsWith(
+				'<p class="wp-shell-subscribe-status wp-shell-subscribe-error" role="status">Oops! The email you used is invalid.',
+			),
+		).toBe(true);
+		// Jetpack's own skin keeps Jetpack's markup for the same status.
+		expect(
+			renderWpShellSubscribe(subscribeSkin(), {
+				...SUBSCRIBE,
+				status: "sent",
+				count: null,
+			}).startsWith('<div class="success"><p>'),
+		).toBe(true);
+		// No count line is drawn for a skin that has none, whatever the count.
+		expect(draw(null)).not.toContain("12");
+	});
+
+	it("draws the subtitle element only for an entry with an excerpt, between the title and the content", () => {
+		const pieces = (subtitle: string | null | undefined) =>
+			drawnPieces(
+				composeWpShell(slotMapped(), {
+					menuItems: () => null,
+					currentPath: "/posts/x",
+					kind: "post",
+					subtitle,
+				}),
+			);
+		expect(pieces("The road across the sea ice opens.")).toContain("[title][subtitle h3.subtitle]");
+		for (const none of [null, undefined, "", "   "]) {
+			expect(pieces(none)).not.toContain("[subtitle");
+			expect(pieces(none)).toContain("[title]");
+		}
+		// A record without a subtitle slot draws none, whatever the entry's excerpt.
+		expect(
+			drawnPieces(
+				composeWpShell(sample(), {
+					menuItems: () => null,
+					currentPath: "/",
+					subtitle: "An excerpt",
+				}),
+			),
+		).not.toContain("[subtitle");
+	});
+
+	it("draws the posts index in its own layout and body classes, the posts in the cards' markup, escaped", () => {
+		const shell = slotMapped();
+		expect(layoutFor(shell, "index")).toBe(shell.index);
+		expect(bodyClassFor(shell, "index")).toBe("archive-page");
+		expect(stylesFor(shell, "index")).toEqual(["/_emdash/api/media/file/wp-shell/index1.css"]);
+		// Without an index, the record's own layout would draw it; the posts route does not come here then.
+		const plain = sample();
+		expect(layoutFor(plain, "index")).toBe(plain);
+		const posts: WpShellPost[] = [
+			{
+				title: "Ice <roads>",
+				url: "/posts/ice-roads",
+				excerpt: "The road & the sea.",
+				date: new Date("2023-07-23T05:30:00Z"),
+			},
+			{
+				title: "Second",
+				url: "/posts/second",
+				excerpt: "",
+				text: "One two three",
+				date: new Date("2023-06-09T12:15:00Z"),
+			},
+		];
+		const site = wpShellDateSite(shell);
+		expect(renderIndexPosts(shell, posts, site)).toBe(
+			'<div class="article col"><h2 class="article__title"><a href="/posts/ice-roads">Ice &lt;roads&gt;</a></h2><time class="article__date">July 22, 2023</time><p class="article__excerpt">The road &amp; the sea.</p></div>' +
+				'<div class="article col"><h2 class="article__title"><a href="/posts/second">Second</a></h2><time class="article__date">June 9, 2023</time><p class="article__excerpt">One two three</p></div>',
+		);
+		// More posts than the source's page listed are all drawn: a page of the index holds what the site's setting says.
+		expect(
+			renderIndexPosts(
+				shell,
+				Array.from({ length: 5 }, (_, i) => ({ title: `P${i}`, url: `/posts/p${i}` })),
+				site,
+			).match(/article__title/g),
+		).toHaveLength(5);
+	});
+
+	it("draws plain items, never a card of the source's, where the record's index has no listing", () => {
+		const shell = slotMapped();
+		delete shell.index!.listing;
+		expect(wpShellProblem(shell)).toBeNull();
+		const out = renderIndexPosts(
+			shell,
+			[
+				{
+					title: "A & B",
+					url: "/posts/a",
+					excerpt: "Its <own>.",
+					date: new Date("2023-07-23T05:30:00Z"),
+				},
+			],
+			wpShellDateSite(shell, "America/Los_Angeles"),
+		);
+		expect(out).toBe(
+			'<article class="wp-shell-index-post"><h2 class="wp-shell-index-title"><a href="/posts/a">A &amp; B</a></h2>' +
+				'<p class="wp-shell-index-date"><time datetime="2023-07-23T05:30:00.000Z">July 22, 2023</time></p><p class="wp-shell-index-excerpt">Its &lt;own&gt;.</p></article>',
+		);
+		expect(out).not.toContain("article__title");
+		expect(renderIndexPosts(shell, [], wpShellDateSite(shell))).toBe("");
+	});
+
+	it("takes the list the cards hung in as the posts index's content, each plain item one of its items; no other layout's", () => {
+		const shell = slotMapped();
+		delete shell.index!.listing;
+		shell.index!.parts = shell.index!.parts.map((p) =>
+			"slot" in p && p.slot === "content" ? { slot: "content", tag: "ul", class: "cards" } : p,
+		);
+		expect(wpShellProblem(shell)).toBeNull();
+		expect(renderIndexPosts(shell, [{ title: "A", url: "/posts/a" }], wpShellDateSite(shell))).toBe(
+			'<li class="wp-shell-index-item"><article class="wp-shell-index-post"><h2 class="wp-shell-index-title"><a href="/posts/a">A</a></h2></article></li>',
+		);
+		const page = slotMapped();
+		page.parts = page.parts.map((p) =>
+			"slot" in p && p.slot === "content" ? { slot: "content", tag: "ul" } : p,
+		);
+		expect(wpShellProblem(page)).toBe("the content element is not one this layout draws");
+		const title = slotMapped();
+		title.index!.parts = title.index!.parts.map((p) =>
+			"slot" in p && p.slot === "title" ? { slot: "title", tag: "ul" } : p,
+		);
+		expect(wpShellProblem(title)).toBe(
+			"the posts index: the title element is not one this layout draws",
+		);
+	});
+
+	it("links the index's other pages: the newest from any later page, the next older one while there is one", () => {
+		expect(renderIndexNav(null, null)).toBe("");
+		expect(renderIndexNav(null, "abc")).toBe(
+			'<nav class="wp-shell-index-nav" aria-label="Posts"><a class="wp-shell-index-older" rel="next" href="/posts?cursor=abc">Older posts</a></nav>',
+		);
+		expect(renderIndexNav("abc", null)).toBe(
+			'<nav class="wp-shell-index-nav" aria-label="Posts"><a class="wp-shell-index-newest" href="/posts">Newest posts</a></nav>',
+		);
+		expect(renderIndexNav("abc", 'x"y&z')).toContain('href="/posts?cursor=x%22y%26z"');
+	});
+
+	const refused: Array<[string, (s: WpShell) => void]> = [
+		[
+			"a sign-up of a plugin this layout does not know",
+			(s) => void ((s.subscribe![0] as { plugin: string }).plugin = "substack"),
+		],
+		["two subtitle slots in one layout", (s) => void s.parts.push({ slot: "subtitle", tag: "p" })],
+		[
+			"a subtitle element this layout does not draw",
+			(s) =>
+				void s.parts.splice(
+					s.parts.findIndex((p) => "slot" in p && p.slot === "subtitle"),
+					1,
+					{ slot: "subtitle", tag: "ul" as "p" },
+				),
+		],
+		[
+			"a subtitle with classes that leave their attribute",
+			(s) =>
+				void s.parts.splice(
+					s.parts.findIndex((p) => "slot" in p && p.slot === "subtitle"),
+					1,
+					{ slot: "subtitle", tag: "p", class: 'x" onclick="y' },
+				),
+		],
+		["a posts index naming no listing", (s) => void (s.index!.listing = 3)],
+		[
+			"a posts index with no content slot",
+			(s) =>
+				void (s.index!.parts = s.index!.parts.filter(
+					(p) => !("slot" in p) || p.slot !== "content",
+				)),
+		],
+		[
+			"a posts index drawing a post's slot",
+			(s) => void s.index!.parts.push({ slot: "postMeta", meta: 0 }),
+		],
+		[
+			"a posts index whose markup carries a script",
+			(s) => void s.index!.parts.push({ html: "<script>x</script>" }),
+		],
+		[
+			"a posts index stylesheet that is not the site's own",
+			(s) => void (s.index!.styles = ["https://evil.example/x.css"]),
+		],
+	];
+	for (const [what, change] of refused) {
+		it(`refuses ${what}`, () => {
+			const s = slotMapped();
+			change(s);
+			expect(wpShellProblem(s)).not.toBeNull();
+		});
+	}
 });

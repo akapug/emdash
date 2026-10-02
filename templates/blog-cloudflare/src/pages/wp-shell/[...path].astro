@@ -134,7 +134,12 @@ const area = layoutComments && shell.post?.commentArea ? shell.post : null;
 	publishedTime={isPost ? (data.publishedAt?.toISOString() ?? null) : null}
 	modifiedTime={isPost ? data.updatedAt.toISOString() : null}
 	content={{ collection, id: data.id, slug: entry.id }}
-	entry={{ title: data.title, body: data.content, edit: entry.edit }}
+	entry={{
+		title: data.title,
+		body: data.content,
+		excerpt: "excerpt" in data && typeof data.excerpt === "string" ? data.excerpt : null,
+		edit: entry.edit,
+	}}
 	post={post}
 	comments={commentsOn}
 >

@@ -71,7 +71,9 @@ export const WP_SHELL_TAGS = [
 	"p",
 	"span",
 ] as const;
-export type WpShellTag = (typeof WP_SHELL_TAGS)[number];
+/** The lists a listing's cards may hang in: the posts index's content element may be one, and no other slot's. */
+export const WP_SHELL_LIST_TAGS = ["ul", "ol"] as const;
+export type WpShellTag = (typeof WP_SHELL_TAGS)[number] | (typeof WP_SHELL_LIST_TAGS)[number];
 
 /**
  * One piece of the page body, in document order. `html` is captured markup;
@@ -85,6 +87,8 @@ export type WpShellPart =
 	| { html: string }
 	| ({ slot: "title" } & WpShellElement)
 	| ({ slot: "content" } & WpShellElement)
+	/** The entry's subtitle, where the source printed one beside its title: the element holds the entry's excerpt. */
+	| ({ slot: "subtitle" } & WpShellElement)
 	| { slot: "siteTitle"; fallback: string }
 	| { slot: "tagline"; fallback: string }
 	| { slot: "logo"; src: string; alt?: string; class?: string; width?: number; height?: number }
@@ -290,6 +294,13 @@ export interface WpShellListing {
 	classes: string[];
 	/** How an item prints its date, in PHP date() letters (`F j, Y`). */
 	date?: string;
+	/**
+	 * How an item prints the date of a post of the current year, in the
+	 * listing's zone, where the source prints no year on one (a Substack
+	 * archive: `Aug 23` this year, `Aug 23, 2024` in another, which is `date`).
+	 * The current year is the one the page is drawn in.
+	 */
+	dateThisYear?: string;
 	/** The site's time zone: an IANA name, or a fixed offset from UTC in minutes. */
 	timeZone?: string;
 	utcOffset?: number;
@@ -369,6 +380,20 @@ export interface WpShell extends WpShellLayout {
 	subscribe?: WpShellSubscribe[];
 	/** Each page's own, where it is drawn in a layout it shares (WpShellPageOwn): without it, a page draws its layout's alone. */
 	pageOwn?: WpShellPageOwn[];
+	/**
+	 * The posts index (`/posts`, where a site's old listing paths such as
+	 * `/archive` redirect), drawn in a layout cut from the site's own listing
+	 * page: the region its cards were in is the content, where EmDash's posts
+	 * are drawn, each in `listings[listing]`'s markup when the record carries
+	 * one, else as plain items (renderIndexPosts). Without it, the posts index
+	 * keeps this template's own design.
+	 */
+	index?: WpShellIndex;
+}
+
+/** The posts index's layout: a layout like any other, and the listing its posts are drawn in, when it has one. */
+export interface WpShellIndex extends WpShellLayout {
+	listing?: number;
 }
 
 /**
@@ -425,13 +450,16 @@ export type WpShellSubscribeHole =
 export type WpShellSubscribePart = string | WpShellSubscribeHole;
 
 /**
- * A sign-up for new posts by email (Jetpack's Subscriptions widget) in the
- * plugin's markup, with holes for EmDash's own form: a visitor's address is
- * posted to the site's subscriptions plugin, and the count line says how many
- * others the site itself has, never the number WordPress.com had.
+ * A sign-up for new posts by email in its source's markup, with holes for
+ * EmDash's own form: a visitor's address is posted to the site's
+ * subscriptions plugin, and the count line says how many others the site
+ * itself has, never the number its old host had. `jetpack`: Jetpack's
+ * Subscriptions widget on a WordPress site. `generic`: any other platform's
+ * sign-up (a Substack's), found by the site's slot map; its status line is
+ * drawn in this layout's own markup, not Jetpack's.
  */
 export interface WpShellSubscribe {
-	plugin: "jetpack";
+	plugin: "jetpack" | "generic";
 	parts: WpShellSubscribePart[];
 	fields: WpShellSubscribePart[];
 	/** The line that says how many others subscribed, drawn for one or more: `%s` the count. */
@@ -521,8 +549,8 @@ export interface WpShellForm {
 	parts: WpShellFormPart[];
 }
 
-/** What a page is, for the body classes WordPress would have given it. */
-export type WpShellKind = "home" | "page" | "post" | "archive";
+/** What a page is, for the body classes WordPress would have given it; `index`, the posts index. */
+export type WpShellKind = "home" | "page" | "post" | "archive" | "index";
 
 /** The EmDash menu item shape this file reads. */
 export interface WpShellMenuItem {
@@ -713,6 +741,7 @@ const layoutsOf = (s: WpShell): WpShellLayout[] => [
 	...(s.home ? [s.home] : []),
 	...(s.pages ?? []),
 	...(s.post ? [s.post] : []),
+	...(s.index ? [s.index] : []),
 ];
 
 /**
@@ -926,10 +955,11 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 const optionalToken = (v: unknown) => v === undefined || (typeof v === "string" && TOKENS.test(v));
 
-function checkElement(p: Record<string, unknown>): boolean {
+function checkElement(p: Record<string, unknown>, list = false): boolean {
 	return (
 		typeof p.tag === "string" &&
-		(WP_SHELL_TAGS as readonly string[]).includes(p.tag) &&
+		((WP_SHELL_TAGS as readonly string[]).includes(p.tag) ||
+			(list && (WP_SHELL_LIST_TAGS as readonly string[]).includes(p.tag))) &&
 		optionalToken(p.class) &&
 		optionalToken(p.id)
 	);
@@ -950,13 +980,18 @@ function checkPart(
 	menus: number,
 	counts: SlotCounts,
 	post: WpShellPostLayout | null = null,
+	index = false,
 ): string | null {
 	if (!isObject(p)) return "a part is not an object";
 	if ("html" in p) return typeof p.html === "string" ? null : "an html part is not a string";
 	switch (p.slot) {
 		case "title":
 		case "content":
-			return checkElement(p) ? null : `the ${p.slot} element is not one this layout draws`;
+		case "subtitle":
+			// The posts index's content may be the list its cards hung in.
+			return checkElement(p, index && p.slot === "content")
+				? null
+				: `the ${p.slot} element is not one this layout draws`;
 		case "siteTitle":
 		case "tagline":
 			return typeof p.fallback === "string" ? null : `the ${p.slot} slot has no fallback`;
@@ -1079,7 +1114,7 @@ function checkListing(l: unknown): string | null {
 	if (!checkListingTemplate(l.item, ITEM_HOLES)) return "a listing's item template is malformed";
 	if (l.thumb !== undefined && !checkListingTemplate(l.thumb, THUMB_HOLES))
 		return "a listing's thumbnail template is malformed";
-	const { classes, date, timeZone, utcOffset, excerpt } = l;
+	const { classes, date, dateThisYear, timeZone, utcOffset, excerpt } = l;
 	if (
 		!Array.isArray(classes) ||
 		classes.length === 0 ||
@@ -1088,6 +1123,11 @@ function checkListing(l: unknown): string | null {
 		return "a listing's classes are not tokens";
 	if (date !== undefined && (typeof date !== "string" || !DATE_FORMAT.test(date)))
 		return "a listing's date format is not one";
+	if (
+		dateThisYear !== undefined &&
+		(date === undefined || typeof dateThisYear !== "string" || !DATE_FORMAT.test(dateThisYear))
+	)
+		return "a listing's date format for the current year is not one";
 	if (timeZone !== undefined && (typeof timeZone !== "string" || !TIME_ZONE.test(timeZone)))
 		return "a listing's time zone is not one";
 	if (
@@ -1351,7 +1391,8 @@ function subscribeHoles(t: unknown, allowed: ReadonlySet<string>): Record<string
 /** Why a sign-up is not one this layout draws, or null. */
 function checkSubscribe(x: unknown): string | null {
 	if (!isObject(x)) return "a sign-up is not an object";
-	if (x.plugin !== "jetpack") return "a sign-up's plugin is not one this layout draws";
+	if (x.plugin !== "jetpack" && x.plugin !== "generic")
+		return "a sign-up's plugin is not one this layout draws";
 	const parts = subscribeHoles(x.parts, SUBSCRIBE_HOLES);
 	const fields = subscribeHoles(x.fields, SUBSCRIBE_FIELD_HOLES);
 	if (!parts || !fields) return "a sign-up's templates are malformed";
@@ -1388,6 +1429,7 @@ function checkLayout(
 	menus: number,
 	counts: SlotCounts,
 	post: WpShellPostLayout | null = null,
+	index = false,
 ): string | null {
 	const { body, styles, parts } = l;
 	if (!isObject(body) || typeof body.class !== "string" || !TOKENS.test(body.class)) {
@@ -1398,13 +1440,14 @@ function checkLayout(
 	}
 	if (!Array.isArray(parts)) return "no parts";
 	for (const p of parts) {
-		const why = checkPart(p, menus, counts, post);
+		const why = checkPart(p, menus, counts, post, index);
 		if (why) return why;
 	}
 	if (countSlot(parts, "title") !== 1 || countSlot(parts, "content") !== 1) {
 		return "the record needs exactly one title and one content slot";
 	}
 	if (countSlot(parts, "comments") > 1) return "a post layout has more than one comments slot";
+	if (countSlot(parts, "subtitle") > 1) return "a layout has more than one subtitle slot";
 	return null;
 }
 
@@ -1771,6 +1814,14 @@ export function wpShellProblem(value: unknown): string | null {
 		if (why) return `a page's own: ${why}`;
 	}
 	if (value.titles !== undefined && !checkTitles(value.titles)) return "the titles name no pages";
+	if (value.index !== undefined) {
+		const why = !isObject(value.index)
+			? "not an object"
+			: value.index.listing !== undefined && !isIndex(value.index.listing, listings.length)
+				? "it names no listing"
+				: checkLayout(value.index, menus.length, counts, null, true);
+		if (why) return `the posts index: ${why}`;
+	}
 	if (!Array.isArray(forms)) return "the forms are not a list";
 	for (const f of forms) {
 		const why = checkForm(f);
@@ -2041,11 +2092,18 @@ export function formatWpTime(
 /** A template piece's markup; a hole has none. */
 const markup = (y: WpShellListingPart | undefined) => (typeof y === "string" ? y : "");
 
+/** The format a listed post's date prints in: the listing's own for a post of the current year (`now`'s, in the listing's zone) where it has one. */
+const listingDateFormat = (listing: WpShellListing, date: Date, now: Date): string | undefined =>
+	listing.dateThisYear && dayIn(date, listing).y === dayIn(now, listing).y
+		? listing.dateThisYear
+		: listing.date;
+
 function fillListing(
 	t: readonly WpShellListingPart[],
 	listing: WpShellListing,
 	post: WpShellPost,
 	at: number,
+	now: Date,
 ): string {
 	let out = "";
 	for (const [i, x] of t.entries()) {
@@ -2066,13 +2124,13 @@ function fillListing(
 			out += listingExcerpt(post, listing.excerpt)
 				.map(escapeHtml)
 				.join(inP ? "</p><p>" : " ");
-		} else if (x.s === "date")
-			out +=
-				post.date && listing.date ? escapeHtml(formatWpDate(post.date, listing.date, listing)) : "";
-		else if (x.s === "src") out += escapeAttr(post.image ?? "");
+		} else if (x.s === "date") {
+			const format = post.date && listingDateFormat(listing, post.date, now);
+			out += post.date && format ? escapeHtml(formatWpDate(post.date, format, listing)) : "";
+		} else if (x.s === "src") out += escapeAttr(post.image ?? "");
 		// The thumbnail only for an image that is one of the site's own files.
 		else if (listing.thumb && thumbDrawn(listing, post))
-			out += fillListing(listing.thumb, listing, post, at);
+			out += fillListing(listing.thumb, listing, post, at, now);
 	}
 	return out;
 }
@@ -2107,17 +2165,24 @@ export function laneHeight(listing: WpShellListing, post: WpShellPost): number {
  * theme's markup. In lanes (the theme's masonry), the first `from` items,
  * then each lane with the posts the theme's rule puts in it: each post in
  * turn into the lane whose estimated height is the least, the leftmost of
- * equals.
+ * equals. A post of `now`'s year (in the listing's zone; the moment the page
+ * is drawn) prints its date in the listing's current-year format, where the
+ * listing has one.
  */
-export function renderListing(listing: WpShellListing, posts: readonly WpShellPost[]): string {
+export function renderListing(
+	listing: WpShellListing,
+	posts: readonly WpShellPost[],
+	now: Date = new Date(),
+): string {
 	const shown = posts.slice(0, listing.count);
 	const lanes = listing.lanes;
-	if (!lanes) return shown.map((post, i) => fillListing(listing.item, listing, post, i)).join("");
+	if (!lanes)
+		return shown.map((post, i) => fillListing(listing.item, listing, post, i, now)).join("");
 	const heights: number[] = Array.from<number>({ length: lanes.columns }).fill(0);
 	const into: string[][] = heights.map(() => []);
 	let lead = "";
 	for (const [i, post] of shown.entries()) {
-		const html = fillListing(listing.item, listing, post, i);
+		const html = fillListing(listing.item, listing, post, i, now);
 		if (i < lanes.from) {
 			lead += html;
 			continue;
@@ -2272,6 +2337,70 @@ export function renderArchiveNav(
 	);
 }
 
+// --- the posts index ------------------------------------------------------------
+
+/**
+ * The posts of one page of the posts index, where the record's index draws
+ * them: each in the markup of the listing its cards were captured as, as many
+ * as the page holds; or, with none, plain items in this layout's own markup
+ * (the title as a link, the date in the site's zone, the excerpt), never a card
+ * of the source's.
+ */
+export function renderIndexPosts(
+	shell: WpShell,
+	posts: readonly WpShellPost[],
+	site: Pick<WpShellDateSite, "zone">,
+): string {
+	const listing =
+		shell.index?.listing !== undefined ? shell.listings?.[shell.index.listing] : undefined;
+	if (listing && posts.length > 0) return renderListing({ ...listing, count: posts.length }, posts);
+	// In a list (the cards hung in one), each plain item is one of its items.
+	const content = shell.index?.parts.find((p) => "slot" in p && p.slot === "content");
+	const list =
+		content && "tag" in content && (WP_SHELL_LIST_TAGS as readonly string[]).includes(content.tag);
+	return posts
+		.map((post) => {
+			const href = escapeAttr(safeHref(post.url));
+			const date = post.date
+				? `<p class="wp-shell-index-date"><time datetime="${escapeAttr(post.date.toISOString())}">${escapeHtml(formatWpDate(post.date, "F j, Y", site.zone))}</time></p>`
+				: "";
+			const excerpt = listingExcerpt(post, ARCHIVE_EXCERPT).map(escapeHtml).join(" ");
+			const item =
+				`<article class="wp-shell-index-post"><h2 class="wp-shell-index-title"><a href="${href}">${escapeHtml(post.title)}</a></h2>` +
+				date +
+				(excerpt ? `<p class="wp-shell-index-excerpt">${excerpt}</p>` : "") +
+				`</article>`;
+			return list ? `<li class="wp-shell-index-item">${item}</li>` : item;
+		})
+		.join("");
+}
+
+/**
+ * Where pages/posts/index.astro sends the posts index: the record's own
+ * index route, the query along, when the record carries an index; null for
+ * any other record (a WordPress one too) and for none, which keep this
+ * template's own posts index.
+ */
+export function wpShellIndexRoute(
+	shell: Pick<WpShell, "index"> | null,
+	search = "",
+): string | null {
+	return shell?.index ? `/wp-shell/listing${search}` : null;
+}
+
+/** The links to the posts index's other pages: its newest, from any later page, and the next older one, when there is one. */
+export function renderIndexNav(cursor: string | null, next: string | null): string {
+	if (!cursor && !next) return "";
+	return (
+		`<nav class="wp-shell-index-nav" aria-label="Posts">` +
+		(cursor ? `<a class="wp-shell-index-newest" href="/posts">Newest posts</a>` : "") +
+		(next
+			? `<a class="wp-shell-index-older" rel="next" href="/posts?cursor=${escapeAttr(encodeURIComponent(next))}">Older posts</a>`
+			: "") +
+		`</nav>`
+	);
+}
+
 // --- a sign-up ---------------------------------------------------------------
 
 /** What the layout knows for a sign-up (renderWpShellSubscribe). */
@@ -2355,11 +2484,14 @@ function subscriberCount(n: number): string {
  */
 export function renderWpShellSubscribe(x: WpShellSubscribe, fill: WpShellSubscribeFill): string {
 	const said = fill.status ? WP_SHELL_SUBSCRIBE_MESSAGES[fill.status] : undefined;
+	// Jetpack's own markup for what a try did; any other platform's in this layout's own.
 	const message = !said
 		? ""
-		: said.ok
-			? `<div class="success"><p>${escapeHtml(said.text)}</p></div>`
-			: `<p class="error">${escapeHtml(said.text)}</p>`;
+		: x.plugin === "generic"
+			? `<p class="wp-shell-subscribe-status wp-shell-subscribe-${said.ok ? "ok" : "error"}" role="status">${escapeHtml(said.text)}</p>`
+			: said.ok
+				? `<div class="success"><p>${escapeHtml(said.text)}</p></div>`
+				: `<p class="error">${escapeHtml(said.text)}</p>`;
 	let fragment = "";
 	const field = (h: WpShellSubscribeHole): string => {
 		switch (h.s) {
@@ -2902,6 +3034,8 @@ export function renderWpShellComments(
 export type WpShellPiece =
 	| { html: string }
 	| { title: WpShellElement }
+	/** The element that holds the entry's subtitle (its excerpt): drawn only for an entry that has one. */
+	| { subtitle: WpShellElement }
 	| { content: WpShellElement; end?: string }
 	| { comments: WpShellElement };
 
@@ -2922,6 +3056,8 @@ export interface WpShellFill {
 	slug?: string | null;
 	/** The entry's title, for the chrome that prints it as text (titleText). */
 	title?: string;
+	/** The entry's excerpt, for a subtitle slot; empty or unset, and the slot draws nothing. */
+	subtitle?: string | null;
 	/** The site's latest posts, newest first, for a listing slot. */
 	posts?: readonly WpShellPost[] | null;
 	/** The single post being drawn, for the post layout's holes. */
@@ -2970,6 +3106,7 @@ export interface WpShellPostFill {
 export function layoutFor(shell: WpShell, kind: WpShellKind, slug?: string | null): WpShellLayout {
 	if (kind === "home" && shell.home) return shell.home;
 	if (kind === "post" && shell.post) return shell.post;
+	if (kind === "index" && shell.index) return shell.index;
 	const own =
 		kind === "page" && slug
 			? shell.pages?.find((p) => p.slug === slug || p.also?.includes(slug))
@@ -3239,6 +3376,8 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		else if (p.slot === "titleText") push(escapeHtml(fill.title ?? ""));
 		else if (p.slot === "title") {
 			if (drawsTitle(shell, fill.kind ?? "page", fill.slug)) out.push({ title: element(p) });
+		} else if (p.slot === "subtitle") {
+			if (fill.subtitle && fill.subtitle.trim() !== "") out.push({ subtitle: element(p) });
 		} else if (p.slot === "content") {
 			const end = postHtml(post?.share);
 			out.push({ content: element(p), ...(end ? { end } : {}) });
@@ -3282,6 +3421,7 @@ const KIND_CLASSES: Record<WpShellKind, readonly string[]> = {
 	page: ["page", "page-template-default"],
 	post: ["single", "single-post", "single-format-standard"],
 	archive: ["archive", "date"],
+	index: ["blog"],
 };
 const ANY_KIND = new Set(Object.values(KIND_CLASSES).flat());
 /** The classes WordPress (and the themes that follow it) give a single entry's page, and never an archive. */

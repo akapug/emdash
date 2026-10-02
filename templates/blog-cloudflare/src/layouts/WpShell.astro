@@ -12,7 +12,8 @@
  * What is drawn from EmDash, so an admin edit shows: the title and content
  * (with visual-editing markers), the menus (through each menu's own markup in
  * the theme), the site title, tagline and logo, and the title again where the
- * chrome prints it as text (a breadcrumb). Everything else in the header and
+ * chrome prints it as text (a breadcrumb), and the entry's excerpt where the
+ * source printed a subtitle beside its title. Everything else in the header and
  * footer is the captured markup, sanitized when it was captured. The home is
  * drawn from the record's home layout when it has one (the front page's own),
  * and a post from its post layout: its meta, featured image and share links
@@ -81,7 +82,8 @@ interface Props {
 	modifiedTime?: string | null;
 	author?: string | null;
 	content?: { collection: string; id: string; slug?: string | null };
-	entry: { title: string; body?: PortableTextBlock[]; edit: EditProxy };
+	/** The entry: its title, body and excerpt (a subtitle slot draws the excerpt), with its edit markers. */
+	entry: { title: string; body?: PortableTextBlock[]; excerpt?: string | null; edit: EditProxy };
 	/** Markup drawn in the content's place instead of the entry's body: a date archive's posts. */
 	contentHtml?: string;
 	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
@@ -200,6 +202,7 @@ const pieces = composeWpShell(shell, {
 	kind,
 	slug,
 	title: entry.title,
+	subtitle: entry.excerpt ?? null,
 	posts,
 	post,
 	dates: datesResult?.dates ?? null,
@@ -262,6 +265,14 @@ const pageCtx = createPublicPageContext({
 						<Comments class={piece.comments.class} id={piece.comments.id}>
 							<slot />
 						</Comments>
+					);
+				}
+				if ("subtitle" in piece) {
+					const Subtitle = piece.subtitle.tag as HTMLTag;
+					return (
+						<Subtitle class={piece.subtitle.class} id={piece.subtitle.id} {...entry.edit.excerpt}>
+							{entry.excerpt}
+						</Subtitle>
 					);
 				}
 				if ("title" in piece) {
