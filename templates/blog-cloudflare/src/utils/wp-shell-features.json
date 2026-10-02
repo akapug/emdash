@@ -25,6 +25,7 @@
 	"record.index.styles",
 	"record.listings",
 	"record.listings[].lanes",
+	"record.listings[].stamp",
 	"record.menus",
 	"record.menus[].current",
 	"record.pageOwn",

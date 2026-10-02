@@ -632,6 +632,47 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 		);
 	});
 
+	it("fills a slot-mapped card's <time datetime> with each post's moment, and accepts the hole only there", () => {
+		// As a Substack archive's card prints its date: the day in its format, the moment in the <time>'s datetime.
+		const item = [
+			'<div class="',
+			{ s: "cls" },
+			'"><a href="',
+			{ s: "href" },
+			'">',
+			{ s: "title" },
+			'</a><time datetime="',
+			{ s: "stamp" },
+			'" class="date-rt">',
+			{ s: "date" },
+			"</time></div>",
+		] as WpShellListing["item"];
+		const listing = { ...listingOf(), item, date: "M j, Y", dateThisYear: "M j", utcOffset: 0 };
+		const html = renderListing(
+			listing,
+			[
+				{ title: "A", url: "/posts/a", date: new Date("2026-08-23T12:13:44.116Z") },
+				{ title: "B", url: "/posts/b" },
+			],
+			new Date("2026-10-01T00:00:00Z"),
+		);
+		expect(html).toContain(
+			'<time datetime="2026-08-23T12:13:44.116Z" class="date-rt">Aug 23</time>',
+		);
+		// No date: no moment either.
+		expect(html).toContain('<time datetime="" class="date-rt"></time>');
+		expect(wpShellProblem(withListing(listing))).toBeNull();
+		// Anywhere but a <time>'s datetime the hole is refused, and so is the record.
+		for (const at of ['<span title="', '"><time class="', "<time>"]) {
+			const bad = item.map((x) =>
+				typeof x === "string" && x.startsWith("</a><time") ? `</a>${at}` : x,
+			);
+			expect(wpShellProblem(withListing({ ...listing, item: bad }))).toBe(
+				"a listing's item template is malformed",
+			);
+		}
+	});
+
 	it("prints an excerpt's paragraphs in the item's own <p>s where the theme does, escaped", () => {
 		const listing = {
 			...listingOf(),

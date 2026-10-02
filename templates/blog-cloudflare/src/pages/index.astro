@@ -14,6 +14,7 @@ import PostCard from "../components/PostCard.astro";
 import { getReadingTime } from "../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../utils/site-identity";
 import { datePath, parseDateQuery } from "../utils/wp-archive";
+import { wpShellIndexRoute } from "../utils/wp-shell";
 import { loadWpShell } from "../utils/wp-shell-loader";
 
 // WordPress's plain permalinks name a date archive by query: `/?m=202307`
@@ -42,6 +43,10 @@ if (page && (await loadWpShell()).shell) {
 	// The query goes along: a rewrite to a path drops it, and the layout reads it (`?subscribe=`).
 	return Astro.rewrite(`/wp-shell/home${Astro.url.search}`);
 }
+// A site whose record carries a posts index (one that is not WordPress, its front page not cut: Substack's cover
+// page is left out) draws its latest posts there in its own listing's design, as /posts does.
+const shellIndex = page ? null : wpShellIndexRoute((await loadWpShell()).shell, Astro.url.search);
+if (shellIndex) return Astro.rewrite(shellIndex);
 
 const postsResult = page
 	? null

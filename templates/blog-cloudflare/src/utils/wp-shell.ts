@@ -274,8 +274,20 @@ export interface WpShellMenu {
 	current?: string;
 }
 
-/** A hole in a listing item's markup, filled for each post here. */
-export type WpShellListingHole = "cls" | "href" | "title" | "excerpt" | "date" | "thumb" | "src";
+/**
+ * A hole in a listing item's markup, filled for each post here. `stamp`: the
+ * `datetime` of the `<time>` a slot-mapped site's card prints its date in,
+ * filled with the post's moment (ISO).
+ */
+export type WpShellListingHole =
+	| "cls"
+	| "href"
+	| "title"
+	| "excerpt"
+	| "date"
+	| "thumb"
+	| "src"
+	| "stamp";
 export type WpShellListingPart = string | { s: WpShellListingHole };
 
 /**
@@ -757,6 +769,7 @@ const LISTING_FILL: Record<WpShellListingHole, string> = {
 	excerpt: "<b></b>",
 	date: "<b></b>",
 	thumb: "<b></b>",
+	stamp: "2026-01-01T00:00:00.000Z",
 };
 
 function fillForCheck(t: WpShellListingPart[], thumb: string): string {
@@ -1080,10 +1093,12 @@ function checkMenu(m: unknown): string | null {
 	return null;
 }
 
-const ITEM_HOLES = new Set(["cls", "href", "title", "excerpt", "date", "thumb"]);
+const ITEM_HOLES = new Set(["cls", "href", "title", "excerpt", "date", "thumb", "stamp"]);
 const THUMB_HOLES = new Set(["href", "src"]);
 /** What each attribute hole is filled inside, and only there. */
 const IN_ATTRIBUTE: Record<string, string> = { cls: 'class="', href: 'href="', src: 'src="' };
+/** A card's moment is filled only in the datetime of the `<time>` it prints its date in. */
+const STAMP_AT = /<time\b[^<>]*\sdatetime="$/;
 const DATE_FORMAT = /^[FMjdmnYS ,./-]{1,20}$/;
 const TIME_ZONE = /^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+){1,2}$/;
 const MAX_LISTED = 50;
@@ -1097,6 +1112,7 @@ function checkListingTemplate(t: unknown, allowed: ReadonlySet<string>): boolean
 			if (!isObject(x) || typeof x.s !== "string" || !allowed.has(x.s)) return false;
 			const attribute = IN_ATTRIBUTE[x.s];
 			const before = t[i - 1];
+			if (x.s === "stamp") return typeof before === "string" && STAMP_AT.test(before);
 			return attribute === undefined || (typeof before === "string" && before.endsWith(attribute));
 		})
 	);
@@ -2127,7 +2143,8 @@ function fillListing(
 		} else if (x.s === "date") {
 			const format = post.date && listingDateFormat(listing, post.date, now);
 			out += post.date && format ? escapeHtml(formatWpDate(post.date, format, listing)) : "";
-		} else if (x.s === "src") out += escapeAttr(post.image ?? "");
+		} else if (x.s === "stamp") out += post.date ? escapeAttr(post.date.toISOString()) : "";
+		else if (x.s === "src") out += escapeAttr(post.image ?? "");
 		// The thumbnail only for an image that is one of the site's own files.
 		else if (listing.thumb && thumbDrawn(listing, post))
 			out += fillListing(listing.thumb, listing, post, at, now);
