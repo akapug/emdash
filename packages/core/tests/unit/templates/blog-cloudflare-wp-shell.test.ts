@@ -659,8 +659,9 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 		expect(html).toContain(
 			'<time datetime="2026-08-23T12:13:44.116Z" class="date-rt">Aug 23</time>',
 		);
-		// No date: no moment either.
-		expect(html).toContain('<time datetime="" class="date-rt"></time>');
+		// No date: no moment either, and no empty datetime.
+		expect(html).toContain('<time class="date-rt"></time>');
+		expect(html).not.toContain('datetime=""');
 		expect(wpShellProblem(withListing(listing))).toBeNull();
 		// Anywhere but a <time>'s datetime the hole is refused, and so is the record.
 		for (const at of ['<span title="', '"><time class="', "<time>"]) {
@@ -671,6 +672,27 @@ describe("wp-shell: the front page's listing of the latest posts", () => {
 				"a listing's item template is malformed",
 			);
 		}
+	});
+
+	it("accepts a slot-mapped post's date meta with its <time datetime> stamp, and the stamp nowhere else", () => {
+		const meta = [
+			'<time datetime="',
+			{ s: "stamp" },
+			'">',
+			{ s: "date" },
+			"</time>",
+		] as WpShellPostLayout["meta"][number];
+		expect(wpShellProblem({ ...sample(), post: { ...postOf(), meta: [meta] } })).toBeNull();
+		const elsewhere = [
+			'<span title="',
+			{ s: "stamp" },
+			'">',
+			{ s: "date" },
+			"</span>",
+		] as WpShellPostLayout["meta"][number];
+		expect(
+			wpShellProblem({ ...sample(), post: { ...postOf(), meta: [elsewhere] } }),
+		).not.toBeNull();
 	});
 
 	it("prints an excerpt's paragraphs in the item's own <p>s where the theme does, escaped", () => {

@@ -125,6 +125,8 @@ export type WpShellPart =
  * written here.
  */
 export type WpShellPostHole =
+	/** The datetime of the `<time>` a slot-mapped post prints its date in: the post's moment (ISO). */
+	| "stamp"
 	| "href"
 	| "date"
 	| "author"
@@ -815,6 +817,7 @@ function drawnMarkup(s: WpShell): string[] {
  * sub-templates, filled the same way.
  */
 const POST_FILL: Record<WpShellPostHole, string> = {
+	stamp: "2026-01-01T00:00:00.000Z",
 	href: "#",
 	adjHref: "#",
 	"share-x": "#",
@@ -1099,6 +1102,8 @@ const THUMB_HOLES = new Set(["href", "src"]);
 const IN_ATTRIBUTE: Record<string, string> = { cls: 'class="', href: 'href="', src: 'src="' };
 /** A card's moment is filled only in the datetime of the `<time>` it prints its date in. */
 const STAMP_AT = /<time\b[^<>]*\sdatetime="$/;
+/** The attribute a card's stamp opens, taken off again for a post with no date. */
+const EMPTY_STAMP = /\s+datetime="$/;
 const DATE_FORMAT = /^[FMjdmnYS ,./-]{1,20}$/;
 const TIME_ZONE = /^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+){1,2}$/;
 const MAX_LISTED = 50;
@@ -1468,6 +1473,7 @@ function checkLayout(
 }
 
 const POST_META_HOLES = new Set([
+	"stamp",
 	"href",
 	"date",
 	"author",
@@ -1497,6 +1503,7 @@ function checkPostTemplate(t: unknown, allowed: ReadonlySet<string>): boolean {
 			if (!isObject(x) || typeof x.s !== "string" || !allowed.has(x.s)) return false;
 			const attribute = POST_IN_ATTRIBUTE[x.s];
 			const before = t[i - 1];
+			if (x.s === "stamp") return typeof before === "string" && STAMP_AT.test(before);
 			return attribute === undefined || (typeof before === "string" && before.endsWith(attribute));
 		})
 	);
@@ -2122,9 +2129,12 @@ function fillListing(
 	now: Date,
 ): string {
 	let out = "";
+	// A card with no date draws no datetime at all: the attribute its stamp sits in goes with the hole.
+	let unquote = false;
 	for (const [i, x] of t.entries()) {
 		if (typeof x === "string") {
-			out += x;
+			out += unquote && x.startsWith('"') ? x.slice(1) : x;
+			unquote = false;
 			continue;
 		}
 		if (x.s === "cls")
@@ -2143,8 +2153,13 @@ function fillListing(
 		} else if (x.s === "date") {
 			const format = post.date && listingDateFormat(listing, post.date, now);
 			out += post.date && format ? escapeHtml(formatWpDate(post.date, format, listing)) : "";
-		} else if (x.s === "stamp") out += post.date ? escapeAttr(post.date.toISOString()) : "";
-		else if (x.s === "src") out += escapeAttr(post.image ?? "");
+		} else if (x.s === "stamp") {
+			if (post.date) out += escapeAttr(post.date.toISOString());
+			else {
+				out = out.replace(EMPTY_STAMP, "");
+				unquote = true;
+			}
+		} else if (x.s === "src") out += escapeAttr(post.image ?? "");
 		// The thumbnail only for an image that is one of the site's own files.
 		else if (listing.thumb && thumbDrawn(listing, post))
 			out += fillListing(listing.thumb, listing, post, at, now);
@@ -3249,7 +3264,10 @@ function fillPost(
 		else if (h === "label") out += escapeHtml(term?.label ?? "");
 		else if (h === "terms") out += term?.terms ?? "";
 		else if (h === "title") out += escapeHtml(p.title);
-		else if (h === "date") {
+		else if (h === "stamp") {
+			if (!p.date || !post.date) return null;
+			out += escapeAttr(p.date.toISOString());
+		} else if (h === "date") {
 			if (!p.date || !post.date) return null;
 			out += escapeHtml(formatWpDate(p.date, post.date, post));
 		} else if (h === "author") {

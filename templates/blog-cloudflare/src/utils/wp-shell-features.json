@@ -63,6 +63,7 @@
 	"record.post.date",
 	"record.post.featured",
 	"record.post.meta",
+	"record.post.meta.stamp",
 	"record.post.parts",
 	"record.post.share",
 	"record.post.styles",
