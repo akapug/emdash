@@ -28,6 +28,7 @@
  */
 import type { HTMLTag } from "astro/types";
 import {
+	getEditMeta,
 	getEmDashCollection,
 	getMenuWithCacheHint,
 	getPublishedDates,
@@ -43,6 +44,7 @@ import WpShellBlock from "../components/WpShellBlock.astro";
 import WpShellImage from "../components/WpShellImage.astro";
 import WpShellEmbed from "../components/WpShellEmbed.astro";
 import WpShellForm from "../components/WpShellForm.astro";
+import WpShellSkeleton from "../components/WpShellSkeleton.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
 	bodyClassFor,
@@ -61,6 +63,7 @@ import {
 	wpShellDateSite,
 	wpShellDocumentTitle,
 } from "../utils/wp-shell";
+import { hasSkeleton, skeletonTree } from "../utils/wp-skeleton";
 
 interface Props {
 	shell: WpShell;
@@ -221,6 +224,14 @@ const components = {
 	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
 };
 
+// A page a builder made (Elementor) is drawn in the builder's own elements, which the page's own
+// stylesheet and the site's rules select by (../utils/wp-skeleton.ts). While the owner edits the
+// page in place, the body is EmDash's inline editor, as any other.
+const skeleton =
+	contentHtml === undefined && !getEditMeta(entry.body) && hasSkeleton(entry.body)
+		? skeletonTree(entry.body as never)
+		: null;
+
 const pageCtx = createPublicPageContext({
 	url: new URL(path + Astro.url.search, Astro.url.origin),
 	locale: Astro.currentLocale,
@@ -289,6 +300,8 @@ const pageCtx = createPublicPageContext({
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
 							{contentHtml !== undefined ? (
 								<Fragment set:html={contentHtml} />
+							) : skeleton ? (
+								<WpShellSkeleton nodes={skeleton} components={components} />
 							) : (
 								<PortableText value={entry.body} components={components} />
 							)}

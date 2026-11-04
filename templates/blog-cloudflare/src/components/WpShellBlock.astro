@@ -11,11 +11,16 @@
  * Josef centres its front page's highlights. So every alignment is drawn
  * here as WordPress's own `has-text-align-{value}` class, and the rules for
  * them are in ../styles/wp-shell.css.
+ *
+ * A paragraph or heading of a page builder's widget carries the class the
+ * builder draws on it (an Elementor heading's `elementor-heading-title`),
+ * which ../utils/wp-skeleton.ts puts on the block as `skeletonClass` when it
+ * draws the page in the builder's skeleton; only class characters are drawn.
  */
 import type { HTMLTag } from "astro/types";
 
 interface Props {
-	node: { style?: string; textAlign?: string };
+	node: { style?: string; textAlign?: string; skeletonClass?: unknown };
 	index?: number;
 	isInline?: boolean;
 }
@@ -39,6 +44,11 @@ const ALIGN_CLASS: Record<string, string> = {
 };
 const Tag = (node.style && Object.hasOwn(TAGS, node.style) ? TAGS[node.style] : undefined) ?? "p";
 const align = node.textAlign && Object.hasOwn(ALIGN_CLASS, node.textAlign) ? ALIGN_CLASS[node.textAlign] : undefined;
+const builder =
+	typeof node.skeletonClass === "string"
+		? node.skeletonClass.split(/\s+/).filter((c) => /^[A-Za-z0-9_-]{1,100}$/.test(c))
+		: [];
+const cls = [...builder, ...(align ? [align] : [])].join(" ") || undefined;
 ---
 
-<Tag class={align} {...attrs}><slot /></Tag>
+<Tag class={cls} {...attrs}><slot /></Tag>

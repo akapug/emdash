@@ -1,0 +1,31 @@
+---
+/**
+ * A page builder's skeleton in a migrated WordPress design
+ * (layouts/WpShell.astro): each element ../utils/wp-skeleton.ts checked, and
+ * each run of blocks inside them drawn by EmDash's PortableText with the
+ * layout's own components. Draws itself for the elements inside an element.
+ */
+import type { HTMLTag } from "astro/types";
+import { PortableText } from "emdash/ui";
+
+import type { SkeletonNode } from "../utils/wp-skeleton";
+
+interface Props {
+	nodes: SkeletonNode[];
+	components?: Record<string, unknown>;
+}
+
+const { nodes, components } = Astro.props;
+---
+
+{
+	nodes.map((node) => {
+		if ("blocks" in node) return <PortableText value={node.blocks as never} components={components as never} />;
+		const Tag = node.element.tag as HTMLTag;
+		return (
+			<Tag class={node.element.class} {...node.element.attrs}>
+				{node.element.children.length > 0 && <Astro.self nodes={node.element.children} components={components} />}
+			</Tag>
+		);
+	})
+}
