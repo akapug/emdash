@@ -17,7 +17,7 @@ import {
 	type ImportConfig,
 } from "../../../src/astro/routes/api/import/wordpress/execute.js";
 import type { EmDashHandlers } from "../../../src/astro/types.js";
-import { parseWxrString } from "../../../src/cli/wxr/parser.js";
+import { parseWxrString, type WxrPost } from "../../../src/cli/wxr/parser.js";
 import { getCommentsWithDb } from "../../../src/comments/query.js";
 import type { Database } from "../../../src/database/types.js";
 import { preImportWxrTaxonomies } from "../../../src/import/wxr-taxonomies.js";
@@ -55,8 +55,9 @@ describe("WXR import: a post's comments", () => {
 		await teardownTestDatabase(db);
 	});
 
-	const run = async (config: ImportConfig = CONFIG) => {
+	const run = async (config: ImportConfig = CONFIG, edit?: (post: WxrPost) => void) => {
 		const wxr = await parseWxrString(WXR);
+		if (edit) wxr.posts.forEach(edit);
 		const plan = await preImportWxrTaxonomies(db, wxr.posts, wxr.categories, wxr.tags, wxr.terms);
 		return importContent(
 			wxr.posts,
@@ -155,6 +156,25 @@ describe("WXR import: a post's comments", () => {
 	it("stores no comment when importComments is false", async () => {
 		const result = await run({ ...CONFIG, importComments: false });
 		expect(result.comments).toBeUndefined();
+		expect(await rows()).toHaveLength(0);
+	});
+
+	// WordPress shows no comment on an item a visitor cannot read, and EmDash's
+	// public comment list does not check that its entry is published.
+	it.each([
+		["private", { status: "private" }, "unpublished-parent"],
+		["behind a password", { postPassword: "hunter2" }, "password-protected-parent"],
+	] as const)("stores no comment on a post that is %s", async (_, change, reason) => {
+		const result = await run(CONFIG, (post) => {
+			if (post.id === 7) Object.assign(post, change);
+		});
+		expect(result.errors).toEqual([]);
+		expect(result.imported).toBe(1);
+		expect(result.comments).toEqual({
+			imported: 0,
+			skipped: 0,
+			notCarried: { [reason]: 8, "post-not-imported": 1 },
+		});
 		expect(await rows()).toHaveLength(0);
 	});
 });

@@ -175,8 +175,10 @@ describe("importWxrComments", () => {
 			...overrides,
 		};
 	}
-	const post = (id: number, comments: WxrComment[]): WxrPost => ({
+	const post = (id: number, comments: WxrComment[], overrides: Partial<WxrPost> = {}): WxrPost => ({
 		id,
+		status: "publish",
+		...overrides,
 		categories: [],
 		tags: [],
 		meta: new Map(),
@@ -261,5 +263,40 @@ describe("importWxrComments", () => {
 		expect(result.notCarried).toEqual({ order_note: 1, review: 1, trackback: 1 });
 		const rows = await db.selectFrom("_emdash_comments").select("body").execute();
 		expect(rows.map((r) => r.body)).toEqual(["Nice post!"]);
+	});
+
+	it("stores no comment on an item WordPress had not published or kept behind a password", async () => {
+		const result = await importWxrComments(
+			[
+				post(10, [wxrComment({ id: 1 }), wxrComment({ id: 2, approved: "spam" })], {
+					status: "private",
+				}),
+				post(11, [wxrComment({ id: 3 }), wxrComment({ id: 4, content: "Second" })], {
+					postPassword: "hunter2",
+				}),
+				post(12, [wxrComment({ id: 5 })], { status: "draft" }),
+				post(13, [wxrComment({ id: 6 })], { status: "future" }),
+			],
+			db,
+			new Map([
+				[10, "content-1"],
+				[11, "content-2"],
+				[12, "content-3"],
+				[13, "content-4"],
+			]),
+			new Map([
+				[10, "posts"],
+				[11, "posts"],
+				[12, "posts"],
+				[13, "posts"],
+			]),
+		);
+		expect(result.errors).toEqual([]);
+		expect(result.imported).toBe(0);
+		expect(result.notCarried).toEqual({
+			"unpublished-parent": 4,
+			"password-protected-parent": 2,
+		});
+		expect(await db.selectFrom("_emdash_comments").selectAll().execute()).toHaveLength(0);
 	});
 });

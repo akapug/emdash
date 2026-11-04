@@ -176,6 +176,9 @@ export interface WxrCommentsImportResult extends CommentsImportResult {
 	 * never approved (`pending`, `spam`, `trash`, `post-trashed`), its type for
 	 * one that is not a comment (`pingback`, `trackback`, `review`, …),
 	 * `post-not-imported` for one on an item the import did not store,
+	 * `unpublished-parent` for one on an item WordPress had not published
+	 * (private, draft, pending, future: the import stores it as a draft),
+	 * `password-protected-parent` for one on an item behind a password,
 	 * `empty` for one with no text a reader saw, and `undated` for one whose
 	 * export holds no date that reads as one.
 	 */
@@ -194,8 +197,9 @@ const WXR_COMMENT_STATUS: Record<string, string> = {
  * Import the comments a WXR export carries on its items.
  *
  * Only APPROVED comments carry, the ones a visitor of the WordPress site
- * could read: a pending, spam or trashed comment, a pingback or a trackback
- * is counted in `notCarried` and never stored. Each carried comment is
+ * could read: a pending, spam or trashed comment, a pingback or a trackback,
+ * and every comment on an item WordPress had not published or kept behind a
+ * password (`hiddenParentReason`), is counted in `notCarried` and never stored. Each carried comment is
  * stored approved, with its author's name, its date and its place in the
  * thread; its author's email is stored because EmDash's moderation reads it
  * (a returning commenter, `countApprovedByEmail`), and no public surface
@@ -230,7 +234,7 @@ export async function importWxrComments(
 			const reason =
 				postId === undefined || !contentIdMap.has(postId)
 					? "post-not-imported"
-					: notCarriedReason(comment);
+					: (hiddenParentReason(post) ?? notCarriedReason(comment));
 			if (postId === undefined || reason) {
 				count(reason ?? "post-not-imported");
 				continue;
@@ -284,6 +288,19 @@ function wxrCommentDate(comment: WxrComment): Date | undefined {
 		valid(parseWxrDate(comment.dateGmt, undefined, comment.date)) ??
 		valid(parseWxrDate(undefined, undefined, comment.date))
 	);
+}
+
+/**
+ * Why no comment on this item carries, or null when its comments may.
+ * WordPress shows an item's comments only where a visitor can read the item:
+ * published (`publish`) and not behind a password (`post_password_required`).
+ * EmDash's public comment list does not check its entry is published, so a
+ * comment carried onto a draft would be readable there.
+ */
+function hiddenParentReason(post: WxrPost): string | null {
+	if (post.status !== "publish") return "unpublished-parent";
+	if (post.postPassword) return "password-protected-parent";
+	return null;
 }
 
 /** Why a comment on an imported item does not carry, or null when it does. */
