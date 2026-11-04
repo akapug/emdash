@@ -131,7 +131,9 @@ describe("wxrCommentText", () => {
 
 	it("follows a link's words with its address, once, unless the words are the address", () => {
 		expect(
-			wxrCommentText('See <a href="https://example.org/a">this <em>page</em></a> and <a href="https://example.org/b">https://example.org/b</a>'),
+			wxrCommentText(
+				'See <a href="https://example.org/a">this <em>page</em></a> and <a href="https://example.org/b">https://example.org/b</a>',
+			),
 		).toBe("See this page (https://example.org/a) and https://example.org/b");
 	});
 

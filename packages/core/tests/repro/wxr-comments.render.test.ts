@@ -38,7 +38,11 @@ describe("a carried comment, drawn", () => {
 			.find((p) => p.id === 7)!
 			.comments!.filter((c) => c.approved === "1" && (c.type === "" || c.type === "comment"));
 		// A commenter who wrote a tag as text: WordPress stored it escaped, and showed the tag's letters.
-		approved.push({ ...approved[0]!, id: 999, content: "Try &lt;script&gt;alert(1)&lt;/script&gt; here" });
+		approved.push({
+			...approved[0]!,
+			id: 999,
+			content: "Try &lt;script&gt;alert(1)&lt;/script&gt; here",
+		});
 		items.list = approved.map(
 			(c): PublicComment => ({
 				id: String(c.id),

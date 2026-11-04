@@ -71,8 +71,7 @@ describe("WXR import: a post's comments", () => {
 			wxr.site.language,
 		);
 	};
-	const rows = () =>
-		db.selectFrom("_emdash_comments").selectAll().orderBy("created_at").execute();
+	const rows = () => db.selectFrom("_emdash_comments").selectAll().orderBy("created_at").execute();
 	const postId = async () =>
 		(
 			(await db
@@ -95,7 +94,14 @@ describe("WXR import: a post's comments", () => {
 		const stored = await rows();
 		const id = await postId();
 		expect(
-			stored.map((r) => [r.author_name, r.body, r.status, r.created_at, r.collection, r.content_id]),
+			stored.map((r) => [
+				r.author_name,
+				r.body,
+				r.status,
+				r.created_at,
+				r.collection,
+				r.content_id,
+			]),
 		).toEqual([
 			[
 				"Alice",
