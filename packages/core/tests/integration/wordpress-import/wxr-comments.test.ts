@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 
 import type { Kysely } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	importContent,
@@ -21,6 +21,8 @@ import { parseWxrString, type WxrPost } from "../../../src/cli/wxr/parser.js";
 import { getCommentsWithDb } from "../../../src/comments/query.js";
 import type { Database } from "../../../src/database/types.js";
 import { preImportWxrTaxonomies } from "../../../src/import/wxr-taxonomies.js";
+import { EmailPipeline } from "../../../src/plugins/email.js";
+import { createHookPipeline } from "../../../src/plugins/hooks.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 import { createTestRuntime, handlersFromRuntime } from "../../utils/mcp-runtime.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
@@ -144,6 +146,19 @@ describe("WXR import: a post's comments", () => {
 			["Mallory", []],
 		]);
 		expect(JSON.stringify(items)).not.toMatch(/@example\.net/);
+	});
+
+	it("imports historical approved comments without sending mail through an available pipeline", async () => {
+		emdash.email = new EmailPipeline(createHookPipeline([], { db }));
+		vi.spyOn(emdash.email, "isAvailable").mockReturnValue(true);
+		const send = vi.spyOn(emdash.email, "send").mockResolvedValue({ status: "sent" });
+
+		expect(emdash.email.isAvailable()).toBe(true);
+		const result = await run();
+		expect(result.errors).toEqual([]);
+		expect(result.comments?.imported).toBe(4);
+		expect(await rows()).toHaveLength(4);
+		expect(send).not.toHaveBeenCalled();
 	});
 
 	it("stores nothing twice when the export is imported again", async () => {
