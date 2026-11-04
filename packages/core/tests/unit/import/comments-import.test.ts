@@ -222,4 +222,44 @@ describe("importWxrComments", () => {
 		expect(rows[1]!.parent_id).toBe(rows[0]!.id);
 		expect(rows.every((r) => r.ip_hash === null && r.user_agent === null)).toBe(true);
 	});
+
+	it("reads an unreadable UTC date as the local one, and counts a comment with no date, without failing the import", async () => {
+		const result = await importWxrComments(
+			[
+				post(10, [
+					wxrComment({ id: 1, dateGmt: "2021-13-45 99:00:00", date: "2021-03-05 01:00:00" }),
+					wxrComment({ id: 2, dateGmt: "garbage", date: "also garbage", content: "No date" }),
+				]),
+			],
+			db,
+			contentIdMap,
+			collectionMap,
+		);
+		expect(result.errors).toEqual([]);
+		expect(result.imported).toBe(1);
+		expect(result.notCarried).toEqual({ undated: 1 });
+		const rows = await db.selectFrom("_emdash_comments").selectAll().execute();
+		expect(rows.map((r) => r.body)).toEqual(["Nice post!"]);
+		expect(Number.isNaN(Date.parse(rows[0]!.created_at))).toBe(false);
+	});
+
+	it("never stores a WooCommerce order note or review, or any type that is not a comment", async () => {
+		const result = await importWxrComments(
+			[
+				post(10, [
+					wxrComment({ id: 1, type: "order_note", content: "Payment captured, card ending 4242" }),
+					wxrComment({ id: 2, type: "review", content: "Five stars" }),
+					wxrComment({ id: 3, type: "trackback" }),
+					wxrComment({ id: 4, type: "" }),
+				]),
+			],
+			db,
+			contentIdMap,
+			collectionMap,
+		);
+		expect(result.imported).toBe(1);
+		expect(result.notCarried).toEqual({ order_note: 1, review: 1, trackback: 1 });
+		const rows = await db.selectFrom("_emdash_comments").select("body").execute();
+		expect(rows.map((r) => r.body)).toEqual(["Nice post!"]);
+	});
 });

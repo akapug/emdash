@@ -175,8 +175,9 @@ export interface WxrCommentsImportResult extends CommentsImportResult {
 	 * Comments not carried, by reason: WordPress's status for one that was
 	 * never approved (`pending`, `spam`, `trash`, `post-trashed`), its type for
 	 * one that is not a comment (`pingback`, `trackback`, `review`, …),
-	 * `post-not-imported` for one on an item the import did not store, and
-	 * `empty` for one with no text a reader saw.
+	 * `post-not-imported` for one on an item the import did not store,
+	 * `empty` for one with no text a reader saw, and `undated` for one whose
+	 * export holds no date that reads as one.
 	 */
 	notCarried: Record<string, number>;
 }
@@ -222,6 +223,7 @@ export async function importWxrComments(
 		notCarried[reason] = (notCarried[reason] ?? 0) + 1;
 	};
 	const carried: PluginComment[] = [];
+	const errors: CommentsImportResult["errors"] = [];
 	for (const post of posts) {
 		const postId = post.id;
 		for (const comment of post.comments ?? []) {
@@ -233,12 +235,28 @@ export async function importWxrComments(
 				count(reason ?? "post-not-imported");
 				continue;
 			}
-			const body = wxrCommentText(comment.content, texturize(post));
+			// One comment the converter cannot read is that comment's error, not the import's.
+			let body: string;
+			try {
+				body = wxrCommentText(comment.content, texturize(post));
+			} catch (error) {
+				errors.push({
+					comment: `${comment.author || "Anonymous"} (#${comment.id})`,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				continue;
+			}
 			if (!body) {
 				count("empty");
 				continue;
 			}
-			const date = parseWxrDate(comment.dateGmt, undefined, comment.date);
+			// The export's own date, never the time of the import: a comment stamped
+			// "now" is stored again by every re-run (the key includes the date).
+			const date = wxrCommentDate(comment);
+			if (!date) {
+				count("undated");
+				continue;
+			}
 			carried.push({
 				id: comment.id,
 				post_id: postId,
@@ -246,13 +264,26 @@ export async function importWxrComments(
 				author_name: comment.author,
 				author_email: comment.authorEmail,
 				body,
-				date_gmt: date ? date.toISOString() : "",
+				date_gmt: date.toISOString(),
 				status: "approved",
 			});
 		}
 	}
 	const result = await importCommentsFromPlugin(carried, db, contentIdMap, collectionMap);
-	return { ...result, notCarried };
+	return { ...result, errors: [...errors, ...result.errors], notCarried };
+}
+
+/**
+ * A comment's date: its UTC date, else its site-local one, else none. An
+ * export's text that is no date (`2021-13-45`, `garbage`) is none, never an
+ * Invalid Date whose `toISOString` throws.
+ */
+function wxrCommentDate(comment: WxrComment): Date | undefined {
+	const valid = (d: Date | undefined) => (d && !Number.isNaN(d.getTime()) ? d : undefined);
+	return (
+		valid(parseWxrDate(comment.dateGmt, undefined, comment.date)) ??
+		valid(parseWxrDate(undefined, undefined, comment.date))
+	);
 }
 
 /** Why a comment on an imported item does not carry, or null when it does. */
