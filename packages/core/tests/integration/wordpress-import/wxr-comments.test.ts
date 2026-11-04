@@ -18,6 +18,7 @@ import {
 } from "../../../src/astro/routes/api/import/wordpress/execute.js";
 import type { EmDashHandlers } from "../../../src/astro/types.js";
 import { parseWxrString, type WxrPost } from "../../../src/cli/wxr/parser.js";
+import { lookupContentAuthor, sendCommentNotification } from "../../../src/comments/notifications.js";
 import { getCommentsWithDb } from "../../../src/comments/query.js";
 import type { Database } from "../../../src/database/types.js";
 import { preImportWxrTaxonomies } from "../../../src/import/wxr-taxonomies.js";
@@ -149,16 +150,49 @@ describe("WXR import: a post's comments", () => {
 	});
 
 	it("imports historical approved comments without sending mail through an available pipeline", async () => {
+		// The post's author is a verified user with an address, so a stored comment
+		// that reached the notification path would mail them. Without an author no
+		// comment can notify anyone, and a zero below would prove nothing.
+		await db
+			.insertInto("users")
+			.values({
+				id: "author_1",
+				email: "author@example.org",
+				name: "Pat",
+				role: 40,
+				email_verified: 1,
+			})
+			.execute();
 		emdash.email = new EmailPipeline(createHookPipeline([], { db }));
 		vi.spyOn(emdash.email, "isAvailable").mockReturnValue(true);
 		const send = vi.spyOn(emdash.email, "send").mockResolvedValue({ status: "sent" });
 
-		expect(emdash.email.isAvailable()).toBe(true);
-		const result = await run();
+		const result = await run({ ...CONFIG, authorMappings: { pat: "author_1" } });
 		expect(result.errors).toEqual([]);
 		expect(result.comments?.imported).toBe(4);
-		expect(await rows()).toHaveLength(4);
+		const stored = await rows();
+		expect(stored).toHaveLength(4);
 		expect(send).not.toHaveBeenCalled();
+
+		// Control: the same pipeline and author do mail when a stored comment
+		// reaches the notification path, so the import's zero is the import's.
+		const first = stored[0]!;
+		const found = await lookupContentAuthor(db, "posts", first.content_id);
+		expect(found?.author?.email).toBe("author@example.org");
+		const sent = await sendCommentNotification({
+			email: emdash.email,
+			comment: {
+				authorName: first.author_name,
+				authorEmail: first.author_email,
+				body: first.body,
+				status: first.status,
+				collection: first.collection,
+			},
+			contentAuthor: found?.author,
+			adminBaseUrl: "https://example.org/_emdash",
+		});
+		expect(sent).toBe(true);
+		expect(send).toHaveBeenCalledTimes(1);
 	});
 
 	it("stores nothing twice when the export is imported again", async () => {
