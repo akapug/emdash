@@ -23,6 +23,10 @@ export default defineConfig({
 		// `createPlugin` from it (#1721).
 		"src/plugins/cloudflare-email.ts",
 		"src/plugins/cloudflare-email-env.ts",
+		// The auth-mail mediator (its own Worker, bundled and deployed by the
+		// operator): the logic, and its WorkerEntrypoint.
+		"src/auth-mail/mediator.ts",
+		"src/auth-mail/worker.ts",
 		"src/plugins/ai-search.ts",
 		"src/plugins/ai-search-admin.tsx",
 

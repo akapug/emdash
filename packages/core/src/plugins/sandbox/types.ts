@@ -16,6 +16,7 @@ import type {
 	ContentCreateOptions,
 	ContentItem,
 	ContentWriteInput,
+	EmailSendResult,
 	PluginComment,
 	PluginCommentStatus,
 	PluginManifest,
@@ -69,11 +70,13 @@ export interface SandboxEmailMessage {
  *
  * @param message - The email message to send
  * @param pluginId - The sending plugin's ID (used as source)
+ * @returns What the send came to: "sent", or "cancelled" by an email:beforeSend
+ *   plugin. The bridge hands it back to the sandboxed plugin.
  */
 export type SandboxEmailSendCallback = (
 	message: SandboxEmailMessage,
 	pluginId: string,
-) => Promise<void>;
+) => Promise<EmailSendResult>;
 
 export type SandboxCommentModerateCallback = (
 	pluginId: string,

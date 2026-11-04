@@ -14,6 +14,7 @@ import type {
 	CronTaskInfo,
 	CommentListOptions,
 	CommentCountOptions,
+	EmailSendResult,
 	PluginComment,
 	PluginCommentStatus,
 	PaginatedResult,
@@ -440,7 +441,7 @@ export interface PluginBridgeBinding {
 	mediaDelete(id: string): Promise<boolean>;
 	// Network
 	httpFetch(url: string, init?: RequestInit): Promise<PluginHttpResponseWire>;
-	// Email
+	// Email: what the send came to, "sent" or "cancelled" by an email:beforeSend plugin
 	emailSend(message: {
 		to: string;
 		cc?: string[];
@@ -448,7 +449,7 @@ export interface PluginBridgeBinding {
 		subject: string;
 		text: string;
 		html?: string;
-	}): Promise<void>;
+	}): Promise<EmailSendResult>;
 	// Cron
 	cronSchedule(
 		name: string,

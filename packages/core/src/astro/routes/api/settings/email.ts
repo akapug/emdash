@@ -12,7 +12,9 @@ import { z } from "zod";
 import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
+import { mediatorStatus, systemMailOf } from "#auth/system-mail.js";
 import { OptionsRepository } from "#db/repositories/options.js";
+import { scrubAddresses } from "#plugins/redact-addresses.js";
 
 export const prerender = false;
 
@@ -58,8 +60,23 @@ export const GET: APIRoute = async ({ locals }) => {
 			.getHookProviders(EMAIL_AFTER_SEND_HOOK)
 			.map((p) => p.pluginId);
 
+		// Sign-in mail: sent by this Worker's pipeline, or by an auth-mail
+		// mediator (the config's systemMail), and that mediator's own status.
+		const mail = await systemMailOf(emdash.config);
+		const systemMail = !mail.mediated
+			? { mediated: false }
+			: "missing" in mail
+				? { mediated: true, binding: mail.binding, present: false, why: mail.missing }
+				: {
+						mediated: true,
+						binding: mail.binding,
+						present: true,
+						status: await mediatorStatus(mail.mediator),
+					};
+
 		return apiSuccess({
 			available: emdash.email?.isAvailable() ?? false,
+			systemMail,
 			providers: providers.map((p) => ({
 				pluginId: p.pluginId,
 			})),
@@ -78,7 +95,9 @@ export const GET: APIRoute = async ({ locals }) => {
  * POST /_emdash/api/settings/email/test
  *
  * Send a test email through the full pipeline.
- * Validates the pipeline is configured and the provider works.
+ * Validates the pipeline is configured and the provider works. A test email
+ * an email:beforeSend plugin cancels was not sent, and the answer says so
+ * (422 EMAIL_CANCELLED, naming the plugin) rather than reporting it sent.
  */
 const testEmailBody = z.object({
 	to: z.email(),
@@ -102,15 +121,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		);
 	}
 
+	// Whom the test email names: an error about it may repeat the address, and
+	// the error is logged, so it is redacted first.
+	let recipient: string | undefined;
 	try {
 		const body = await parseBody(request, testEmailBody);
 		if (isParseError(body)) return body;
+		recipient = body.to;
 
 		const optionsRepo = new OptionsRepository(emdash.db);
 		const siteName = (await optionsRepo.get<string>("emdash:site_title")) ?? "EmDash";
 		const safeName = escapeHtml(siteName);
 
-		await emdash.email.send(
+		const outcome = await emdash.email.send(
 			{
 				to: body.to,
 				subject: `Test email from ${siteName}`,
@@ -135,11 +158,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			"admin",
 		);
 
+		if (outcome.status === "cancelled") {
+			return apiError(
+				"EMAIL_CANCELLED",
+				`The test email was not sent: the plugin "${outcome.by}" cancelled it`,
+				422,
+			);
+		}
+
 		return apiSuccess({
 			success: true,
 			message: `Test email sent to ${body.to}`,
 		});
 	} catch (error) {
-		return handleError(error, "Failed to send test email", "EMAIL_TEST_ERROR");
+		return handleError(
+			scrubAddresses(error, recipient ? [recipient] : []),
+			"Failed to send test email",
+			"EMAIL_TEST_ERROR",
+		);
 	}
 };

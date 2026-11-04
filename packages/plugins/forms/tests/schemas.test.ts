@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { exportSchema, formCreateSchema, formUpdateSchema } from "../src/schemas.js";
+import {
+	exportSchema,
+	formCreateSchema,
+	formUpdateSchema,
+	MAX_NOTIFY_EMAILS,
+} from "../src/schemas.js";
 
 describe("exportSchema", () => {
 	it("accepts minute-precision ISO datetime bounds", () => {
@@ -69,5 +74,39 @@ describe("formCreateSchema", () => {
 			spamProtection: "honeypot",
 			submitLabel: "Submit",
 		});
+	});
+});
+
+describe("a form's notification addresses", () => {
+	const addresses = (n: number) => Array.from({ length: n }, (_, i) => `staff${i}@example.com`);
+	const create = (notifyEmails: string[]) =>
+		formCreateSchema.safeParse({
+			name: "Contact",
+			slug: "contact",
+			pages: [
+				{
+					fields: [
+						{
+							id: "m",
+							name: "m",
+							label: "Message",
+							type: "textarea",
+							required: true,
+							width: "full",
+						},
+					],
+				},
+			],
+			settings: { notifyEmails },
+		});
+	const update = (notifyEmails: string[]) =>
+		formUpdateSchema.safeParse({ id: "01JBQ8Z0000000000000000000", settings: { notifyEmails } });
+
+	it("are at most MAX_NOTIFY_EMAILS, when a form is created and when it is edited", () => {
+		expect(create(addresses(10)).success).toBe(true);
+		expect(create(addresses(11)).success).toBe(false);
+		expect(update(addresses(10)).success).toBe(true);
+		expect(update(addresses(11)).success).toBe(false);
+		expect(MAX_NOTIFY_EMAILS).toBe(10);
 	});
 });

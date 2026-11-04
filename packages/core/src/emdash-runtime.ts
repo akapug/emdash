@@ -254,6 +254,7 @@ import { CronExecutor, type InvokeCronHookFn } from "./plugins/cron.js";
 import { definePlugin } from "./plugins/define-plugin.js";
 import { DEV_CONSOLE_EMAIL_PLUGIN_ID, devConsoleEmailDeliver } from "./plugins/email-console.js";
 import { EmailPipeline } from "./plugins/email.js";
+import { executionPolicyRefusal } from "./plugins/execution-policy.js";
 import {
 	createHookPipeline,
 	getActiveContentSaveHookName,
@@ -273,6 +274,7 @@ import {
 	type RouteCallerInput,
 	type RouteMeta,
 } from "./plugins/routes.js";
+import { assertSandboxBypassAllowed, sandboxBypassRefusal } from "./plugins/sandbox-bypass.js";
 import { isContentSaveRejection } from "./plugins/save-rejection.js";
 import type { CronScheduler } from "./plugins/scheduler/types.js";
 import { PluginStateRepository } from "./plugins/state.js";
@@ -877,7 +879,9 @@ export class EmDashRuntime {
 	 * marketplace plugins in-process via syncMarketplacePlugins().
 	 */
 	isSandboxBypassed(): boolean {
-		return this.runtimeDeps.sandboxBypassed === true;
+		// Never on Cloudflare Workers (plugins/sandbox-bypass.ts): an install or
+		// update asked there keeps the SANDBOX_NOT_AVAILABLE gate.
+		return this.runtimeDeps.sandboxBypassed === true && sandboxBypassRefusal(true) === null;
 	}
 
 	/**
@@ -1148,7 +1152,10 @@ export class EmDashRuntime {
 		// marketplace plugins to refresh in-process. Hooks/routes still won't
 		// execute (matches the cold-start bypass behavior), but Configure
 		// links and admin pages appear immediately.
-		if (this.runtimeDeps.sandboxBypassed) {
+		if (
+			this.runtimeDeps.sandboxBypassed !== undefined &&
+			this.runtimeDeps.sandboxBypassed !== false
+		) {
 			await this.syncMarketplacePluginsBypassed();
 			return;
 		}
@@ -1331,6 +1338,8 @@ export class EmDashRuntime {
 	 * fix would be vm.SourceTextModule for explicit lifecycle management.
 	 */
 	private async syncMarketplacePluginsBypassed(): Promise<void> {
+		// Refused before any state or bundle is read, never caught below.
+		assertSandboxBypassAllowed(this.runtimeDeps.sandboxBypassed);
 		if (!this.storage) return;
 		try {
 			const stateRepo = new PluginStateRepository(this.db);
@@ -1482,6 +1491,20 @@ export class EmDashRuntime {
 		deps: RuntimeDependencies,
 		timings?: Array<{ name: string; dur: number; desc?: string }>,
 	): Promise<EmDashRuntime> {
+		// Before anything else runs, and before any plugin code is loaded:
+		// `sandbox: false` is never honoured on Cloudflare Workers, however many
+		// sandboxed entries the build has (plugins/sandbox-bypass.ts). With none,
+		// marketplace plugins would still be loaded in-process below.
+		assertSandboxBypassAllowed(deps.sandboxBypassed ?? false);
+		// The build's own record of what it lets run (plugins/execution-policy.ts),
+		// when its config has one: malformed, or naming another sandbox mode than
+		// the one this runtime was given, and nothing starts.
+		const policyRefused = executionPolicyRefusal(
+			Reflect.get(deps.config, "execution"),
+			deps.sandboxBypassed,
+		);
+		if (policyRefused) throw new Error(`EmDash: ${policyRefused}: refusing to start`);
+
 		// Helper: time a phase and push into the shared timings array when
 		// provided. Uses performance.now() — monotonic across async boundaries.
 		// No-op when `timings` wasn't passed (preserves backwards compatibility
@@ -1810,19 +1833,8 @@ export class EmDashRuntime {
 
 		// sandbox: false escape hatch - load sandboxed plugin entries in-process
 		// as trusted plugins (no isolation) so they participate in the hook pipeline.
-		// Block this on Cloudflare Workers where dynamic import(dataUrl) is not
-		// available and running untrusted code in-process is a security risk.
+		// Refused on Cloudflare Workers at the top of create(), before this point.
 		if (deps.sandboxBypassed && deps.sandboxedPluginEntries.length > 0) {
-			const isCfWorkers =
-				typeof navigator !== "undefined" &&
-				typeof navigator.userAgent === "string" &&
-				navigator.userAgent.includes("Cloudflare-Workers");
-			if (isCfWorkers) {
-				throw new Error(
-					"sandbox: false is not supported in Cloudflare Workers. " +
-						"Remove the sandbox: false option or use the Cloudflare sandbox runner.",
-				);
-			}
 			console.info(
 				"EmDash: Sandbox disabled (sandbox: false). " +
 					"Sandboxed plugins will run in-process without isolation.",
@@ -2043,7 +2055,12 @@ export class EmDashRuntime {
 		// Wire email send into sandbox runner (created earlier but without
 		// email pipeline since it didn't exist yet)
 		if (sandboxRunner) {
-			sandboxRunner.setEmailSend((message, pluginId) => emailPipeline.send(message, pluginId));
+			// A sandboxed plugin's send resolves to what it came to ("sent", or
+			// "cancelled" by an email:beforeSend plugin), across its bridge. Its
+			// source is its manifest id, never the reserved "system".
+			sandboxRunner.setEmailSend((message, pluginId) =>
+				emailPipeline.sendAsPlugin(message, pluginId),
+			);
 		}
 
 		// ── Cron system ──────────────────────────────────────────────────
@@ -2392,6 +2409,7 @@ export class EmDashRuntime {
 	private static async loadBypassedPlugins(
 		entries: SandboxedPluginEntry[],
 	): Promise<ResolvedPlugin[]> {
+		assertSandboxBypassAllowed();
 		const { adaptSandboxEntry } = await import("./plugins/adapt-sandbox-entry.js");
 		const plugins: ResolvedPlugin[] = [];
 		for (const entry of entries) {
@@ -2750,6 +2768,7 @@ export class EmDashRuntime {
 		db: Kysely<Database>,
 		storage: Storage,
 	): Promise<ResolvedPlugin[]> {
+		assertSandboxBypassAllowed();
 		const resolved: ResolvedPlugin[] = [];
 		try {
 			const stateRepo = new PluginStateRepository(db);

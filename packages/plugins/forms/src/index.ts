@@ -18,7 +18,7 @@
  * ```
  */
 
-import type { PluginDescriptor, ResolvedPlugin } from "emdash";
+import type { PluginDescriptor, ResolvedPlugin, RouteContext } from "emdash";
 import { definePlugin } from "emdash";
 
 import { version } from "../package.json";
@@ -37,7 +37,12 @@ import {
 	submissionsListHandler,
 	submissionUpdateHandler,
 } from "./handlers/submissions.js";
-import { definitionHandler, submitHandler } from "./handlers/submit.js";
+import {
+	DEFAULT_NOTIFICATION_LIMITS,
+	definitionHandler,
+	type NotificationLimits,
+	submitHandler,
+} from "./handlers/submit.js";
 import {
 	definitionSchema,
 	exportSchema,
@@ -50,6 +55,7 @@ import {
 	submissionsListSchema,
 	submitSchema,
 	submissionUpdateSchema,
+	type SubmitInput,
 } from "./schemas.js";
 import { FORMS_STORAGE_CONFIG } from "./storage.js";
 
@@ -58,6 +64,13 @@ import { FORMS_STORAGE_CONFIG } from "./storage.js";
 export interface FormsPluginOptions {
 	/** Default spam protection for new forms */
 	defaultSpamProtection?: "none" | "honeypot" | "turnstile";
+	/**
+	 * How many submissions of one form may send mail (notifications and the
+	 * autoresponder), per hour and per day. A submission past either is stored
+	 * and sends nothing.
+	 * @default { perHour: 10, perDay: 50 }
+	 */
+	notificationLimits?: Partial<NotificationLimits>;
 }
 
 // ─── Plugin Descriptor (for live.config.ts) ──────────────────────
@@ -89,7 +102,8 @@ export function formsPlugin(
 
 // ─── Plugin Implementation ───────────────────────────────────────
 
-export function createPlugin(_options: FormsPluginOptions = {}): ResolvedPlugin {
+export function createPlugin(options: FormsPluginOptions = {}): ResolvedPlugin {
+	const limits = { ...DEFAULT_NOTIFICATION_LIMITS, ...options.notificationLimits };
 	return definePlugin({
 		id: "emdash-forms",
 		version,
@@ -126,7 +140,7 @@ export function createPlugin(_options: FormsPluginOptions = {}): ResolvedPlugin 
 			submit: {
 				public: true,
 				input: submitSchema,
-				handler: submitHandler,
+				handler: (ctx: RouteContext<SubmitInput>) => submitHandler(ctx, limits),
 			},
 
 			definition: {

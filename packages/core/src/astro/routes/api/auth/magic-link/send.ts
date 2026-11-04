@@ -21,6 +21,7 @@ import { isParseError, parseBody } from "#api/parse.js";
 import { magicLinkSendBody } from "#api/schemas.js";
 import { getSiteBaseUrl } from "#api/site-url.js";
 import { checkRateLimit, getClientIp } from "#auth/rate-limit.js";
+import { SYSTEM_MAIL_PROTOCOL, askMediator, mediatorIp, systemMailOf } from "#auth/system-mail.js";
 import { getTrustedProxyHeaders } from "#auth/trusted-proxy.js";
 import { OptionsRepository } from "#db/repositories/options.js";
 
@@ -44,6 +45,31 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		if (!rateLimit.allowed) {
 			// Return success-shaped response to avoid revealing rate limit
 			// (which could leak information about email enumeration attempts)
+			return apiSuccess({
+				success: true,
+				message: "If an account exists for this email, a magic link has been sent.",
+			});
+		}
+
+		// Mediated (the config's systemMail): the auth-mail mediator issues and
+		// sends the link itself; nothing about it is built or sent here, and
+		// without its binding nothing is sent at all.
+		const mail = await systemMailOf(emdash.config);
+		if (mail.mediated) {
+			const outcome =
+				"mediator" in mail
+					? await askMediator((requestId) =>
+							mail.mediator.requestMagicLink({
+								protocol: SYSTEM_MAIL_PROTOCOL,
+								requestId,
+								email: body.email.toLowerCase(),
+								ip: mediatorIp(ip),
+							}),
+						)
+					: { status: "refused" as const, why: mail.missing };
+			if (outcome.status === "refused") console.warn(`[magic-link] not sent: ${outcome.why}`);
+			if (outcome.status === "unknown")
+				console.warn(`[magic-link] not known to be sent: ${outcome.why}`);
 			return apiSuccess({
 				success: true,
 				message: "If an account exists for this email, a magic link has been sent.",

@@ -14,6 +14,12 @@ import type { APIRoute } from "astro";
 import { resolveEmailLocale } from "#api/email-locale.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { getSiteBaseUrl } from "#api/site-url.js";
+import {
+	SYSTEM_MAIL_PROTOCOL,
+	askMediator,
+	credentialOf,
+	systemMailOf,
+} from "#auth/system-mail.js";
 import { OptionsRepository } from "#db/repositories/options.js";
 
 export const prerender = false;
@@ -42,6 +48,37 @@ export const POST: APIRoute = async ({ request, params, locals }) => {
 		const targetUser = await adapter.getUserById(id);
 		if (!targetUser) {
 			return apiError("NOT_FOUND", "User not found", 404);
+		}
+
+		// Mediated (the config's systemMail): the auth-mail mediator authenticates
+		// the admin itself from this request's own credential and sends the link;
+		// nothing about it is built or sent here. A link not known to be sent is
+		// never said to be unsent.
+		const mail = await systemMailOf(emdash.config);
+		if (mail.mediated) {
+			const outcome =
+				"mediator" in mail
+					? await askMediator((requestId) =>
+							mail.mediator.sendRecovery({
+								protocol: SYSTEM_MAIL_PROTOCOL,
+								requestId,
+								userId: targetUser.id,
+								...credentialOf(request),
+							}),
+						)
+					: { status: "refused" as const, why: mail.missing };
+			if (outcome.status === "sent")
+				return apiSuccess({ success: true, message: "Recovery link sent" });
+			if (outcome.status === "unknown") {
+				console.warn(`[recovery] not known to be sent: ${outcome.why}`);
+				return apiError(
+					"RECOVERY_SEND_UNKNOWN",
+					"The recovery link may have been sent: whether it was is not known. Ask the user to check their inbox before you send another.",
+					502,
+				);
+			}
+			console.warn(`[recovery] not sent: ${outcome.why}`);
+			return apiError("RECOVERY_NOT_SENT", "The recovery link was not sent", 502);
 		}
 
 		// Check if email pipeline is available

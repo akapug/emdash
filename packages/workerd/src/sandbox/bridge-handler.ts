@@ -812,8 +812,8 @@ async function dispatch(
 			const message = requireEmailMessage(body, "message");
 			const emailSend = opts.emailSend();
 			if (!emailSend) throw new Error("Email is not configured. No email provider is available.");
-			await emailSend(message, pluginId);
-			return null;
+			// What the send came to ("sent", or "cancelled" by an email:beforeSend plugin) reaches the plugin.
+			return await emailSend(message, pluginId);
 		}
 
 		// ── Users ───────────────────────────────────────────────────────
@@ -916,10 +916,13 @@ async function dispatch(
 		case "log": {
 			const level = requireLogLevel(body, "level");
 			const msg = requireString(body, "msg");
+			// The plugin's secrets and every email address out, with or without a
+			// redactor of the plugin's own.
+			const sanitizer = opts.secretRedactor ?? createPluginSecretRedactor();
 			console[level](
 				`[plugin:${pluginId}]`,
-				opts.secretRedactor?.redact(msg) ?? msg,
-				opts.secretRedactor?.redact(body.data ?? "") ?? body.data ?? "",
+				sanitizer.redact(msg),
+				sanitizer.redact(body.data ?? ""),
 			);
 			return null;
 		}

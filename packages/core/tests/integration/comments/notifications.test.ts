@@ -90,7 +90,8 @@ describe("Comment Notifications", () => {
 		let sendSpy: ReturnType<typeof vi.fn>;
 
 		beforeEach(() => {
-			sendSpy = vi.fn().mockResolvedValue(undefined);
+			// The pipeline's answer: what the send came to (EmailPipeline.send).
+			sendSpy = vi.fn().mockResolvedValue({ status: "sent" });
 			mockEmail = {
 				send: sendSpy,
 				isAvailable: () => true,
@@ -118,6 +119,27 @@ describe("Comment Notifications", () => {
 			expect(message.to).toBe("author@example.com");
 			expect(message.subject).toContain("My Post");
 			expect(source).toBe("emdash-comments");
+		});
+
+		it("says not sent when an email:beforeSend plugin cancelled it", async () => {
+			// The pipeline returns normally for a cancelled send, and nothing went out.
+			sendSpy.mockResolvedValue({ status: "cancelled", by: "quiet-hours" });
+			const sent = await sendCommentNotification({
+				email: mockEmail,
+				comment: {
+					authorName: "Jane",
+					authorEmail: "jane@example.com",
+					body: "Great post!",
+					status: "approved",
+					collection: "post",
+				},
+				contentTitle: "My Post",
+				contentAuthor: { email: "author@example.com", name: "Author" },
+				adminBaseUrl: "https://example.com/_emdash",
+			});
+
+			expect(sendSpy).toHaveBeenCalledOnce();
+			expect(sent).toBe(false);
 		});
 
 		it("skips pending comments", async () => {

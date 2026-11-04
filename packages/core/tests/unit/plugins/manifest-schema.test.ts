@@ -33,6 +33,17 @@ describe("pluginManifestSchema — content policy", () => {
 	});
 });
 
+describe("pluginManifestSchema — reserved id", () => {
+	it('refuses a manifest whose id is "system", the email source of EmDash\'s own auth mail', () => {
+		const result = pluginManifestSchema.safeParse({ ...makeManifest({}), id: "system" });
+		expect(result.success).toBe(false);
+		expect(JSON.stringify(result.error?.issues)).toMatch(/reserved/);
+		expect(
+			pluginManifestSchema.safeParse({ ...makeManifest({}), id: "system-status" }).success,
+		).toBe(true);
+	});
+});
+
 describe("pluginManifestSchema — route entries", () => {
 	it("rejects duplicate route names before runtime last-write-wins normalization", () => {
 		const result = pluginManifestSchema.safeParse({

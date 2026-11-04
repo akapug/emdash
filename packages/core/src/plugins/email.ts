@@ -16,13 +16,35 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { HookPipeline } from "./hooks.js";
-import type { EmailDeliverEvent, EmailMessage } from "./types.js";
+import {
+	describeRedacted,
+	messageAddresses as addressesOf,
+	scrubAddresses,
+} from "./redact-addresses.js";
+import type { EmailDeliverEvent, EmailMessage, EmailSendResult } from "./types.js";
+
+export type { EmailSendResult } from "./types.js";
 
 /** Hook name for the exclusive email delivery hook */
 const EMAIL_DELIVER_HOOK = "email:deliver";
 
-/** Source value used for auth emails (magic links, invites, password resets) */
-const SYSTEM_SOURCE = "system";
+/**
+ * Source value used for auth emails (magic links, invites, password resets).
+ * It is reserved: no plugin may send as it (a plugin's source is its id), so
+ * no plugin gets what "system" mail gets (no email:beforeSend/afterSend hook
+ * sees it, and a provider may keep a reserve for it).
+ */
+export const SYSTEM_EMAIL_SOURCE = "system";
+const SYSTEM_SOURCE = SYSTEM_EMAIL_SOURCE;
+
+/**
+ * The domain of a recipient, which a log line names in place of the address:
+ * runtime logs (Workers Logs among them) keep what is logged, and a recipient
+ * is whoever a form, a comment or a sign-in named.
+ */
+function recipientDomain(address: string): string {
+	return address.slice(address.lastIndexOf("@") + 1);
+}
 
 /**
  * Error thrown when ctx.email.send() is called but no provider is configured.
@@ -47,6 +69,20 @@ export class EmailRecursionError extends Error {
 				"from within the email pipeline, which would cause infinite recursion.",
 		);
 		this.name = "EmailRecursionError";
+	}
+}
+
+/**
+ * Error thrown when a plugin sends as the reserved "system" source: a plugin
+ * whose id is "system" (definePlugin and the manifest schema refuse that id;
+ * this is the send boundary's own check).
+ */
+export class ReservedEmailSourceError extends Error {
+	constructor() {
+		super(
+			`A plugin cannot send email as "${SYSTEM_EMAIL_SOURCE}": that source is EmDash's own auth mail, and a plugin's source is its id.`,
+		);
+		this.name = "ReservedEmailSourceError";
 	}
 }
 
@@ -92,11 +128,12 @@ export class EmailPipeline {
 	 *
 	 * @param message - The email to send
 	 * @param source - Where the email originated ("system" for auth, plugin ID for plugins)
+	 * @returns "sent", or "cancelled" by the email:beforeSend plugin that stopped it
 	 * @throws EmailNotConfiguredError if no provider is selected
 	 * @throws EmailRecursionError if called re-entrantly from within a hook
 	 * @throws Error if the provider handler throws
 	 */
-	async send(message: EmailMessage, source: string): Promise<void> {
+	async send(message: EmailMessage, source: string): Promise<EmailSendResult> {
 		// Recursion guard: a plugin with email:send + email:intercept calling
 		// ctx.email.send() from an email hook would loop forever.
 		// Uses AsyncLocalStorage so concurrent requests don't interfere —
@@ -111,20 +148,31 @@ export class EmailPipeline {
 			// Already inside an ALS context (e.g. nested call) — increment depth
 			store.depth++;
 			try {
-				await run();
+				return await run();
 			} finally {
 				store.depth--;
 			}
-		} else {
-			// First call — create new ALS context
-			await emailSendALS.run({ depth: 1 }, run);
 		}
+		// First call — create new ALS context
+		return emailSendALS.run({ depth: 1 }, run);
+	}
+
+	/**
+	 * Send on behalf of a plugin (ctx.email.send, natively and through the
+	 * sandbox bridges): its source is its id, which may never be the reserved
+	 * "system" source.
+	 *
+	 * @throws ReservedEmailSourceError for a plugin whose id is "system"
+	 */
+	async sendAsPlugin(message: EmailMessage, pluginId: string): Promise<EmailSendResult> {
+		if (pluginId === SYSTEM_EMAIL_SOURCE) throw new ReservedEmailSourceError();
+		return this.send(message, pluginId);
 	}
 
 	/**
 	 * Inner send implementation, separated from the recursion guard.
 	 */
-	private async sendInner(message: EmailMessage, source: string): Promise<void> {
+	private async sendInner(message: EmailMessage, source: string): Promise<EmailSendResult> {
 		// Validate message fields at the pipeline boundary. TypeScript enforces
 		// this at compile time, but sandboxed plugins cross an RPC boundary
 		// where runtime types aren't guaranteed.
@@ -161,16 +209,32 @@ export class EmailPipeline {
 		if (isSystemEmail) {
 			finalMessage = message;
 		} else {
-			// Stage 1: email:beforeSend middleware (can transform or cancel)
-			const beforeResult = await this.pipeline.runEmailBeforeSend(message, source);
+			// Stage 1: email:beforeSend middleware (can transform or cancel).
+			// A plugin whose error policy is "abort" stops the send by throwing,
+			// and its error may repeat the message's addresses: it is redacted
+			// whole (message, stack, data, causes) before it is logged or reaches
+			// the caller, which may log it too.
+			let beforeResult: Awaited<ReturnType<HookPipeline["runEmailBeforeSend"]>>;
+			try {
+				beforeResult = await this.pipeline.runEmailBeforeSend(message, source);
+			} catch (thrown) {
+				const error = scrubAddresses(thrown, addressesOf(message));
+				console.error(
+					`[email:beforeSend] A plugin stopped the email to an address at ${recipientDomain(message.to)}:`,
+					error,
+				);
+				throw error;
+			}
 
 			if (beforeResult.message === false) {
 				// Cancelled by middleware — find which plugin cancelled for audit log
 				const cancellingResult = beforeResult.results.find((r) => r.value === false);
 				const cancelledBy = cancellingResult?.pluginId ?? "unknown";
 
-				console.info(`[email] Email to "${message.to}" cancelled by plugin "${cancelledBy}"`);
-				return;
+				console.info(
+					`[email] Email to an address at ${recipientDomain(message.to)} cancelled by plugin "${cancelledBy}"`,
+				);
+				return { status: "cancelled", by: cancelledBy };
 			}
 
 			finalMessage = beforeResult.message;
@@ -187,12 +251,15 @@ export class EmailPipeline {
 		if (deliverResult.error) {
 			// The caller (e.g. auth routes) often swallows delivery errors to avoid
 			// leaking whether an email address exists. Log here so the failure and
-			// the responsible provider are always visible in runtime logs.
+			// the responsible provider are always visible in runtime logs. The
+			// error is redacted first, whole (message, stack, causes), in any
+			// letter case: it is logged here and by whoever catches it.
+			const error = scrubAddresses(deliverResult.error, addressesOf(finalMessage));
 			console.error(
-				`[email:deliver] Provider "${deliverResult.pluginId}" failed to send email to "${finalMessage.to}":`,
-				deliverResult.error,
+				`[email:deliver] Provider "${deliverResult.pluginId}" failed to send email to an address at ${recipientDomain(finalMessage.to)}:`,
+				error,
 			);
-			throw deliverResult.error;
+			throw error;
 		}
 
 		// Stage 3: email:afterSend (fire-and-forget)
@@ -206,10 +273,11 @@ export class EmailPipeline {
 				.catch((err) =>
 					console.error(
 						"[email] afterSend pipeline error:",
-						err instanceof Error ? err.message : err,
+						describeRedacted(err, addressesOf(finalMessage)),
 					),
 				);
 		}
+		return { status: "sent" };
 	}
 
 	/**

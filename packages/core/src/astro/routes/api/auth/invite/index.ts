@@ -4,9 +4,10 @@
  * Create an invite for a new user. Admin only.
  *
  * When an email provider is configured (via the plugin email pipeline),
- * the invite email is sent automatically.
- * When no provider is configured, returns the invite URL for the admin
- * to share manually (copy-link fallback).
+ * the invite email is sent automatically, and the answer says `emailed: true`
+ * only when the pipeline reports it sent. Otherwise (no provider, or a send
+ * that did not report "sent") it answers `emailed: false` with the invite URL
+ * for the admin to share manually (copy-link fallback).
  */
 
 import type { APIRoute } from "astro";
@@ -22,7 +23,14 @@ import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
 import { inviteCreateBody } from "#api/schemas.js";
 import { getSiteBaseUrl } from "#api/site-url.js";
+import {
+	SYSTEM_MAIL_PROTOCOL,
+	askMediator,
+	credentialOf,
+	systemMailOf,
+} from "#auth/system-mail.js";
 import { OptionsRepository } from "#db/repositories/options.js";
+import type { EmailSendResult } from "#plugins/email.js";
 
 export const POST: APIRoute = async ({ request, locals }) => {
 	const { emdash, user } = locals;
@@ -52,10 +60,63 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		// Use the configured site URL (stored option as fallback) to prevent Host header spoofing in invite emails
 		const baseUrl = await getSiteBaseUrl(emdash.db, request, emdash.config);
 
-		// Build email sender from the plugin pipeline (if available)
+		// Mediated (the config's systemMail): the auth-mail mediator
+		// authenticates the admin itself from this request's own credential,
+		// issues the invite and sends it. Nothing about that message is built or
+		// sent here. When it is not sent (no binding, a refusal), the invite is
+		// made here with no email and its link returned, as for a site with no
+		// email provider: this Worker never mails it. When whether it was sent
+		// is not known, the broker may have made and mailed one: none is made
+		// here, and the answer never says it was not sent.
+		const mail = await systemMailOf(emdash.config);
+		if (mail.mediated) {
+			const outcome =
+				"mediator" in mail
+					? await askMediator((requestId) =>
+							mail.mediator.createInvite({
+								protocol: SYSTEM_MAIL_PROTOCOL,
+								requestId,
+								email: body.email,
+								role,
+								...credentialOf(request),
+							}),
+						)
+					: { status: "refused" as const, why: mail.missing };
+			if (outcome.status === "sent") {
+				return apiSuccess({
+					success: true,
+					emailed: true,
+					message: `Invite sent to ${body.email}`,
+				});
+			}
+			if (outcome.status === "unknown") {
+				console.warn(`[invite] not known to be emailed: ${outcome.why}`);
+				return apiError(
+					"INVITE_EMAIL_UNKNOWN",
+					"The invite may have been emailed: whether it was is not known, so no second invite was made. Ask the invitee to check their inbox before you invite them again.",
+					502,
+				);
+			}
+			console.warn(`[invite] not emailed: ${outcome.why}`);
+			const unsent = await createInvite({ baseUrl, siteName }, adapter, body.email, role, user.id);
+			return apiSuccess(
+				{
+					success: true,
+					emailed: false,
+					message: "Invite created. Its email was not sent — share the link manually.",
+					inviteUrl: unsent.url,
+				},
+				200,
+			);
+		}
+
+		// Build email sender from the plugin pipeline (if available), keeping
+		// what the pipeline says the send came to.
+		let outcome: EmailSendResult | undefined;
 		const emailSend = emdash.email?.isAvailable()
-			? (message: { to: string; subject: string; text: string; html?: string }) =>
-					emdash.email!.send(message, "system")
+			? async (message: { to: string; subject: string; text: string; html?: string }) => {
+					outcome = await emdash.email!.send(message, "system");
+				}
 			: undefined;
 
 		// Localize the invite email copy. Only resolved when an
@@ -81,19 +142,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			user.id,
 		);
 
-		if (emailSend) {
-			// Email was sent
+		if (outcome?.status === "sent") {
 			return apiSuccess({
 				success: true,
+				emailed: true,
 				message: `Invite sent to ${body.email}`,
 			});
 		}
 
-		// No email provider — return the invite URL for manual sharing
+		// No email was sent — return the invite URL for manual sharing
 		return apiSuccess(
 			{
 				success: true,
-				message: "Invite created. No email provider configured — share the link manually.",
+				emailed: false,
+				message: emailSend
+					? "Invite created. Its email was not sent — share the link manually."
+					: "Invite created. No email provider configured — share the link manually.",
 				inviteUrl: result.url,
 			},
 			200,

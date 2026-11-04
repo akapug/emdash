@@ -1,2 +1,6 @@
 # Keep JSON files on LF so generators do not create line-ending-only diffs.
 *.json text eol=lf
+
+# Synthetic auth fixtures quote schema and seed SQL; neither file is a database export.
+packages/cloudflare/tests/mail-broker.test.ts fleet-bulk=quotes
+packages/cloudflare/tests/mail-broker-workerd.test.ts fleet-bulk=quotes

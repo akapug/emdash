@@ -448,7 +448,14 @@ const declaredAccessSchema = z.object({
  * plain object (no `.transform`) because callers `.pick()`/`.extend()` it.
  */
 export const pluginManifestBaseSchema = z.object({
-	id: z.string().min(1),
+	// "system" is reserved: it is the email source of EmDash's own auth mail,
+	// and a plugin's email source is its id.
+	id: z
+		.string()
+		.min(1)
+		.refine((id) => id !== "system", {
+			message: 'Plugin id "system" is reserved (the email source of EmDash\'s own auth mail)',
+		}),
 	version: z.string().min(1),
 	declaredAccess: declaredAccessSchema.optional(),
 	capabilities: z.array(z.enum(PLUGIN_CAPABILITIES)),
