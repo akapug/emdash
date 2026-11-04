@@ -27,7 +27,7 @@ import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { BylineRepository } from "#db/repositories/byline.js";
 import { SeoRepository } from "#db/repositories/seo.js";
 import { importWxrComments } from "#import/comments.js";
-import { resolveImportByline } from "#import/utils.js";
+import { isPasswordProtected, resolveImportByline } from "#import/utils.js";
 import {
 	emptyWxrSeoTally,
 	extractWxrSeo,
@@ -119,6 +119,12 @@ export interface ImportResult {
 	 * carried (`importWxrComments`). Absent when `importComments` is false.
 	 */
 	comments?: { imported: number; skipped: number; notCarried: Record<string, number> };
+	/**
+	 * Each item stored as a draft whatever its WordPress status, and why:
+	 * `password-protected` for one WordPress kept behind a post password, which
+	 * EmDash cannot gate (the password is not stored). Absent when there is none.
+	 */
+	drafted?: Array<{ title: string; reason: "password-protected" }>;
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -389,8 +395,10 @@ export async function importContent(
 				translationOf = translationGroupMap.get(post.translationGroup);
 			}
 
-			// Map WordPress status to EmDash status
-			const status = mapStatus(post.status);
+			// Map WordPress status to EmDash status. EmDash has no password gate, so
+			// an item WordPress kept behind a password is never published here.
+			const passwordProtected = isPasswordProtected(post);
+			const status = passwordProtected ? "draft" : mapStatus(post.status);
 
 			// Build data object with required fields. The title and excerpt as
 			// WordPress printed them (the_title and the_excerpt run wptexturize),
@@ -454,6 +462,12 @@ export async function importContent(
 
 			if (createResult.success) {
 				result.imported++;
+				if (passwordProtected) {
+					(result.drafted ??= []).push({
+						title: post.title || "Untitled",
+						reason: "password-protected",
+					});
+				}
 				if (seoTally && seo) {
 					if (collectionHasSeo) tallyWxrSeo(seoTally, seo);
 					else tallyWxrSeoNoCollection(seoTally, seo);

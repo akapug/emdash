@@ -18,6 +18,7 @@ import type { WxrComment, WxrPost } from "../cli/wxr/parser.js";
 import type { Database } from "../database/types.js";
 import { invalidateCommentObjectCache } from "../object-cache/index.js";
 import { parseWxrDate } from "./sources/wxr.js";
+import { isPasswordProtected } from "./utils.js";
 
 /**
  * Plugin API comment format (matches /emdash/v1/comments items)
@@ -301,7 +302,7 @@ function wxrCommentDate(comment: WxrComment): Date | undefined {
  */
 function hiddenParentReason(post: WxrPost): string | null {
 	if (post.status !== "publish") return "unpublished-parent";
-	if (post.postPassword) return "password-protected-parent";
+	if (isPasswordProtected(post)) return "password-protected-parent";
 	return null;
 }
 
