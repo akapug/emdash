@@ -237,6 +237,7 @@ export type {
 	WxrSite,
 	WxrPost,
 	WxrAttachment,
+	WxrComment,
 	WxrCategory,
 	WxrTag,
 	WxrTerm,

@@ -100,6 +100,35 @@ export interface WxrPost {
 	 * only as a key to link posts.
 	 */
 	translationGroup?: string;
+	/**
+	 * The item's `<wp:comment>` elements, in file order: every one the
+	 * export holds, whatever its status, so the importer decides what
+	 * carries. The commenter's IP address (`wp:comment_author_IP`) and URL
+	 * are not read.
+	 */
+	comments?: WxrComment[];
+}
+
+/**
+ * One `<wp:comment>` of an item.
+ */
+export interface WxrComment {
+	/** `wp:comment_id` */
+	id: number;
+	/** `wp:comment_parent`: the comment this one replies to, 0 for none */
+	parent: number;
+	author: string;
+	authorEmail: string;
+	/** Site-local time (`wp:comment_date`) */
+	date?: string;
+	/** UTC (`wp:comment_date_gmt`); `0000-00-00 00:00:00` when WordPress never set it */
+	dateGmt?: string;
+	/** The body as stored: HTML from the commenter, filtered by WordPress at submission */
+	content: string;
+	/** `wp:comment_approved`: "1" approved, "0" pending, "spam", "trash", "post-trashed" */
+	approved: string;
+	/** `wp:comment_type`: "" or "comment" for a comment; "pingback", "trackback", … otherwise */
+	type: string;
 }
 
 /**
@@ -377,6 +406,48 @@ function captureItemCategoryLabel(
 	if (!item.taxonomyLabels.has(key)) item.taxonomyLabels.set(key, label);
 }
 
+/** A comment with every field empty, filled by readCommentField as its children close. */
+function newWxrComment(): WxrComment {
+	return { id: 0, parent: 0, author: "", authorEmail: "", content: "", approved: "", type: "" };
+}
+
+/**
+ * One `<wp:comment>` child's text onto the comment. The commenter's IP
+ * address and URL are not read; `<wp:commentmeta>` (Akismet's history, a
+ * rating) is the comment's and is not kept.
+ */
+function readCommentField(comment: WxrComment, tag: string, text: string): void {
+	switch (tag) {
+		case "wp:comment_id":
+			comment.id = parseInt(text, 10) || 0;
+			break;
+		case "wp:comment_parent":
+			comment.parent = parseInt(text, 10) || 0;
+			break;
+		case "wp:comment_author":
+			comment.author = text;
+			break;
+		case "wp:comment_author_email":
+			comment.authorEmail = text;
+			break;
+		case "wp:comment_date":
+			comment.date = text || undefined;
+			break;
+		case "wp:comment_date_gmt":
+			comment.dateGmt = text || undefined;
+			break;
+		case "wp:comment_content":
+			comment.content = text;
+			break;
+		case "wp:comment_approved":
+			comment.approved = text;
+			break;
+		case "wp:comment_type":
+			comment.type = text;
+			break;
+	}
+}
+
 /** Type guard for complete WxrTerm (all required fields present) */
 function isCompleteWxrTerm(term: Partial<WxrTerm>): term is WxrTerm {
 	return (
@@ -415,6 +486,8 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 		let currentAuthor: WxrAuthor | null = null;
 		let currentTerm: Partial<WxrTerm> | null = null;
 		let currentMetaKey = "";
+		// The item's <wp:comment> being read (readCommentField).
+		let currentComment: WxrComment | null = null;
 		// Per-item category element currently open. Captured at opentag so
 		// we can pair the text body (the human label) with the slug when
 		// closetag fires. WXR per-item category elements look like:
@@ -447,6 +520,8 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 				currentAuthor = {};
 			} else if (tagName === "wp:term") {
 				currentTerm = {};
+			} else if (tagName === "wp:comment" && currentItem) {
+				currentComment = newWxrComment();
 			}
 
 			// Handle category/tag/custom taxonomy assignment in items
@@ -508,8 +583,18 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 				}
 			}
 
-			// Item (post/page/attachment) parsing
-			if (currentItem) {
+			// A comment's fields, its <wp:commentmeta> included, are the
+			// comment's: none of them reaches the item (a comment's meta_key
+			// and meta_value are not the post's meta).
+			if (currentItem && currentComment) {
+				if (tag === "wp:comment") {
+					(currentItem.comments ??= []).push(currentComment);
+					currentComment = null;
+				} else {
+					readCommentField(currentComment, tag, text);
+				}
+			} else if (currentItem) {
+				// Item (post/page/attachment) parsing
 				switch (tag) {
 					case "title":
 						currentItem.title = text;
@@ -796,6 +881,8 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 		let currentAuthor: WxrAuthor | null = null;
 		let currentTerm: Partial<WxrTerm> | null = null;
 		let currentMetaKey = "";
+		// The item's <wp:comment> being read (readCommentField).
+		let currentComment: WxrComment | null = null;
 		// Per-item category element currently open (see streaming-parser
 		// counterpart above for rationale).
 		let pendingItemCategory: { domain: string; nicename: string } | null = null;
@@ -826,6 +913,8 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 				currentAuthor = {};
 			} else if (tag === "wp:term") {
 				currentTerm = {};
+			} else if (tag === "wp:comment" && currentItem) {
+				currentComment = newWxrComment();
 			}
 
 			// Handle category/tag/custom taxonomy assignment in items
@@ -887,8 +976,18 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 				}
 			}
 
-			// Item (post/page/attachment) parsing
-			if (currentItem) {
+			// A comment's fields, its <wp:commentmeta> included, are the
+			// comment's: none of them reaches the item (a comment's meta_key
+			// and meta_value are not the post's meta).
+			if (currentItem && currentComment) {
+				if (tag === "wp:comment") {
+					(currentItem.comments ??= []).push(currentComment);
+					currentComment = null;
+				} else {
+					readCommentField(currentComment, tag, text);
+				}
+			} else if (currentItem) {
+				// Item (post/page/attachment) parsing
 				switch (tag) {
 					case "title":
 						currentItem.title = text;

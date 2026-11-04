@@ -4,3 +4,8 @@
 # Synthetic auth fixtures quote schema and seed SQL; neither file is a database export.
 packages/cloudflare/tests/mail-broker.test.ts fleet-bulk=quotes
 packages/cloudflare/tests/mail-broker-workerd.test.ts fleet-bulk=quotes
+
+# A hand-written WordPress export the import tests read: quoted test input, not bulk data.
+packages/core/tests/integration/wordpress-import/fixtures/comments-export.xml fleet-bulk=quotes
+# A test that builds a small WordPress export inline: quoted test input, not bulk data.
+packages/core/tests/integration/wordpress-import/wxr-password.test.ts fleet-bulk=quotes

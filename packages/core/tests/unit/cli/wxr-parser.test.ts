@@ -2,6 +2,7 @@
  * Tests for WXR parser
  */
 
+import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 
 import { describe, it, expect } from "vitest";
@@ -775,4 +776,53 @@ describe("parseWxr", () => {
 			expect(post?.taxonomyLabels?.get("genre\u0000sci-fi")).toBe("Science Fiction");
 		});
 	});
+});
+
+describe("an item's comments", () => {
+	const fixture = readFileSync(
+		new URL("../../integration/wordpress-import/fixtures/comments-export.xml", import.meta.url),
+		"utf8",
+	);
+
+	for (const [name, parse] of [
+		["parseWxr", (xml: string) => parseWxr(createStream(xml))],
+		["parseWxrString", (xml: string) => parseWxrString(xml)],
+	] as const) {
+		it(`${name} reads every <wp:comment> of an item, whatever its status, without its IP or URL`, async () => {
+			const result = await parse(fixture);
+			const pond = result.posts.find((p) => p.id === 7)!;
+			expect(pond.comments?.map((c) => [c.id, c.parent, c.approved, c.type])).toEqual([
+				[101, 0, "1", "comment"],
+				[102, 101, "1", "comment"],
+				[103, 102, "1", ""],
+				[104, 0, "0", "comment"],
+				[105, 0, "spam", "comment"],
+				[106, 0, "trash", "comment"],
+				[107, 0, "1", "pingback"],
+				[108, 0, "1", "comment"],
+			]);
+			expect(pond.comments?.[0]).toEqual({
+				id: 101,
+				parent: 0,
+				author: "Alice",
+				authorEmail: "alice@example.net",
+				date: "2026-01-16 02:00:00",
+				dateGmt: "2026-01-16 10:00:00",
+				content: 'First!\n\nLovely <a href="https://example.org/fish">fish</a> &amp; frogs.',
+				approved: "1",
+				type: "comment",
+			});
+			expect(JSON.stringify(pond.comments)).not.toContain("203.0.113.9");
+			expect(JSON.stringify(pond.comments)).not.toContain("alice.example.net");
+			expect(result.posts.find((p) => p.id === 9)?.comments?.map((c) => c.id)).toEqual([201]);
+		});
+
+		it(`${name} keeps a comment's meta off the post's meta`, async () => {
+			const result = await parse(fixture);
+			const pond = result.posts.find((p) => p.id === 7)!;
+			expect(pond.meta.get("mood")).toBe("calm");
+			expect(pond.title).toBe("The Pond");
+			expect(pond.status).toBe("publish");
+		});
+	}
 });

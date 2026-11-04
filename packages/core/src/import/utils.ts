@@ -115,6 +115,16 @@ export function mapWpStatus(status: string | undefined): WpStatus {
 	}
 }
 
+/**
+ * Whether WordPress kept an item from anyone without its post password
+ * (`post_password_required`: any non-empty `wp:post_password`). EmDash has no
+ * password gate, so an import stores such an item as a draft whatever its
+ * WordPress status, and never stores the password.
+ */
+export function isPasswordProtected(post: { postPassword?: string }): boolean {
+	return !!post.postPassword;
+}
+
 // =============================================================================
 // Collection Mapping
 // =============================================================================

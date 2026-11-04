@@ -32,6 +32,7 @@ import {
 	isInternalPostType,
 	isInternalMetaKey,
 	mapWpStatus,
+	isPasswordProtected,
 	mapPostTypeToCollection,
 	mapMetaKeyToField,
 	inferMetaType,
@@ -323,7 +324,8 @@ function wxrPostToNormalizedItem(
 	return {
 		sourceId: post.id || 0,
 		postType: post.postType || "post",
-		status: mapWpStatus(post.status),
+		// WordPress kept a password-protected item from its readers; EmDash has no password gate.
+		status: isPasswordProtected(post) ? "draft" : mapWpStatus(post.status),
 		slug: post.postName || slugify(post.title || `post-${post.id || Date.now()}`),
 		// As WordPress printed them, like the content (wptexturize); the slug is the stored title's.
 		title: typed(post.title || "Untitled"),
