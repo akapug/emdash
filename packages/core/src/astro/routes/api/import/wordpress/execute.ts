@@ -26,6 +26,7 @@ import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { BylineRepository } from "#db/repositories/byline.js";
 import { SeoRepository } from "#db/repositories/seo.js";
+import { importWxrComments } from "#import/comments.js";
 import { resolveImportByline } from "#import/utils.js";
 import {
 	emptyWxrSeoTally,
@@ -73,6 +74,8 @@ export interface ImportConfig {
 	locale?: string;
 	/** Carry per-post SEO from Yoast SEO, Rank Math and All in One SEO postmeta. Defaults to true. */
 	importSeo?: boolean;
+	/** Carry each item's approved comments (`importWxrComments`). Defaults to true. */
+	importComments?: boolean;
 }
 
 export interface ImportResult {
@@ -110,6 +113,12 @@ export interface ImportResult {
 	 * (WPML, Polylang) decides for that post.
 	 */
 	typography?: { language: string | null; texturized: boolean; note: string };
+	/**
+	 * The export's comments: how many approved ones were stored, how many
+	 * were stored already (a re-run), and every other one by why it was not
+	 * carried (`importWxrComments`). Absent when `importComments` is false.
+	 */
+	comments?: { imported: number; skipped: number; notCarried: Record<string, number> };
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -284,6 +293,16 @@ export async function importContent(
 	// `translationOf` so they share a `translation_group` on the EmDash side.
 	const translationGroupMap = new Map<string, string>();
 
+	// WP post ID -> the EmDash entry it is (stored now, or found already
+	// stored), and its collection: where the item's comments go.
+	const contentIdByWpId = new Map<number, string>();
+	const collectionByWpId = new Map<number, string>();
+	const stored = (post: WxrPost, collection: string, id: string) => {
+		if (post.id === undefined) return;
+		contentIdByWpId.set(post.id, id);
+		collectionByWpId.set(post.id, collection);
+	};
+
 	for (const post of posts) {
 		const postType = post.postType || "post";
 		const mapping = config.postTypeMappings[postType];
@@ -334,6 +353,7 @@ export async function importContent(
 			if (config.skipExisting) {
 				const existing = await contentRepo.findBySlug(collection, slug, postLocale);
 				if (existing) {
+					stored(post, collection, existing.id);
 					// Record the translation group mapping so later
 					// translations in this WXR can link to the existing
 					// item. We deliberately trust the WXR's grouping over
@@ -448,6 +468,8 @@ export async function importContent(
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- handler contract documented at handleContentCreate
 				const createdItem = (createResult.data as { item: { id: string } } | undefined)?.item;
 
+				if (createdItem) stored(post, collection, createdItem.id);
+
 				// Track translation group: the first imported post in a group
 				// becomes the anchor that later translations link to.
 				if (
@@ -516,6 +538,24 @@ export async function importContent(
 				title: post.title || "Untitled",
 				error: error instanceof Error && error.message ? error.message : "Failed to import item",
 			});
+		}
+	}
+
+	if (config.importComments !== false) {
+		const comments = await importWxrComments(
+			posts,
+			emdash.db,
+			contentIdByWpId,
+			collectionByWpId,
+			(post) => texturizes(post.locale ?? siteLanguage),
+		);
+		result.comments = {
+			imported: comments.imported,
+			skipped: comments.skipped,
+			notCarried: comments.notCarried,
+		};
+		for (const e of comments.errors) {
+			result.errors.push({ title: `Comment: ${e.comment}`, error: e.error });
 		}
 	}
 

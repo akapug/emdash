@@ -1,2 +1,5 @@
 # Keep JSON files on LF so generators do not create line-ending-only diffs.
 *.json text eol=lf
+
+# A hand-written WordPress export the import tests read: quoted test input, not bulk data.
+packages/core/tests/integration/wordpress-import/fixtures/comments-export.xml fleet-bulk=quotes

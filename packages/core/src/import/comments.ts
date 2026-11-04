@@ -1,15 +1,23 @@
 /**
  * Comment import functions
  *
- * Import comments from the WordPress plugin API into EmDash's native
- * comments table, preserving authors, dates, threading, and status.
+ * Import comments from the WordPress plugin API, or from a WXR export's
+ * `<wp:comment>` elements, into EmDash's native comments table, preserving
+ * authors, dates, threading, and status.
  */
 
+import {
+	extractText,
+	gutenbergToPortableText,
+	type PortableTextBlock,
+} from "@emdash-cms/gutenberg-to-portable-text";
 import type { Kysely } from "kysely";
 import { ulid } from "ulidx";
 
+import type { WxrComment, WxrPost } from "../cli/wxr/parser.js";
 import type { Database } from "../database/types.js";
 import { invalidateCommentObjectCache } from "../object-cache/index.js";
+import { parseWxrDate } from "./sources/wxr.js";
 
 /**
  * Plugin API comment format (matches /emdash/v1/comments items)
@@ -156,4 +164,167 @@ export async function importCommentsFromPlugin(
 	}
 
 	return result;
+}
+
+/**
+ * Result of importing a WXR export's comments: what was stored, and every
+ * comment that was not, counted by why.
+ */
+export interface WxrCommentsImportResult extends CommentsImportResult {
+	/**
+	 * Comments not carried, by reason: WordPress's status for one that was
+	 * never approved (`pending`, `spam`, `trash`, `post-trashed`), its type for
+	 * one that is not a comment (`pingback`, `trackback`, `review`, …),
+	 * `post-not-imported` for one on an item the import did not store, and
+	 * `empty` for one with no text a reader saw.
+	 */
+	notCarried: Record<string, number>;
+}
+
+/** WordPress's `comment_approved` values, as `notCarried` names them. */
+const WXR_COMMENT_STATUS: Record<string, string> = {
+	"0": "pending",
+	spam: "spam",
+	trash: "trash",
+	"post-trashed": "post-trashed",
+};
+
+/**
+ * Import the comments a WXR export carries on its items.
+ *
+ * Only APPROVED comments carry, the ones a visitor of the WordPress site
+ * could read: a pending, spam or trashed comment, a pingback or a trackback
+ * is counted in `notCarried` and never stored. Each carried comment is
+ * stored approved, with its author's name, its date and its place in the
+ * thread; its author's email is stored because EmDash's moderation reads it
+ * (a returning commenter, `countApprovedByEmail`), and no public surface
+ * returns it (`toPublicComment`). The commenter's IP address and URL are
+ * never read from the export.
+ *
+ * The body is the text WordPress showed (`wxrCommentText`). Threads,
+ * timestamps and re-runs are `importCommentsFromPlugin`'s.
+ *
+ * @param posts - The export's items, each with its `comments`
+ * @param contentIdMap - WP post ID -> EmDash content ID, for every item this
+ *   import stored or found already stored
+ * @param collectionMap - WP post ID -> EmDash collection slug
+ * @param texturize - Whether WordPress showed this item's text texturized
+ */
+export async function importWxrComments(
+	posts: readonly WxrPost[],
+	db: Kysely<Database>,
+	contentIdMap: Map<number, string>,
+	collectionMap: Map<number, string>,
+	texturize: (post: WxrPost) => boolean = () => true,
+): Promise<WxrCommentsImportResult> {
+	const notCarried: Record<string, number> = {};
+	const count = (reason: string) => {
+		notCarried[reason] = (notCarried[reason] ?? 0) + 1;
+	};
+	const carried: PluginComment[] = [];
+	for (const post of posts) {
+		const postId = post.id;
+		for (const comment of post.comments ?? []) {
+			const reason =
+				postId === undefined || !contentIdMap.has(postId)
+					? "post-not-imported"
+					: notCarriedReason(comment);
+			if (postId === undefined || reason) {
+				count(reason ?? "post-not-imported");
+				continue;
+			}
+			const body = wxrCommentText(comment.content, texturize(post));
+			if (!body) {
+				count("empty");
+				continue;
+			}
+			const date = parseWxrDate(comment.dateGmt, undefined, comment.date);
+			carried.push({
+				id: comment.id,
+				post_id: postId,
+				parent_id: comment.parent > 0 ? comment.parent : null,
+				author_name: comment.author,
+				author_email: comment.authorEmail,
+				body,
+				date_gmt: date ? date.toISOString() : "",
+				status: "approved",
+			});
+		}
+	}
+	const result = await importCommentsFromPlugin(carried, db, contentIdMap, collectionMap);
+	return { ...result, notCarried };
+}
+
+/** Why a comment on an imported item does not carry, or null when it does. */
+function notCarriedReason(comment: WxrComment): string | null {
+	if (comment.type !== "" && comment.type !== "comment") return comment.type;
+	if (comment.approved !== "1") return WXR_COMMENT_STATUS[comment.approved] ?? "not-approved";
+	return null;
+}
+
+/**
+ * A WordPress comment's body as the plain text EmDash stores: what a reader
+ * of the WordPress site saw, never markup.
+ *
+ * WordPress shows a comment through `comment_text`, which runs wpautop and
+ * wptexturize over it, the same as a classic post; so the body goes through
+ * the post converter (`gutenbergToPortableText`), which takes out what no
+ * reader sees (`<script>`, `<style>`, `<noscript>`, whole) and reads every
+ * other tag as structure. Its paragraphs are kept as blank lines, its line
+ * breaks and list items as lines, and a link whose text does not show its
+ * address is followed by the address, which EmDash's comment list links
+ * again. Nothing of the markup survives: EmDash escapes a comment body when it
+ * draws it, so a tag left here would be shown as text.
+ */
+export function wxrCommentText(html: string, texturize = true): string {
+	let out = "";
+	let afterListItem = false;
+	for (const block of gutenbergToPortableText(html, { texturize })) {
+		const text = blockText(block).trim();
+		if (!text) continue;
+		const listItem = block._type === "block" && Boolean(block.listItem);
+		if (out) out += listItem && afterListItem ? "\n" : "\n\n";
+		out += text;
+		afterListItem = listItem;
+	}
+	return out;
+}
+
+const WEB_ADDRESS = /^https?:\/\//i;
+
+/** The text a reader saw of one converted block. */
+function blockText(block: PortableTextBlock): string {
+	switch (block._type) {
+		case "block": {
+			const links = new Map<string, string>();
+			for (const def of block.markDefs ?? []) {
+				if (def._type === "link" && typeof def.href === "string" && WEB_ADDRESS.test(def.href)) {
+					links.set(def._key, def.href);
+				}
+			}
+			const linkOf = (marks: string[] | undefined) => marks?.find((m) => links.has(m));
+			let text = "";
+			// The text of the link being read, so its address is said once, after all of it.
+			let linkText = "";
+			for (const [i, span] of block.children.entries()) {
+				text += span.text;
+				const key = linkOf(span.marks);
+				if (!key) continue;
+				linkText += span.text;
+				if (linkOf(block.children[i + 1]?.marks) === key) continue;
+				const href = links.get(key) ?? "";
+				if (!linkText.includes(href)) text += ` (${href})`;
+				linkText = "";
+			}
+			return block.listItem ? `- ${text}` : text;
+		}
+		case "code":
+			return block.code;
+		case "embed":
+			return block.url;
+		case "htmlBlock":
+			return extractText(block.html);
+		default:
+			return "";
+	}
 }

@@ -8,7 +8,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { importCommentsFromPlugin, type PluginComment } from "../../../src/import/comments.js";
+import type { WxrComment, WxrPost } from "../../../src/cli/wxr/parser.js";
+import {
+	importCommentsFromPlugin,
+	importWxrComments,
+	type PluginComment,
+	wxrCommentText,
+} from "../../../src/import/comments.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
 let db: Awaited<ReturnType<typeof setupTestDatabase>>;
@@ -115,5 +121,103 @@ describe("importCommentsFromPlugin", () => {
 
 		const rows = await db.selectFrom("_emdash_comments").select("id").execute();
 		expect(rows).toHaveLength(2);
+	});
+});
+
+describe("wxrCommentText", () => {
+	it("keeps paragraphs as blank lines and line breaks as lines", () => {
+		expect(wxrCommentText("Line one\nLine two\n\nPara two")).toBe("Line one\nLine two\n\nPara two");
+	});
+
+	it("follows a link's words with its address, once, unless the words are the address", () => {
+		expect(
+			wxrCommentText('See <a href="https://example.org/a">this <em>page</em></a> and <a href="https://example.org/b">https://example.org/b</a>'),
+		).toBe("See this page (https://example.org/a) and https://example.org/b");
+	});
+
+	it("never carries a link's address that is not a web address", () => {
+		expect(wxrCommentText('<a href="javascript:alert(1)">click</a>')).toBe("click");
+	});
+
+	it("takes a script, a style and every tag out, and keeps the words a reader saw", () => {
+		const text = wxrCommentText(
+			'<script>alert("x")</script>Hi <b onclick="steal()">there</b><style>p{}</style>',
+		);
+		expect(text).toBe("Hi there");
+	});
+
+	it("reads entities as the characters they are: an escaped tag is text", () => {
+		expect(wxrCommentText("Tom &amp; Jerry &lt;b&gt; bold", false)).toBe("Tom & Jerry <b> bold");
+	});
+
+	it("draws a list as lines", () => {
+		expect(wxrCommentText("<ul><li>one</li><li>two</li></ul>")).toBe("- one\n- two");
+	});
+
+	it("texturizes as WordPress showed it, unless told not to", () => {
+		expect(wxrCommentText('"quoted"')).toBe("\u201Cquoted\u201D");
+		expect(wxrCommentText('"quoted"', false)).toBe('"quoted"');
+	});
+});
+
+describe("importWxrComments", () => {
+	function wxrComment(overrides: Partial<WxrComment> & { id: number }): WxrComment {
+		return {
+			parent: 0,
+			author: "Alice",
+			authorEmail: "alice@example.com",
+			dateGmt: "2020-05-01 12:00:00",
+			content: "Nice post!",
+			approved: "1",
+			type: "comment",
+			...overrides,
+		};
+	}
+	const post = (id: number, comments: WxrComment[]): WxrPost => ({
+		id,
+		categories: [],
+		tags: [],
+		meta: new Map(),
+		comments,
+	});
+
+	it("stores the approved comments and counts every other one by why", async () => {
+		const result = await importWxrComments(
+			[
+				post(10, [
+					wxrComment({ id: 1 }),
+					wxrComment({ id: 2, parent: 1, dateGmt: "2020-05-02 12:00:00", content: "Reply" }),
+					wxrComment({ id: 3, approved: "0" }),
+					wxrComment({ id: 4, approved: "spam" }),
+					wxrComment({ id: 5, approved: "trash" }),
+					wxrComment({ id: 6, type: "pingback" }),
+					wxrComment({ id: 7, content: "<script>x()</script>" }),
+				]),
+				post(999, [wxrComment({ id: 8 })]),
+			],
+			db,
+			contentIdMap,
+			collectionMap,
+		);
+		expect(result.imported).toBe(2);
+		expect(result.notCarried).toEqual({
+			pending: 1,
+			spam: 1,
+			trash: 1,
+			pingback: 1,
+			empty: 1,
+			"post-not-imported": 1,
+		});
+		const rows = await db
+			.selectFrom("_emdash_comments")
+			.selectAll()
+			.orderBy("created_at")
+			.execute();
+		expect(rows.map((r) => [r.body, r.status, r.created_at])).toEqual([
+			["Nice post!", "approved", "2020-05-01T12:00:00.000Z"],
+			["Reply", "approved", "2020-05-02T12:00:00.000Z"],
+		]);
+		expect(rows[1]!.parent_id).toBe(rows[0]!.id);
+		expect(rows.every((r) => r.ip_hash === null && r.user_agent === null)).toBe(true);
 	});
 });
