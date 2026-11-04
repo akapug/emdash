@@ -115,7 +115,8 @@ function run(blocks: Block[], s: Skeleton | null): SkeletonNode[] {
 	const widgets = isObject(s?.widgets) ? s.widgets : {};
 	const out: SkeletonNode[] = [];
 	for (let i = 0; i < blocks.length; ) {
-		const b = blocks[i]!;
+		const b = blocks[i];
+		if (!b) break;
 		if (b._type === "columns" && skeletonOf(b)) {
 			out.push(...columns(b));
 			i++;
@@ -124,7 +125,7 @@ function run(blocks: Block[], s: Skeleton | null): SkeletonNode[] {
 		const id = widgetIdOf(b);
 		const own = id !== null && Object.hasOwn(widgets, id) ? id : null;
 		let j = i + 1;
-		while (j < blocks.length && !(blocks[j]!._type === "columns" && skeletonOf(blocks[j])) && sameGroup(widgetIdOf(blocks[j]!), own, widgets)) j++;
+		for (let next = blocks[j]; next && !(next._type === "columns" && skeletonOf(next)) && sameGroup(widgetIdOf(next), own, widgets); next = blocks[j]) j++;
 		const group = blocks.slice(i, j);
 		const w = own !== null ? widgets[own] : s?.added;
 		out.push(...(isObject(w) ? nest(w.wraps, widgetBlocks(w, group)) : [{ blocks: group }]));
@@ -161,7 +162,8 @@ export function skeletonTree(body: Block[]): SkeletonNode[] {
 		return s !== null && !(b._type === "columns" && s.inner === true);
 	};
 	for (let i = 0; i < body.length; ) {
-		const b = body[i]!;
+		const b = body[i];
+		if (!b) break;
 		const s = skeletonOf(b);
 		if (document === undefined && s?.document) document = s.document;
 		if (b._type === "columns" && s && !s.inner) {
@@ -170,7 +172,7 @@ export function skeletonTree(body: Block[]): SkeletonNode[] {
 			continue;
 		}
 		let j = i + 1;
-		while (j < body.length && !starts(body[j]!)) j++;
+		for (let next = body[j]; next && !starts(next); next = body[j]) j++;
 		const carrier = s !== null && b._type !== "columns" ? s : null;
 		const blocks = body.slice(carrier ? i + 1 : i, j);
 		out.push(...(carrier ? nest(carrier.wraps, run(blocks, carrier)) : run(blocks, null)));
