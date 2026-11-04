@@ -277,16 +277,18 @@ export async function importWxrComments(
 	return { ...result, errors: [...errors, ...result.errors], notCarried };
 }
 
+/** A date that reads as one, or none: never an Invalid Date. */
+const validDate = (d: Date | undefined) => (d && !Number.isNaN(d.getTime()) ? d : undefined);
+
 /**
  * A comment's date: its UTC date, else its site-local one, else none. An
  * export's text that is no date (`2021-13-45`, `garbage`) is none, never an
  * Invalid Date whose `toISOString` throws.
  */
 function wxrCommentDate(comment: WxrComment): Date | undefined {
-	const valid = (d: Date | undefined) => (d && !Number.isNaN(d.getTime()) ? d : undefined);
 	return (
-		valid(parseWxrDate(comment.dateGmt, undefined, comment.date)) ??
-		valid(parseWxrDate(undefined, undefined, comment.date))
+		validDate(parseWxrDate(comment.dateGmt, undefined, comment.date)) ??
+		validDate(parseWxrDate(undefined, undefined, comment.date))
 	);
 }
 
