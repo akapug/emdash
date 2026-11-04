@@ -49,7 +49,8 @@ interface Skeleton {
 	inner?: boolean;
 }
 
-type Block = { _type?: string; _key?: string; [k: string]: unknown };
+/** A stored block, as read: any object; its type and key are checked where read. */
+type Block = Record<string, unknown>;
 
 /** An element to draw, checked: its tag, classes and attributes, and what it holds. */
 export interface SkeletonElement {
@@ -63,15 +64,30 @@ export interface SkeletonElement {
 export type SkeletonNode = { element: SkeletonElement } | { blocks: Block[] };
 
 /** The elements a skeleton may draw. */
-const TAGS = new Set(["div", "section", "header", "footer", "aside", "article", "nav", "main", "span"]);
+const TAGS = new Set([
+	"div",
+	"section",
+	"header",
+	"footer",
+	"aside",
+	"article",
+	"nav",
+	"main",
+	"span",
+]);
 const CLASS = /^[A-Za-z0-9_-]{1,100}$/;
+const SPACES = /\s+/;
 const ATTR = /^(id|data-[a-z0-9_-]{1,40})$/;
 const KEY = /^el-([0-9a-z]{1,32})(?:-[1-9]\d{0,5})?$/;
 /** Blocks a widget draws its own `body` instead of: its placeholder and a divider's break. */
 const PLACEHOLDERS = new Set(["elementor-widget", "break"]);
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const skeletonOf = (b: unknown): Skeleton | null => (isObject(b) && isObject(b.skeleton) ? (b.skeleton as Skeleton) : null);
+const isObject = (v: unknown): v is Record<string, unknown> =>
+	typeof v === "object" && v !== null && !Array.isArray(v);
+/** The objects of a stored list of blocks; anything else is no block. */
+const blocksOf = (v: unknown): Block[] => (Array.isArray(v) ? v.filter(isObject) : []);
+const skeletonOf = (b: unknown): Skeleton | null =>
+	isObject(b) && isObject(b.skeleton) ? b.skeleton : null;
 
 /** Whether a body holds a skeleton to draw: a carrier or a `columns` block with one. */
 export function hasSkeleton(body: unknown): boolean {
@@ -81,13 +97,22 @@ export function hasSkeleton(body: unknown): boolean {
 /** A stored element, checked; null when its tag is not one a skeleton draws. */
 function checked(w: unknown, children: SkeletonNode[]): SkeletonNode | null {
 	if (!isObject(w) || typeof w.tag !== "string" || !TAGS.has(w.tag)) return null;
-	const classes = typeof w.class === "string" ? w.class.split(/\s+/).filter((c) => CLASS.test(c)) : [];
+	const classes =
+		typeof w.class === "string" ? w.class.split(SPACES).filter((c) => CLASS.test(c)) : [];
 	const attrs: Record<string, string> = {};
 	if (isObject(w.attrs)) {
-		for (const [k, v] of Object.entries(w.attrs)) if (ATTR.test(k) && typeof v === "string" && v.length <= 200) attrs[k] = v;
+		for (const [k, v] of Object.entries(w.attrs))
+			if (ATTR.test(k) && typeof v === "string" && v.length <= 200) attrs[k] = v;
 	}
 	const lead = Array.isArray(w.lead) ? w.lead.flatMap((l) => checked(l, []) ?? []) : [];
-	return { element: { tag: w.tag, class: classes.length ? classes.join(" ") : undefined, attrs, children: [...lead, ...children] } };
+	return {
+		element: {
+			tag: w.tag,
+			class: classes.length ? classes.join(" ") : undefined,
+			attrs,
+			children: [...lead, ...children],
+		},
+	};
 }
 
 /** `children` inside `wraps`, the first outermost. An element that fails the check is left out and its children kept. */
@@ -99,22 +124,30 @@ function nest(wraps: unknown, children: SkeletonNode[]): SkeletonNode[] {
 	}, children);
 }
 
-const widgetIdOf = (b: Block): string | null => (typeof b._key === "string" ? (KEY.exec(b._key)?.[1] ?? null) : null);
+const widgetIdOf = (b: Block): string | null =>
+	typeof b._key === "string" ? (KEY.exec(b._key)?.[1] ?? null) : null;
 
 /** A widget's blocks: a heading's paragraphs carry its title class (WpShellBlock draws `skeletonClass`). */
 function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
-	if (Array.isArray(w.body) && blocks.every((b) => PLACEHOLDERS.has(String(b._type)))) return nest(w.body, []);
+	if (Array.isArray(w.body) && blocks.every((b) => PLACEHOLDERS.has(String(b._type))))
+		return nest(w.body, []);
 	const shown = blocks.filter((b) => b._type !== "elementor-widget");
 	if (shown.length === 0) return [];
 	const cls = typeof w.blockClass === "string" ? w.blockClass : null;
-	return [{ blocks: cls ? shown.map((b) => (b._type === "block" ? { ...b, skeletonClass: cls } : b)) : shown }];
+	return [
+		{
+			blocks: cls
+				? shown.map((b) => (b._type === "block" ? { ...b, skeletonClass: cls } : b))
+				: shown,
+		},
+	];
 }
 
 /** A run of blocks in one column (or after one carrier): each widget's blocks in its elements, a `columns` block in its own. */
 function run(blocks: Block[], s: Skeleton | null): SkeletonNode[] {
 	const widgets = isObject(s?.widgets) ? s.widgets : {};
 	const out: SkeletonNode[] = [];
-	for (let i = 0; i < blocks.length; ) {
+	for (let i = 0; i < blocks.length;) {
 		const b = blocks[i];
 		if (!b) break;
 		if (b._type === "columns" && skeletonOf(b)) {
@@ -125,7 +158,14 @@ function run(blocks: Block[], s: Skeleton | null): SkeletonNode[] {
 		const id = widgetIdOf(b);
 		const own = id !== null && Object.hasOwn(widgets, id) ? id : null;
 		let j = i + 1;
-		for (let next = blocks[j]; next && !(next._type === "columns" && skeletonOf(next)) && sameGroup(widgetIdOf(next), own, widgets); next = blocks[j]) j++;
+		for (
+			let next = blocks[j];
+			next &&
+			!(next._type === "columns" && skeletonOf(next)) &&
+			sameGroup(widgetIdOf(next), own, widgets);
+			next = blocks[j]
+		)
+			j++;
 		const group = blocks.slice(i, j);
 		const w = own !== null ? widgets[own] : s?.added;
 		out.push(...(isObject(w) ? nest(w.wraps, widgetBlocks(w, group)) : [{ blocks: group }]));
@@ -135,19 +175,23 @@ function run(blocks: Block[], s: Skeleton | null): SkeletonNode[] {
 }
 
 /** Whether a block keyed with `id` goes on in the group of widget `own` (null: the owner's added blocks). */
-function sameGroup(id: string | null, own: string | null, widgets: Record<string, SkeletonWidget>): boolean {
+function sameGroup(
+	id: string | null,
+	own: string | null,
+	widgets: Record<string, SkeletonWidget>,
+): boolean {
 	if (own !== null) return id === own;
 	return id === null || !Object.hasOwn(widgets, id);
 }
 
 function columns(b: Block): SkeletonNode[] {
 	const s = skeletonOf(b);
-	const cols = Array.isArray(b.columns) ? (b.columns as Block[]) : [];
+	const cols = blocksOf(b.columns);
 	return nest(
 		s?.wraps,
 		cols.flatMap((c) => {
 			const cs = skeletonOf(c);
-			const content = Array.isArray(c.content) ? (c.content as Block[]) : [];
+			const content = blocksOf(c.content);
 			return nest(cs?.wraps, run(content, cs));
 		}),
 	);
@@ -161,7 +205,7 @@ export function skeletonTree(body: Block[]): SkeletonNode[] {
 		const s = skeletonOf(b);
 		return s !== null && !(b._type === "columns" && s.inner === true);
 	};
-	for (let i = 0; i < body.length; ) {
+	for (let i = 0; i < body.length;) {
 		const b = body[i];
 		if (!b) break;
 		const s = skeletonOf(b);
