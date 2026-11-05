@@ -18,7 +18,10 @@ import {
 } from "../../../src/astro/routes/api/import/wordpress/execute.js";
 import type { EmDashHandlers } from "../../../src/astro/types.js";
 import { parseWxrString, type WxrPost } from "../../../src/cli/wxr/parser.js";
-import { lookupContentAuthor, sendCommentNotification } from "../../../src/comments/notifications.js";
+import {
+	lookupContentAuthor,
+	sendCommentNotification,
+} from "../../../src/comments/notifications.js";
 import { getCommentsWithDb } from "../../../src/comments/query.js";
 import type { Database } from "../../../src/database/types.js";
 import { preImportWxrTaxonomies } from "../../../src/import/wxr-taxonomies.js";
