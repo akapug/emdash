@@ -44,9 +44,10 @@ const ALIGN_CLASS: Record<string, string> = {
 };
 const Tag = (node.style && Object.hasOwn(TAGS, node.style) ? TAGS[node.style] : undefined) ?? "p";
 const align = node.textAlign && Object.hasOwn(ALIGN_CLASS, node.textAlign) ? ALIGN_CLASS[node.textAlign] : undefined;
+const CLASS_NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const builder =
 	typeof node.skeletonClass === "string"
-		? node.skeletonClass.split(/\s+/).filter((c) => /^[A-Za-z0-9_-]{1,100}$/.test(c))
+		? node.skeletonClass.split(/\s+/).filter((c) => CLASS_NAME.test(c))
 		: [];
 const cls = [...builder, ...(align ? [align] : [])].join(" ") || undefined;
 ---
