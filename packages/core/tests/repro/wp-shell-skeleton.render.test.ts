@@ -229,6 +229,60 @@ describe("the WpShell layout's page-builder skeleton", () => {
 			]),
 		);
 		expect(hostile).toBe('<div class="ok also-ok" data-id="3000001" id="top"><p>Kept</p></div>');
+		// a widget's block class is drawn by WpShellBlock with class characters only
+		const titled = squash(
+			await render([
+				{
+					_type: "elementor-section",
+					_key: "el-3000002",
+					skeleton: {
+						wraps: [],
+						widgets: {
+							"3000003": {
+								wraps: [],
+								blockClass: 'title" onclick="alert(1)" x="  elementor-size-default',
+							},
+						},
+					},
+				},
+				text("el-3000003", "Heading", "h2"),
+			]),
+		);
+		expect(titled).toBe('<h2 class="elementor-size-default">Heading</h2>');
+	});
+
+	it("draws the words a widget's blocks hold, never its empty elements in their place", async () => {
+		// a divider drawn with its text keeps its words; the line it would draw alone is not drawn over them
+		const html = squash(
+			await render([
+				{
+					_type: "elementor-section",
+					_key: "el-4000001",
+					skeleton: {
+						wraps: [],
+						widgets: {
+							"4000002": widget("4000002", "divider", {
+								body: [
+									wrap("div", "elementor-divider"),
+									wrap("span", "elementor-divider-separator"),
+								],
+							}),
+							"4000003": widget("4000003", "text-editor"),
+						},
+					},
+				},
+				text("el-4000002", "Or"),
+				{ _type: "break", _key: "el-4000002-1", style: "lineBreak" },
+				{ _type: "elementor-widget", _key: "el-4000003" },
+			]),
+		);
+		expect(html).toContain("<p>Or</p>");
+		expect(html).not.toContain("elementor-divider-separator");
+		// a widget that kept only its place draws its own elements, empty, and no placeholder of EmDash's
+		expect(html).toContain(
+			'data-widget_type="text-editor.default"><div class="elementor-widget-container"></div></div>',
+		);
+		expect(html).not.toContain("data-portabletext-unknown");
 	});
 
 	it("leaves a body with no skeleton to EmDash's own drawing, and an owner's EmDash columns block as EmDash draws it", async () => {

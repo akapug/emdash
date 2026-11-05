@@ -57,6 +57,8 @@ const reads = vi.hoisted(() => ({
 	shell: null as unknown,
 	getEmDashCollection: vi.fn(),
 	getEmDashEntry: vi.fn(),
+	// No entry drawn here is in the visual editor's edit mode, unless a test says so.
+	getEditMeta: vi.fn((_value: unknown): unknown => undefined),
 	getCommentCount: vi.fn(),
 	getCollectionInfo: vi.fn(),
 	getComments: vi.fn(),
@@ -78,8 +80,7 @@ async function emdashReads() {
 		getContentSeo: seo.getContentSeo,
 		decodeSlug: slug.decodeSlug,
 		getEmDashCollection: reads.getEmDashCollection,
-		// No entry drawn here is in the visual editor's edit mode.
-		getEditMeta: () => undefined,
+		getEditMeta: reads.getEditMeta,
 		getTermsForEntries: async () => new Map(),
 		createNoop: () => ({}),
 		getEmDashEntry: reads.getEmDashEntry,
@@ -935,7 +936,7 @@ describe("WpShell: what the layout draws through its own components", () => {
 				},
 				locals: answering(definition()),
 			});
-		const html = await draw([
+		const built = [
 			{
 				_type: "elementor-section",
 				_key: "el-1000001",
@@ -965,7 +966,8 @@ describe("WpShell: what the layout draws through its own components", () => {
 				markDefs: [],
 				children: [{ _type: "span", _key: "s", text: "Who we are", marks: [] }],
 			},
-		]);
+		];
+		const html = await draw(built);
 		expect(html).toMatch(
 			/<div class="entry-content"[^>]*><div class="elementor elementor-7" data-elementor-id="7"><section class="elementor-section elementor-element-1000001" data-id="1000001"><div class="elementor-container"><div class="elementor-widget elementor-widget-heading" data-id="1000002"><div class="elementor-widget-container"><h2 class="elementor-heading-title elementor-size-default"[^>]*>Who we are<\/h2><\/div><\/div><\/div><\/section><\/div>/,
 		);
@@ -981,6 +983,17 @@ describe("WpShell: what the layout draws through its own components", () => {
 		]);
 		expect(plain).toMatch(/<div class="entry-content"[^>]*><p[^>]*>Plain<\/p>/);
 		expect(plain).not.toContain("elementor");
+		// while the owner edits the page in place, its body is the inline editor's, never the skeleton
+		reads.getEditMeta.mockImplementation((v) =>
+			Array.isArray(v) ? { collection: "pages", id: "1", field: "content" } : undefined,
+		);
+		try {
+			const editing = await draw(built);
+			expect(editing).toContain("Who we are");
+			expect(editing).not.toContain("elementor-7");
+		} finally {
+			reads.getEditMeta.mockImplementation(() => undefined);
+		}
 	});
 
 	it("puts each post of a listing's lanes by the shape EmDash stores for its image", async () => {
