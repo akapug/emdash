@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Role } from "@emdash-cms/auth";
 import Database from "better-sqlite3";
 import { SqliteDialect, sql } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleReferenceChildrenSet } from "../../../src/api/handlers/relations.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
@@ -33,10 +33,12 @@ describe("runtime import sync", () => {
 	let runtime: EmDashRuntime;
 	let saves: number;
 	let interveningSave: (() => Promise<void>) | undefined;
+	let afterSaves: Record<string, unknown>[];
 
 	beforeEach(async () => {
 		saves = 0;
 		interveningSave = undefined;
+		afterSaves = [];
 		runtime = await EmDashRuntime.create({
 			config: {
 				database: { entrypoint: `test-import-sync-${randomUUID()}`, config: {}, type: "sqlite" },
@@ -56,6 +58,9 @@ describe("runtime import sync", () => {
 							saves++;
 							await interveningSave?.();
 							return { ...event.content, title: `${String(event.content.title)} [normalized]` };
+						},
+						"content:afterSave": async (event) => {
+							afterSaves.push(event.content);
 						},
 					},
 				}),
@@ -143,6 +148,12 @@ describe("runtime import sync", () => {
 		expect(revision?.data.excerpt).toBe("Old excerpt");
 		expect(revision?.data.title).toBe(item?.data.title);
 		expect(updated.data.originalRevisionId).toBe(first.data.originalRevisionId);
+		await vi.waitFor(() => expect(afterSaves).toHaveLength(2));
+		expect(afterSaves[1]).toMatchObject({
+			id: first.data.entryId,
+			title: item?.data.title,
+			excerpt: "Old excerpt",
+		});
 	});
 
 	it("preserves an omitted required field even when a hook returns a value for it", async () => {
