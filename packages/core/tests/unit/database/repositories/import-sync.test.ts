@@ -11,6 +11,7 @@ import {
 } from "../../../../src/database/repositories/import-sync.js";
 import { SeoRepository } from "../../../../src/database/repositories/seo.js";
 import type { Database } from "../../../../src/database/types.js";
+import { SchemaRegistry } from "../../../../src/schema/registry.js";
 import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../../../utils/test-db.js";
 
 function request(overrides: Partial<ImportSyncInput> = {}): ImportSyncInput {
@@ -21,6 +22,12 @@ function request(overrides: Partial<ImportSyncInput> = {}): ImportSyncInput {
 		locale: "en",
 		sequence: 1,
 		requestHash: "accepted-create-hash",
+		grant: {
+			id: overrides.source?.site === "https://other.example" ? "grant-other" : "grant-1",
+			bindingId: "binding-1",
+			generation: 1,
+		},
+		mappedFields: Object.keys(overrides.data ?? { title: "Original", content: [] }),
 		slug: "original",
 		data: { title: "Original", content: [] },
 		authorId: "importer",
@@ -61,6 +68,7 @@ async function snapshot(db: Kysely<Database>) {
 			db,
 		),
 		sql`SELECT * FROM _emdash_import_operations ORDER BY operation_id`.execute(db),
+		sql`SELECT * FROM _emdash_import_grants ORDER BY id`.execute(db),
 		sql`SELECT * FROM _emdash_revision_prune_queue ORDER BY collection, entry_id`.execute(db),
 	]).then((results) => results.map((result) => result.rows));
 }
@@ -75,6 +83,9 @@ for (const mode of ["sqlite transaction", "D1-style atomic adapter"] as const) {
 
 		beforeEach(async () => {
 			db = await setupTestDatabaseWithCollections();
+			await sql`INSERT INTO _emdash_import_grants (id, source_site, binding_id, actor_id, generation, revoked)
+				VALUES ('grant-1', 'https://source.example', 'binding-1', 'importer', 1, 0),
+				('grant-other', 'https://other.example', 'binding-1', 'importer', 1, 0)`.execute(db);
 			batches = 0;
 			beforeBatch = undefined;
 			afterBatch = undefined;
@@ -106,6 +117,26 @@ for (const mode of ["sqlite transaction", "D1-style atomic adapter"] as const) {
 		afterEach(async () => {
 			await teardownTestDatabase(db);
 		});
+
+		it.each(["table", "operation_column"])(
+			"refuses new applies with incomplete grant schema: %s",
+			async (kind) => {
+				expect(await repo.supports("page")).toBe(true);
+				if (kind === "table") await sql`DROP TABLE _emdash_import_grants`.execute(db);
+				else
+					await sql`ALTER TABLE _emdash_import_operations DROP COLUMN grant_generation`.execute(db);
+				expect(await repo.supports("page")).toBe(false);
+				expect(await repo.apply(request())).toEqual({
+					state: "unknown",
+					reason: "import_provenance_unavailable",
+				});
+				expect((await sql`SELECT * FROM ec_page`.execute(db)).rows).toHaveLength(0);
+				expect((await sql`SELECT * FROM revisions`.execute(db)).rows).toHaveLength(0);
+				expect((await sql`SELECT * FROM _emdash_import_operations`.execute(db)).rows).toHaveLength(
+					0,
+				);
+			},
+		);
 
 		it.each(["missing", "replaced"])(
 			"refuses direct apply when its sticky content trigger is %s",
@@ -155,6 +186,144 @@ for (const mode of ["sqlite transaction", "D1-style atomic adapter"] as const) {
 				last_sequence: 1,
 			});
 			if (mode === "D1-style atomic adapter") expect(batches).toBe(1);
+		});
+
+		it.each([true, false])(
+			"preserves unmapped custom columns without writing them (snapshot includes custom: %s)",
+			async (includeCustom) => {
+				await sql`ALTER TABLE ec_page ADD COLUMN custom_note TEXT DEFAULT 'Keep me'`.execute(db);
+				const created = requireApplied(await repo.apply(request()));
+				await sql`CREATE TRIGGER reject_unmapped_write BEFORE UPDATE OF custom_note, content ON ec_page
+				BEGIN SELECT RAISE(ABORT, 'unmapped field was written'); END`.execute(db);
+				const data = {
+					title: "Mapped update",
+					content: [],
+					...(includeCustom ? { custom_note: "Must not overwrite" } : {}),
+				};
+				const changed = requireApplied(
+					await repo.apply(update(created, { data, mappedFields: ["title"] })),
+				);
+				expect(
+					(
+						await sql`SELECT title, content, custom_note FROM ec_page WHERE id = ${created.entryId} AND locale = 'en'`.execute(
+							db,
+						)
+					).rows[0],
+				).toMatchObject({ title: "Mapped update", content: "[]", custom_note: "Keep me" });
+				const revision = await sql<{
+					data: string;
+				}>`SELECT data FROM revisions WHERE id = ${changed.revisionId}`.execute(db);
+				expect(JSON.parse(revision.rows[0].data)).toEqual({
+					title: "Mapped update",
+					content: [],
+					custom_note: "Keep me",
+					_slug: "original",
+				});
+			},
+		);
+
+		it("preserves literal JSON-looking text, booleans and lists in the complete revision snapshot", async () => {
+			const registry = new SchemaRegistry(db);
+			await registry.createField("page", { slug: "literal_text", label: "Literal", type: "text" });
+			await registry.createField("page", { slug: "enabled", label: "Enabled", type: "boolean" });
+			await registry.createField("page", {
+				slug: "choices",
+				label: "Choices",
+				type: "multiSelect",
+			});
+			const original = {
+				title: "Original",
+				content: [],
+				literal_text: '{"note":"literal text"}',
+				enabled: true,
+				choices: ["one", "two"],
+			};
+			const created = requireApplied(await repo.apply(request({ data: original })));
+			const changed = requireApplied(
+				await repo.apply(update(created, { data: { title: "Mapped" }, mappedFields: ["title"] })),
+			);
+			const revision = await sql<{
+				data: string;
+			}>`SELECT data FROM revisions WHERE id = ${changed.revisionId}`.execute(db);
+			expect(JSON.parse(revision.rows[0].data)).toEqual({
+				...original,
+				title: "Mapped",
+				_slug: "original",
+			});
+		});
+
+		it("an empty mapping appends the complete snapshot without writing any data columns", async () => {
+			const created = requireApplied(await repo.apply(request()));
+			await sql`CREATE TRIGGER reject_data_write BEFORE UPDATE OF title, content ON ec_page
+				BEGIN SELECT RAISE(ABORT, 'empty mapping wrote data'); END`.execute(db);
+			const changed = requireApplied(
+				await repo.apply(update(created, { data: {}, mappedFields: [] })),
+			);
+			expect(changed.version).toBe(2);
+			expect(
+				(
+					await sql`SELECT title FROM ec_page WHERE id = ${created.entryId} AND locale = 'en'`.execute(
+						db,
+					)
+				).rows[0],
+			).toMatchObject({ title: "Original" });
+		});
+
+		it.each([
+			{ mappedFields: ["title", "title"] },
+			{ mappedFields: ["missing"] },
+			{ mappedFields: ["version"] },
+			{ mappedFields: ["title; DROP TABLE revisions"] },
+		])("refuses invalid mapped fields %j with zero effects", async ({ mappedFields }) => {
+			const before = await snapshot(db);
+			const outcome = await repo.apply(request({ mappedFields })).catch(() => null);
+			expect(outcome?.state).not.toBe("applied");
+			expect(await snapshot(db)).toEqual(before);
+		});
+
+		it.each([
+			{ grant: { id: "absent", bindingId: "binding-1", generation: 1 } },
+			{ grant: { id: "grant-1", bindingId: "wrong-binding", generation: 1 } },
+			{ grant: { id: "grant-1", bindingId: "binding-1", generation: 2 } },
+			{ authorId: "wrong-actor" },
+			{ source: { site: "https://wrong.example", type: "page" as const, id: "17" } },
+		])("requires the exact active grant authority on create and update: %j", async (overrides) => {
+			let before = await snapshot(db);
+			expect((await repo.apply(request(overrides))).state).not.toBe("applied");
+			expect(await snapshot(db)).toEqual(before);
+			const created = requireApplied(await repo.apply(request()));
+			before = await snapshot(db);
+			expect((await repo.apply(update(created, overrides))).state).not.toBe("applied");
+			expect(await snapshot(db)).toEqual(before);
+		});
+
+		it("persists grant identity and replays completed outcomes after revocation without new writes", async () => {
+			const created = requireApplied(await repo.apply(request()));
+			expect(
+				(
+					await sql`SELECT grant_id, grant_generation, binding_id FROM _emdash_import_operations`.execute(
+						db,
+					)
+				).rows[0],
+			).toEqual({ grant_id: "grant-1", grant_generation: 1, binding_id: "binding-1" });
+			await sql`UPDATE _emdash_import_grants SET revoked = 1 WHERE id = 'grant-1'`.execute(db);
+			const before = await snapshot(db);
+			expect(await repo.apply(request())).toEqual({ ...created, replayed: true });
+			expect(await repo.lookup("create-1", request())).toEqual({ ...created, replayed: true });
+			expect((await repo.apply(update(created))).state).not.toBe("applied");
+			expect(await snapshot(db)).toEqual(before);
+		});
+
+		it("keeps pre-fence nullable-grant completed receipts replayable without enrolling a new operation", async () => {
+			const created = requireApplied(await repo.apply(request()));
+			await sql`UPDATE _emdash_import_operations SET grant_id = NULL, grant_generation = NULL, binding_id = NULL`.execute(
+				db,
+			);
+			await sql`UPDATE _emdash_import_grants SET revoked = 1 WHERE id = 'grant-1'`.execute(db);
+			const before = await snapshot(db);
+			expect(await repo.apply(request())).toEqual({ ...created, replayed: true });
+			expect((await repo.apply(update(created))).state).not.toBe("applied");
+			expect(await snapshot(db)).toEqual(before);
 		});
 
 		it("promotes only its own immutable revision and keeps the original snapshot", async () => {
@@ -228,6 +397,9 @@ for (const mode of ["sqlite transaction", "D1-style atomic adapter"] as const) {
 			{ sequence: 2 },
 			{ collection: "post" },
 			{ entryId: "another-id" },
+			{ grant: { id: "another-grant", bindingId: "binding-1", generation: 1 } },
+			{ grant: { id: "grant-1", bindingId: "another-binding", generation: 1 } },
+			{ grant: { id: "grant-1", bindingId: "binding-1", generation: 2 } },
 		])("refuses operation-id reuse with a different accepted identity: %j", async (overrides) => {
 			await repo.apply(request());
 			const before = await snapshot(db);
@@ -487,6 +659,38 @@ for (const mode of ["sqlite transaction", "D1-style atomic adapter"] as const) {
 					};
 					expect((await repo.apply(request())).state).not.toBe("applied");
 					expect(await snapshot(db)).toEqual(raced);
+				},
+			);
+
+			it("rejects creation if the grant is revoked after preflight", async () => {
+				let raced: Awaited<ReturnType<typeof snapshot>> | undefined;
+				beforeBatch = async () => {
+					await sql`UPDATE _emdash_import_grants SET revoked = 1 WHERE id = 'grant-1'`.execute(db);
+					raced = await snapshot(db);
+				};
+				expect((await repo.apply(request())).state).not.toBe("applied");
+				expect(await snapshot(db)).toEqual(raced);
+			});
+
+			it.each(["revoke", "generation"])(
+				"rejects grant %s after preflight and before the atomic batch with zero writes",
+				async (kind) => {
+					const created = requireApplied(await repo.apply(request()));
+					let raced: Awaited<ReturnType<typeof snapshot>> | undefined;
+					beforeBatch = async () => {
+						if (kind === "revoke")
+							await sql`UPDATE _emdash_import_grants SET revoked = 1 WHERE id = 'grant-1'`.execute(
+								db,
+							);
+						else
+							await sql`UPDATE _emdash_import_grants SET generation = generation + 1 WHERE id = 'grant-1'`.execute(
+								db,
+							);
+						raced = await snapshot(db);
+					};
+					expect((await repo.apply(update(created))).state).not.toBe("applied");
+					expect(await snapshot(db)).toEqual(raced);
+					expect(await repo.apply(request())).toEqual({ ...created, replayed: true });
 				},
 			);
 

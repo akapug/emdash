@@ -7,6 +7,7 @@ import { GET, POST } from "../../../src/astro/routes/api/import/wordpress/sync.j
 const body = {
 	version: 1,
 	operationId: "receipt-1",
+	grant: { id: "grant-1", bindingId: "binding-1", generation: 1 },
 	source: { site: "https://source.example", type: "page", id: "42" },
 	collection: "pages",
 	locale: "en",
@@ -17,7 +18,12 @@ const body = {
 
 function context(options: { role?: number; scopes?: string[]; authenticated?: boolean } = {}) {
 	const emdash = {
-		getImportSyncCapability: vi.fn().mockResolvedValue({ version: 1, available: true }),
+		getImportSyncCapability: vi.fn().mockResolvedValue({
+			version: 1,
+			available: true,
+			mappedFieldsOnly: true,
+			grantGenerationFence: true,
+		}),
 		handleImportSync: vi.fn().mockResolvedValue({ success: true, data: { state: "applied" } }),
 	};
 	const ctx = {
@@ -63,7 +69,10 @@ describe("import sync route", () => {
 	it("discovers a versioned capability without writing", async () => {
 		const { ctx, emdash } = context({ scopes: ["admin"] });
 		const response = await GET(ctx);
-		expect(await response.json()).toEqual({ success: true, data: { version: 1, available: true } });
+		expect(await response.json()).toEqual({
+			success: true,
+			data: { version: 1, available: true, mappedFieldsOnly: true, grantGenerationFence: true },
+		});
 		expect(emdash.getImportSyncCapability).toHaveBeenCalledWith("pages");
 		expect(emdash.handleImportSync).not.toHaveBeenCalled();
 	});
@@ -89,6 +98,17 @@ describe("import sync route", () => {
 		ctx.request = new Request(ctx.url, {
 			method: "POST",
 			body: JSON.stringify({ ...body, authorId: "forged" }),
+		});
+		expect((await POST(ctx)).status).toBe(400);
+		expect(emdash.handleImportSync).not.toHaveBeenCalled();
+	});
+
+	it("requires explicit grant evidence before invoking the runtime", async () => {
+		const { ctx, emdash } = context();
+		const { grant: _grant, ...withoutGrant } = body;
+		ctx.request = new Request(ctx.url, {
+			method: "POST",
+			body: JSON.stringify(withoutGrant),
 		});
 		expect((await POST(ctx)).status).toBe(400);
 		expect(emdash.handleImportSync).not.toHaveBeenCalled();

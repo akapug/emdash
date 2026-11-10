@@ -164,9 +164,11 @@ Its `data` value contains `success`, `imported`, `skipped`, `errors`, `byCollect
 
 ### Synchronize an importer-owned entry
 
-`GET /_emdash/api/import/wordpress/sync?collection=pages` discovers the versioned sync capability. Check for `data.version === 1` and `data.available === true` before submitting content. A missing endpoint or unavailable capability means the caller must leave the entry unchanged. This integration endpoint requires `import:execute`; bearer tokens also require the `admin` scope.
+`GET /_emdash/api/import/wordpress/sync?collection=pages` discovers the versioned sync capability. Check for `data.version === 1`, `data.available === true`, `data.mappedFieldsOnly === true` and `data.grantGenerationFence === true` before submitting content. A missing endpoint or unavailable capability means the caller must leave the entry unchanged. This integration endpoint requires `import:execute`; bearer tokens also require the `admin` scope.
 
-`POST /_emdash/api/import/wordpress/sync` creates or updates one published entry atomically. It accepts complete collection field data, already converted to EmDash field formats, rather than WXR or raw WordPress HTML. The collection must support revisions. SQLite and Cloudflare D1 are supported when the import provenance migration and edit-tracking triggers are installed.
+`POST /_emdash/api/import/wordpress/sync` creates or updates one published entry atomically. It accepts mapped fields already converted to EmDash field formats, rather than WXR or raw WordPress HTML. An update writes only the keys supplied in `data`; omitted fields keep their current values in both the live entry and the complete revision snapshot. Save hooks cannot add fields to that write set. A create must supply all required fields. The collection must support revisions. SQLite and Cloudflare D1 are supported when the import provenance and grant migrations and edit-tracking triggers are installed.
+
+Before sending content, explicitly create a tenant-local grant with `POST /_emdash/api/import/wordpress/sync/grants`. Send `{ "sourceSite": "https://wordpress.example", "bindingId": "wordpress-live", "actorId": "import-actor" }`. The response returns a server-generated `id` and `generation`. The grant binds the exact source site, serving binding and authenticated actor; include its ID, binding ID and generation in every sync request. Authentication or a Helper connection does not create a grant automatically. Both grant lifecycle methods require `import:execute` and, for bearer tokens, the `admin` scope.
 
 The following request creates a published page and records its source identity and original revision.
 
@@ -174,6 +176,7 @@ The following request creates a published page and records its source identity a
 {
   "version": 1,
   "operationId": "accepted-push-42-page-7",
+  "grant": { "id": "01K9SF9H3MN7CYAHC8J0VBVX64", "bindingId": "wordpress-live", "generation": 1 },
   "source": { "site": "https://wordpress.example", "type": "page", "id": "7" },
   "collection": "pages",
   "locale": "en",
@@ -184,6 +187,8 @@ The following request creates a published page and records its source identity a
 ```
 
 Use a stable source identity and a strictly increasing accepted-push `sequence`, not a WordPress modification timestamp. Store the returned `entryId` and `version`. Include both as `entryId` and `expectedVersion` on the next update, with a new operation ID and sequence. Retry the identical request with the same operation ID; a changed request under that ID is a conflict. The authenticated actor supplies authorship.
+
+Before moving a serving binding, revoke the old grant with `DELETE /_emdash/api/import/wordpress/sync/grants` and the JSON body `{ "id": "the-grant-id" }`. Revocation advances its generation and permanently disables that grant. Repeating the same revoke returns the same revoked generation. A request already authenticated or running save hooks cannot commit after the revocation completes. A commit completed before revocation stays applied, and its identical request can still replay its durable receipt. A new binding requires a separately authorized grant.
 
 The response's `data.state` is `applied`, `conflict`, or `unknown`. Only `applied` proves a write. Its receipt contains `entryId`, `revisionId`, `originalRevisionId`, `version`, and `replayed`. A conflict or unknown result leaves content unchanged. Preserve these outcomes in the caller's ledger rather than treating HTTP success alone as an applied update.
 

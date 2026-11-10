@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { handleReferenceChildrenSet } from "../../../src/api/handlers/relations.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
+import { ImportSyncGrantRepository } from "../../../src/database/repositories/import-sync-grant.js";
 import { RelationRepository } from "../../../src/database/repositories/relation.js";
 import { RevisionRepository } from "../../../src/database/repositories/revision.js";
 import { TaxonomyRepository } from "../../../src/database/repositories/taxonomy.js";
@@ -19,6 +20,7 @@ const actor = { id: "importer", role: Role.ADMIN };
 const initial: ImportSyncRequest = {
 	version: 1,
 	operationId: "receipt-1",
+	grant: { id: "grant-1", bindingId: "binding-1", generation: 1 },
 	source: { site: "https://source.example", type: "page", id: "42" },
 	collection: "pages",
 	locale: "en",
@@ -68,6 +70,12 @@ describe("runtime import sync", () => {
 			required: true,
 		});
 		await registry.createField("pages", { slug: "excerpt", label: "Excerpt", type: "text" });
+		const grant = await new ImportSyncGrantRepository(runtime.db).create({
+			sourceSite: initial.source.site,
+			bindingId: "binding-1",
+			actorId: actor.id,
+		});
+		initial.grant = { id: grant.id, bindingId: grant.bindingId, generation: grant.generation };
 	});
 
 	afterEach(async () => {
@@ -83,7 +91,12 @@ describe("runtime import sync", () => {
 	}
 
 	it("validates hook output, stores its own snapshot and replays without rerunning hooks", async () => {
-		expect(await runtime.getImportSyncCapability("pages")).toEqual({ version: 1, available: true });
+		expect(await runtime.getImportSyncCapability("pages")).toEqual({
+			version: 1,
+			available: true,
+			mappedFieldsOnly: true,
+			grantGenerationFence: true,
+		});
 		const created = await create();
 		const revision = await new RevisionRepository(runtime.db).findById(created.revisionId);
 		expect(revision?.data.title).toBe("Home [normalized]");
@@ -101,7 +114,7 @@ describe("runtime import sync", () => {
 		expect(saves).toBe(1);
 	});
 
-	it("clears omitted optional fields in the published row and its matching snapshot", async () => {
+	it("preserves unmapped custom fields in the published row and its matching snapshot", async () => {
 		const first = await runtime.handleImportSync(
 			{ ...initial, data: { title: "Home", excerpt: "Old excerpt" } },
 			actor,
@@ -125,11 +138,65 @@ describe("runtime import sync", () => {
 		const revision = await new RevisionRepository(runtime.db).findById(updated.data.revisionId);
 		const stored = await sql<{ excerpt: string | null }>`SELECT excerpt FROM ec_pages
 			WHERE id = ${first.data.entryId} AND locale = ${initial.locale}`.execute(runtime.db);
-		expect(stored.rows).toEqual([{ excerpt: null }]);
-		expect(item?.data).not.toHaveProperty("excerpt");
-		expect(revision?.data.excerpt).toBeNull();
+		expect(stored.rows).toEqual([{ excerpt: "Old excerpt" }]);
+		expect(item?.data.excerpt).toBe("Old excerpt");
+		expect(revision?.data.excerpt).toBe("Old excerpt");
 		expect(revision?.data.title).toBe(item?.data.title);
 		expect(updated.data.originalRevisionId).toBe(first.data.originalRevisionId);
+	});
+
+	it("preserves an omitted required field even when a hook returns a value for it", async () => {
+		const created = await create();
+		const updated = await runtime.handleImportSync(
+			{
+				...initial,
+				operationId: "receipt-2",
+				sequence: 2,
+				entryId: created.entryId,
+				expectedVersion: created.version,
+				data: { excerpt: "Mapped excerpt" },
+			},
+			actor,
+		);
+		if (!updated.success || updated.data.state !== "applied")
+			throw new Error("Update was not applied");
+		const item = await new ContentRepository(runtime.db).findById("pages", created.entryId);
+		const revision = await new RevisionRepository(runtime.db).findById(updated.data.revisionId);
+		expect(item?.data).toEqual({ title: "Home [normalized]", excerpt: "Mapped excerpt" });
+		expect(revision?.data.title).toBe(item?.data.title);
+		expect(revision?.data.excerpt).toBe(item?.data.excerpt);
+	});
+
+	it("does not commit after an authenticated request loses its import grant during save hooks", async () => {
+		const created = await create();
+		interveningSave = async () => {
+			interveningSave = undefined;
+			const revoked = await new ImportSyncGrantRepository(runtime.db).revoke(initial.grant.id);
+			expect(revoked?.generation).toBe(initial.grant.generation + 1);
+		};
+		const result = await runtime.handleImportSync(
+			{
+				...initial,
+				operationId: "receipt-2",
+				sequence: 2,
+				entryId: created.entryId,
+				expectedVersion: created.version,
+				data: { title: "Forbidden after fence" },
+			},
+			actor,
+		);
+		expect(result.success && result.data.state).not.toBe("applied");
+		expect(saves).toBe(2);
+		const item = await new ContentRepository(runtime.db).findById("pages", created.entryId);
+		expect(item?.data.title).toBe("Home [normalized]");
+		expect(await runtime.db.selectFrom("revisions").select("id").execute()).toHaveLength(1);
+		expect(
+			await runtime.db.selectFrom("_emdash_import_operations").select("operation_id").execute(),
+		).toEqual([{ operation_id: initial.operationId }]);
+		expect(await runtime.handleImportSync(initial, actor)).toEqual({
+			success: true,
+			data: { ...created, replayed: true },
+		});
 	});
 
 	it("does not replace a page changed during beforeSave preparation", async () => {
@@ -281,6 +348,79 @@ describe("runtime import sync", () => {
 		);
 	});
 
+	it("can revoke authority even when an unrelated collection is unavailable", async () => {
+		await new SchemaRegistry(runtime.db).createCollection({ slug: "gone", label: "Gone" });
+		await sql`DROP TABLE ec_gone`.execute(runtime.db);
+		expect((await runtime.getImportSyncCapability()).available).toBe(false);
+		const revoked = await runtime.handleImportSyncGrantRevoke({ id: initial.grant.id }, actor);
+		expect(revoked).toMatchObject({ success: true, data: { generation: 2, revoked: true } });
+	});
+
+	it("requires an administrator for grant lifecycle and makes double revoke idempotent", async () => {
+		const grantRequest = {
+			sourceSite: initial.source.site,
+			bindingId: "binding-2",
+			actorId: actor.id,
+		};
+		const deniedActor = { id: "subscriber", role: Role.SUBSCRIBER };
+		expect(await runtime.handleImportSyncGrantCreate(grantRequest, deniedActor)).toMatchObject({
+			success: false,
+			error: { code: "FORBIDDEN" },
+		});
+		expect(
+			await runtime.handleImportSyncGrantRevoke({ id: initial.grant.id }, deniedActor),
+		).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+		expect((await new ImportSyncGrantRepository(runtime.db).find(initial.grant.id))?.revoked).toBe(
+			false,
+		);
+		const created = await runtime.handleImportSyncGrantCreate(grantRequest, actor);
+		if (!created.success) throw new Error("Grant was not created");
+		expect(created.data).toMatchObject({ ...grantRequest, generation: 1, revoked: false });
+		const revoked = await runtime.handleImportSyncGrantRevoke({ id: created.data.id }, actor);
+		expect(revoked).toMatchObject({ success: true, data: { generation: 2, revoked: true } });
+		expect(await runtime.handleImportSyncGrantRevoke({ id: created.data.id }, actor)).toEqual(
+			revoked,
+		);
+		const request = {
+			...initial,
+			grant: {
+				id: created.data.id,
+				bindingId: created.data.bindingId,
+				generation: created.data.generation,
+			},
+		};
+		expect(await runtime.handleImportSync(request, actor)).toEqual({
+			success: true,
+			data: { state: "conflict", reason: "import_grant_changed" },
+		});
+		expect(saves).toBe(0);
+	});
+
+	it.each(["missing", "generation", "binding", "source", "actor", "revoked"])(
+		"refuses %s grant evidence before save hooks",
+		async (mismatch) => {
+			const request = structuredClone(initial);
+			let caller = actor;
+			if (mismatch === "missing") request.grant.id = "missing-grant";
+			if (mismatch === "generation") request.grant.generation++;
+			if (mismatch === "binding") request.grant.bindingId = "other-binding";
+			if (mismatch === "source") request.source.site = "https://other.example";
+			if (mismatch === "actor") caller = { ...actor, id: "other-admin" };
+			if (mismatch === "revoked")
+				await new ImportSyncGrantRepository(runtime.db).revoke(request.grant.id);
+			const result = await runtime.handleImportSync(request, caller);
+			expect(result).toEqual({
+				success: true,
+				data: { state: "conflict", reason: "import_grant_changed" },
+			});
+			expect(saves).toBe(0);
+			expect(await runtime.db.selectFrom("revisions").select("id").execute()).toHaveLength(0);
+			expect(
+				await runtime.db.selectFrom("_emdash_import_operations").select("operation_id").execute(),
+			).toHaveLength(0);
+		},
+	);
+
 	it("declines collections without revision support before save hooks", async () => {
 		await new SchemaRegistry(runtime.db).createCollection({
 			slug: "plain",
@@ -290,6 +430,8 @@ describe("runtime import sync", () => {
 		expect(await runtime.getImportSyncCapability("plain")).toEqual({
 			version: 1,
 			available: false,
+			mappedFieldsOnly: true,
+			grantGenerationFence: true,
 		});
 		const result = await runtime.handleImportSync({ ...initial, collection: "plain" }, actor);
 		expect(result.success && result.data.state).toBe("unknown");

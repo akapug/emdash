@@ -386,6 +386,11 @@ export function injectCoreRoutes(
 	});
 
 	injectRoute({
+		pattern: "/_emdash/api/import/wordpress/sync/grants",
+		entrypoint: resolveRoute("api/import/wordpress/sync/grants.ts"),
+	});
+
+	injectRoute({
 		pattern: "/_emdash/api/import/wordpress/execute",
 		entrypoint: resolveRoute("api/import/wordpress/execute.ts"),
 	});

@@ -25,6 +25,8 @@ export interface ImportSyncInput {
 	locale: string;
 	sequence: number;
 	requestHash: string;
+	grant: { id: string; bindingId: string; generation: number };
+	mappedFields: string[];
 	entryId?: string;
 	expectedVersion?: number;
 	slug: string;
@@ -36,7 +38,7 @@ export interface ImportSyncInput {
 
 export type ImportSyncRequestIdentity = Pick<
 	ImportSyncInput,
-	"source" | "collection" | "locale" | "sequence" | "requestHash" | "entryId"
+	"source" | "collection" | "locale" | "sequence" | "requestHash" | "entryId" | "grant"
 >;
 
 export interface ImportSyncApplied {
@@ -65,6 +67,9 @@ interface OperationRow {
 	revision_id: string;
 	version: number;
 	completed: number;
+	grant_id?: string | null;
+	grant_generation?: number | null;
+	binding_id?: string | null;
 	original_revision_id: string | null;
 }
 
@@ -123,6 +128,21 @@ export class ImportSyncRepository {
 	async supports(collection?: string): Promise<boolean> {
 		if (!supportsAtomicImportSync(this.db)) return false;
 		try {
+			const [grants, operations] = await Promise.all([
+				sql<{ name: string }>`PRAGMA table_info(_emdash_import_grants)`.execute(this.db),
+				sql<{ name: string }>`PRAGMA table_info(_emdash_import_operations)`.execute(this.db),
+			]);
+			const grantColumns = new Set(grants.rows.map((column) => column.name));
+			const operationColumns = new Set(operations.rows.map((column) => column.name));
+			if (
+				!["id", "source_site", "binding_id", "actor_id", "generation", "revoked"].every((column) =>
+					grantColumns.has(column),
+				) ||
+				!["grant_id", "grant_generation", "binding_id"].every((column) =>
+					operationColumns.has(column),
+				)
+			)
+				return false;
 			if (collection !== undefined) {
 				validateIdentifier(collection, "collection");
 				if (!(await hasImportBaselineTriggers(this.db, collection))) return false;
@@ -202,6 +222,10 @@ export class ImportSyncRepository {
 			row.locale !== input.locale ||
 			row.sequence !== input.sequence ||
 			row.request_hash !== input.requestHash ||
+			((row.grant_id != null || row.grant_generation != null || row.binding_id != null) &&
+				(row.grant_id !== input.grant?.id ||
+					row.grant_generation !== input.grant?.generation ||
+					row.binding_id !== input.grant?.bindingId)) ||
 			(input.entryId !== undefined && row.entry_id !== input.entryId)
 		) {
 			return { state: "conflict", reason: "operation_identity_mismatch" };
@@ -214,6 +238,8 @@ export class ImportSyncRepository {
 			return { state: "unknown", reason: "atomic_import_unavailable" };
 		}
 		validateIdentifier(input.collection, "collection");
+		const prior = await this.lookup(input.operationId, input);
+		if (prior) return prior;
 		if (
 			!input.operationId ||
 			!input.source.site ||
@@ -223,6 +249,12 @@ export class ImportSyncRepository {
 			!input.slug ||
 			!input.requestHash ||
 			!input.authorId ||
+			!input.grant?.id ||
+			!input.grant.bindingId ||
+			!Number.isSafeInteger(input.grant.generation) ||
+			input.grant.generation < 1 ||
+			!Array.isArray(input.mappedFields) ||
+			new Set(input.mappedFields).size !== input.mappedFields.length ||
 			!Number.isSafeInteger(input.sequence) ||
 			input.sequence < 1 ||
 			(input.expectedVersion !== undefined &&
@@ -234,6 +266,12 @@ export class ImportSyncRepository {
 			return { state: "conflict", reason: "invalid_import_input" };
 		}
 		const fields = Object.entries(input.data);
+		for (const field of input.mappedFields) {
+			validateIdentifier(field, "mapped content field");
+			if (!Object.hasOwn(input.data, field)) {
+				return { state: "conflict", reason: "mapped_field_missing_from_snapshot" };
+			}
+		}
 		for (const [field] of fields) {
 			validateIdentifier(field, "content field");
 			if (SYSTEM_COLUMNS.has(field)) {
@@ -268,6 +306,48 @@ export class ImportSyncRepository {
 		const version = updating ? (input.expectedVersion ?? 0) + 1 : 1;
 		const now = new Date().toISOString();
 		const publishedAt = input.publishedAt ?? now;
+		const mappedFields = new Set(input.mappedFields);
+		const writtenFields = fields.filter(([field]) => mappedFields.has(field));
+		let revisionSnapshot = sql`${JSON.stringify({ ...input.data, _slug: input.slug })}`;
+		let columnWitness = sql`1 = 1`;
+		if (updating) {
+			const definition = await sql<{
+				sql: string;
+			}>`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ${table}`.execute(this.db);
+			if (!definition.rows[0]) return { state: "unknown", reason: "import_provenance_unavailable" };
+			columnWitness = sql`EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table'
+				AND name = ${table} AND sql = ${definition.rows[0].sql})`;
+			const columns = await sql<{ name: string }>`PRAGMA table_info(${sql.ref(table)})`.execute(
+				this.db,
+			);
+			const dataColumns = columns.rows
+				.map((column) => column.name)
+				.filter((column) => !SYSTEM_COLUMNS.has(column));
+			const entries = dataColumns.flatMap((field) => {
+				validateIdentifier(field, "stored content field");
+				const current = sql.ref(`c.${field}`);
+				const path = sql.lit(`$.${field}`);
+				const fieldType = sql`json_extract(field_types.data, ${path})`;
+				const value = mappedFields.has(field)
+					? sql`json(${JSON.stringify(input.data[field] ?? null)})`
+					: sql`CASE WHEN json_type(snapshot_base.data, ${path}) IN ('object', 'array') THEN json(${current})
+						WHEN json_type(snapshot_base.data, ${path}) IN ('true', 'false') THEN CASE ${current}
+							WHEN 1 THEN json('true') WHEN 0 THEN json('false') ELSE NULL END
+						WHEN json_type(snapshot_base.data, ${path}) IS NOT NULL THEN ${current}
+						WHEN ${fieldType} = 'boolean' THEN CASE ${current}
+							WHEN 1 THEN json('true') WHEN 0 THEN json('false') ELSE NULL END
+						WHEN ${fieldType} IN ('json', 'portableText', 'multiSelect', 'repeater', 'blocks') THEN json(${current})
+						ELSE ${current} END`;
+				return [sql.lit(field), value];
+			});
+			revisionSnapshot = sql`(SELECT json_object(${sql.join([...entries, sql.lit("_slug"), sql`${input.slug}`])})
+				FROM revisions AS snapshot_base
+				CROSS JOIN (SELECT json_group_object(f.slug, f.type) AS data
+					FROM _emdash_fields AS f JOIN _emdash_collections AS collection ON collection.id = f.collection_id
+					WHERE collection.slug = ${input.collection}) AS field_types
+				WHERE snapshot_base.id = c.live_revision_id
+				AND snapshot_base.collection = ${input.collection} AND snapshot_base.entry_id = c.id)`;
+		}
 		const sourceMatch = sql`b.source_site = ${input.source.site}
 			AND b.source_type = ${input.source.type} AND b.source_id = ${input.source.id}
 			AND b.locale = ${input.locale}`;
@@ -350,7 +430,9 @@ export class ImportSyncRepository {
 			sql`live_revision_id = ${revisionId}`,
 			sql`draft_revision_id = NULL`,
 			sql`scheduled_at = NULL`,
-			...fields.map(([field, value]) => sql`${sql.ref(field)} = ${storedValue(value)}`),
+			...input.mappedFields.map(
+				(field) => sql`${sql.ref(field)} = ${storedValue(input.data[field])}`,
+			),
 		];
 		const content = updating
 			? sql`
@@ -383,25 +465,39 @@ export class ImportSyncRepository {
 				${input.sequence}, ${input.operationId} WHERE ${pending}
 			RETURNING entry_id
 		`;
+		const revision = updating
+			? sql`
+			INSERT INTO revisions (id, collection, entry_id, data, author_id)
+			SELECT ${revisionId}, ${input.collection}, ${entryId}, ${revisionSnapshot}, ${input.authorId}
+			FROM ${sql.ref(table)} AS c
+			WHERE c.id = ${entryId} AND c.locale = ${input.locale} AND ${pending} RETURNING id
+		`
+			: sql`
+			INSERT INTO revisions (id, collection, entry_id, data, author_id)
+			SELECT ${revisionId}, ${input.collection}, ${entryId}, ${revisionSnapshot}, ${input.authorId}
+			WHERE ${pending} RETURNING id
+		`;
 		const queries = [
 			sql`
 				INSERT INTO _emdash_import_operations
 					(operation_id, source_site, source_type, source_id, collection, entry_id, locale,
-					sequence, request_hash, revision_id, version, completed)
+					sequence, request_hash, revision_id, version, completed, grant_id, grant_generation, binding_id)
 				SELECT ${input.operationId}, ${input.source.site}, ${input.source.type}, ${input.source.id},
 					${input.collection}, ${entryId}, ${input.locale}, ${input.sequence}, ${input.requestHash},
-					${revisionId}, ${version}, 0
+					${revisionId}, ${version}, 0, ${input.grant.id}, ${input.grant.generation}, ${input.grant.bindingId}
 				WHERE NOT EXISTS (SELECT 1 FROM _emdash_import_operations WHERE operation_id = ${input.operationId})
-				AND ${eligible} AND ${vacantSlug}
+				AND ${eligible} AND ${vacantSlug} AND ${columnWitness}
+				AND EXISTS (SELECT 1 FROM _emdash_import_grants AS grant_authority
+					WHERE grant_authority.id = ${input.grant.id}
+					AND grant_authority.source_site = ${input.source.site}
+					AND grant_authority.binding_id = ${input.grant.bindingId}
+					AND grant_authority.actor_id = ${input.authorId}
+					AND grant_authority.generation = ${input.grant.generation}
+					AND grant_authority.revoked = 0)
 				AND ${importBaselineTriggerWitness(this.db, input.collection)}
 				RETURNING operation_id
 			`,
-			sql`
-				INSERT INTO revisions (id, collection, entry_id, data, author_id)
-				SELECT ${revisionId}, ${input.collection}, ${entryId},
-					${JSON.stringify({ ...input.data, _slug: input.slug })}, ${input.authorId}
-				WHERE ${pending} RETURNING id
-			`,
+			revision,
 			content,
 			baseline,
 			sql`
@@ -421,9 +517,9 @@ export class ImportSyncRepository {
 					AND c.draft_revision_id IS NULL AND c.scheduled_at IS NULL AND c.deleted_at IS NULL
 					AND c.status = 'published' AND c.slug = ${input.slug} AND c.author_id = ${input.authorId}
 					AND ${
-						fields.length
+						(updating ? writtenFields : fields).length
 							? sql.join(
-									fields.map(
+									(updating ? writtenFields : fields).map(
 										([field, value]) => sql`${sql.ref(`c.${field}`)} IS ${storedValue(value)}`,
 									),
 									sql` AND `,
@@ -433,7 +529,7 @@ export class ImportSyncRepository {
 					AND b.version = ${version} AND b.live_revision_id = ${revisionId} AND b.customer_owned = 0
 					AND b.last_operation_id = ${input.operationId} AND b.last_sequence = ${input.sequence}
 					AND r.collection = ${input.collection} AND r.entry_id = ${entryId}
-					AND r.data = ${JSON.stringify({ ...input.data, _slug: input.slug })}
+					AND r.data = ${revisionSnapshot}
 					AND r.author_id = ${input.authorId}
 					AND EXISTS (SELECT 1 FROM _emdash_revision_prune_queue
 						WHERE collection = ${input.collection} AND entry_id = ${entryId} AND revision_id = ${revisionId})

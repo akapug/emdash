@@ -5,10 +5,24 @@ export const IMPORT_SYNC_VERSION = 1;
 
 const identity = z.string().trim().min(1);
 
+export const importSyncGrantCreateSchema = z
+	.object({ sourceSite: z.url(), bindingId: identity, actorId: identity })
+	.strict();
+export const importSyncGrantRevokeSchema = z.object({ id: identity }).strict();
+export type ImportSyncGrantCreateRequest = z.infer<typeof importSyncGrantCreateSchema>;
+export type ImportSyncGrantRevokeRequest = z.infer<typeof importSyncGrantRevokeSchema>;
+
 export const importSyncRequestSchema = z
 	.object({
 		version: z.literal(IMPORT_SYNC_VERSION),
 		operationId: identity,
+		grant: z
+			.object({
+				id: identity,
+				bindingId: identity,
+				generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+			})
+			.strict(),
 		source: z
 			.object({
 				site: z.url(),

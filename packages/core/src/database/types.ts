@@ -28,8 +28,22 @@ export interface ImportBaselineTable {
 	last_operation_id: string;
 }
 
+export interface ImportSyncGrantTable {
+	id: string;
+	source_site: string;
+	binding_id: string;
+	actor_id: string;
+	generation: Generated<number>;
+	revoked: Generated<number>;
+	created_at: Generated<string>;
+	updated_at: Generated<string>;
+}
+
 export interface ImportOperationTable {
 	operation_id: string;
+	grant_id: Generated<string | null>;
+	grant_generation: Generated<number | null>;
+	binding_id: Generated<string | null>;
 	source_site: string;
 	source_type: string;
 	source_id: string;
@@ -790,6 +804,7 @@ export interface Database {
 	revisions: RevisionTable;
 	_emdash_import_baselines: ImportBaselineTable;
 	_emdash_import_operations: ImportOperationTable;
+	_emdash_import_grants: ImportSyncGrantTable;
 	_emdash_revision_prune_queue: RevisionPruneQueueTable;
 	taxonomies: TaxonomyTable;
 	content_taxonomies: ContentTaxonomyTable;

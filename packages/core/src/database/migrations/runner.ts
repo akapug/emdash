@@ -94,6 +94,7 @@ import * as m083 from "./083_block_types.js";
 import * as m084 from "./084_site_transfer.js";
 import * as m085 from "./085_taxonomy_def_groups.js";
 import * as m086 from "./086_import_baselines.js";
+import * as m087 from "./087_import_sync_grants.js";
 
 const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"001_initial": m001,
@@ -181,6 +182,7 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"084_site_transfer": m084,
 	"085_taxonomy_def_groups": m085,
 	"086_import_baselines": m086,
+	"087_import_sync_grants": m087,
 });
 
 /** Ordered names from the statically registered migration set. */

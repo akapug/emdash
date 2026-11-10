@@ -9,6 +9,7 @@ import {
 const request: ImportSyncRequest = {
 	version: 1,
 	operationId: "receipt-1",
+	grant: { id: "grant-1", bindingId: "binding-1", generation: 1 },
 	source: { site: "https://source.example", type: "page", id: "42" },
 	collection: "pages",
 	locale: "en",
@@ -28,6 +29,11 @@ describe("import sync request identity", () => {
 		);
 		expect(importSyncRequestSchema.safeParse({ ...request, sequence: 0 }).success).toBe(false);
 		expect(importSyncRequestSchema.safeParse({ ...request, version: 2 }).success).toBe(false);
+		expect(importSyncRequestSchema.safeParse({ ...request, grant: undefined }).success).toBe(false);
+		expect(
+			importSyncRequestSchema.safeParse({ ...request, grant: { ...request.grant, generation: 0 } })
+				.success,
+		).toBe(false);
 	});
 
 	it("hashes the whole accepted request and actor, independent of object key order", async () => {
@@ -38,6 +44,9 @@ describe("import sync request identity", () => {
 		).toBe(original);
 		for (const changed of [
 			{ ...request, sequence: 2 },
+			{ ...request, grant: { ...request.grant, generation: 2 } },
+			{ ...request, grant: { ...request.grant, bindingId: "binding-2" } },
+			{ ...request, grant: { ...request.grant, id: "grant-2" } },
 			{ ...request, locale: "fr" },
 			{ ...request, source: { ...request.source, id: "43" } },
 			{ ...request, entryId: "entry", expectedVersion: 1 },
