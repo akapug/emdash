@@ -57,7 +57,10 @@ import { AuditRepository } from "./database/repositories/audit.js";
 import { CommentRepository } from "./database/repositories/comment.js";
 import type { CommentStatus } from "./database/repositories/comment.js";
 import { ContentRepository } from "./database/repositories/content.js";
-import { ImportSyncGrantRepository, type ImportSyncGrant } from "./database/repositories/import-sync-grant.js";
+import {
+	ImportSyncGrantRepository,
+	type ImportSyncGrant,
+} from "./database/repositories/import-sync-grant.js";
 import {
 	ImportSyncRepository,
 	supportsAtomicImportSync,
@@ -3322,9 +3325,7 @@ export class EmDashRuntime {
 		}
 	}
 
-	async getImportSyncCapability(
-		collection?: string,
-	): Promise<{
+	async getImportSyncCapability(collection?: string): Promise<{
 		version: typeof IMPORT_SYNC_VERSION;
 		available: boolean;
 		mappedFieldsOnly: true;
@@ -3335,7 +3336,12 @@ export class EmDashRuntime {
 			const schema = await this.schemaRegistry.getCollectionWithFields(collection);
 			available = schema?.supports?.includes("revisions") ?? false;
 		}
-		return { version: IMPORT_SYNC_VERSION, available, mappedFieldsOnly: true, grantGenerationFence: true };
+		return {
+			version: IMPORT_SYNC_VERSION,
+			available,
+			mappedFieldsOnly: true,
+			grantGenerationFence: true,
+		};
 	}
 
 	async handleImportSyncGrantCreate(
@@ -3343,16 +3349,28 @@ export class EmDashRuntime {
 		actor: ActorInfo,
 	): Promise<ApiResult<ImportSyncGrant>> {
 		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
-			return { success: false, error: { code: "FORBIDDEN", message: "Import permission required" } };
+			return {
+				success: false,
+				error: { code: "FORBIDDEN", message: "Import permission required" },
+			};
 		}
 		const parsed = importSyncGrantCreateSchema.safeParse(request);
 		if (!parsed.success) {
-			return { success: false, error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" } };
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" },
+			};
 		}
 		if (!supportsAtomicImportSync(this.db)) {
-			return { success: false, error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" } };
+			return {
+				success: false,
+				error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" },
+			};
 		}
-		return { success: true, data: await new ImportSyncGrantRepository(this.db).create(parsed.data) };
+		return {
+			success: true,
+			data: await new ImportSyncGrantRepository(this.db).create(parsed.data),
+		};
 	}
 
 	async handleImportSyncGrantRevoke(
@@ -3360,14 +3378,23 @@ export class EmDashRuntime {
 		actor: ActorInfo,
 	): Promise<ApiResult<ImportSyncGrant>> {
 		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
-			return { success: false, error: { code: "FORBIDDEN", message: "Import permission required" } };
+			return {
+				success: false,
+				error: { code: "FORBIDDEN", message: "Import permission required" },
+			};
 		}
 		const parsed = importSyncGrantRevokeSchema.safeParse(request);
 		if (!parsed.success) {
-			return { success: false, error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" } };
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" },
+			};
 		}
 		if (!supportsAtomicImportSync(this.db)) {
-			return { success: false, error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" } };
+			return {
+				success: false,
+				error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" },
+			};
 		}
 		const grant = await new ImportSyncGrantRepository(this.db).revoke(parsed.data.id);
 		return grant
