@@ -5,7 +5,9 @@ import Database from "better-sqlite3";
 import { SqliteDialect, sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { handleReferenceChildrenSet } from "../../../src/api/handlers/relations.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
+import { RelationRepository } from "../../../src/database/repositories/relation.js";
 import { RevisionRepository } from "../../../src/database/repositories/revision.js";
 import { TaxonomyRepository } from "../../../src/database/repositories/taxonomy.js";
 import { EmDashRuntime } from "../../../src/emdash-runtime.js";
@@ -184,6 +186,70 @@ describe("runtime import sync", () => {
 			);
 			expect(result.success && result.data.state).toBe("conflict");
 			expect(saves).toBe(1);
+		},
+	);
+
+	it.each(["parent with a child", "parent with an unchanged empty set", "child"])(
+		"treats a reference edit as the imported page's %s as a customer save",
+		async (side) => {
+			const created = await create();
+			await new SchemaRegistry(runtime.db).createCollection({ slug: "notes", label: "Notes" });
+			const note = await new ContentRepository(runtime.db).create({
+				type: "notes",
+				slug: "note",
+				data: {},
+			});
+			const relations = new RelationRepository(runtime.db);
+			const set =
+				side === "child"
+					? await handleReferenceChildrenSet(
+							runtime.db,
+							"notes",
+							note.id,
+							(
+								await relations.create({
+									name: "notes_pages",
+									parentCollection: "notes",
+									childCollection: "pages",
+									parentLabel: "Note",
+									childLabel: "Page",
+								})
+							).id,
+							[created.entryId],
+						)
+					: await handleReferenceChildrenSet(
+							runtime.db,
+							"pages",
+							created.entryId,
+							(
+								await relations.create({
+									name: "pages_notes",
+									parentCollection: "pages",
+									childCollection: "notes",
+									parentLabel: "Page",
+									childLabel: "Note",
+								})
+							).id,
+							side === "parent with a child" ? [note.id] : [],
+						);
+			expect(set.success).toBe(true);
+			const baseline = await runtime.db
+				.selectFrom("_emdash_import_baselines")
+				.selectAll()
+				.executeTakeFirstOrThrow();
+			expect(baseline.customer_owned).toBe(1);
+			const result = await runtime.handleImportSync(
+				{
+					...initial,
+					operationId: "receipt-2",
+					sequence: 2,
+					entryId: created.entryId,
+					expectedVersion: created.version,
+					data: { title: "Source update" },
+				},
+				actor,
+			);
+			expect(result.success && result.data.state).toBe("conflict");
 		},
 	);
 

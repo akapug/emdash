@@ -74,6 +74,25 @@ describe("import baseline schema expansion", () => {
 		expect(rows).toEqual([{ slug: "legacy", version: 1 }]);
 	});
 
+	it("installs past a registry row whose content table is already gone and leaves it unknown", async () => {
+		const { error } = await createMigrator(db).migrateTo("085_taxonomy_def_groups");
+		if (error) throw error;
+		const registry = new SchemaRegistry(db);
+		await registry.createCollection({ slug: "gone", label: "Gone" });
+		await registry.createCollection({ slug: "kept", label: "Kept" });
+		// An interrupted D1 delete drops the table before it removes the registry row.
+		await sql`DROP TABLE ec_gone`.execute(db);
+		await up(db);
+		await up(db);
+		expect(await hasImportBaselineTriggers(db, "kept")).toBe(true);
+		expect(await hasImportBaselineTriggers(db, "gone")).toBe(false);
+		const { rows } = await sql<{ name: string }>`SELECT name FROM sqlite_master
+			WHERE type = 'trigger' AND name LIKE 'emdash_import_gone_%'`.execute(db);
+		expect(rows).toEqual([]);
+		await sql`INSERT INTO _emdash_seo (collection, content_id, seo_no_index)
+			VALUES ('kept', 'entry', 0)`.execute(db);
+	});
+
 	it("allows old-schema assignment writes without inventing a baseline", async () => {
 		await expect(markImportBaselineCustomerOwned(db, "post", "entry")).resolves.toBeUndefined();
 		expect(await hasImportBaselineTriggers(db, "post")).toBe(false);

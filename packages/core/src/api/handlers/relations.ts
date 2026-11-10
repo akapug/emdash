@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 
+import { markImportBaselineCustomerOwned } from "../../database/import-baseline-triggers.js";
 import { ContentRepository } from "../../database/repositories/content.js";
 import {
 	RelationRepository,
@@ -408,6 +409,10 @@ export async function handleReferenceChildrenSet(
 			childGroups.push(child.translationGroup);
 		}
 
+		// An unchanged empty set emits no edge SQL, so record the save intent explicitly.
+		await markImportBaselineCustomerOwned(db, collection, entry.translationGroup, {
+			translationGroup: true,
+		});
 		await repo.setChildren(rel.translationGroup, entry.translationGroup, childGroups);
 
 		// Return the first page of the new set, mirroring the GET shape. The actor
