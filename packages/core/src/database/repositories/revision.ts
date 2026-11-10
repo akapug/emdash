@@ -238,6 +238,16 @@ export class RevisionRepository {
 			.deleteFrom("revisions")
 			.where("collection", "=", collection)
 			.where("entry_id", "=", entryId)
+			.where((eb) =>
+				eb.not(
+					eb.exists(
+						eb
+							.selectFrom("_emdash_import_baselines")
+							.select("original_revision_id")
+							.whereRef("original_revision_id", "=", "revisions.id"),
+					),
+				),
+			)
 			.executeTakeFirst();
 
 		try {
@@ -286,13 +296,33 @@ export class RevisionRepository {
 
 		if (keepIds.length === 0) return 0;
 		const revisionBoundary = throughRevisionId ? sql`AND id <= ${throughRevisionId}` : sql``;
+		const importerCustody = throughRevisionId
+			? sql`AND NOT EXISTS (
+			SELECT 1 FROM _emdash_import_baselines AS baseline
+			JOIN _emdash_import_operations AS imported
+				ON imported.source_site = baseline.source_site
+				AND imported.source_type = baseline.source_type
+				AND imported.source_id = baseline.source_id
+				AND imported.locale = baseline.locale
+				AND imported.collection = baseline.collection
+				AND imported.entry_id = baseline.entry_id
+			WHERE baseline.collection = ${collection} AND baseline.entry_id = ${entryId}
+			AND baseline.customer_owned = 1
+			AND imported.revision_id = ${throughRevisionId} AND imported.completed = 1
+		)`
+			: sql``;
 
 		const result = await sql`
 			DELETE FROM revisions
 			WHERE collection = ${collection}
 			AND entry_id = ${entryId}
 			${revisionBoundary}
+			${importerCustody}
 			AND id NOT IN (${sql.join(keepIds.map((id) => sql`${id}`))})
+			AND NOT EXISTS (
+				SELECT 1 FROM _emdash_import_baselines AS baseline
+				WHERE baseline.original_revision_id = revisions.id
+			)
 			AND NOT EXISTS (
 				SELECT 1 FROM ${sql.ref(tableName)} AS content
 				WHERE content.live_revision_id = revisions.id
@@ -331,6 +361,10 @@ export class RevisionRepository {
 			WHERE id = ${revisionId}
 			AND collection = ${collection}
 			AND entry_id = ${entryId}
+			AND NOT EXISTS (
+				SELECT 1 FROM _emdash_import_baselines AS baseline
+				WHERE baseline.original_revision_id = revisions.id
+			)
 			AND NOT EXISTS (
 				SELECT 1 FROM ${sql.ref(tableName)} AS content
 				WHERE content.live_revision_id = revisions.id

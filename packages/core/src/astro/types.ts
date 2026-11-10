@@ -267,6 +267,19 @@ export interface HandlerResponse<T = unknown> {
  * handleContentGet, handleRevisionGet) use narrower types.
  */
 export interface EmDashHandlers {
+	getImportSyncCapability?: (collection?: string) => Promise<{
+		version: 1;
+		available: boolean;
+	}>;
+	handleImportSync?: (
+		request: import("../import/sync.js").ImportSyncRequest,
+		actor: { id: string; role: number },
+	) => Promise<
+		import("../api/types.js").ApiResult<
+			import("../database/repositories/import-sync.js").ImportSyncResult
+		>
+	>;
+
 	// Comment administration
 	handleCommentModerate?: (
 		id: string,

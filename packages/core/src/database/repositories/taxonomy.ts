@@ -3,6 +3,7 @@ import { ulid } from "ulidx";
 
 import { invalidateTaxonomyObjectCache } from "../../object-cache/index.js";
 import { slugify } from "../../utils/slugify.js";
+import { markImportBaselineCustomerOwned } from "../import-baseline-triggers.js";
 import { withTransaction } from "../transaction.js";
 import type { Database, TaxonomyTable } from "../types.js";
 import { validateIdentifier } from "../validate.js";
@@ -627,9 +628,12 @@ export class TaxonomyRepository {
 		taxonomyGroups: string[],
 	): Promise<number> {
 		const uniqueGroups = [...new Set(taxonomyGroups)];
-		if (uniqueGroups.length === 0) return 0;
 		const entryGroup = await this.resolveEntryTranslationGroup(collection, entryId);
 		if (!entryGroup) return 0;
+		await markImportBaselineCustomerOwned(this.db, collection, entryGroup, {
+			translationGroup: true,
+		});
+		if (uniqueGroups.length === 0) return 0;
 
 		const result = await this.db
 			.insertInto("content_taxonomies")
@@ -653,6 +657,9 @@ export class TaxonomyRepository {
 			this.resolveTranslationGroup(taxonomyId),
 		]);
 		if (!entryGroup || !taxonomyGroup) return;
+		await markImportBaselineCustomerOwned(this.db, collection, entryGroup, {
+			translationGroup: true,
+		});
 
 		await this.db
 			.deleteFrom("content_taxonomies")
@@ -670,9 +677,12 @@ export class TaxonomyRepository {
 		taxonomyGroups: string[],
 	): Promise<number> {
 		const uniqueGroups = [...new Set(taxonomyGroups)];
-		if (uniqueGroups.length === 0) return 0;
 		const entryGroup = await this.resolveEntryTranslationGroup(collection, entryId);
 		if (!entryGroup) return 0;
+		await markImportBaselineCustomerOwned(this.db, collection, entryGroup, {
+			translationGroup: true,
+		});
+		if (uniqueGroups.length === 0) return 0;
 
 		const result = await this.db
 			.deleteFrom("content_taxonomies")
@@ -772,6 +782,10 @@ export class TaxonomyRepository {
 	): Promise<void> {
 		const entryGroup = await this.resolveEntryTranslationGroup(collection, entryId);
 		if (!entryGroup) return;
+		// A same-value save still transfers ownership even when the diff emits no SQL.
+		await markImportBaselineCustomerOwned(this.db, collection, entryGroup, {
+			translationGroup: true,
+		});
 
 		const groups: string[] = [];
 		for (const id of termIds) {
@@ -831,6 +845,9 @@ export class TaxonomyRepository {
 	 * row has been deleted.
 	 */
 	async clearEntryGroupTerms(collection: string, entryGroup: string): Promise<number> {
+		await markImportBaselineCustomerOwned(this.db, collection, entryGroup, {
+			translationGroup: true,
+		});
 		const result = await this.db
 			.deleteFrom("content_taxonomies")
 			.where("collection", "=", collection)

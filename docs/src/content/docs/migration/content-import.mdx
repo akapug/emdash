@@ -162,6 +162,33 @@ Its `data` value contains `success`, `collectionsCreated`, `fieldsCreated`, and 
 
 Its `data` value contains `success`, `imported`, `skipped`, `errors`, `byCollection`, and optional section and taxonomy summaries.
 
+### Synchronize an importer-owned entry
+
+`GET /_emdash/api/import/wordpress/sync?collection=pages` discovers the versioned sync capability. Check for `data.version === 1` and `data.available === true` before submitting content. A missing endpoint or unavailable capability means the caller must leave the entry unchanged. This integration endpoint requires `import:execute`; bearer tokens also require the `admin` scope.
+
+`POST /_emdash/api/import/wordpress/sync` creates or updates one published entry atomically. It accepts complete collection field data, already converted to EmDash field formats, rather than WXR or raw WordPress HTML. The collection must support revisions. SQLite and Cloudflare D1 are supported when the import provenance migration and edit-tracking triggers are installed.
+
+The following request creates a published page and records its source identity and original revision.
+
+```json title="Request body"
+{
+  "version": 1,
+  "operationId": "accepted-push-42-page-7",
+  "source": { "site": "https://wordpress.example", "type": "page", "id": "7" },
+  "collection": "pages",
+  "locale": "en",
+  "sequence": 42,
+  "slug": "about",
+  "data": { "title": "About", "content": [] }
+}
+```
+
+Use a stable source identity and a strictly increasing accepted-push `sequence`, not a WordPress modification timestamp. Store the returned `entryId` and `version`. Include both as `entryId` and `expectedVersion` on the next update, with a new operation ID and sequence. Retry the identical request with the same operation ID; a changed request under that ID is a conflict. The authenticated actor supplies authorship.
+
+The response's `data.state` is `applied`, `conflict`, or `unknown`. Only `applied` proves a write. Its receipt contains `entryId`, `revisionId`, `originalRevisionId`, `version`, and `replayed`. A conflict or unknown result leaves content unchanged. Preserve these outcomes in the caller's ledger rather than treating HTTP success alone as an applied update.
+
+Any EmDash write to the entry, including a same-value save or an associated SEO, byline, or taxonomy change, ends automatic importer ownership. The original import revision remains pinned; later revisions follow normal retention. Existing entries imported through the WXR or exporter endpoints have no sync baseline and cannot be enrolled by slug, timestamp, or matching content. A slug collision is refused rather than adopted. The WXR and exporter admin flows do not use this endpoint automatically.
+
 ### Copy media
 
 `POST /_emdash/api/import/wordpress/media` accepts JSON `{ "attachments": [...], "stream": true }`. Streaming is the default. A streaming response is newline-delimited JSON with `progress` records followed by one `result` record; it does not use the normal API envelope. Set `stream` to `false` to receive the normal envelope around `{ imported, failed, urlMap }`.
