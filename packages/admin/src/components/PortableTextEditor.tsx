@@ -102,8 +102,10 @@ import {
 	Selection,
 	TextSelection,
 	type EditorState,
+	type Transaction,
 } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
+import { ReplaceAroundStep, ReplaceStep } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 import { useEditor, EditorContent, useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -4449,6 +4451,42 @@ function openParagraphAfterSelectedPluginBlock(view: EditorView, text: string): 
  * content then goes through the editor's own paste handling, at the new cursor). Backspace and
  * Delete still remove a selected block, as PluginBlockNode's shortcuts mean them to.
  */
+/**
+ * Whether these transactions took a selected plugin block's place with words or a paste, rather than
+ * deleting it on purpose: an input path no handler sees (`execCommand("insertText")`, a browser's
+ * own DOM edit) or a paste that holds nothing replaces the selection where it stands. A deliberate
+ * delete (Backspace or Delete, a cut, a drag that moves the block, undo and redo) inserts no words;
+ * a whole document set at once (the editor's content replaced) is never the block's own loss.
+ */
+function wordsTookSelectedBlocksPlace(transactions: readonly Transaction[]): boolean {
+	if (transactions.some((tr) => tr.getMeta("history$") || ["cut", "drop"].includes(tr.getMeta("uiEvent"))))
+		return false;
+	return transactions.some(
+		(tr) =>
+			tr.getMeta("uiEvent") === "paste" ||
+			tr.steps.some((step, i) => {
+				if (!(step instanceof ReplaceStep || step instanceof ReplaceAroundStep)) return false;
+				const before = tr.docs[i];
+				if (before && step.from === 0 && step.to === before.content.size) return false;
+				const words = step.slice.content;
+				return words.textBetween(0, words.size, "\n", "\n") !== "";
+			}),
+	);
+}
+
+/** Whether `doc` still holds the plugin block `block`: its Portable Text key, or the node itself. */
+function holdsPluginBlock(doc: ProseMirrorNode, block: ProseMirrorNode): boolean {
+	const key = block.attrs[PORTABLE_TEXT_KEY_ATTR];
+	let found = false;
+	doc.descendants((node) => {
+		if (found) return false;
+		if (node.type === block.type && (key ? node.attrs[PORTABLE_TEXT_KEY_ATTR] === key : node.eq(block)))
+			found = true;
+		return !found;
+	});
+	return found;
+}
+
 const PluginBlockSelectionGuard = Extension.create({
 	name: "emdashPluginBlockSelectionGuard",
 	priority: 1_300,
@@ -4492,6 +4530,25 @@ const PluginBlockSelectionGuard = Extension.create({
 						openParagraphAfterSelectedPluginBlock(view, "");
 						return false;
 					},
+				},
+				// The last guard, for whatever path no handler above sees: a selected block whose place
+				// words or a paste took is put back where it stood, before them, in the same undo step.
+				appendTransaction(transactions, oldState, newState) {
+					const { selection } = oldState;
+					if (!(selection instanceof NodeSelection) || selection.node.type.name !== "pluginBlock")
+						return null;
+					if (!transactions.some((tr) => tr.docChanged)) return null;
+					if (holdsPluginBlock(newState.doc, selection.node)) return null;
+					if (!wordsTookSelectedBlocksPlace(transactions)) return null;
+					const pos = transactions.reduce((at, tr) => tr.mapping.map(at, -1), selection.from);
+					const $pos = newState.doc.resolve(pos);
+					const at =
+						$pos.depth === 0
+							? pos
+							: $pos.parentOffset === $pos.parent.content.size && $pos.parentOffset > 0
+								? $pos.after(1)
+								: $pos.before(1);
+					return newState.tr.insert(at, selection.node);
 				},
 			}),
 		];
