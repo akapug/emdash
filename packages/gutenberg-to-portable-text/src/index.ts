@@ -126,6 +126,9 @@ const holdsList = (node: HtmlElement): boolean =>
 	node.childNodes.some(
 		(c) => isHtmlElement(c) && (c.tagName === "ul" || c.tagName === "ol" || holdsList(c)),
 	);
+/** Whether an element holds a block of its own (a div's heading and paragraph), each a line of the item. */
+const holdsBlock = (node: HtmlElement): boolean =>
+	node.childNodes.some((c) => isHtmlElement(c) && ITEM_BLOCK_TAGS.has(c.tagName));
 /** A term or a description in a definition list, each drawn on a line of its own. */
 const DEFINITION_TAG_PATTERN = /<(\/?)(?:dt|dd)\b[^>]*>/giu;
 
@@ -472,8 +475,10 @@ export function htmlToPortableText(
 					pushList(node, level + 1);
 				} else if (ITEM_BLOCK_TAGS.has(node.tagName)) {
 					endLine();
-					if (holdsList(node)) walk(node.childNodes);
-					else {
+					if (holdsList(node) || holdsBlock(node)) {
+						walk(node.childNodes);
+						endLine();
+					} else {
 						run = serialize(node);
 						endLine();
 					}

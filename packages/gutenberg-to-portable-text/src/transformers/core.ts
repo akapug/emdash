@@ -39,6 +39,7 @@ const DATA_ID_PATTERN = /data-id=["'](\d+)["']/i;
 const CODE_TAG_PATTERN_SINGLE = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const TABLE_TAG_PATTERN = /<table[^>]*>([\s\S]*?)<\/table>/i;
 const THEAD_TAG_PATTERN = /<thead[^>]*>([\s\S]*?)<\/thead>/i;
+const TFOOT_TAG_PATTERN = /<tfoot[^>]*>([\s\S]*?)<\/tfoot>/i;
 const IMG_TAG_GLOBAL = /<img[^>]+>/gi;
 const IMG_TAG_SINGLE = /<img[^>]+>/i;
 const TABLE_ROW_PATTERN = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
@@ -657,14 +658,15 @@ export const table: BlockTransformer = (block, _options, context) => {
 		rows.push(...headerRows);
 	}
 
-	// Parse body rows: every row outside the head, in a tbody, a tfoot (the block's
-	// footer section) or none, so a footer or a row after a bare head is not dropped
-	const bodyRows = parseTableRows(
-		theadMatch ? tableContent.replace(theadMatch[0], "") : tableContent,
-		context,
-		false,
-	);
-	rows.push(...bodyRows);
+	// Parse body rows: every row outside the head, in a tbody or none, so a row after a
+	// bare head is not dropped; then the footer's (the block's footer section), last, as
+	// a browser draws it wherever it is written
+	const tfootMatch = tableContent.match(TFOOT_TAG_PATTERN);
+	let bodyContent = tableContent;
+	if (theadMatch) bodyContent = bodyContent.replace(theadMatch[0], "");
+	if (tfootMatch) bodyContent = bodyContent.replace(tfootMatch[0], "");
+	rows.push(...parseTableRows(bodyContent, context, false));
+	if (tfootMatch?.[1]) rows.push(...parseTableRows(tfootMatch[1], context, false));
 
 	if (rows.length === 0) {
 		return [];

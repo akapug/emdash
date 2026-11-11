@@ -174,3 +174,25 @@ describe("block editor content: a table's footer", () => {
 		expect(shape(gutenbergToPortableText(content))).toEqual(["table A / b / c"]);
 	});
 });
+
+describe("classic content: a block inside a list item's block", () => {
+	it("draws each block a list item's div holds on a line of its own, its words apart", () => {
+		const content = `<ul><li><div><h4>Head</h4><p>body</p></div></li><li><div>alpha<div>beta</div></div></li></ul>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"normal bullet1: Head\nbody",
+			"normal bullet1: alpha\nbeta",
+		]);
+	});
+});
+
+describe("a table's footer is drawn last", () => {
+	it("keeps a footer written before the body below it, as a browser draws it", () => {
+		const rows = `<thead><tr><th>H</th></tr></thead><tfoot><tr><td>F</td></tr></tfoot><tbody><tr><td>B</td></tr></tbody>`;
+		const classic = `<table>${rows}</table>`;
+		const blockEditor = `<!-- wp:table -->
+<figure class="wp-block-table"><table>${rows}</table></figure>
+<!-- /wp:table -->`;
+		expect(shape(gutenbergToPortableText(classic))).toEqual(["table H / B / F"]);
+		expect(shape(gutenbergToPortableText(blockEditor))).toEqual(["table H / B / F"]);
+	});
+});
