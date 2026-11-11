@@ -662,7 +662,11 @@ export function htmlToPortableText(
  * Where the element `tag` opening at `start` closes, the elements of its own
  * name inside it counted; nothing when it is never closed.
  */
-function closingTag(html: string, tag: string, start: number): { start: number; end: number } | undefined {
+function closingTag(
+	html: string,
+	tag: string,
+	start: number,
+): { start: number; end: number } | undefined {
 	const pattern = new RegExp(String.raw`<(\/?)${tag}\b[^>]*>`, "giu");
 	pattern.lastIndex = start;
 	let depth = 0;
