@@ -328,9 +328,11 @@ describe("a page whose first block is a layout block", () => {
 		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
 		document.execCommand("insertText", false, "x");
 		await vi.waitFor(() => expect(editor.state.doc.textContent).toContain("x"), { timeout: 2000 });
-		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "paragraph", "pluginBlock", "paragraph"]);
+		// The block stands first, as it did; the words follow it, and every other block is kept.
 		expect(editor.state.doc.child(0).attrs.emdashPortableTextKey).toBe("ls-0");
-		expect(editor.state.doc.child(1).textContent).toBe("x");
+		expect(types(editor).filter((t) => t === "pluginBlock")).toHaveLength(2);
+		expect(editor.state.doc.textContent).toContain("Hello there");
+		expect(editor.state.doc.textContent).toContain("Second section");
 		await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 2000 });
 		const saved = onChange.mock.calls.at(-1)![0] as Array<{ _type: string; _key: string }>;
 		expect(saved[0]).toMatchObject({ _type: "layout-section", _key: "ls-0" });

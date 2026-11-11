@@ -4452,13 +4452,13 @@ function openParagraphAfterSelectedPluginBlock(view: EditorView, text: string): 
  * Delete still remove a selected block, as PluginBlockNode's shortcuts mean them to.
  */
 /**
- * Whether these transactions took a selected plugin block's place with words or a paste, rather than
- * deleting it on purpose: an input path no handler sees (`execCommand("insertText")`, a browser's
- * own DOM edit) or a paste that holds nothing replaces the selection where it stands. A deliberate
- * delete (Backspace or Delete, a cut, a drag that moves the block, undo and redo) inserts no words;
- * a whole document set at once (the editor's content replaced) is never the block's own loss.
+ * Whether these transactions put words or a paste where something stood, rather than deleting it on
+ * purpose: an input path no handler sees (`execCommand("insertText")`, a browser's own DOM edit)
+ * replaces the selection where it stands, and a paste replaces it even when it holds nothing. A
+ * deliberate delete (Backspace or Delete, a cut, a drag that moves a block, undo and redo) inserts
+ * no words; a whole document set at once (the editor's content replaced) is never a block's loss.
  */
-function wordsTookSelectedBlocksPlace(transactions: readonly Transaction[]): boolean {
+function wordsOrPasteReplaced(transactions: readonly Transaction[]): boolean {
 	if (transactions.some((tr) => tr.getMeta("history$") || ["cut", "drop"].includes(tr.getMeta("uiEvent"))))
 		return false;
 	return transactions.some(
@@ -4472,6 +4472,11 @@ function wordsTookSelectedBlocksPlace(transactions: readonly Transaction[]): boo
 				return words.textBetween(0, words.size, "\n", "\n") !== "";
 			}),
 	);
+}
+
+/** A migrated page's own layout block (`layout-section`, `layout-element`): it holds the page's design. */
+function isLayoutBlock(node: ProseMirrorNode): boolean {
+	return node.type.name === "pluginBlock" && String(node.attrs.blockType ?? "").startsWith("layout-");
 }
 
 /** Whether `doc` still holds the plugin block `block`: its Portable Text key, or the node itself. */
@@ -4531,24 +4536,32 @@ const PluginBlockSelectionGuard = Extension.create({
 						return false;
 					},
 				},
-				// The last guard, for whatever path no handler above sees: a selected block whose place
+				// The last guard, for whatever path no handler above sees (by then the block may no longer
+				// be selected: the browser's edit moves the selection first): a layout block whose place
 				// words or a paste took is put back where it stood, before them, in the same undo step.
 				appendTransaction(transactions, oldState, newState) {
-					const { selection } = oldState;
-					if (!(selection instanceof NodeSelection) || selection.node.type.name !== "pluginBlock")
-						return null;
 					if (!transactions.some((tr) => tr.docChanged)) return null;
-					if (holdsPluginBlock(newState.doc, selection.node)) return null;
-					if (!wordsTookSelectedBlocksPlace(transactions)) return null;
-					const pos = transactions.reduce((at, tr) => tr.mapping.map(at, -1), selection.from);
-					const $pos = newState.doc.resolve(pos);
-					const at =
-						$pos.depth === 0
-							? pos
-							: $pos.parentOffset === $pos.parent.content.size && $pos.parentOffset > 0
-								? $pos.after(1)
-								: $pos.before(1);
-					return newState.tr.insert(at, selection.node);
+					const lost: Array<{ node: ProseMirrorNode; pos: number }> = [];
+					oldState.doc.forEach((node, pos) => {
+						if (isLayoutBlock(node) && !holdsPluginBlock(newState.doc, node)) lost.push({ node, pos });
+					});
+					if (lost.length === 0 || !wordsOrPasteReplaced(transactions)) return null;
+					const tr = newState.tr;
+					for (const { node, pos } of lost) {
+						const mapped = tr.mapping.map(
+							transactions.reduce((at, t) => t.mapping.map(at, -1), pos),
+							-1,
+						);
+						const $pos = tr.doc.resolve(mapped);
+						const at =
+							$pos.depth === 0
+								? mapped
+								: $pos.parentOffset === $pos.parent.content.size && $pos.parentOffset > 0
+									? $pos.after(1)
+									: $pos.before(1);
+						tr.insert(at, node);
+					}
+					return tr;
 				},
 			}),
 		];
