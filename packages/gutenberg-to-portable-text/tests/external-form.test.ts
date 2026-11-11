@@ -111,6 +111,25 @@ describe("a form that is not carried", () => {
 		);
 	});
 
+	// The host's import report (embark external-forms.ts) says the same of where a form sits.
+	it("is read as its container's text in a classic table or list, and carried through a div", () => {
+		const form = PAYPAL.split(
+			'<form action="https://www.paypal.com/cgi-bin/webscr" method="post"></form>',
+		)[0]!;
+		const types = (html: string) => gutenbergToPortableText(html).map((b) => b._type);
+		expect(types(`<table><tr><td>${form}</td></tr></table>`)).not.toContain("externalForm");
+		expect(types(`<ul><li>${form}</li></ul>`)).not.toContain("externalForm");
+		expect(types(`<div class="pay">${form}</div>`)).toContain("externalForm");
+		expect(
+			types(
+				`<!-- wp:table -->\n<figure class="wp-block-table"><table><tr><td>${form}</td></tr></table></figure>\n<!-- /wp:table -->`,
+			),
+		).not.toContain("externalForm");
+		expect(
+			types(`<!-- wp:html -->\n<table><tr><td>${form}</td></tr></table>\n<!-- /wp:html -->`),
+		).toContain("externalForm");
+	});
+
 	it("draws nothing, and is no refusal, when it holds no control (WordPress's empty form)", () => {
 		const html = `<form action="https://www.paypal.com/cgi-bin/webscr" method="post"></form>`;
 		expect(gutenbergToPortableText(html)).toEqual([]);
