@@ -64,6 +64,13 @@ async function setup(): Promise<Harness> {
 	return { db, emdash, manifest: await emdash.getManifest() };
 }
 
+/** The WXR with a `<generator>`: the program that wrote it. */
+const byGenerator = (generator: string) =>
+	WXR.replace(
+		"<link>https://example.org</link>",
+		`<link>https://example.org</link>\n    <generator>${generator}</generator>`,
+	);
+
 /** The WXR with a `<language>` of its own. */
 const inLanguage = (language: string) =>
 	WXR.replace(
@@ -183,6 +190,61 @@ describe("WXR import: the text as WordPress printed it", () => {
 		expect(en.result.typography).toMatchObject({ language: "en-GB", texturized: true });
 	});
 
+	it("stores an export another program wrote as written, and says so; WordPress's own as WordPress printed it", async () => {
+		const run = async (generator: string) => {
+			const wxr = await parseWxrString(byGenerator(generator));
+			const plan = await preImportWxrTaxonomies(
+				harness.db,
+				wxr.posts,
+				wxr.categories,
+				wxr.tags,
+				wxr.terms,
+			);
+			const result = await importContent(
+				wxr.posts,
+				{ ...CONFIG, skipExisting: false },
+				harness.emdash,
+				harness.manifest,
+				new Map(),
+				undefined,
+				undefined,
+				plan,
+				undefined,
+				wxr.site.language,
+				wxr.site.generator,
+			);
+			const rows = (await harness.db
+				.selectFrom("ec_posts" as keyof Database)
+				.selectAll()
+				.execute()) as unknown as Array<{ title: string; excerpt: string; content: string }>;
+			const row = rows.at(-1)!;
+			const first = (JSON.parse(row.content) as Array<{ children?: Array<{ text: string }> }>)[0]!;
+			return {
+				result,
+				said: [row.title, row.excerpt, first.children?.map((c) => c.text).join("")],
+			};
+		};
+		const converted = await run("Embark site import (generic)");
+		expect(converted.said).toEqual([
+			`Tom's "Big" Day -- Live...`,
+			`It's "short" - really.`,
+			`It's "here" - now...`,
+		]);
+		expect(converted.result.typography).toMatchObject({ language: null, texturized: false });
+		expect(converted.result.typography!.note).toBe(
+			"the export was written by Embark site import (generic), not WordPress: the text is stored as written, since no WordPress ever printed it",
+		);
+		await teardownTestDatabase(harness.db);
+		harness = await setup();
+		const wp = await run("https://wordpress.org/?v=6.6.2");
+		expect(wp.said).toEqual([
+			"Tom’s “Big” Day — Live…",
+			"It’s “short” – really.",
+			"It’s “here” – now…",
+		]);
+		expect(wp.result.typography).toMatchObject({ texturized: true });
+	});
+
 	it("reads the language in the WXR source too, and says which in its analysis", async () => {
 		const { wxrSource } = await import("../../../src/import/sources/wxr.js");
 		const file = (xml: string) => ({
@@ -199,5 +261,17 @@ describe("WXR import: the text as WordPress printed it", () => {
 		expect((await items(WXR))[0]!.title).toBe("Tom’s “Big” Day — Live…");
 		const analysis = await wxrSource.analyze(file(inLanguage("de-DE")), {});
 		expect(analysis.typography).toMatchObject({ language: "de-DE", texturized: false });
+		// And the generator: a converter's export is stored as written.
+		expect((await items(byGenerator("Embark site import (generic)")))[0]!.title).toBe(
+			`Tom's "Big" Day -- Live...`,
+		);
+		expect((await items(byGenerator("http://wordpress.com/")))[0]!.title).toBe(
+			"Tom’s “Big” Day — Live…",
+		);
+		const converted = await wxrSource.analyze(
+			file(byGenerator("Embark site import (generic)")),
+			{},
+		);
+		expect(converted.typography).toMatchObject({ texturized: false });
 	});
 });

@@ -39,6 +39,23 @@ describe("parseWxr", () => {
 		expect(result.site.language).toBe("en-US");
 	});
 
+	it("reads the export's <generator>, from a stream and from a string", async () => {
+		const wxr = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel>
+    <title>Test Site</title>
+    <generator>https://wordpress.org/?v=6.6.2</generator>
+    <item><title>Post</title><generator>not the channel's</generator></item>
+  </channel>
+</rss>`;
+		expect((await parseWxr(createStream(wxr))).site.generator).toBe(
+			"https://wordpress.org/?v=6.6.2",
+		);
+		expect((await parseWxrString(wxr)).site.generator).toBe("https://wordpress.org/?v=6.6.2");
+		const none = wxr.replace("<generator>https://wordpress.org/?v=6.6.2</generator>", "");
+		expect((await parseWxrString(none)).site.generator).toBeUndefined();
+	});
+
 	it("reads the same site metadata from a string, ignoring an item's own title and link", async () => {
 		const wxr = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">

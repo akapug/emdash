@@ -232,6 +232,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			taxonomyPlan,
 			seoSite,
 			wxr.site.language,
+			wxr.site.generator,
 		);
 
 		// Import reusable blocks as sections (if enabled)
@@ -265,6 +266,8 @@ export async function importContent(
 	taxonomyPlan: TaxonomyImportPlan,
 	seoSite?: WxrSeoSite,
 	siteLanguage?: string,
+	/** The export's `<generator>`: another program's export is stored as written (texturizes). */
+	generator?: string,
 ): Promise<ImportResult> {
 	const result: ImportResult = {
 		success: true,
@@ -274,8 +277,8 @@ export async function importContent(
 		byCollection: {},
 		typography: {
 			language: siteLanguage?.trim() || null,
-			texturized: texturizes(siteLanguage),
-			note: texturizeNote(siteLanguage),
+			texturized: texturizes(siteLanguage, generator),
+			note: texturizeNote(siteLanguage, generator),
 		},
 		taxonomies: {
 			termsCreated: taxonomyPlan.termsCreated,
@@ -334,7 +337,7 @@ export async function importContent(
 
 		try {
 			// The text as WordPress printed it, in English (texturizes); a post's own locale decides for it.
-			const texturize = texturizes(post.locale ?? siteLanguage);
+			const texturize = texturizes(post.locale ?? siteLanguage, generator);
 
 			// Convert content to Portable Text
 			const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
@@ -561,7 +564,7 @@ export async function importContent(
 			emdash.db,
 			contentIdByWpId,
 			collectionByWpId,
-			(post) => texturizes(post.locale ?? siteLanguage),
+			(post) => texturizes(post.locale ?? siteLanguage, generator),
 		);
 		result.comments = {
 			imported: comments.imported,

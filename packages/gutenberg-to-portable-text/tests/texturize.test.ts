@@ -7,7 +7,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { gutenbergToPortableText, texturizeNote, texturizes, wptexturize } from "../src/index.js";
+import {
+	gutenbergToPortableText,
+	printedByWordPress,
+	texturizeNote,
+	texturizes,
+	wptexturize,
+} from "../src/index.js";
 import type { PortableTextBlock } from "../src/types.js";
 
 const text = (blocks: PortableTextBlock[]) =>
@@ -147,6 +153,28 @@ describe("texturizes: WordPress's English quote marks are a site in English's, o
 			expect(texturizes(l), String(l)).toBe(true);
 		for (const l of ["fr-FR", "de_DE", "es", "eng", "enx", "nl-BE"])
 			expect(texturizes(l), l).toBe(false);
+	});
+
+	it("says no for an export another program wrote, whatever its language; WordPress's own, or one that names none, by its language", () => {
+		for (const g of [
+			undefined,
+			null,
+			"",
+			"https://wordpress.org/?v=6.6.2",
+			"http://wordpress.com/",
+		]) {
+			expect(printedByWordPress(g), String(g)).toBe(true);
+			expect(texturizes("en-US", g), String(g)).toBe(true);
+			expect(texturizes("fr-FR", g), String(g)).toBe(false);
+		}
+		for (const g of ["Embark site import (generic)", "Jekyll", "Hugo 0.120"]) {
+			expect(printedByWordPress(g), g).toBe(false);
+			expect(texturizes("en-US", g), g).toBe(false);
+			expect(texturizes(undefined, g), g).toBe(false);
+		}
+		expect(texturizeNote("en", "Hugo 0.120")).toBe(
+			"the export was written by Hugo 0.120, not WordPress: the text is stored as written, since no WordPress ever printed it",
+		);
 	});
 
 	it("says which in a sentence", () => {

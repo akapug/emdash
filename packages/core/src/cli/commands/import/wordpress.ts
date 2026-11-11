@@ -639,8 +639,8 @@ export async function executeWordPressImport(
 	// The site's typography: as WordPress printed it, in English (texturizes).
 	result.typography = {
 		language: wxr.site.language?.trim() || null,
-		texturized: texturizes(wxr.site.language),
-		note: texturizeNote(wxr.site.language),
+		texturized: texturizes(wxr.site.language, wxr.site.generator),
+		note: texturizeNote(wxr.site.language, wxr.site.generator),
 	};
 	log(pc.dim(`Typography: ${result.typography.note}`));
 
@@ -693,6 +693,7 @@ export async function executeWordPressImport(
 				config,
 				mediaMap,
 				wxr.site.language,
+				wxr.site.generator,
 			);
 
 			const outputPath = join(options.outputDir, converted.collection, `${converted.slug}.json`);
@@ -925,10 +926,11 @@ function convertPostWithConfig(
 	config: MigrationConfig,
 	mediaMap: Map<number, string>,
 	siteLanguage?: string,
+	generator?: string,
 ): ConvertedContent {
 	// As WordPress printed it, in English (texturizes): the title and excerpt like the content.
 	// A post's own locale decides for it.
-	const texturize = texturizes(post.locale ?? siteLanguage);
+	const texturize = texturizes(post.locale ?? siteLanguage, generator);
 	const typed = (text: string) => (texturize ? wptexturize(text) : text);
 
 	// Convert content to Portable Text

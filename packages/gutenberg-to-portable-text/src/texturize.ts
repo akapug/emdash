@@ -307,16 +307,37 @@ export function wptexturize(html: string): string {
  * (`« »` in French, `„ “` in German), and those are not ported here, so the
  * text of a site in any other language is stored as written: straight quotes
  * and all, which is what its author typed.
+ *
+ * And only an export WordPress wrote: one whose `<generator>` names another
+ * program (a converter that read a Jekyll, Hugo or Substack site as its
+ * readers saw it) holds text no WordPress ever printed, so it is stored as
+ * written. An export that names no generator is read as WordPress's, as
+ * before; WordPress and WordPress.com always name themselves.
  */
 const ENGLISH = /^en(?:[-_]|$)/i;
+const WORDPRESS = /wordpress/i;
 
-export function texturizes(language: string | null | undefined): boolean {
+/** Whether an export's `<generator>` is WordPress's, or names nothing. */
+export function printedByWordPress(generator: string | null | undefined): boolean {
+	const g = (generator ?? "").trim();
+	return g === "" || WORDPRESS.test(g);
+}
+
+export function texturizes(
+	language: string | null | undefined,
+	generator?: string | null,
+): boolean {
 	const l = (language ?? "").trim();
-	return l === "" || ENGLISH.test(l);
+	return printedByWordPress(generator) && (l === "" || ENGLISH.test(l));
 }
 
 /** What an importer says it did with a site's typography, and why. */
-export function texturizeNote(language: string | null | undefined): string {
+export function texturizeNote(
+	language: string | null | undefined,
+	generator?: string | null,
+): string {
+	if (!printedByWordPress(generator))
+		return `the export was written by ${(generator ?? "").trim()}, not WordPress: the text is stored as written, since no WordPress ever printed it`;
 	const l = (language ?? "").trim();
 	if (l === "")
 		return "the export names no language: the text is stored as WordPress printed it in English (wptexturize)";

@@ -99,7 +99,13 @@ export const wxrSource: ImportSource = {
 			}
 
 			// Convert to normalized item
-			yield wxrPostToNormalizedItem(post, attachmentMap, wxr.site.link || "", wxr.site.language);
+			yield wxrPostToNormalizedItem(
+				post,
+				attachmentMap,
+				wxr.site.link || "",
+				wxr.site.language,
+				wxr.site.generator,
+			);
 
 			count++;
 			if (options.limit && count >= options.limit) {
@@ -263,8 +269,8 @@ function analyzeWxrData(
 		},
 		typography: {
 			language: wxr.site.language?.trim() || null,
-			texturized: texturizes(wxr.site.language),
-			note: texturizeNote(wxr.site.language),
+			texturized: texturizes(wxr.site.language, wxr.site.generator),
+			note: texturizeNote(wxr.site.language, wxr.site.generator),
 		},
 		postTypes,
 		attachments: {
@@ -295,9 +301,11 @@ function wxrPostToNormalizedItem(
 	attachmentMap: Map<string, string>,
 	siteUrl: string,
 	siteLanguage?: string,
+	generator?: string,
 ): NormalizedItem {
-	// As WordPress printed it, in English (texturizes); a post's own locale decides for it.
-	const texturize = texturizes(post.locale ?? siteLanguage);
+	// As WordPress printed it, in English (texturizes); a post's own locale decides for it,
+	// and an export another program wrote is stored as written.
+	const texturize = texturizes(post.locale ?? siteLanguage, generator);
 	const typed = (text: string) => (texturize ? wptexturize(text) : text);
 	const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
 	if (siteUrl) relativizeContentLinks(content, siteUrl);

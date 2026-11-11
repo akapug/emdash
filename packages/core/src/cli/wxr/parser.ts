@@ -42,6 +42,8 @@ export interface WxrSite {
 	link?: string;
 	description?: string;
 	language?: string;
+	/** `<generator>`: the program that wrote the export ("https://wordpress.org/?v=6.6"). */
+	generator?: string;
 	baseSiteUrl?: string;
 	baseBlogUrl?: string;
 }
@@ -574,6 +576,9 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 					case "language":
 						data.site.language = text;
 						break;
+					case "generator":
+						data.site.generator = text;
+						break;
 					case "wp:base_site_url":
 						data.site.baseSiteUrl = text;
 						break;
@@ -966,6 +971,9 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 						break;
 					case "language":
 						data.site.language = text;
+						break;
+					case "generator":
+						data.site.generator = text;
 						break;
 					case "wp:base_site_url":
 						data.site.baseSiteUrl = text;
