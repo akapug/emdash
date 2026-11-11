@@ -585,4 +585,56 @@ describe("what a page's own layout drew on its words and links", () => {
 		);
 		expect(heading).toBe('<section class="content-section"><h2>Title</h2></section>');
 	});
+
+	// A page that drew two hover texts on the same words, each where it stood (a glossary's "CSA" twice), keeps each on its
+	// own words: the second is drawn on the next place the words are found, never on top of the first.
+	it("draws two hover texts on the same words each on its own place, in the order the page drew them", async () => {
+		const html = squash(
+			await render([
+				carrier({
+					l0: {
+						wraps: [],
+						notes: [
+							{ text: "CSA", title: "one" },
+							{ text: "CSA", title: "two" },
+						],
+					},
+				}),
+				{
+					_type: "block",
+					_key: "el-l0",
+					style: "normal",
+					markDefs: [],
+					children: [span("a", "CSA and CSA")],
+				},
+				{
+					_type: "block",
+					_key: "el-l0-1",
+					style: "normal",
+					markDefs: [],
+					children: [span("b", "CSA again")],
+				},
+			]),
+		);
+		expect(html).toContain(
+			'<p><span title="one">CSA</span> and <span title="two">CSA</span></p><p>CSA again</p>',
+		);
+	});
+
+	// A hover text's mark is named apart from every mark the block holds, so it never takes another mark's place.
+	it("names a hover text's mark apart from the marks a block holds", async () => {
+		const html = squash(
+			await render([
+				carrier({ l0: { wraps: [], notes: [{ text: "x", title: "T" }] } }),
+				{
+					_type: "block",
+					_key: "el-l0",
+					style: "normal",
+					markDefs: [{ _type: "link", _key: "wp-shell-note-0", href: "https://x.example/" }],
+					children: [span("a", "x y", ["wp-shell-note-0"])],
+				},
+			]),
+		);
+		expect(html).toContain('<a href="https://x.example/"><span title="T">x</span> y</a>');
+	});
 });
