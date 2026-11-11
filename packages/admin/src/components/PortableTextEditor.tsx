@@ -4548,13 +4548,15 @@ const PluginBlockSelectionGuard = Extension.create({
 						return false;
 					},
 				},
-				// The last guard, for whatever path no handler above sees (by then the block may no longer
-				// be selected: the browser's edit moves the selection first): a layout block whose place
+				// The last guard, for whatever path no handler above sees (`execCommand("insertText")`, a
+				// browser's own DOM edit, a paste no handler took): a selected layout block whose place
 				// words or a paste took is put back where it stood, before them, in the same undo step.
 				appendTransaction(transactions, oldState, newState) {
 					if (!transactions.some((tr) => tr.docChanged)) return null;
+					const { from, to } = oldState.selection;
 					const lost: Array<{ node: ProseMirrorNode; pos: number }> = [];
 					oldState.doc.forEach((node, pos) => {
+						if (pos < from || pos + node.nodeSize > to) return;
 						if (isLayoutBlock(node) && !holdsPluginBlock(newState.doc, node))
 							lost.push({ node, pos });
 					});
