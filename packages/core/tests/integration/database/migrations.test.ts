@@ -183,12 +183,23 @@ describe("Database Migrations (Integration)", () => {
 
 	describe("exact migration status", () => {
 		it("registers each migration under a unique increasing sequence number", () => {
-			const sequence = MIGRATION_NAMES.map((name) => Number(name.slice(0, 3)));
+			// Upstream migrations are NNN_name; the fork's own are embark_NNN_name,
+			// registered after them, each series numbered on its own.
+			const forkStart = MIGRATION_NAMES.findIndex((name) => name.startsWith("embark_"));
+			const upstream = forkStart === -1 ? MIGRATION_NAMES : MIGRATION_NAMES.slice(0, forkStart);
+			const fork = forkStart === -1 ? [] : MIGRATION_NAMES.slice(forkStart);
 
 			expect(MIGRATION_NAMES).toEqual(MIGRATION_NAMES.toSorted());
-			expect(sequence.every(Number.isInteger)).toBe(true);
-			expect(new Set(sequence)).toHaveLength(sequence.length);
-			expect(sequence).toEqual(sequence.toSorted((left, right) => left - right));
+			for (const [names, prefix] of [
+				[upstream, ""],
+				[fork, "embark_"],
+			] as const) {
+				expect(names.every((name) => name.startsWith(prefix))).toBe(true);
+				const sequence = names.map((name) => Number(name.slice(prefix.length, prefix.length + 3)));
+				expect(sequence.every(Number.isInteger)).toBe(true);
+				expect(new Set(sequence)).toHaveLength(sequence.length);
+				expect(sequence).toEqual(sequence.toSorted((left, right) => left - right));
+			}
 		});
 
 		it("exports the registered migration names in execution order", async () => {

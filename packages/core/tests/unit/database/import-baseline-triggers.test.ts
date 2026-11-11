@@ -7,7 +7,7 @@ import {
 	markImportBaselineCustomerOwned,
 	supportsImportBaselineDialect,
 } from "../../../src/database/import-baseline-triggers.js";
-import { up } from "../../../src/database/migrations/088_import_baselines.js";
+import { up } from "../../../src/database/migrations/embark_001_import_baselines.js";
 import { createMigrator } from "../../../src/database/migrations/runner.js";
 import type { Database } from "../../../src/database/types.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
@@ -40,7 +40,7 @@ describe("import baseline schema expansion", () => {
 	});
 
 	it("installs on existing collections, restarts after individual statements and leaves legacy content unknown", async () => {
-		const { error } = await createMigrator(db).migrateTo("085_taxonomy_def_groups");
+		const { error } = await createMigrator(db).migrateTo("087_reference_field_relations");
 		if (error) throw error;
 		await new SchemaRegistry(db).createCollection({ slug: "legacy", label: "Legacy" });
 		await sql`INSERT INTO ec_legacy (id, slug) VALUES ('legacy-entry', 'legacy')`.execute(db);
@@ -75,7 +75,7 @@ describe("import baseline schema expansion", () => {
 	});
 
 	it("installs past a registry row whose content table is already gone and leaves it unknown", async () => {
-		const { error } = await createMigrator(db).migrateTo("085_taxonomy_def_groups");
+		const { error } = await createMigrator(db).migrateTo("087_reference_field_relations");
 		if (error) throw error;
 		const registry = new SchemaRegistry(db);
 		await registry.createCollection({ slug: "gone", label: "Gone" });

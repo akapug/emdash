@@ -6,7 +6,7 @@ import {
 	importBaselineTriggerWitness,
 	markImportBaselineCustomerOwned,
 } from "../../src/database/import-baseline-triggers.js";
-import { up } from "../../src/database/migrations/088_import_baselines.js";
+import { up } from "../../src/database/migrations/embark_001_import_baselines.js";
 import { RevisionRepository } from "../../src/database/repositories/revision.js";
 import type { Database } from "../../src/database/types.js";
 import { SchemaRegistry } from "../../src/schema/registry.js";

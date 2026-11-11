@@ -1,7 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { expect, it } from "vitest";
 
-import { up } from "../../src/database/migrations/089_import_sync_grants.js";
+import { up } from "../../src/database/migrations/embark_002_import_sync_grants.js";
 import { ImportSyncGrantRepository } from "../../src/database/repositories/import-sync-grant.js";
 import type { Database } from "../../src/database/types.js";
 

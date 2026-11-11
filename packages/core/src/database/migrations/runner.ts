@@ -95,8 +95,8 @@ import * as m084 from "./084_site_transfer.js";
 import * as m085 from "./085_taxonomy_def_groups.js";
 import * as m086 from "./086_relations_structural.js";
 import * as m087 from "./087_reference_field_relations.js";
-import * as m088 from "./088_import_baselines.js";
-import * as m089 from "./089_import_sync_grants.js";
+import * as embark001 from "./embark_001_import_baselines.js";
+import * as embark002 from "./embark_002_import_sync_grants.js";
 
 const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"001_initial": m001,
@@ -185,8 +185,8 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"085_taxonomy_def_groups": m085,
 	"086_relations_structural": m086,
 	"087_reference_field_relations": m087,
-	"088_import_baselines": m088,
-	"089_import_sync_grants": m089,
+	embark_001_import_baselines: embark001,
+	embark_002_import_sync_grants: embark002,
 });
 
 /** Ordered names from the statically registered migration set. */
@@ -260,15 +260,22 @@ export interface MigrationOptions {
 	 * give-up path doesn't take 10 seconds per case.
 	 */
 	raceWaitMs?: number;
+	/** Tests only: the migration set to run in place of the registered one. */
+	migrations?: Readonly<Record<string, Migration>>;
 }
 
 export function createMigrator(db: Kysely<Database>, options?: MigrationOptions): Migrator {
+	const migrations = options?.migrations;
 	return new Migrator({
 		db,
-		provider: new StaticMigrationProvider(),
+		provider: migrations
+			? { getMigrations: async () => ({ ...migrations }) }
+			: new StaticMigrationProvider(),
 		migrationTableName: MIGRATION_TABLE,
 		migrationLockTableName: MIGRATION_LOCK_TABLE,
 		migrationTableSchema: options?.migrationTableSchema,
+		// Fork migrations are namespaced embark_NNN and never renamed once applied.
+		allowUnorderedMigrations: true,
 	});
 }
 

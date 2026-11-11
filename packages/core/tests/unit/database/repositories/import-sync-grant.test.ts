@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { columnExists } from "../../../../src/database/dialect-helpers.js";
-import { up } from "../../../../src/database/migrations/089_import_sync_grants.js";
+import { up } from "../../../../src/database/migrations/embark_002_import_sync_grants.js";
 import { createMigrator } from "../../../../src/database/migrations/runner.js";
 import { ImportSyncGrantRepository } from "../../../../src/database/repositories/import-sync-grant.js";
 import type { Database } from "../../../../src/database/types.js";
@@ -37,7 +37,7 @@ describe("import sync grant schema expansion", () => {
 	it.each([1, 2, 3])(
 		"restarts before operation column %i without changing completed legacy receipts",
 		async (interruptedColumn) => {
-			const { error } = await createMigrator(db).migrateTo("088_import_baselines");
+			const { error } = await createMigrator(db).migrateTo("embark_001_import_baselines");
 			if (error) throw error;
 			await sql`INSERT INTO _emdash_import_operations
 			(operation_id, source_site, source_type, source_id, collection, entry_id, locale,
