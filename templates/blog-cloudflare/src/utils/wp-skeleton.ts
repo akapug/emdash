@@ -259,9 +259,15 @@ function decorated(
 			: d,
 	);
 	const children: unknown[] = Array.isArray(b.children) ? b.children : [];
-	const isSpan = (c: unknown): c is Span =>
-		isObject(c) && c._type === "span" && typeof c.text === "string" && Array.isArray(c.marks);
-	let spans = children.filter(isSpan);
+	// The admin's editor saves a span with no marks with no `marks` at all.
+	const isSpan = (c: unknown): c is Record<string, unknown> & { text: string } =>
+		isObject(c) &&
+		c._type === "span" &&
+		typeof c.text === "string" &&
+		(c.marks === undefined || Array.isArray(c.marks));
+	let spans: Span[] = children
+		.filter(isSpan)
+		.map((s) => ({ ...s, marks: Array.isArray(s.marks) ? s.marks : [] }));
 	if (spans.length !== children.length || notes.every((n) => drawn.has(n)))
 		return { ...b, markDefs };
 	// Two hover texts on the same words are drawn in the page's order, each past the one before it.

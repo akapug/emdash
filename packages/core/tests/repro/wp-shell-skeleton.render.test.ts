@@ -556,7 +556,11 @@ describe("what a page's own layout drew on its words and links", () => {
 						_type: "block",
 						_key: "el-l1-2",
 						style: "normal",
-						children: [bare, span("b", "Seedco", ["strong"]), { _type: "span", _key: "c", text: ", and CSA boxes." }],
+						children: [
+							bare,
+							span("b", "Seedco", ["strong"]),
+							{ _type: "span", _key: "c", text: ", and CSA boxes." },
+						],
 					}
 				: b,
 		);
