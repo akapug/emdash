@@ -94,7 +94,15 @@ import Superscript from "@tiptap/extension-superscript";
 import TextAlign from "@tiptap/extension-text-align";
 import Typography from "@tiptap/extension-typography";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { AllSelection, NodeSelection, TextSelection } from "@tiptap/pm/state";
+import {
+	AllSelection,
+	NodeSelection,
+	Plugin,
+	PluginKey,
+	Selection,
+	TextSelection,
+	type EditorState,
+} from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import { useEditor, EditorContent, useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -3144,6 +3152,7 @@ export function PortableTextEditor({
 			ImageExtension,
 			MarkdownLinkExtension,
 			PluginBlockExtension,
+			PluginBlockSelectionGuard,
 			Subscript,
 			Superscript,
 			EmDashTable.configure({
@@ -4402,6 +4411,65 @@ function setSelectionTextAlignment(editor: Editor, alignment: TextAlignment): bo
 	editor.view.dispatch(transaction);
 	return true;
 }
+
+/** Where words typed or pasted onto a selected plugin block go instead of its place: just after it; else null. */
+function afterSelectedPluginBlock(state: EditorState): number | null {
+	const { selection } = state;
+	return selection instanceof NodeSelection && selection.node.type.name === "pluginBlock"
+		? selection.to
+		: null;
+}
+
+/**
+ * A page that opens on an atom block (a migrated page's layout carrier, an embed) would open with
+ * ProseMirror's default selection, `Selection.atStart`, which selects that block as a node, so the
+ * first key typed would replace the block and everything it holds. The editor opens with a text
+ * cursor in the page's first words instead (or keeps the default when it holds none). A key or a
+ * paste that lands on a selected plugin block, at any time, goes into a new paragraph just after the
+ * block, never in its place; Backspace and Delete still remove a selected block, as
+ * PluginBlockNode's shortcuts mean them to.
+ */
+const PluginBlockSelectionGuard = Extension.create({
+	name: "emdashPluginBlockSelectionGuard",
+	priority: 1_300,
+	onCreate() {
+		const { state, view } = this.editor;
+		if (!(state.selection instanceof NodeSelection)) return;
+		const text = Selection.findFrom(state.doc.resolve(0), 1, true);
+		if (text) view.dispatch(state.tr.setSelection(text).setMeta("addToHistory", false));
+	},
+	addProseMirrorPlugins() {
+		return [
+			new Plugin({
+				key: new PluginKey("emdashPluginBlockSelectionGuard"),
+				props: {
+					handleTextInput(view, _from, _to, text) {
+						const at = afterSelectedPluginBlock(view.state);
+						const paragraph = view.state.schema.nodes.paragraph;
+						if (at === null || !paragraph) return false;
+						const tr = view.state.tr.insert(
+							at,
+							paragraph.create(null, view.state.schema.text(text)),
+						);
+						tr.setSelection(TextSelection.create(tr.doc, at + 1 + text.length));
+						view.dispatch(tr.scrollIntoView());
+						return true;
+					},
+					handlePaste(view, _event, slice) {
+						const at = afterSelectedPluginBlock(view.state);
+						const paragraph = view.state.schema.nodes.paragraph;
+						if (at === null || !paragraph) return false;
+						const tr = view.state.tr.insert(at, paragraph.create());
+						tr.setSelection(TextSelection.create(tr.doc, at + 1));
+						tr.replaceSelection(slice);
+						view.dispatch(tr.scrollIntoView().setMeta("paste", true).setMeta("uiEvent", "paste"));
+						return true;
+					},
+				},
+			}),
+		];
+	},
+});
 
 const TableSafetyShortcuts = Extension.create({
 	name: "tableSafetyShortcuts",

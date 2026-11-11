@@ -2050,7 +2050,13 @@ describe("a page whose first block is a layout block", () => {
 		expect(editor.state.selection).toBeInstanceOf(NodeSelection);
 		await userEvent.keyboard("x");
 		await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 2000 });
-		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "paragraph", "pluginBlock", "paragraph"]);
+		expect(types(editor)).toEqual([
+			"pluginBlock",
+			"paragraph",
+			"paragraph",
+			"pluginBlock",
+			"paragraph",
+		]);
 		expect(editor.state.doc.child(1).textContent).toBe("x");
 		const saved = onChange.mock.calls.at(-1)![0] as Array<{ _type: string; _key: string }>;
 		expect(saved[0]).toMatchObject({ _type: "layout-section", _key: "ls-0" });
@@ -2071,7 +2077,13 @@ describe("a page whose first block is a layout block", () => {
 		const paste = new Event("paste", { bubbles: true, cancelable: true });
 		Object.defineProperty(paste, "clipboardData", { value: clipboardData });
 		editor.view.dom.dispatchEvent(paste);
-		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "pluginBlock", "paragraph", "paragraph"]);
+		expect(types(editor)).toEqual([
+			"pluginBlock",
+			"paragraph",
+			"pluginBlock",
+			"paragraph",
+			"paragraph",
+		]);
 		expect(editor.state.doc.child(3).textContent).toBe("pasted words");
 	});
 });
