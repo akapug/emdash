@@ -11,13 +11,19 @@ import { describe, expect, it } from "vitest";
 
 import WpShellBlock from "../../../../templates/blog-cloudflare/src/components/WpShellBlock.astro";
 import WpShellImage from "../../../../templates/blog-cloudflare/src/components/WpShellImage.astro";
+import WpShellLink from "../../../../templates/blog-cloudflare/src/components/WpShellLink.astro";
+import WpShellNote from "../../../../templates/blog-cloudflare/src/components/WpShellNote.astro";
 import WpShellSkeleton from "../../../../templates/blog-cloudflare/src/components/WpShellSkeleton.astro";
 import {
 	hasSkeleton,
 	skeletonTree,
 } from "../../../../templates/blog-cloudflare/src/utils/wp-skeleton";
 
-const components = { block: WpShellBlock, type: { image: WpShellImage } };
+const components = {
+	block: WpShellBlock,
+	type: { image: WpShellImage },
+	mark: { link: WpShellLink, wpShellNote: WpShellNote },
+};
 const locals = { emdash: { getPublicMediaUrl: (k: string) => `/_emdash/api/media/file/${k}` } };
 
 const text = (key: string, t: string, style = "normal") => ({
@@ -427,5 +433,156 @@ describe("a page's own layout in the WpShell skeleton", () => {
 			]),
 		);
 		expect(html).toBe('<div class="row"><p>One</p></div><div class="row"><h2>Two</h2></div>');
+	});
+});
+
+/**
+ * What a page's own layout drew on its words and links that Portable Text
+ * holds no field for, as the import keeps it in a widget's skeleton
+ * (packages/host/src/import/layout-pt.ts): a link's class by its href, a hover
+ * text with the words it is on, and a whole element that is one link. A save
+ * in the admin keeps a block's key and its words, so these are drawn from the
+ * skeleton, never stored on the blocks. All data synthetic.
+ */
+describe("what a page's own layout drew on its words and links", () => {
+	const span = (key: string, t: string, marks: string[] = []) => ({
+		_type: "span",
+		_key: key,
+		text: t,
+		marks,
+	});
+	const carrier = (widgets: Record<string, unknown>) => ({
+		_type: "layout-section",
+		_key: "ls-0",
+		skeleton: { wraps: [wrap("section", "content-section")], widgets, added: { wraps: [] } },
+	});
+	const NOTES = [
+		{ text: "a startup called Seedco", title: 'A cooperative of "growers"', class: "citation" },
+		{ text: "CSA", title: "Community Supported Agriculture" },
+	];
+	const after = {
+		_type: "block",
+		_key: "el-l1-2",
+		style: "normal",
+		markDefs: [{ _type: "link", _key: "farm", href: "https://farms.example/" }],
+		children: [
+			span("a", "After, at a startup called "),
+			span("b", "Seedco", ["strong"]),
+			span("c", ", and CSA boxes, from "),
+			span("d", "the farm", ["farm"]),
+			span("e", "."),
+		],
+	};
+	const badge = (link: unknown) => ({
+		_type: "image",
+		_key: "el-l1-1",
+		asset: { _type: "reference", _ref: "badge", url: "https://badges.example/badge.svg" },
+		link,
+	});
+	const page = (
+		link: unknown = "https://badges.example/robin",
+		widgets: Record<string, unknown> = {},
+	) => [
+		carrier({
+			l0: {
+				wraps: [wrap("aside", "content-section__aside")],
+				blockTag: "none",
+				linkClasses: { "https://profiles.example/robin": "content-section__link" },
+			},
+			l1: {
+				wraps: [wrap("div", "intro-text")],
+				linkClasses: { "https://badges.example/robin": "badge-widget" },
+				notes: NOTES,
+			},
+			...widgets,
+		}),
+		{
+			_type: "block",
+			_key: "el-l0",
+			style: "normal",
+			markDefs: [{ _type: "link", _key: "p", href: "https://profiles.example/robin" }],
+			children: [span("s", "Profile", ["p"])],
+		},
+		text("el-l1", "Before the badge."),
+		badge(link),
+		after,
+	];
+
+	it("draws a whole element that is one link as that link, with its class, in no paragraph", async () => {
+		const html = squash(await render(page()));
+		expect(html).toContain(
+			'<aside class="content-section__aside"><a href="https://profiles.example/robin" class="content-section__link">Profile</a></aside>',
+		);
+		// A link the widget names no class for is EmDash's own.
+		expect(html).toContain('from <a href="https://farms.example/">the farm</a>.');
+	});
+
+	it("draws a picture's link with its class, the picture in it as the page drew it, in either shape of link", async () => {
+		const drawn =
+			'<a href="https://badges.example/robin" class="badge-widget"><img src="https://badges.example/badge.svg" alt loading="lazy" decoding="async"></a>';
+		expect(squash(await render(page()))).toContain(`<p>Before the badge.</p>${drawn}<p>`);
+		expect(squash(await render(page({ href: "https://badges.example/robin" })))).toContain(drawn);
+		expect(
+			squash(await render(page({ href: "https://badges.example/robin", blank: true }))),
+		).toContain(
+			'<a href="https://badges.example/robin" target="_blank" rel="noopener noreferrer" class="badge-widget"><img',
+		);
+		// A picture whose link names no class is EmDash's own.
+		const other = squash(await render(page("https://elsewhere.example/")));
+		expect(other).not.toContain("badge-widget");
+		expect(other).toContain("<figure");
+	});
+
+	it("draws each hover text on the words it is on, across the spans they are in, and leaves words it does not find alone", async () => {
+		const html = squash(await render(page()));
+		expect(html).toContain(
+			'<p>After, at <span class="citation" title="A cooperative of &quot;growers&quot;">a startup called <strong>Seedco</strong></span>, and <span title="Community Supported Agriculture">CSA</span> boxes, from <a href="https://farms.example/">the farm</a>.</p>',
+		);
+		// The owner changed the words: no note is drawn, and every word is.
+		const edited = page().map((b) =>
+			b._key === "el-l1-2" ? { ...after, children: [span("a", "New words, and CSA.")] } : b,
+		);
+		expect(squash(await render(edited))).toContain(
+			'<p>New words, and <span title="Community Supported Agriculture">CSA</span>.</p>',
+		);
+	});
+
+	it("draws no class, title or element of its own from a stored value it does not allow", async () => {
+		const html = squash(
+			await render([
+				carrier({
+					l0: {
+						wraps: [],
+						blockTag: "script",
+						linkClasses: { "https://profiles.example/robin": 'x" onclick="alert(1)' },
+						notes: [
+							{ text: "Profile", title: '"><script>alert(1)</script>', class: "a b<c" },
+							{ text: "Profile", title: 7 },
+						],
+					},
+				}),
+				{
+					_type: "block",
+					_key: "el-l0",
+					style: "normal",
+					markDefs: [{ _type: "link", _key: "p", href: "javascript:alert(1)" }],
+					children: [span("s", "Profile", ["p"])],
+				},
+			]),
+		);
+		expect(html).not.toContain("onclick");
+		expect(html).toMatch(/<a href="#">/);
+		// The title is one attribute value: its quote is escaped, so nothing in it is markup.
+		expect(html).toContain(
+			'<span class="a" title="&quot;><script>alert(1)</script>">Profile</span>',
+		);
+		// A heading stays a heading whatever the widget's tag says.
+		const heading = squash(
+			await render([
+				carrier({ l0: { wraps: [], blockTag: "none" } }),
+				text("el-l0", "Title", "h2"),
+			]),
+		);
+		expect(heading).toBe('<section class="content-section"><h2>Title</h2></section>');
 	});
 });
