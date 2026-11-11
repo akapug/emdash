@@ -17,9 +17,9 @@
  * `skeletonClass`, ../utils/wp-skeleton.ts) is drawn as the page drew it too,
  * an `<img>` with that class, in its link when it has one. A picture whose
  * link the page drew with a class (`skeletonLinkClasses`, by href: a badge in
- * a paragraph, floated by the theme's rule for that class) is drawn in that
- * link, with its class, as the page drew it. Every other image is EmDash's
- * own.
+ * a paragraph, floated by the theme's rule for that class) or a title
+ * (`skeletonLinkTitles`, by href) is drawn in that link, with its class and
+ * title, as the page drew it. Every other image is EmDash's own.
  */
 import type { ComponentProps } from "astro/types";
 import { normalizeImageLink, PTImage } from "emdash/ui";
@@ -72,15 +72,23 @@ const linkClass =
 				.filter((c) => CLASS_NAME.test(c))
 				.join(" ")
 		: "";
+// The hover text the page drew on the picture's link, by its href (drawn as an attribute's text).
+const linkTitles: unknown = (node as { skeletonLinkTitles?: unknown } | undefined)?.skeletonLinkTitles;
+const linkTitleOf: unknown =
+	link !== null && src !== null && !node?.caption && typeof linkTitles === "object" && linkTitles !== null && Object.hasOwn(linkTitles, link)
+		? (linkTitles as Record<string, unknown>)[link]
+		: undefined;
+const linkTitle = typeof linkTitleOf === "string" && linkTitleOf !== "" ? linkTitleOf : undefined;
 ---
 
 {
-	linkClass ? (
+	linkClass || linkTitle ? (
 		<a
 			href={link}
 			target={blank ? "_blank" : undefined}
 			rel={blank ? "noopener noreferrer" : undefined}
-			class={linkClass}
+			class={linkClass || undefined}
+			title={linkTitle}
 		>
 			<img class={own || undefined} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
 		</a>

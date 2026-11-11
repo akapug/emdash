@@ -33,9 +33,9 @@
  * a save in the admin keeps, and is put on the blocks only as they are drawn:
  * `linkClasses`, the class of each link by its href (a text link's markDef
  * carries it as `skeletonClass`, a picture as `skeletonLinkClasses`),
- * `linkTitles`, the hover text of each text link by its href (its markDef
- * carries it as `skeletonTitle`; the admin's editor keeps a link's href and
- * target only), and
+ * `linkTitles`, the hover text of each link by its href (a text link's markDef
+ * carries it as `skeletonTitle`, a picture as `skeletonLinkTitles`; the
+ * admin's editor keeps a link's href and target only), and
  * `notes`, a hover text on words of the widget, drawn as a `wpShellNote` mark
  * on those words (the first place they are found, past any earlier hover text
  * on the same words; words the owner changed are left as they are).
@@ -335,8 +335,8 @@ function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 	const titles = linkTitlesOf(w.linkTitles);
 	const notes = notesOf(w.notes);
 	const linked = Object.keys(links).length > 0;
-	if (!cls && !tag && !linked && Object.keys(titles).length === 0 && notes.length === 0)
-		return [{ blocks: shown }];
+	const titled = Object.keys(titles).length > 0;
+	if (!cls && !tag && !linked && !titled && notes.length === 0) return [{ blocks: shown }];
 	const drawn = new Set<Note>();
 	return [
 		{
@@ -353,11 +353,12 @@ function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 							notes,
 							drawn,
 						)
-					: b._type === "image" && (cls || linked)
+					: b._type === "image" && (cls || linked || titled)
 						? {
 								...b,
 								...(cls ? { skeletonClass: cls } : {}),
 								...(linked ? { skeletonLinkClasses: links } : {}),
+								...(titled ? { skeletonLinkTitles: titles } : {}),
 							}
 						: b,
 			),
