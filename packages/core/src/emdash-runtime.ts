@@ -3556,8 +3556,11 @@ export class EmDashRuntime {
 		const result = await repo.apply({ ...input, mappedFields, data });
 		if (result.state === "applied" && !result.replayed) {
 			await this.refreshContentUsageAfterSuccessfulWrite(request.collection, [result.entryId]);
+			// A mapped update leaves omitted fields in place, so afterSave reports the stored
+			// entry rather than the partial write set.
+			const saved = await contentRepo.findById(request.collection, result.entryId);
 			this.runAfterSaveHooks(
-				{ ...data, id: result.entryId, _slug: request.slug },
+				{ ...data, ...saved?.data, id: result.entryId, _slug: request.slug },
 				request.collection,
 				!request.entryId,
 				actor,
