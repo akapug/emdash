@@ -272,7 +272,25 @@ export interface EmDashHandlers {
 	getImportSyncCapability?: (collection?: string) => Promise<{
 		version: 1;
 		available: boolean;
+		mappedFieldsOnly: true;
+		grantGenerationFence: true;
 	}>;
+	handleImportSyncGrantCreate?: (
+		request: import("../import/sync.js").ImportSyncGrantCreateRequest,
+		actor: { id: string; role: number },
+	) => Promise<
+		import("../api/types.js").ApiResult<
+			import("../database/repositories/import-sync-grant.js").ImportSyncGrant
+		>
+	>;
+	handleImportSyncGrantRevoke?: (
+		request: import("../import/sync.js").ImportSyncGrantRevokeRequest,
+		actor: { id: string; role: number },
+	) => Promise<
+		import("../api/types.js").ApiResult<
+			import("../database/repositories/import-sync-grant.js").ImportSyncGrant
+		>
+	>;
 	handleImportSync?: (
 		request: import("../import/sync.js").ImportSyncRequest,
 		actor: { id: string; role: number },

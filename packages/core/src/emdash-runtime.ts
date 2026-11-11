@@ -63,8 +63,10 @@ import { AuditRepository } from "./database/repositories/audit.js";
 import { CommentRepository } from "./database/repositories/comment.js";
 import type { CommentStatus } from "./database/repositories/comment.js";
 import { ContentRepository } from "./database/repositories/content.js";
+import { ImportSyncGrantRepository, type ImportSyncGrant } from "./database/repositories/import-sync-grant.js";
 import {
 	ImportSyncRepository,
+	supportsAtomicImportSync,
 	type ImportSyncResult,
 } from "./database/repositories/import-sync.js";
 import { RevisionRepository } from "./database/repositories/revision.js";
@@ -80,6 +82,10 @@ import { repairLocaleCasing } from "./i18n/repair-locale-casing.js";
 import { warnAboutUnconfiguredTaxonomyLocales } from "./i18n/taxonomy-locale-diagnostic.js";
 import {
 	hashImportSyncRequest,
+	importSyncGrantCreateSchema,
+	importSyncGrantRevokeSchema,
+	type ImportSyncGrantCreateRequest,
+	type ImportSyncGrantRevokeRequest,
 	importSyncRequestSchema,
 	IMPORT_SYNC_VERSION,
 	type ImportSyncRequest,
@@ -3352,13 +3358,55 @@ export class EmDashRuntime {
 
 	async getImportSyncCapability(
 		collection?: string,
-	): Promise<{ version: typeof IMPORT_SYNC_VERSION; available: boolean }> {
+	): Promise<{
+		version: typeof IMPORT_SYNC_VERSION;
+		available: boolean;
+		mappedFieldsOnly: true;
+		grantGenerationFence: true;
+	}> {
 		let available = await new ImportSyncRepository(this.db).supports(collection);
 		if (available && collection !== undefined) {
 			const schema = await this.schemaRegistry.getCollectionWithFields(collection);
 			available = schema?.supports?.includes("revisions") ?? false;
 		}
-		return { version: IMPORT_SYNC_VERSION, available };
+		return { version: IMPORT_SYNC_VERSION, available, mappedFieldsOnly: true, grantGenerationFence: true };
+	}
+
+	async handleImportSyncGrantCreate(
+		request: ImportSyncGrantCreateRequest,
+		actor: ActorInfo,
+	): Promise<ApiResult<ImportSyncGrant>> {
+		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
+			return { success: false, error: { code: "FORBIDDEN", message: "Import permission required" } };
+		}
+		const parsed = importSyncGrantCreateSchema.safeParse(request);
+		if (!parsed.success) {
+			return { success: false, error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" } };
+		}
+		if (!supportsAtomicImportSync(this.db)) {
+			return { success: false, error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" } };
+		}
+		return { success: true, data: await new ImportSyncGrantRepository(this.db).create(parsed.data) };
+	}
+
+	async handleImportSyncGrantRevoke(
+		request: ImportSyncGrantRevokeRequest,
+		actor: ActorInfo,
+	): Promise<ApiResult<ImportSyncGrant>> {
+		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
+			return { success: false, error: { code: "FORBIDDEN", message: "Import permission required" } };
+		}
+		const parsed = importSyncGrantRevokeSchema.safeParse(request);
+		if (!parsed.success) {
+			return { success: false, error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" } };
+		}
+		if (!supportsAtomicImportSync(this.db)) {
+			return { success: false, error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" } };
+		}
+		const grant = await new ImportSyncGrantRepository(this.db).revoke(parsed.data.id);
+		return grant
+			? { success: true, data: grant }
+			: { success: false, error: { code: "NOT_FOUND", message: "Import grant not found" } };
 	}
 
 	async handleImportSync(
@@ -3396,6 +3444,18 @@ export class EmDashRuntime {
 		const input = { ...request, requestHash, authorId: actor.id };
 		const replay = await repo.lookup(request.operationId, input);
 		if (replay) return { success: true, data: replay };
+
+		const grant = await new ImportSyncGrantRepository(this.db).find(request.grant.id);
+		if (
+			!grant ||
+			grant.revoked ||
+			grant.generation !== request.grant.generation ||
+			grant.bindingId !== request.grant.bindingId ||
+			grant.sourceSite !== request.source.site ||
+			grant.actorId !== actor.id
+		) {
+			return { success: true, data: { state: "conflict", reason: "import_grant_changed" } };
+		}
 
 		const collectionInfo = await this.schemaRegistry.getCollectionWithFields(request.collection);
 		if (!collectionInfo?.supports?.includes("revisions")) {
@@ -3444,7 +3504,8 @@ export class EmDashRuntime {
 		) {
 			return { success: true, data: { state: "conflict", reason: "source_or_slug_exists" } };
 		}
-		let data = request.data;
+		const mappedFields = Object.keys(request.data);
+		let data = structuredClone(request.data);
 		if (this.hooks.hasHooks("content:beforeSave")) {
 			try {
 				const result = await this.hooks.runContentBeforeSave(
@@ -3459,12 +3520,8 @@ export class EmDashRuntime {
 				return beforeSaveFailure(error);
 			}
 		}
-		// A full replacement must clear omitted optional fields in both the live
-		// row and revision, rather than retaining unrepresented live values.
-		data = { ...data };
-		for (const field of collectionInfo.fields) {
-			if (!Object.hasOwn(data, field.slug)) data[field.slug] = null;
-		}
+		// Hooks may normalize mapped values, but cannot expand the import's write set.
+		data = Object.fromEntries(mappedFields.map((field) => [field, data[field]]));
 		const blockTypes = collectionInfo.fields.some((field) => field.type === "blocks")
 			? await resolveBlockTypes(this.db)
 			: undefined;
@@ -3490,13 +3547,13 @@ export class EmDashRuntime {
 		}
 		const { validateContentData } = await import("./api/handlers/validation.js");
 		const validation = await validateContentData(this.db, request.collection, data, {
-			partial: false,
+			partial: Boolean(request.entryId),
 		});
 		if (!validation.ok) return { success: false, error: validation.error };
 
 		// The repository rechecks ownership and the caller's version inside the atomic
 		// write. A hook or editor save in the preparation window cannot grant a new base.
-		const result = await repo.apply({ ...input, data });
+		const result = await repo.apply({ ...input, mappedFields, data });
 		if (result.state === "applied" && !result.replayed) {
 			await this.refreshContentUsageAfterSuccessfulWrite(request.collection, [result.entryId]);
 			this.runAfterSaveHooks(

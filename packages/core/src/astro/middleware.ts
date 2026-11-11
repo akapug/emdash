@@ -916,6 +916,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
 				locals.emdash = {
 					getImportSyncCapability: runtime.getImportSyncCapability.bind(runtime),
 					handleImportSync: runtime.handleImportSync.bind(runtime),
+					handleImportSyncGrantCreate: runtime.handleImportSyncGrantCreate.bind(runtime),
+					handleImportSyncGrantRevoke: runtime.handleImportSyncGrantRevoke.bind(runtime),
 					// Content handlers
 					handleContentList: runtime.handleContentList.bind(runtime),
 					handleContentGet: runtime.handleContentGet.bind(runtime),
