@@ -701,7 +701,8 @@ export function htmlToPortableText(
 			}
 
 			case "dl": {
-				pushPart(content.replace(DEFINITION_TAG_PATTERN, (_, close: string) => `<${close}p>`));
+				// each term and description as a div: its text a paragraph, a list in it a list
+				pushPart(content.replace(DEFINITION_TAG_PATTERN, (_, close: string) => `<${close}div>`));
 				break;
 			}
 

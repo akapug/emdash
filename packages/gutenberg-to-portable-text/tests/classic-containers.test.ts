@@ -155,8 +155,14 @@ describe("classic content: other containers of blocks", () => {
 	});
 
 	it("draws each term and description of a definition list on its own line", () => {
-		const content = `<dl><dt>Term</dt><dd>Definition</dd></dl>`;
-		expect(shape(gutenbergToPortableText(content))).toEqual(["normal: Term", "normal: Definition"]);
+		const content = `<dl><dt>Term</dt><dd>Definition</dd><dt>Sizes</dt><dd><ul><li>Small</li><li>Large</li></ul></dd></dl>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"normal: Term",
+			"normal: Definition",
+			"normal: Sizes",
+			"normal bullet1: Small",
+			"normal bullet1: Large",
+		]);
 	});
 });
 
