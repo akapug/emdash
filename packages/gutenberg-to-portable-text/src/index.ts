@@ -21,6 +21,7 @@ import {
 	withoutUndrawn,
 } from "./inline.js";
 import { wptexturize } from "./texturize.js";
+import { list as listTransformer, table as tableTransformer } from "./transformers/core.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
@@ -42,16 +43,21 @@ import { sanitizeHref } from "./url.js";
 const LINKED_IMAGE = String.raw`<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:\s|<br\s*\/?>)*<img\s+([^>]+)\/?>(?:\s|<br\s*\/?>)*<\/a>`;
 /** A block element, a rule or line break, or an image outside any (the link around it too: groups 4 and 5). */
 const BLOCK_ELEMENT_PATTERN = new RegExp(
-	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
+	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
 	"gu",
 );
+/**
+ * An element that can hold one of its own kind (a list in a list, a quote in a
+ * quote, a table in a table): the block pattern ends it at the first closing
+ * tag, which is the inner one's, so its end is found by counting.
+ */
+const NESTING_TAGS = new Set(["ul", "ol", "blockquote", "table"]);
 const LINKED_IMAGE_PATTERN = new RegExp(LINKED_IMAGE, "gu");
 const LINKED_IMAGE_ONE = new RegExp(LINKED_IMAGE, "u");
 const STANDALONE_IMAGE_PATTERN = /<img\s+[^>]+\/?>/gu;
 const IMG_TAG_PATTERN = /<img[^>]+>/i;
 const SRC_ATTR_PATTERN = /src=["']([^"']+)["']/i;
 const ALT_ATTR_PATTERN = /alt=["']([^"']*)["']/i;
-const LIST_ITEM_PATTERN = /<li[^>]*>([\s\S]*?)<\/li>/gu;
 const CODE_TAG_PATTERN = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const HTML_TAG_PATTERN = /<[^>]+>/g;
 const FIGCAPTION_TAG_PATTERN = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i;
@@ -67,7 +73,23 @@ const NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const NBSP_ENTITY_PATTERN = /&nbsp;/g;
 /** A block-level element inside a `<div>`: its paragraphs are the div's content, one block each. */
-const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|hr)\b/i;
+const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|table|dl|hr)\b/i;
+/** A block-level element inside a quote: the quote holds blocks, not one run of text. */
+const QUOTE_BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr)\b/i;
+/** The one paragraph wpautop wraps a quote's text in */
+const ONE_PARAGRAPH_PATTERN = /^\s*<p\b[^>]*>([\s\S]*)<\/p>\s*$/i;
+/**
+ * What makes a table a layout and not a grid of text: an image, an iframe or a
+ * block element in a cell (a table cell holds text alone), or a cell of more
+ * than one paragraph.
+ */
+const LAYOUT_TABLE_PATTERN =
+	/<(?:img|iframe|table|ul|ol|blockquote|pre|figure|div|dl|h[1-6])\b|<p\b[^>]*>[\s\S]*?<\/p>\s*<p\b/i;
+const TABLE_CAPTION_PATTERN = /<caption\b[^>]*>([\s\S]*?)<\/caption>/i;
+/** A table cell's opening or closing tag */
+const TABLE_CELL_TAG_PATTERN = /<(\/?)(?:td|th)\b[^>]*>/giu;
+/** A term or a description in a definition list, each drawn on a line of its own. */
+const DEFINITION_TAG_PATTERN = /<(\/?)(?:dt|dd)\b[^>]*>/giu;
 
 // Re-export types
 export type {
@@ -369,10 +391,20 @@ export function htmlToPortableText(
 	let match;
 
 	while ((match = BLOCK_ELEMENT_PATTERN.exec(html)) !== null) {
-		const fullMatch = match[0];
+		let fullMatch = match[0];
 		const tag = (match[1] || match[3] || "").toLowerCase();
-		const content = match[2] || "";
+		let content = match[2] || "";
 		const start = match.index;
+
+		// A list, quote or table that holds one of its own kind ends at its own closing tag
+		if (NESTING_TAGS.has(tag)) {
+			const close = closingTag(html, tag, start);
+			if (close && close.end > start + fullMatch.length) {
+				content = html.slice(start + fullMatch.indexOf(">") + 1, close.start);
+				fullMatch = html.slice(start, close.end);
+				BLOCK_ELEMENT_PATTERN.lastIndex = close.end;
+			}
+		}
 
 		// Handle text between matches
 		pushText(lastIndex, start);
@@ -499,7 +531,28 @@ export function htmlToPortableText(
 			}
 
 			case "blockquote": {
-				pushInline(content, { style: "blockquote", ...aligned(fullMatch) });
+				const paragraph = ONE_PARAGRAPH_PATTERN.exec(content)?.[1];
+				if (!QUOTE_BLOCK_INSIDE_PATTERN.test(paragraph ?? content)) {
+					pushInline(content, { style: "blockquote", ...aligned(fullMatch) });
+					break;
+				}
+				// A quote that holds paragraphs, a list or a heading draws each of them inside it:
+				// its paragraphs are the quote's text, and a list or heading keeps its own shape,
+				// as a block-editor quote's inner blocks do (core/quote). Read as one run of text,
+				// a list's items joined into one line of the quote.
+				const from = blocks.length;
+				const quoteAlign = aligned(fullMatch);
+				pushPart(content);
+				for (let i = from; i < blocks.length; i++) {
+					const block = blocks[i]!;
+					if (block._type === "block" && block.style === "normal" && !block.listItem) {
+						blocks[i] = {
+							...block,
+							style: "blockquote",
+							...(block.textAlign ? {} : quoteAlign),
+						};
+					}
+				}
 				break;
 			}
 
@@ -517,11 +570,40 @@ export function htmlToPortableText(
 
 			case "ul":
 			case "ol": {
-				const listItem = tag === "ol" ? "number" : "bullet";
-				let liMatch;
-				while ((liMatch = LIST_ITEM_PATTERN.exec(content)) !== null) {
-					pushInline(liMatch[1] || "", { style: "normal", listItem, level: 1 });
+				// The list as the block editor's list block reads its HTML: a list inside an
+				// item is the next level down, and the items after it stay in the list.
+				blocks.push(
+					...listTransformer(
+						htmlBlock("core/list", fullMatch, { ordered: tag === "ol" }),
+						options,
+						createTransformContext(options, generateKey),
+					),
+				);
+				break;
+			}
+
+			case "table": {
+				// A table of text is a table. One that lays out images or blocks (a table cell
+				// holds text alone) draws each cell's content in its order, as a phone shows it.
+				if (LAYOUT_TABLE_PATTERN.test(content)) {
+					pushPart(content.replace(TABLE_CELL_TAG_PATTERN, (_, close: string) => `<${close}div>`));
+					break;
 				}
+				// its caption, which the table block holds no place for, above it as WordPress draws it
+				const caption = TABLE_CAPTION_PATTERN.exec(content)?.[1];
+				if (caption) pushInline(caption, { style: "normal" });
+				blocks.push(
+					...tableTransformer(
+						htmlBlock("core/table", fullMatch),
+						options,
+						createTransformContext(options, generateKey),
+					),
+				);
+				break;
+			}
+
+			case "dl": {
+				pushPart(content.replace(DEFINITION_TAG_PATTERN, (_, close: string) => `<${close}p>`));
 				break;
 			}
 
@@ -561,6 +643,9 @@ export function htmlToPortableText(
 						...(link ? { link } : {}),
 						...extractDisplaySize(imgMatch[0]),
 					});
+				} else {
+					// A figure with no image (a table's, a quote's) holds blocks: they are its content
+					pushPart(content);
 				}
 				break;
 			}
@@ -571,6 +656,31 @@ export function htmlToPortableText(
 	pushText(lastIndex, html.length);
 
 	return blocks;
+}
+
+/**
+ * Where the element `tag` opening at `start` closes, the elements of its own
+ * name inside it counted; nothing when it is never closed.
+ */
+function closingTag(html: string, tag: string, start: number): { start: number; end: number } | undefined {
+	const pattern = new RegExp(String.raw`<(\/?)${tag}\b[^>]*>`, "giu");
+	pattern.lastIndex = start;
+	let depth = 0;
+	let m;
+	while ((m = pattern.exec(html)) !== null) {
+		depth += m[1] ? -1 : 1;
+		if (depth === 0) return { start: m.index, end: m.index + m[0].length };
+	}
+	return undefined;
+}
+
+/** Classic HTML as the block editor's block of that name holds it, for its transformer. */
+function htmlBlock(
+	blockName: string,
+	innerHTML: string,
+	attrs: Record<string, unknown> = {},
+): GutenbergBlock {
+	return { blockName, attrs, innerHTML, innerBlocks: [], innerContent: [innerHTML] };
 }
 
 /**

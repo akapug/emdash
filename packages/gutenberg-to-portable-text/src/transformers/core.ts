@@ -43,7 +43,6 @@ const IMG_TAG_GLOBAL = /<img[^>]+>/gi;
 const IMG_TAG_SINGLE = /<img[^>]+>/i;
 const TABLE_ROW_PATTERN = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
 const TABLE_CELL_PATTERN = /<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi;
-const TBODY_TAG_PATTERN = /<tbody[^>]*>([\s\S]*?)<\/tbody>/i;
 const CITE_TAG_PATTERN = /<cite[^>]*>([\s\S]*?)<\/cite>/i;
 const LT_ENTITY_PATTERN = /&lt;/g;
 const GT_ENTITY_PATTERN = /&gt;/g;
@@ -639,7 +638,6 @@ export const table: BlockTransformer = (block, _options, context) => {
 
 	// Check for thead
 	const theadMatch = tableContent.match(THEAD_TAG_PATTERN);
-	const tbodyMatch = tableContent.match(TBODY_TAG_PATTERN);
 
 	const rows: Array<{
 		_type: "tableRow";
@@ -659,15 +657,14 @@ export const table: BlockTransformer = (block, _options, context) => {
 		rows.push(...headerRows);
 	}
 
-	// Parse body rows
-	if (tbodyMatch?.[1]) {
-		const bodyRows = parseTableRows(tbodyMatch[1], context, false);
-		rows.push(...bodyRows);
-	} else if (!theadMatch) {
-		// No thead or tbody, parse rows directly
-		const directRows = parseTableRows(tableContent, context, false);
-		rows.push(...directRows);
-	}
+	// Parse body rows: every row outside the head, in a tbody, a tfoot (the block's
+	// footer section) or none, so a footer or a row after a bare head is not dropped
+	const bodyRows = parseTableRows(
+		theadMatch ? tableContent.replace(theadMatch[0], "") : tableContent,
+		context,
+		false,
+	);
+	rows.push(...bodyRows);
 
 	if (rows.length === 0) {
 		return [];
