@@ -12,8 +12,11 @@
  * URL, at the size WordPress drew it (the block's `displayWidth` and
  * `displayHeight`, the `width` and `height` of WordPress's own tag). Without
  * that size the file's own size is drawn, and the file an import holds for a
- * `-300x256` size is the upload it was cut from. Every other image is
- * EmDash's own.
+ * `-300x256` size is the upload it was cut from. A picture of a page's own
+ * layout that the page drew with a class (a portrait, a logo, an icon:
+ * `skeletonClass`, ../utils/wp-skeleton.ts) is drawn as the page drew it too,
+ * an `<img>` with that class, in its link when it has one. Every other image
+ * is EmDash's own.
  */
 import type { ComponentProps } from "astro/types";
 import { PTImage } from "emdash/ui";
@@ -35,10 +38,33 @@ const src =
 const wordpress = align !== null && src !== null && !node?.link && !node?.caption;
 const width = pixels(node?.displayWidth);
 const height = pixels(node?.displayHeight);
+// Class characters only, as WpShellBlock draws them.
+const CLASS_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+const skeletonClass: unknown = (node as { skeletonClass?: unknown } | undefined)?.skeletonClass;
+const own =
+	src !== null && !node?.caption && typeof skeletonClass === "string"
+		? skeletonClass
+				.split(/\s+/)
+				.filter((c) => CLASS_NAME.test(c))
+				.join(" ")
+		: "";
+// The link as EmDash's own image takes it: a web or a site address only.
+const link =
+	typeof node?.link === "string" && (HTTP_URL.test(node.link) || (node.link.startsWith("/") && !node.link.startsWith("//")))
+		? node.link
+		: null;
 ---
 
 {
-	wordpress ? (
+	own ? (
+		link ? (
+			<a href={link}>
+				<img class={own} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
+			</a>
+		) : (
+			<img class={own} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
+		)
+	) : wordpress ? (
 		<img
 			class={`align${align}`}
 			src={src}

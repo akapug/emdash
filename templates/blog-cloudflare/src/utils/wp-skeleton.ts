@@ -20,6 +20,15 @@
  *     `added`, the elements around a block the owner added (any other key);
  *   - `skeleton.document`: the page's own wrapper, drawn once around the page.
  *
+ * A page's own layout (Embark's packages/host/src/import/layout-pt.ts, a
+ * static site's front page of sections) is deeper than a builder's: a list
+ * item holds a name and a date, each a widget of its own. So an element may
+ * name a `node`, and the elements of consecutive widgets that name one node
+ * are drawn as ONE element holding both. A widget's `blockTag` (`span` or
+ * `div`) draws its one paragraph as that element instead of a `<p>`, and its
+ * `blockClass` goes on a picture of it too, which is then drawn as the page drew
+ * it: an `<img>` with that class.
+ *
  * This file knows no builder: it groups the blocks and checks every element
  * it is asked to draw against one list (a tag from TAGS, classes of class
  * characters, an `id` and `data-` attributes only), so a stored value can
@@ -33,11 +42,13 @@ export interface SkeletonWrap {
 	class: string;
 	attrs?: Record<string, string>;
 	lead?: SkeletonWrap[];
+	node?: string;
 }
 
 interface SkeletonWidget {
 	wraps?: SkeletonWrap[];
 	blockClass?: string;
+	blockTag?: string;
 	body?: SkeletonWrap[];
 }
 
@@ -58,6 +69,8 @@ export interface SkeletonElement {
 	class: string | undefined;
 	attrs: Record<string, string>;
 	children: SkeletonNode[];
+	/** The page's element this is (SkeletonWrap.node): never drawn, only matched. */
+	node?: string;
 }
 
 /** What the layout draws: an element, or a run of blocks for EmDash's PortableText. */
@@ -79,8 +92,11 @@ const CLASS = /^[A-Za-z0-9_-]{1,100}$/;
 const SPACES = /\s+/;
 const ATTR = /^(id|data-[a-z0-9_-]{1,40})$/;
 const KEY = /^el-([0-9a-z]{1,32})(?:-[1-9]\d{0,5})?$/;
-/** Blocks a widget draws its own `body` instead of: its placeholder and a divider's break. */
-const PLACEHOLDERS = new Set(["elementor-widget", "break"]);
+const NODE = /^[a-z0-9_-]{1,40}$/;
+/** The elements a widget's one paragraph may be drawn as (`blockTag`). */
+const BLOCK_TAGS = new Set(["span", "div"]);
+/** Blocks a widget draws its own `body` instead of: its placeholder, a divider's break, and an element of a page's own layout that shows nothing. */
+const PLACEHOLDERS = new Set(["elementor-widget", "break", "layout-element"]);
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
@@ -111,8 +127,34 @@ function checked(w: unknown, children: SkeletonNode[]): SkeletonNode | null {
 			class: classes.length ? classes.join(" ") : undefined,
 			attrs,
 			children: [...lead, ...children],
+			...(typeof w.node === "string" && NODE.test(w.node) ? { node: w.node } : {}),
 		},
 	};
+}
+
+/**
+ * Consecutive elements that name one node drawn as one: the first holds the
+ * children of every one of them, in order, themselves merged so. An element
+ * with no node is never merged.
+ */
+function merged(nodes: SkeletonNode[]): SkeletonNode[] {
+	const out: SkeletonNode[] = [];
+	for (const n of nodes) {
+		const last = out.at(-1);
+		if (
+			last &&
+			"element" in last &&
+			"element" in n &&
+			n.element.node !== undefined &&
+			last.element.node === n.element.node
+		) {
+			last.element.children.push(...n.element.children);
+			continue;
+		}
+		out.push("element" in n ? { element: { ...n.element, children: [...n.element.children] } } : n);
+	}
+	for (const n of out) if ("element" in n) n.element.children = merged(n.element.children);
+	return out;
 }
 
 /** `children` inside `wraps`, the first outermost. An element that fails the check is left out and its children kept. */
@@ -134,11 +176,17 @@ function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 	const shown = blocks.filter((b) => b._type !== "elementor-widget");
 	if (shown.length === 0) return [];
 	const cls = typeof w.blockClass === "string" ? w.blockClass : null;
+	const tag = typeof w.blockTag === "string" && BLOCK_TAGS.has(w.blockTag) ? w.blockTag : null;
+	if (!cls && !tag) return [{ blocks: shown }];
 	return [
 		{
-			blocks: cls
-				? shown.map((b) => (b._type === "block" ? { ...b, skeletonClass: cls } : b))
-				: shown,
+			blocks: shown.map((b) =>
+				b._type === "block"
+					? { ...b, ...(cls ? { skeletonClass: cls } : {}), ...(tag ? { skeletonTag: tag } : {}) }
+					: b._type === "image" && cls
+						? { ...b, skeletonClass: cls }
+						: b,
+			),
 		},
 	];
 }
@@ -171,7 +219,7 @@ function run(blocks: Block[], s: Skeleton | null): SkeletonNode[] {
 		out.push(...(isObject(w) ? nest(w.wraps, widgetBlocks(w, group)) : [{ blocks: group }]));
 		i = j;
 	}
-	return out;
+	return merged(out);
 }
 
 /** Whether a block keyed with `id` goes on in the group of widget `own` (null: the owner's added blocks). */
