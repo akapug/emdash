@@ -25,9 +25,17 @@
  * item holds a name and a date, each a widget of its own. So an element may
  * name a `node`, and the elements of consecutive widgets that name one node
  * are drawn as ONE element holding both. A widget's `blockTag` (`span` or
- * `div`) draws its one paragraph as that element instead of a `<p>`, and its
+ * `div`) draws its one paragraph as that element instead of a `<p>`, or as its
+ * words alone (`none`: a whole element that is one link), and its
  * `blockClass` goes on a picture of it too, which is then drawn as the page drew
- * it: an `<img>` with that class.
+ * it: an `<img>` with that class. What the page drew on a widget's words and
+ * links that Portable Text holds no field for rides in the skeleton too, which
+ * a save in the admin keeps, and is put on the blocks only as they are drawn:
+ * `linkClasses`, the class of each link by its href (a text link's markDef
+ * carries it as `skeletonClass`, a picture as `skeletonLinkClasses`), and
+ * `notes`, a hover text on words of the widget, drawn as a `wpShellNote` mark
+ * on those words (the first place they are found; words the owner changed are
+ * left as they are).
  *
  * This file knows no builder: it groups the blocks and checks every element
  * it is asked to draw against one list (a tag from TAGS, classes of class
@@ -50,6 +58,8 @@ interface SkeletonWidget {
 	blockClass?: string;
 	blockTag?: string;
 	body?: SkeletonWrap[];
+	linkClasses?: unknown;
+	notes?: unknown;
 }
 
 interface Skeleton {
@@ -93,8 +103,12 @@ const SPACES = /\s+/;
 const ATTR = /^(id|data-[a-z0-9_-]{1,40})$/;
 const KEY = /^el-([0-9a-z]{1,32})(?:-[1-9]\d{0,5})?$/;
 const NODE = /^[a-z0-9_-]{1,40}$/;
-/** The elements a widget's one paragraph may be drawn as (`blockTag`). */
-const BLOCK_TAGS = new Set(["span", "div"]);
+/** The elements a widget's one paragraph may be drawn as (`blockTag`), or `none`, its words alone. */
+const BLOCK_TAGS = new Set(["span", "div", "none"]);
+/** The mark a hover text is drawn as (components/WpShellNote.astro). */
+const NOTE_MARK = "wpShellNote";
+/** The longest hover text drawn. */
+const NOTE_MAX = 2000;
 /** Blocks a widget draws its own `body` instead of: its placeholder, a divider's break, and an element of a page's own layout that shows nothing. */
 const PLACEHOLDERS = new Set(["elementor-widget", "break", "layout-element"]);
 
@@ -169,6 +183,114 @@ function nest(wraps: unknown, children: SkeletonNode[]): SkeletonNode[] {
 const widgetIdOf = (b: Block): string | null =>
 	typeof b._key === "string" ? (KEY.exec(b._key)?.[1] ?? null) : null;
 
+/** Class characters only, as an element's classes are checked. */
+const classNames = (v: unknown): string =>
+	typeof v === "string"
+		? v
+				.split(SPACES)
+				.filter((c) => CLASS.test(c))
+				.join(" ")
+		: "";
+
+/** A widget's link classes by href, each checked; none for a stored value that is not a map of strings. */
+function linkClassesOf(v: unknown): Record<string, string> {
+	const out: Record<string, string> = {};
+	if (!isObject(v)) return out;
+	for (const [href, cls] of Object.entries(v)) {
+		const checkedCls = classNames(cls);
+		if (checkedCls) out[href] = checkedCls;
+	}
+	return out;
+}
+
+interface Note {
+	text: string;
+	title: string;
+	class: string;
+}
+
+/** A widget's hover texts, each checked. */
+function notesOf(v: unknown): Note[] {
+	if (!Array.isArray(v)) return [];
+	return v.flatMap((n) =>
+		isObject(n) &&
+		typeof n.text === "string" &&
+		n.text !== "" &&
+		typeof n.title === "string" &&
+		n.title !== "" &&
+		n.title.length <= NOTE_MAX
+			? [{ text: n.text, title: n.title, class: classNames(n.class) }]
+			: [],
+	);
+}
+
+type Span = Record<string, unknown> & { text: string; marks: unknown[] };
+
+/** The spans with one split at `at` characters into their words, so a mark can start or end there. */
+function splitAt(spans: Span[], at: number): Span[] {
+	let pos = 0;
+	return spans.flatMap((s) => {
+		const start = pos;
+		pos += s.text.length;
+		if (at <= start || at >= pos) return [s];
+		return [
+			{ ...s, text: s.text.slice(0, at - start) },
+			{ ...s, _key: `${String(s._key)}-${at}`, text: s.text.slice(at - start) },
+		];
+	});
+}
+
+/**
+ * A text block with what the widget drew on it: its links' classes on their
+ * markDefs, and each hover text not yet drawn as a mark on the first words of
+ * the block that are its words. A block holding anything but spans is left
+ * its words as they are.
+ */
+function decorated(
+	b: Block,
+	links: Record<string, string>,
+	notes: Note[],
+	drawn: Set<Note>,
+): Block {
+	const defs = Array.isArray(b.markDefs) ? b.markDefs.filter(isObject) : [];
+	const markDefs = defs.map((d) =>
+		d._type === "link" && typeof d.href === "string" && Object.hasOwn(links, d.href)
+			? { ...d, skeletonClass: links[d.href] }
+			: d,
+	);
+	const children: unknown[] = Array.isArray(b.children) ? b.children : [];
+	const isSpan = (c: unknown): c is Span =>
+		isObject(c) && c._type === "span" && typeof c.text === "string" && Array.isArray(c.marks);
+	let spans = children.filter(isSpan);
+	if (spans.length !== children.length || notes.every((n) => drawn.has(n)))
+		return { ...b, markDefs };
+	notes.forEach((note, i) => {
+		if (drawn.has(note)) return;
+		const at = spans
+			.map((s) => s.text)
+			.join("")
+			.indexOf(note.text);
+		if (at < 0) return;
+		const end = at + note.text.length;
+		spans = splitAt(splitAt(spans, at), end);
+		const key = `wp-shell-note-${i}`;
+		markDefs.push({
+			_type: NOTE_MARK,
+			_key: key,
+			title: note.title,
+			...(note.class ? { class: note.class } : {}),
+		});
+		let pos = 0;
+		spans = spans.map((s) => {
+			const start = pos;
+			pos += s.text.length;
+			return start >= at && pos <= end && s.text !== "" ? { ...s, marks: [...s.marks, key] } : s;
+		});
+		drawn.add(note);
+	});
+	return { ...b, markDefs, children: spans };
+}
+
 /** A widget's blocks: a heading's paragraphs carry its title class (WpShellBlock draws `skeletonClass`). */
 function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 	if (Array.isArray(w.body) && blocks.every((b) => PLACEHOLDERS.has(String(b._type))))
@@ -177,14 +299,31 @@ function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 	if (shown.length === 0) return [];
 	const cls = typeof w.blockClass === "string" ? w.blockClass : null;
 	const tag = typeof w.blockTag === "string" && BLOCK_TAGS.has(w.blockTag) ? w.blockTag : null;
-	if (!cls && !tag) return [{ blocks: shown }];
+	const links = linkClassesOf(w.linkClasses);
+	const notes = notesOf(w.notes);
+	const linked = Object.keys(links).length > 0;
+	if (!cls && !tag && !linked && notes.length === 0) return [{ blocks: shown }];
+	const drawn = new Set<Note>();
 	return [
 		{
 			blocks: shown.map((b) =>
 				b._type === "block"
-					? { ...b, ...(cls ? { skeletonClass: cls } : {}), ...(tag ? { skeletonTag: tag } : {}) }
-					: b._type === "image" && cls
-						? { ...b, skeletonClass: cls }
+					? decorated(
+							{
+								...b,
+								...(cls ? { skeletonClass: cls } : {}),
+								...(tag ? { skeletonTag: tag } : {}),
+							},
+							links,
+							notes,
+							drawn,
+						)
+					: b._type === "image" && (cls || linked)
+						? {
+								...b,
+								...(cls ? { skeletonClass: cls } : {}),
+								...(linked ? { skeletonLinkClasses: links } : {}),
+							}
 						: b,
 			),
 		},

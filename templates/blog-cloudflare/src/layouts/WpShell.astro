@@ -42,6 +42,8 @@ import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
 import WpShellBlock from "../components/WpShellBlock.astro";
 import WpShellImage from "../components/WpShellImage.astro";
+import WpShellLink from "../components/WpShellLink.astro";
+import WpShellNote from "../components/WpShellNote.astro";
 import WpShellEmbed from "../components/WpShellEmbed.astro";
 import WpShellForm from "../components/WpShellForm.astro";
 import WpShellSkeleton from "../components/WpShellSkeleton.astro";
@@ -218,10 +220,12 @@ const commentsInLayout = pieces.some((piece) => "comments" in piece);
 
 // WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
 // video embedded from a link in classic content, and a form imported from the site's form plugin,
-// in that plugin's markup (EmDash's form, its submit path).
+// in that plugin's markup (EmDash's form, its submit path). A link of a page's own layout wears the
+// class the page drew on it, and its hover texts are drawn as titles (../utils/wp-skeleton.ts).
 const components = {
 	block: WpShellBlock,
 	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
+	mark: { link: WpShellLink, wpShellNote: WpShellNote },
 };
 
 // A page a builder made (Elementor) is drawn in the builder's own elements, which the page's own

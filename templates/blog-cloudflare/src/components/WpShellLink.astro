@@ -1,0 +1,31 @@
+---
+/**
+ * A link in a migrated WordPress design (layouts/WpShell.astro), drawn as
+ * EmDash's own link mark draws it (packages/core/src/components/marks/Link.astro),
+ * with the class the page drew on it: ../utils/wp-skeleton.ts puts a page's
+ * own layout's link class on the link's markDef as `skeletonClass` as the page
+ * is drawn (a sidebar's `content-section__link`). Only class characters are
+ * drawn.
+ */
+import { sanitizeHref } from "emdash/ui";
+
+interface Props {
+	node: { markDef?: { href?: string; blank?: boolean; skeletonClass?: unknown } };
+}
+
+const { node } = Astro.props;
+const href = sanitizeHref(node?.markDef?.href);
+// A same-page anchor never opens a new tab, as EmDash's own link.
+const blank = !href.startsWith("#") && node?.markDef?.blank;
+const CLASS_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+const skeletonClass = node?.markDef?.skeletonClass;
+const cls =
+	typeof skeletonClass === "string"
+		? skeletonClass
+				.split(/\s+/)
+				.filter((c) => CLASS_NAME.test(c))
+				.join(" ") || undefined
+		: undefined;
+---
+
+<a href={href} target={blank ? "_blank" : undefined} rel={blank ? "noopener noreferrer" : undefined} class={cls}><slot /></a>

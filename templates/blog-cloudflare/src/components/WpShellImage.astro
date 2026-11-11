@@ -15,8 +15,11 @@
  * `-300x256` size is the upload it was cut from. A picture of a page's own
  * layout that the page drew with a class (a portrait, a logo, an icon:
  * `skeletonClass`, ../utils/wp-skeleton.ts) is drawn as the page drew it too,
- * an `<img>` with that class, in its link when it has one. Every other image
- * is EmDash's own.
+ * an `<img>` with that class, in its link when it has one. A picture whose
+ * link the page drew with a class (`skeletonLinkClasses`, by href: a badge in
+ * a paragraph, floated by the theme's rule for that class) is drawn in that
+ * link, with its class, as the page drew it. Every other image is EmDash's
+ * own.
  */
 import type { ComponentProps } from "astro/types";
 import { normalizeImageLink, PTImage } from "emdash/ui";
@@ -56,10 +59,32 @@ const link =
 	href !== undefined && (HTTP_URL.test(href) || (href.startsWith("/") && !href.startsWith("//"))) ? href : null;
 // "Open in a new tab", as EmDash's own image draws it.
 const blank = link !== null && imageLink?.blank === true;
+// The class the page drew on the picture's link, by its href (class characters only).
+const linkClasses: unknown = (node as { skeletonLinkClasses?: unknown } | undefined)?.skeletonLinkClasses;
+const linkClassOf: unknown =
+	link !== null && src !== null && !node?.caption && typeof linkClasses === "object" && linkClasses !== null && Object.hasOwn(linkClasses, link)
+		? (linkClasses as Record<string, unknown>)[link]
+		: undefined;
+const linkClass =
+	typeof linkClassOf === "string"
+		? linkClassOf
+				.split(/\s+/)
+				.filter((c) => CLASS_NAME.test(c))
+				.join(" ")
+		: "";
 ---
 
 {
-	own ? (
+	linkClass ? (
+		<a
+			href={link}
+			target={blank ? "_blank" : undefined}
+			rel={blank ? "noopener noreferrer" : undefined}
+			class={linkClass}
+		>
+			<img class={own || undefined} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
+		</a>
+	) : own ? (
 		link ? (
 			<a href={link} target={blank ? "_blank" : undefined} rel={blank ? "noopener noreferrer" : undefined}>
 				<img class={own} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
