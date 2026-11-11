@@ -8,6 +8,7 @@
  * form" fail in half its runs while they shared PortableTextEditor.test.tsx).
  */
 
+import { Slice } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/react";
 import * as React from "react";
@@ -318,4 +319,44 @@ describe("a page whose first block is a layout block", () => {
 		expect(String(list.attrs.listId)).not.toMatch(/^legacy:/);
 	});
 
+	it("keeps a layout block that words inserted by a command land on, and puts them after it, in one undo step", async () => {
+		// execCommand("insertText") edits the DOM with no key press, no beforeinput and no paste: only the
+		// transaction ProseMirror reads back from the DOM shows the block gone.
+		const onChange = vi.fn();
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage(), onChange });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		document.execCommand("insertText", false, "x");
+		await vi.waitFor(() => expect(editor.state.doc.textContent).toContain("x"), { timeout: 2000 });
+		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "paragraph", "pluginBlock", "paragraph"]);
+		expect(editor.state.doc.child(0).attrs.emdashPortableTextKey).toBe("ls-0");
+		expect(editor.state.doc.child(1).textContent).toBe("x");
+		await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 2000 });
+		const saved = onChange.mock.calls.at(-1)![0] as Array<{ _type: string; _key: string }>;
+		expect(saved[0]).toMatchObject({ _type: "layout-section", _key: "ls-0" });
+		// One undo takes the words back, and the page is as it was.
+		editor.commands.undo();
+		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "pluginBlock", "paragraph"]);
+		expect(editor.state.doc.child(0).attrs.emdashPortableTextKey).toBe("ls-0");
+	});
+
+	it("keeps a selected layout block a paste of nothing would replace", async () => {
+		const { editor } = await renderAndGetEditor({ value: layoutPage() });
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		editor.view.dispatch(
+			editor.state.tr.replaceSelection(Slice.empty).setMeta("uiEvent", "paste"),
+		);
+		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "pluginBlock", "paragraph"]);
+		expect(editor.state.doc.child(0).attrs.emdashPortableTextKey).toBe("ls-0");
+	});
+
+	it("still deletes a selected layout block on Backspace, which means it", async () => {
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		await userEvent.keyboard("{Backspace}");
+		await vi.waitFor(() => expect(types(editor)).toEqual(["paragraph", "pluginBlock", "paragraph"]), {
+			timeout: 2000,
+		});
+	});
 });
