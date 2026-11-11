@@ -17,6 +17,10 @@ import {
 	listTablesLike,
 	tableExists,
 } from "../database/dialect-helpers.js";
+import {
+	installImportBaselineCollectionTriggers,
+	removeImportBaselineCollectionTriggers,
+} from "../database/import-baseline-triggers.js";
 import { withTransaction } from "../database/transaction.js";
 import type { CollectionTable, Database, FieldTable } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
@@ -1149,12 +1153,25 @@ export class SchemaRegistry {
 	async deleteCollection(slug: string, options?: { force?: boolean }): Promise<void> {
 		await this.assertCollectionDeletable(slug, options);
 		const existing = await this.getCollection(slug);
-		const activated = await deleteActivatedMediaUsageCollection(this.db, {
-			collectionId: existing?.id,
-			collectionSlug: slug,
-			forceDelete: options?.force === true,
-		});
+		await removeImportBaselineCollectionTriggers(this.db, slug);
+		let activated;
+		try {
+			activated = await deleteActivatedMediaUsageCollection(this.db, {
+				collectionId: existing?.id,
+				collectionSlug: slug,
+				forceDelete: options?.force === true,
+			});
+		} catch (error) {
+			if (
+				(await tableExists(this.db, this.getTableName(slug))) &&
+				!(await isMediaUsageCollectionSlugDeleting(this.db, slug))
+			) {
+				await installImportBaselineCollectionTriggers(this.db, slug);
+			}
+			throw error;
+		}
 		if (activated === "has_content") {
+			await installImportBaselineCollectionTriggers(this.db, slug);
 			throw new SchemaError(
 				`Collection "${slug}" has content. Use force: true to delete.`,
 				"COLLECTION_HAS_CONTENT",
@@ -1185,7 +1202,9 @@ export class SchemaRegistry {
 			});
 			await deleteContentMediaUsageCollection(this.db, slug);
 		} catch (error) {
-			if (contentTableDropped && !(await tableExists(this.db, this.getTableName(slug)))) {
+			if (await tableExists(this.db, this.getTableName(slug))) {
+				await installImportBaselineCollectionTriggers(this.db, slug);
+			} else if (contentTableDropped) {
 				await deleteContentMediaUsageCollection(this.db, slug);
 			}
 			throw error;
@@ -1869,6 +1888,7 @@ export class SchemaRegistry {
 		await table
 			.addUniqueConstraint(`${tableName}_slug_locale_unique`, ["slug", "locale"])
 			.execute();
+		await installImportBaselineCollectionTriggers(conn, slug);
 
 		const createIndex = options.ifNotExists ? sql`CREATE INDEX IF NOT EXISTS` : sql`CREATE INDEX`;
 		const createUniqueIndex = options.ifNotExists

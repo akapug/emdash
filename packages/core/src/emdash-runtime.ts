@@ -36,6 +36,7 @@ import {
 } from "./api/handlers/staged-references.js";
 import { validateRev } from "./api/rev.js";
 import { getSiteBaseUrl } from "./api/site-url.js";
+import type { ApiResult } from "./api/types.js";
 import type {
 	EmDashConfig,
 	PluginAdminPage,
@@ -62,6 +63,10 @@ import { AuditRepository } from "./database/repositories/audit.js";
 import { CommentRepository } from "./database/repositories/comment.js";
 import type { CommentStatus } from "./database/repositories/comment.js";
 import { ContentRepository } from "./database/repositories/content.js";
+import {
+	ImportSyncRepository,
+	type ImportSyncResult,
+} from "./database/repositories/import-sync.js";
 import { RevisionRepository } from "./database/repositories/revision.js";
 import { selectTaxonomyDefs } from "./database/repositories/taxonomy-def.js";
 import { ContentMutationConflictError } from "./database/repositories/types.js";
@@ -73,6 +78,12 @@ import type { ImageValue } from "./fields/types.js";
 import { getI18nConfig, resolveContentCreateLocale } from "./i18n/config.js";
 import { repairLocaleCasing } from "./i18n/repair-locale-casing.js";
 import { warnAboutUnconfiguredTaxonomyLocales } from "./i18n/taxonomy-locale-diagnostic.js";
+import {
+	hashImportSyncRequest,
+	importSyncRequestSchema,
+	IMPORT_SYNC_VERSION,
+	type ImportSyncRequest,
+} from "./import/sync.js";
 import { normalizeMediaValue } from "./media/normalize.js";
 import type { MediaProvider, MediaProviderCapabilities } from "./media/types.js";
 import { activateMediaUsageCapture } from "./media/usage/activation.js";
@@ -546,7 +557,7 @@ function beforeSaveFailure(error: unknown) {
 				error: {
 					code: ErrorCode.SAVE_REJECTED,
 					message: error.message,
-					details: sandbox,
+					details: { ...sandbox },
 				},
 			};
 		}
@@ -3337,6 +3348,165 @@ export class EmDashRuntime {
 			console.error("[emdash] draft hydration failed:", error);
 			return result;
 		}
+	}
+
+	async getImportSyncCapability(
+		collection?: string,
+	): Promise<{ version: typeof IMPORT_SYNC_VERSION; available: boolean }> {
+		let available = await new ImportSyncRepository(this.db).supports(collection);
+		if (available && collection !== undefined) {
+			const schema = await this.schemaRegistry.getCollectionWithFields(collection);
+			available = schema?.supports?.includes("revisions") ?? false;
+		}
+		return { version: IMPORT_SYNC_VERSION, available };
+	}
+
+	async handleImportSync(
+		request: ImportSyncRequest,
+		actor: ActorInfo,
+	): Promise<ApiResult<ImportSyncResult>> {
+		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
+			return {
+				success: false,
+				error: { code: "FORBIDDEN", message: "Import permission required" },
+			};
+		}
+		const parsed = importSyncRequestSchema.safeParse(request);
+		if (!parsed.success) {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid import sync request" },
+			};
+		}
+		request = parsed.data;
+		try {
+			request.locale = resolveContentCreateLocale(request.locale);
+		} catch {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid or unconfigured import locale" },
+			};
+		}
+		actor = { ...actor };
+		const repo = new ImportSyncRepository(this.db);
+		if (!(await repo.supports(request.collection))) {
+			return { success: true, data: { state: "unknown", reason: "unsupported_capability" } };
+		}
+		const requestHash = await hashImportSyncRequest(request, actor.id);
+		const input = { ...request, requestHash, authorId: actor.id };
+		const replay = await repo.lookup(request.operationId, input);
+		if (replay) return { success: true, data: replay };
+
+		const collectionInfo = await this.schemaRegistry.getCollectionWithFields(request.collection);
+		if (!collectionInfo?.supports?.includes("revisions")) {
+			return { success: true, data: { state: "unknown", reason: "revisions_required" } };
+		}
+		const contentRepo = new ContentRepository(this.db);
+		const existing = request.entryId
+			? await contentRepo.findById(request.collection, request.entryId)
+			: null;
+		const baseline = await this.db
+			.selectFrom("_emdash_import_baselines")
+			.selectAll()
+			.where("source_site", "=", request.source.site)
+			.where("source_type", "=", request.source.type)
+			.where("source_id", "=", request.source.id)
+			.where("locale", "=", request.locale)
+			.executeTakeFirst();
+		if (request.entryId) {
+			if (
+				!baseline ||
+				!existing ||
+				baseline.collection !== request.collection ||
+				baseline.entry_id !== request.entryId
+			) {
+				return { success: true, data: { state: "unknown", reason: "baseline_missing" } };
+			}
+			if (
+				baseline.customer_owned !== 0 ||
+				existing.version !== request.expectedVersion ||
+				baseline.version !== existing.version ||
+				existing.draftRevisionId ||
+				existing.liveRevisionId !== baseline.live_revision_id ||
+				existing.locale !== request.locale ||
+				existing.status !== "published" ||
+				request.sequence <= baseline.last_sequence
+			) {
+				return { success: true, data: { state: "conflict", reason: "baseline_changed" } };
+			}
+		} else if (
+			baseline ||
+			(await contentRepo.findBySlugIncludingTrashed(
+				request.collection,
+				request.slug,
+				request.locale,
+			))
+		) {
+			return { success: true, data: { state: "conflict", reason: "source_or_slug_exists" } };
+		}
+		let data = request.data;
+		if (this.hooks.hasHooks("content:beforeSave")) {
+			try {
+				const result = await this.hooks.runContentBeforeSave(
+					data,
+					request.collection,
+					!request.entryId,
+					request.entryId,
+					actor,
+				);
+				data = result.content;
+			} catch (error) {
+				return beforeSaveFailure(error);
+			}
+		}
+		// A full replacement must clear omitted optional fields in both the live
+		// row and revision, rather than retaining unrepresented live values.
+		data = { ...data };
+		for (const field of collectionInfo.fields) {
+			if (!Object.hasOwn(data, field.slug)) data[field.slug] = null;
+		}
+		const blockTypes = collectionInfo.fields.some((field) => field.type === "blocks")
+			? await resolveBlockTypes(this.db)
+			: undefined;
+		try {
+			data = await normalizeBlocksData(
+				this.db,
+				collectionInfo,
+				data,
+				existing?.data,
+				{},
+				false,
+				blockTypes,
+			);
+			data = await this.normalizeFieldValues(request.collection, data, collectionInfo, blockTypes);
+		} catch (error) {
+			if (error instanceof SchemaError) {
+				return {
+					success: false,
+					error: { code: error.code, message: error.message, details: error.details },
+				};
+			}
+			throw error;
+		}
+		const { validateContentData } = await import("./api/handlers/validation.js");
+		const validation = await validateContentData(this.db, request.collection, data, {
+			partial: false,
+		});
+		if (!validation.ok) return { success: false, error: validation.error };
+
+		// The repository rechecks ownership and the caller's version inside the atomic
+		// write. A hook or editor save in the preparation window cannot grant a new base.
+		const result = await repo.apply({ ...input, data });
+		if (result.state === "applied" && !result.replayed) {
+			await this.refreshContentUsageAfterSuccessfulWrite(request.collection, [result.entryId]);
+			this.runAfterSaveHooks(
+				{ ...data, id: result.entryId, _slug: request.slug },
+				request.collection,
+				!request.entryId,
+				actor,
+			);
+		}
+		return { success: true, data: result };
 	}
 
 	async handleContentCreate(
