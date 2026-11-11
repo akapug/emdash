@@ -11,7 +11,7 @@ import { TableMap } from "@tiptap/pm/tables";
 import type { Editor } from "@tiptap/react";
 import * as React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { userEvent } from "vitest/browser";
+import { cdp, userEvent } from "vitest/browser";
 
 import type { PluginBlockDef } from "../../src/components/PortableTextEditor";
 import {
@@ -2085,5 +2085,87 @@ describe("a page whose first block is a layout block", () => {
 			"paragraph",
 		]);
 		expect(editor.state.doc.child(3).textContent).toBe("pasted words");
+	});
+
+	it("keeps a layout block that words from an input method land on, and puts them after it", async () => {
+		// A phone keyboard, dictation, an emoji picker or an input method's commit inserts words without a key press.
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		await cdp().send("Input.insertText", { text: "x" });
+		await vi.waitFor(() => expect(editor.state.doc.child(1).textContent).toBe("x"), {
+			timeout: 2000,
+		});
+		expect(types(editor)).toEqual([
+			"pluginBlock",
+			"paragraph",
+			"paragraph",
+			"pluginBlock",
+			"paragraph",
+		]);
+	});
+
+	it("keeps a layout block a composition starts on, and puts the composed words after it", async () => {
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		await cdp().send("Input.imeSetComposition", { text: "に", selectionStart: 1, selectionEnd: 1 });
+		await cdp().send("Input.imeSetComposition", {
+			text: "にほ",
+			selectionStart: 2,
+			selectionEnd: 2,
+		});
+		await cdp().send("Input.insertText", { text: "日本" });
+		await vi.waitFor(() => expect(editor.state.doc.child(1).textContent).toBe("日本"), {
+			timeout: 2000,
+		});
+		expect(types(editor)).toEqual([
+			"pluginBlock",
+			"paragraph",
+			"paragraph",
+			"pluginBlock",
+			"paragraph",
+		]);
+	});
+
+	it("leaves the page as it is when an empty paste lands on a selected layout block", async () => {
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		const paste = new Event("paste", { bubbles: true, cancelable: true });
+		Object.defineProperty(paste, "clipboardData", {
+			value: { files: [], items: [], types: [], getData: () => "" },
+		});
+		editor.view.dom.dispatchEvent(paste);
+		// With nothing to paste, ProseMirror reads the clipboard again through a hidden element, 50 ms on.
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "pluginBlock", "paragraph"]);
+	});
+
+	it("gives a numbered list pasted onto a selected layout block its own identity, as a paste anywhere else does", async () => {
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		const html = '<ol start="3"><li><p>a</p></li><li><p>b</p></li></ol>';
+		const paste = new Event("paste", { bubbles: true, cancelable: true });
+		Object.defineProperty(paste, "clipboardData", {
+			value: {
+				files: [],
+				items: [],
+				types: ["text/html"],
+				getData: (type: string) => (type === "text/html" ? html : ""),
+			},
+		});
+		editor.view.dom.dispatchEvent(paste);
+		expect(types(editor)).toEqual([
+			"pluginBlock",
+			"orderedList",
+			"paragraph",
+			"pluginBlock",
+			"paragraph",
+		]);
+		const list = editor.state.doc.child(1);
+		expect(list.attrs.listStart).toBe(3);
+		expect(String(list.attrs.listId)).not.toMatch(/^legacy:/);
 	});
 });
