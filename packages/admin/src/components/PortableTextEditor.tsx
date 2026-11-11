@@ -93,7 +93,7 @@ import Subscript from "@tiptap/extension-subscript";
 import Superscript from "@tiptap/extension-superscript";
 import TextAlign from "@tiptap/extension-text-align";
 import Typography from "@tiptap/extension-typography";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode, Slice } from "@tiptap/pm/model";
 import {
 	AllSelection,
 	NodeSelection,
@@ -105,7 +105,6 @@ import {
 	type Transaction,
 } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
-import { ReplaceAroundStep, ReplaceStep } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 import { useEditor, EditorContent, useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -4459,16 +4458,24 @@ function openParagraphAfterSelectedPluginBlock(view: EditorView, text: string): 
  * no words; a whole document set at once (the editor's content replaced) is never a block's loss.
  */
 function wordsOrPasteReplaced(transactions: readonly Transaction[]): boolean {
-	if (transactions.some((tr) => tr.getMeta("history$") || ["cut", "drop"].includes(tr.getMeta("uiEvent"))))
+	if (
+		transactions.some(
+			(tr) => tr.getMeta("history$") || ["cut", "drop"].includes(tr.getMeta("uiEvent")),
+		)
+	)
 		return false;
 	return transactions.some(
 		(tr) =>
 			tr.getMeta("uiEvent") === "paste" ||
 			tr.steps.some((step, i) => {
-				if (!(step instanceof ReplaceStep || step instanceof ReplaceAroundStep)) return false;
+				// By shape, not `instanceof`: the editor's steps may come from another copy of the
+				// transform package than the one this module would import.
+				const { stepType } = step.toJSON() as { stepType?: string };
+				if (stepType !== "replace" && stepType !== "replaceAround") return false;
+				const { from, to, slice } = step as unknown as { from: number; to: number; slice: Slice };
 				const before = tr.docs[i];
-				if (before && step.from === 0 && step.to === before.content.size) return false;
-				const words = step.slice.content;
+				if (before && from === 0 && to === before.content.size) return false;
+				const words = slice.content;
 				return words.textBetween(0, words.size, "\n", "\n") !== "";
 			}),
 	);
@@ -4476,7 +4483,9 @@ function wordsOrPasteReplaced(transactions: readonly Transaction[]): boolean {
 
 /** A migrated page's own layout block (`layout-section`, `layout-element`): it holds the page's design. */
 function isLayoutBlock(node: ProseMirrorNode): boolean {
-	return node.type.name === "pluginBlock" && String(node.attrs.blockType ?? "").startsWith("layout-");
+	return (
+		node.type.name === "pluginBlock" && String(node.attrs.blockType ?? "").startsWith("layout-")
+	);
 }
 
 /** Whether `doc` still holds the plugin block `block`: its Portable Text key, or the node itself. */
@@ -4485,7 +4494,10 @@ function holdsPluginBlock(doc: ProseMirrorNode, block: ProseMirrorNode): boolean
 	let found = false;
 	doc.descendants((node) => {
 		if (found) return false;
-		if (node.type === block.type && (key ? node.attrs[PORTABLE_TEXT_KEY_ATTR] === key : node.eq(block)))
+		if (
+			node.type === block.type &&
+			(key ? node.attrs[PORTABLE_TEXT_KEY_ATTR] === key : node.eq(block))
+		)
 			found = true;
 		return !found;
 	});
@@ -4543,7 +4555,8 @@ const PluginBlockSelectionGuard = Extension.create({
 					if (!transactions.some((tr) => tr.docChanged)) return null;
 					const lost: Array<{ node: ProseMirrorNode; pos: number }> = [];
 					oldState.doc.forEach((node, pos) => {
-						if (isLayoutBlock(node) && !holdsPluginBlock(newState.doc, node)) lost.push({ node, pos });
+						if (isLayoutBlock(node) && !holdsPluginBlock(newState.doc, node))
+							lost.push({ node, pos });
 					});
 					if (lost.length === 0 || !wordsOrPasteReplaced(transactions)) return null;
 					const tr = newState.tr;

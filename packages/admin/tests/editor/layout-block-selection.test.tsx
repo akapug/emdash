@@ -345,9 +345,7 @@ describe("a page whose first block is a layout block", () => {
 	it("keeps a selected layout block a paste of nothing would replace", async () => {
 		const { editor } = await renderAndGetEditor({ value: layoutPage() });
 		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
-		editor.view.dispatch(
-			editor.state.tr.replaceSelection(Slice.empty).setMeta("uiEvent", "paste"),
-		);
+		editor.view.dispatch(editor.state.tr.replaceSelection(Slice.empty).setMeta("uiEvent", "paste"));
 		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "pluginBlock", "paragraph"]);
 		expect(editor.state.doc.child(0).attrs.emdashPortableTextKey).toBe("ls-0");
 	});
@@ -357,8 +355,11 @@ describe("a page whose first block is a layout block", () => {
 		await focusEditor(pm);
 		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
 		await userEvent.keyboard("{Backspace}");
-		await vi.waitFor(() => expect(types(editor)).toEqual(["paragraph", "pluginBlock", "paragraph"]), {
-			timeout: 2000,
-		});
+		await vi.waitFor(
+			() => expect(types(editor)).toEqual(["paragraph", "pluginBlock", "paragraph"]),
+			{
+				timeout: 2000,
+			},
+		);
 	});
 });
