@@ -34,8 +34,8 @@
  * `linkClasses`, the class of each link by its href (a text link's markDef
  * carries it as `skeletonClass`, a picture as `skeletonLinkClasses`), and
  * `notes`, a hover text on words of the widget, drawn as a `wpShellNote` mark
- * on those words (the first place they are found; words the owner changed are
- * left as they are).
+ * on those words (the first place they are found, past any earlier hover text
+ * on the same words; words the owner changed are left as they are).
  *
  * This file knows no builder: it groups the blocks and checks every element
  * it is asked to draw against one list (a tag from TAGS, classes of class
@@ -264,16 +264,21 @@ function decorated(
 	let spans = children.filter(isSpan);
 	if (spans.length !== children.length || notes.every((n) => drawn.has(n)))
 		return { ...b, markDefs };
+	// Two hover texts on the same words are drawn in the page's order, each past the one before it.
+	const from = new Map<string, number>();
 	notes.forEach((note, i) => {
 		if (drawn.has(note)) return;
 		const at = spans
 			.map((s) => s.text)
 			.join("")
-			.indexOf(note.text);
+			.indexOf(note.text, from.get(note.text) ?? 0);
 		if (at < 0) return;
 		const end = at + note.text.length;
+		from.set(note.text, end);
 		spans = splitAt(splitAt(spans, at), end);
-		const key = `wp-shell-note-${i}`;
+		// Named apart from every mark the block holds, so it never takes another mark's place.
+		let key = `wp-shell-note-${i}`;
+		while (markDefs.some((d) => d._key === key)) key = `${key}-n`;
 		markDefs.push({
 			_type: NOTE_MARK,
 			_key: key,
