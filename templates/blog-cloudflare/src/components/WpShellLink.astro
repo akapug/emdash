@@ -4,13 +4,14 @@
  * EmDash's own link mark draws it (packages/core/src/components/marks/Link.astro),
  * with the class the page drew on it: ../utils/wp-skeleton.ts puts a page's
  * own layout's link class on the link's markDef as `skeletonClass` as the page
- * is drawn (a sidebar's `content-section__link`). Only class characters are
- * drawn.
+ * is drawn (a sidebar's `content-section__link`), and the link's own hover
+ * text as `skeletonTitle`. Only class characters are drawn; the title is
+ * drawn as an attribute's text.
  */
 import { sanitizeHref } from "emdash/ui";
 
 interface Props {
-	node: { markDef?: { href?: string; blank?: boolean; skeletonClass?: unknown } };
+	node: { markDef?: { href?: string; blank?: boolean; skeletonClass?: unknown; skeletonTitle?: unknown } };
 }
 
 const { node } = Astro.props;
@@ -26,6 +27,7 @@ const cls =
 				.filter((c) => CLASS_NAME.test(c))
 				.join(" ") || undefined
 		: undefined;
+const title = typeof node?.markDef?.skeletonTitle === "string" ? node.markDef.skeletonTitle || undefined : undefined;
 ---
 
-<a href={href} target={blank ? "_blank" : undefined} rel={blank ? "noopener noreferrer" : undefined} class={cls}><slot /></a>
+<a href={href} target={blank ? "_blank" : undefined} rel={blank ? "noopener noreferrer" : undefined} class={cls} title={title}><slot /></a>

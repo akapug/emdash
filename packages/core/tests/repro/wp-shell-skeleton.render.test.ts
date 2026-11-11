@@ -571,8 +571,8 @@ describe("what a page's own layout drew on its words and links", () => {
 
 	// The admin's editor keeps only a link's href and target, so a link's title rides in the skeleton by its href.
 	it("draws a link's title the page drew, by its href, on a text link, as the import stored it and as a save in the admin did", async () => {
-		const titled = (link: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
-			page(undefined, {
+		const titled = (link: Record<string, unknown>, extra: Record<string, unknown> = {}) => [
+			...page(undefined, {
 				l2: {
 					wraps: [wrap("div", "more")],
 					linkTitles: {
@@ -582,28 +582,30 @@ describe("what a page's own layout drew on its words and links", () => {
 					},
 					...extra,
 				},
-			}).concat([
-				{
-					_type: "block",
-					_key: "el-l2",
-					style: "normal",
-					markDefs: [
-						link,
-						{ _type: "link", _key: "o", href: "https://odd.example/" },
-						{ _type: "link", _key: "p", href: "https://plain.example/" },
-					],
-					children: [
-						span("a", "Media", ["m"]),
-						span("b", ", "),
-						span("c", "odd", ["o"]),
-						span("d", " and "),
-						span("e", "plain", ["p"]),
-					],
-				},
-			]);
+			}),
+			{
+				_type: "block",
+				_key: "el-l2",
+				style: "normal",
+				markDefs: [
+					link,
+					{ _type: "link", _key: "o", href: "https://odd.example/" },
+					{ _type: "link", _key: "p", href: "https://plain.example/" },
+				],
+				children: [
+					span("a", "Media", ["m"]),
+					span("b", ", "),
+					span("c", "odd", ["o"]),
+					span("d", " and "),
+					span("e", "plain", ["p"]),
+				],
+			},
+		];
 		const want =
 			'<div class="more"><p><a href="https://media.example/" title="Media &quot;home&quot;">Media</a>, <a href="https://odd.example/">odd</a> and <a href="https://plain.example/">plain</a></p></div>';
-		expect(squash(await render(titled({ _type: "link", _key: "m", href: "https://media.example/" })))).toContain(want);
+		expect(
+			squash(await render(titled({ _type: "link", _key: "m", href: "https://media.example/" }))),
+		).toContain(want);
 		// With a class for the same href, the link wears both.
 		expect(
 			squash(

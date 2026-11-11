@@ -32,7 +32,10 @@
  * links that Portable Text holds no field for rides in the skeleton too, which
  * a save in the admin keeps, and is put on the blocks only as they are drawn:
  * `linkClasses`, the class of each link by its href (a text link's markDef
- * carries it as `skeletonClass`, a picture as `skeletonLinkClasses`), and
+ * carries it as `skeletonClass`, a picture as `skeletonLinkClasses`),
+ * `linkTitles`, the hover text of each text link by its href (its markDef
+ * carries it as `skeletonTitle`; the admin's editor keeps a link's href and
+ * target only), and
  * `notes`, a hover text on words of the widget, drawn as a `wpShellNote` mark
  * on those words (the first place they are found, past any earlier hover text
  * on the same words; words the owner changed are left as they are).
@@ -59,6 +62,7 @@ interface SkeletonWidget {
 	blockTag?: string;
 	body?: SkeletonWrap[];
 	linkClasses?: unknown;
+	linkTitles?: unknown;
 	notes?: unknown;
 }
 
@@ -203,6 +207,16 @@ function linkClassesOf(v: unknown): Record<string, string> {
 	return out;
 }
 
+/** A widget's link titles by href, each a non-empty string no longer than a hover text; none for a stored value that is not a map. */
+function linkTitlesOf(v: unknown): Record<string, string> {
+	const out: Record<string, string> = {};
+	if (!isObject(v)) return out;
+	for (const [href, title] of Object.entries(v)) {
+		if (typeof title === "string" && title !== "" && title.length <= NOTE_MAX) out[href] = title;
+	}
+	return out;
+}
+
 interface Note {
 	text: string;
 	title: string;
@@ -241,7 +255,7 @@ function splitAt(spans: Span[], at: number): Span[] {
 }
 
 /**
- * A text block with what the widget drew on it: its links' classes on their
+ * A text block with what the widget drew on it: its links' classes and titles on their
  * markDefs, and each hover text not yet drawn as a mark on the first words of
  * the block that are its words. A block holding anything but spans is left
  * its words as they are.
@@ -249,13 +263,20 @@ function splitAt(spans: Span[], at: number): Span[] {
 function decorated(
 	b: Block,
 	links: Record<string, string>,
+	titles: Record<string, string>,
 	notes: Note[],
 	drawn: Set<Note>,
 ): Block {
 	const defs = Array.isArray(b.markDefs) ? b.markDefs.filter(isObject) : [];
 	const markDefs = defs.map((d) =>
-		d._type === "link" && typeof d.href === "string" && Object.hasOwn(links, d.href)
-			? { ...d, skeletonClass: links[d.href] }
+		d._type === "link" &&
+		typeof d.href === "string" &&
+		(Object.hasOwn(links, d.href) || Object.hasOwn(titles, d.href))
+			? {
+					...d,
+					...(Object.hasOwn(links, d.href) ? { skeletonClass: links[d.href] } : {}),
+					...(Object.hasOwn(titles, d.href) ? { skeletonTitle: titles[d.href] } : {}),
+				}
 			: d,
 	);
 	const children: unknown[] = Array.isArray(b.children) ? b.children : [];
@@ -311,9 +332,11 @@ function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 	const cls = typeof w.blockClass === "string" ? w.blockClass : null;
 	const tag = typeof w.blockTag === "string" && BLOCK_TAGS.has(w.blockTag) ? w.blockTag : null;
 	const links = linkClassesOf(w.linkClasses);
+	const titles = linkTitlesOf(w.linkTitles);
 	const notes = notesOf(w.notes);
 	const linked = Object.keys(links).length > 0;
-	if (!cls && !tag && !linked && notes.length === 0) return [{ blocks: shown }];
+	if (!cls && !tag && !linked && Object.keys(titles).length === 0 && notes.length === 0)
+		return [{ blocks: shown }];
 	const drawn = new Set<Note>();
 	return [
 		{
@@ -326,6 +349,7 @@ function widgetBlocks(w: SkeletonWidget, blocks: Block[]): SkeletonNode[] {
 								...(tag ? { skeletonTag: tag } : {}),
 							},
 							links,
+							titles,
 							notes,
 							drawn,
 						)

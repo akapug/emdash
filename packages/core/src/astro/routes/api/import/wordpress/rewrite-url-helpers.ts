@@ -154,14 +154,15 @@ function rewriteMarkDefUrls(
 }
 
 /**
- * Rewrite the keys of the link classes a page's own layout keeps in its
- * skeleton (Embark's layout-pt.ts; the blog template's wp-skeleton.ts draws
- * them): each widget's `linkClasses` names a link's class by the link's href,
- * so a key moves with the href it names. A moved key that meets another key
- * of a different class names neither, as the import names no class for links
- * of one href that disagree. Returns how many keys moved.
+ * Rewrite the keys of the link classes and link titles a page's own layout
+ * keeps in its skeleton (Embark's layout-pt.ts; the blog template's
+ * wp-skeleton.ts draws them): each widget's `linkClasses` and `linkTitles`
+ * name a link's class and title by the link's href, so a key moves with the
+ * href it names. A moved key that meets another key of a different value
+ * names neither, as the import names none for links of one href that
+ * disagree. Returns how many keys moved.
  */
-function rewriteSkeletonLinkClasses(
+function rewriteSkeletonLinkKeys(
 	skeleton: unknown,
 	exactMap: Record<string, string>,
 	baseMap: Map<string, string>,
@@ -169,24 +170,26 @@ function rewriteSkeletonLinkClasses(
 	if (!isRecord(skeleton) || !isRecord(skeleton.widgets)) return 0;
 	let rewritten = 0;
 	for (const widget of Object.values(skeleton.widgets)) {
-		if (!isRecord(widget) || !isRecord(widget.linkClasses) || Array.isArray(widget.linkClasses))
-			continue;
-		const classes = widget.linkClasses;
-		const moves = Object.keys(classes).flatMap((href) => {
-			const to = findMatchingUrl(href, exactMap, baseMap);
-			return to && to !== href ? [{ href, to }] : [];
-		});
-		if (moves.length === 0) continue;
-		const out: Record<string, unknown> = { ...classes };
-		for (const { href } of moves) delete out[href];
-		const disagree = new Set<string>();
-		for (const { href, to } of moves) {
-			if (Object.hasOwn(out, to) && out[to] !== classes[href]) disagree.add(to);
-			else out[to] = classes[href];
+		if (!isRecord(widget)) continue;
+		for (const field of ["linkClasses", "linkTitles"] as const) {
+			const byHref = widget[field];
+			if (!isRecord(byHref) || Array.isArray(byHref)) continue;
+			const moves = Object.keys(byHref).flatMap((href) => {
+				const to = findMatchingUrl(href, exactMap, baseMap);
+				return to && to !== href ? [{ href, to }] : [];
+			});
+			if (moves.length === 0) continue;
+			const out: Record<string, unknown> = { ...byHref };
+			for (const { href } of moves) delete out[href];
+			const disagree = new Set<string>();
+			for (const { href, to } of moves) {
+				if (Object.hasOwn(out, to) && out[to] !== byHref[href]) disagree.add(to);
+				else out[to] = byHref[href];
+			}
+			for (const to of disagree) delete out[to];
+			widget[field] = out;
+			rewritten += moves.length;
 		}
-		for (const to of disagree) delete out[to];
-		widget.linkClasses = out;
-		rewritten += moves.length;
 	}
 	return rewritten;
 }
@@ -243,8 +246,8 @@ export function rewritePortableTextUrls(
 			}
 		}
 
-		// Handle the link classes a page's own layout keeps by href in its skeleton
-		linksRewritten += rewriteSkeletonLinkClasses(block.skeleton, exactMap, baseMap);
+		// Handle the link classes and titles a page's own layout keeps by href in its skeleton
+		linksRewritten += rewriteSkeletonLinkKeys(block.skeleton, exactMap, baseMap);
 
 		// Handle a file download block, a button, and the buttons of a buttons block
 		if (
