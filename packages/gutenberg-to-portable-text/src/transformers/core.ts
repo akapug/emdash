@@ -4,6 +4,7 @@
 
 import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
+import { splitExternalForms } from "../external-form.js";
 import {
 	decodeUrlEntities,
 	extractAlt,
@@ -982,17 +983,25 @@ export const pullquote: BlockTransformer = (block, _options, context) => {
 };
 
 /**
- * core/html → htmlBlock (pass through)
+ * core/html → htmlBlock (pass through); a form in it that posts to a payment
+ * provider is the form it is (external-form.ts), the HTML around it htmlBlocks.
  */
 export const html: BlockTransformer = (block, _options, context) => {
-	return [
-		{
-			_type: "htmlBlock",
-			_key: context.generateKey(),
-			html: block.innerHTML.trim(),
-			originalBlockName: "core/html",
-		},
-	];
+	return splitExternalForms(block.innerHTML, context.generateKey).flatMap(
+		(part): PortableTextBlock[] =>
+			"block" in part
+				? [part.block]
+				: part.html.trim() || !block.innerHTML.trim()
+					? [
+							{
+								_type: "htmlBlock",
+								_key: context.generateKey(),
+								html: part.html.trim(),
+								originalBlockName: "core/html",
+							},
+						]
+					: [],
+	);
 };
 
 /**

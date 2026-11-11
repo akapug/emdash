@@ -401,6 +401,9 @@ export function relativizeContentLinks(blocks: PortableTextBlock[], siteUrl: str
 			case "file":
 			case "pullquote":
 				break;
+			// A payment form posts to its provider, never to the source site
+			case "externalForm":
+				break;
 			default:
 				block satisfies never;
 		}

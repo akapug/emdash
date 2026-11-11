@@ -12,6 +12,7 @@ import { parseFragment, serialize, serializeOuter, type DefaultTreeAdapterMap } 
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
+import { externalFormBlock, splitExternalForms } from "./external-form.js";
 import { findIframes, iframeBlock, reopened } from "./iframe.js";
 import {
 	drawsLine,
@@ -44,7 +45,7 @@ import { sanitizeHref } from "./url.js";
 const LINKED_IMAGE = String.raw`<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:\s|<br\s*\/?>)*<img\s+([^>]+)\/?>(?:\s|<br\s*\/?>)*<\/a>`;
 /** A block element, a rule or line break, or an image outside any (the link around it too: groups 4 and 5). */
 const BLOCK_ELEMENT_PATTERN = new RegExp(
-	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
+	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr|form)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
 	"gu",
 );
 /**
@@ -74,7 +75,7 @@ const NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const NBSP_ENTITY_PATTERN = /&nbsp;/g;
 /** A block-level element inside a `<div>`: its paragraphs are the div's content, one block each. */
-const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|table|dl|hr)\b/i;
+const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|table|dl|hr|form)\b/i;
 /** A block-level element inside a quote: the quote holds blocks, not one run of text. */
 const QUOTE_BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr)\b/i;
 /** The one paragraph wpautop wraps a quote's text in */
@@ -160,6 +161,15 @@ export type {
 export { defaultTransformers, fallbackTransformer } from "./transformers/index.js";
 export * as coreTransformers from "./transformers/core.js";
 export * as embedTransformers from "./transformers/embed.js";
+
+// A form that posts to a payment provider, carried as a form; and why one is not.
+export {
+	EXTERNAL_FORM_HOSTS,
+	FORM_PATTERN,
+	externalFormAction,
+	externalFormBlock,
+	externalFormRefusal,
+} from "./external-form.js";
 
 // WordPress's typography, for the text an importer stores beside the content (a title, an excerpt).
 export { printedByWordPress, texturizeNote, texturizes, wptexturize } from "./texturize.js";
@@ -706,6 +716,15 @@ export function htmlToPortableText(
 				break;
 			}
 
+			case "form": {
+				// A form that posts to a payment provider is the form it is (external-form.ts);
+				// any other keeps what it says, as it did before forms were read.
+				const form = externalFormBlock(fullMatch, generateKey);
+				if (form) blocks.push(form);
+				else pushPart(content);
+				break;
+			}
+
 			case "dl": {
 				// each term and description as a div: its text a paragraph, a list in it a list
 				pushPart(content.replace(DEFINITION_TAG_PATTERN, (_, close: string) => `<${close}div>`));
@@ -819,6 +838,16 @@ function transformBlock(
 	const transformer = getTransformer(block.blockName, options.customTransformers);
 	if (block.blockName !== null) {
 		return transformer(block, options, context);
+	}
+
+	// A payment form in freeform HTML is the form it is (external-form.ts); the HTML around it is read as before.
+	const parts = splitExternalForms(block.innerHTML, context.generateKey);
+	if (parts.length > 1 || "block" in parts[0]!) {
+		return parts.flatMap((part) =>
+			"block" in part
+				? [part.block]
+				: transformBlock({ ...block, innerHTML: part.html }, options, context),
+		);
 	}
 
 	// Freeform HTML between blocks is classic content, and WordPress autoembeds URLs in it too.

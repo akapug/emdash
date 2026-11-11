@@ -236,7 +236,48 @@ export type PortableTextBlock =
 	| PortableTextButtonsBlock
 	| PortableTextCoverBlock
 	| PortableTextFileBlock
-	| PortableTextPullquoteBlock;
+	| PortableTextPullquoteBlock
+	| PortableTextExternalFormBlock;
+
+/** What a carried payment form draws, in order. */
+export type PortableTextExternalFormItem =
+	| { _type: "text"; _key: string; text: string }
+	| {
+			_type: "select";
+			_key: string;
+			name: string;
+			options: Array<{ _key: string; value: string; label: string; selected?: true }>;
+			required?: true;
+	  }
+	| {
+			_type: "input";
+			_key: string;
+			inputType: "text" | "email" | "number" | "tel" | "url";
+			name: string;
+			value?: string;
+			placeholder?: string;
+			maxLength?: number;
+			required?: true;
+	  }
+	| { _type: "textarea"; _key: string; name: string }
+	| { _type: "image"; _key: string; src: string; alt: string }
+	| { _type: "submit"; _key: string; label: string; image?: string; name?: string; value?: string };
+
+/**
+ * A form that posts to a payment provider (PayPal's Buy Now, Donate or cart
+ * button), carried as the form it is: the visitor's browser posts it to
+ * `action`, on a host external-form.ts allows, with its hidden fields.
+ */
+export interface PortableTextExternalFormBlock {
+	_type: "externalForm";
+	_key: string;
+	provider: string;
+	action: string;
+	method: "post" | "get";
+	target?: "_blank" | "_top" | "_self";
+	hidden: Array<{ _key: string; name: string; value: string }>;
+	items: PortableTextExternalFormItem[];
+}
 
 /**
  * Options for the conversion

@@ -62,6 +62,7 @@ export { default as Columns } from "./Columns.astro";
 export { default as Break } from "./Break.astro";
 export { default as HtmlBlock } from "./HtmlBlock.astro";
 export { default as Table } from "./Table.astro";
+export { default as ExternalForm } from "./ExternalForm.astro";
 export { default as Button } from "./Button.astro";
 export { default as Buttons } from "./Buttons.astro";
 export { default as Cover } from "./Cover.astro";
@@ -84,6 +85,7 @@ import CodeComponent from "./Code.astro";
 import ColumnsComponent from "./Columns.astro";
 import CoverComponent from "./Cover.astro";
 import EmbedComponent from "./Embed.astro";
+import ExternalFormComponent from "./ExternalForm.astro";
 import FileComponent from "./File.astro";
 import GalleryComponent from "./Gallery.astro";
 import HtmlBlockComponent from "./HtmlBlock.astro";
@@ -101,7 +103,7 @@ import TableComponent from "./Table.astro";
  * - Block styles: paragraph, h1..h6, blockquote — with `textAlign` honoured
  *   as a WordPress-style `has-text-align-{value}` class (#1201)
  * - Block types: image, code, embed, gallery, columns, break, htmlBlock, table,
- *   button, buttons, cover, file, pullquote
+ *   button, buttons, cover, file, pullquote, externalForm
  * - Marks: superscript, subscript, underline, strike-through, link
  */
 export const emdashComponents = {
@@ -119,6 +121,7 @@ export const emdashComponents = {
 		break: BreakComponent,
 		htmlBlock: HtmlBlockComponent,
 		table: TableComponent,
+		externalForm: ExternalFormComponent,
 		button: ButtonComponent,
 		buttons: ButtonsComponent,
 		cover: CoverComponent,
