@@ -311,13 +311,17 @@ export function wptexturize(html: string): string {
  * And only an export WordPress wrote: one whose `<generator>` names another
  * program (a converter that read a Jekyll, Hugo or Substack site as its
  * readers saw it) holds text no WordPress ever printed, so it is stored as
- * written. An export that names no generator is read as WordPress's, as
- * before; WordPress and WordPress.com always name themselves.
+ * written. WordPress's export names it through the feed's `rss2_head` hook
+ * (`<generator>https://wordpress.org/?v=6.8</generator>`, WordPress.com's
+ * `http://wordpress.com/`); ClassicPress, which keeps wptexturize, names
+ * `https://www.classicpress.net/?v=…`. A site that unhooks `the_generator` (a
+ * common hardening snippet) writes none, so an export that names no
+ * generator is read as WordPress's, as before.
  */
 const ENGLISH = /^en(?:[-_]|$)/i;
-const WORDPRESS = /wordpress/i;
+const WORDPRESS = /wordpress|classicpress/i;
 
-/** Whether an export's `<generator>` is WordPress's, or names nothing. */
+/** Whether an export's `<generator>` is WordPress's (or ClassicPress's), or names nothing. */
 export function printedByWordPress(generator: string | null | undefined): boolean {
 	const g = (generator ?? "").trim();
 	return g === "" || WORDPRESS.test(g);

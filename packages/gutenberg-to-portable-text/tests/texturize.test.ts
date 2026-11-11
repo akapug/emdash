@@ -162,6 +162,7 @@ describe("texturizes: WordPress's English quote marks are a site in English's, o
 			"",
 			"https://wordpress.org/?v=6.6.2",
 			"http://wordpress.com/",
+			"https://www.classicpress.net/?v=6.2.6-cp-2.4.1",
 		]) {
 			expect(printedByWordPress(g), String(g)).toBe(true);
 			expect(texturizes("en-US", g), String(g)).toBe(true);

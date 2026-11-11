@@ -54,6 +54,25 @@ describe("parseWxr", () => {
 		expect((await parseWxrString(wxr)).site.generator).toBe("https://wordpress.org/?v=6.6.2");
 		const none = wxr.replace("<generator>https://wordpress.org/?v=6.6.2</generator>", "");
 		expect((await parseWxrString(none)).site.generator).toBeUndefined();
+		expect((await parseWxr(createStream(none))).site.generator).toBeUndefined();
+	});
+
+	it("reads a <generator> in CDATA, with entities or padded with whitespace the same from a stream and from a string", async () => {
+		const at = (generator: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel>
+    <title>Test Site</title>
+    <generator>${generator}</generator>
+  </channel>
+</rss>`;
+		for (const [raw, read] of [
+			["<![CDATA[https://wordpress.org/?v=6.8]]>", "https://wordpress.org/?v=6.8"],
+			["https://wordpress.org/?v=6.8&amp;x=1", "https://wordpress.org/?v=6.8&x=1"],
+			["\n      Embark site import\n    ", "Embark site import"],
+		]) {
+			expect((await parseWxr(createStream(at(raw!)))).site.generator, raw).toBe(read);
+			expect((await parseWxrString(at(raw!))).site.generator, raw).toBe(read);
+		}
 	});
 
 	it("reads the same site metadata from a string, ignoring an item's own title and link", async () => {
