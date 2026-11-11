@@ -345,3 +345,71 @@ describe("a URL map key that carries a query stands for that URL alone", () => {
 		});
 	});
 });
+
+/**
+ * A page drawn in its own layout (Embark's layout-pt.ts) keeps the class the page drew on
+ * each link in its skeleton, by the link's href (templates/blog-cloudflare
+ * src/utils/wp-skeleton.ts `linkClasses`). The rewrite moves the href of a link to an
+ * imported file, so it moves the key that names that href too, or the link loses its class.
+ */
+describe("a layout's link classes follow the links the rewrite moves", () => {
+	const pdf = "https://example.com/wp-content/uploads/2026/01/cv.pdf";
+	const moved = "/_emdash/api/media/file/01CV.pdf";
+	const other = "https://elsewhere.example/";
+	const exact = { [pdf]: moved };
+	const base = buildBaseUrlMap(exact);
+	const carrier = (linkClasses: Record<string, string>) => ({
+		_type: "layout-section",
+		_key: "ls-0",
+		skeleton: { wraps: [], widgets: { l0: { wraps: [], linkClasses } }, added: { wraps: [] } },
+	});
+
+	it("rewrites the key of a moved link's class, with the link's own href, and leaves any other key", () => {
+		const blocks: PortableTextBlock[] = [
+			carrier({ [pdf]: "cv-button", [other]: "pill" }),
+			{
+				_type: "block",
+				_key: "el-l0",
+				children: [],
+				markDefs: [{ _type: "link", _key: "a", href: pdf }],
+			},
+		];
+		expect(rewritePortableTextUrls(blocks, exact, base)).toEqual({
+			changed: true,
+			urlsRewritten: 2,
+		});
+		const skeleton = blocks[0]!.skeleton as {
+			widgets: { l0: { linkClasses: Record<string, string> } };
+		};
+		expect(skeleton.widgets.l0.linkClasses).toEqual({ [moved]: "cv-button", [other]: "pill" });
+		expect(blocks[1]!.markDefs).toEqual([expect.objectContaining({ href: moved })]);
+	});
+
+	it("reports a layout whose only moved URL is a class's key as changed, so it is written", () => {
+		const blocks: PortableTextBlock[] = [carrier({ [pdf]: "cv-button" })];
+		expect(rewritePortableTextUrls(blocks, exact, base)).toEqual({
+			changed: true,
+			urlsRewritten: 1,
+		});
+	});
+
+	it("names no class for a moved key that meets another key of a different class, as the import names none for links that disagree", () => {
+		const blocks: PortableTextBlock[] = [carrier({ [pdf]: "cv-button", [moved]: "pill" })];
+		rewritePortableTextUrls(blocks, exact, base);
+		const skeleton = blocks[0]!.skeleton as {
+			widgets: { l0: { linkClasses: Record<string, string> } };
+		};
+		expect(skeleton.widgets.l0.linkClasses).toEqual({});
+	});
+
+	it("leaves a skeleton it cannot read, and one with no link classes, as they are", () => {
+		const odd = [
+			{ _type: "layout-section", _key: "a", skeleton: { widgets: { l0: { linkClasses: [pdf] } } } },
+			{ _type: "layout-section", _key: "b", skeleton: { widgets: "x" } },
+			{ _type: "layout-section", _key: "c", skeleton: { wraps: [] } },
+		] as PortableTextBlock[];
+		const before = JSON.stringify(odd);
+		expect(rewritePortableTextUrls(odd, exact, base)).toEqual({ changed: false, urlsRewritten: 0 });
+		expect(JSON.stringify(odd)).toBe(before);
+	});
+});
