@@ -377,6 +377,37 @@ describe("a page's own layout in the WpShell skeleton", () => {
 		);
 	});
 
+	it("draws a classed picture's link as the admin's editor stores it, an object, as it draws the import's string", async () => {
+		// The import stores a linked image's link as a string; a save in the admin rewrites it as `{ href, blank? }`.
+		const withLink = (link: unknown) =>
+			LAYOUT.map((b) => (b._key === "el-l1" ? { ...b, link } : b));
+		const logo = (html: string) =>
+			html.match(
+				/<a\b[^>]*><img class="work-list__logo"[^>]*><\/a>|<img class="work-list__logo"[^>]*>/,
+			)?.[0];
+		const imported = logo(squash(await render(LAYOUT)));
+		expect(imported).toMatch(/^<a href="https:\/\/seedco\.example\/"><img class="work-list__logo"/);
+		expect(logo(squash(await render(withLink({ href: "https://seedco.example/" }))))).toBe(
+			imported,
+		);
+		// "open in a new tab", as EmDash's own image draws it
+		expect(
+			logo(squash(await render(withLink({ href: "https://seedco.example/", blank: true })))),
+		).toMatch(
+			/^<a href="https:\/\/seedco\.example\/" target="_blank" rel="noopener noreferrer"><img class="work-list__logo"/,
+		);
+		// a link the page cannot follow safely, in either shape, draws the picture alone
+		for (const bad of [
+			"javascript:alert(1)",
+			{ href: "javascript:alert(1)" },
+			{ href: "//elsewhere.example/" },
+			{ href: "" },
+			{ blank: true },
+		]) {
+			expect(logo(squash(await render(withLink(bad))))).toMatch(/^<img class="work-list__logo"/);
+		}
+	});
+
 	it("never merges elements that name no node, and draws a heading as a heading whatever its tag says", async () => {
 		const html = squash(
 			await render([
