@@ -362,4 +362,67 @@ describe("a page whose first block is a layout block", () => {
 			},
 		);
 	});
+
+	// Two layout blocks between words, and the keys of the plugin blocks in the order the page holds them.
+	const twoLayoutBlocks = () => [
+		textBlock("Before"),
+		{ _type: "layout-section", _key: "ls-a", skeleton: { wraps: [], widgets: {} } },
+		{ _type: "layout-section", _key: "ls-b", skeleton: { wraps: [], widgets: {} } },
+		textBlock("After"),
+	];
+	const blockKeys = (editor: Editor) => {
+		const keys: unknown[] = [];
+		editor.state.doc.forEach((node) => {
+			if (node.type.name === "pluginBlock") keys.push(node.attrs.emdashPortableTextKey);
+		});
+		return keys;
+	};
+
+	it("puts back two layout blocks words took at once, in the order the page held them", async () => {
+		// A DOM edit over a selection that holds both blocks, read back as one replace of the two blocks
+		// by a paragraph of words: both are put back at the same place, so their order is the question.
+		const { editor, pm } = await renderAndGetEditor({ value: twoLayoutBlocks() });
+		await focusEditor(pm);
+		const { doc } = editor.state;
+		const blocksFrom = doc.child(0).nodeSize;
+		const blocksTo = blocksFrom + doc.child(1).nodeSize + doc.child(2).nodeSize;
+		editor.view.dispatch(
+			editor.state.tr.setSelection(TextSelection.create(doc, blocksFrom - 1, blocksTo + 1)),
+		);
+		const { schema } = editor.state;
+		editor.view.dispatch(
+			editor.state.tr.replaceWith(
+				blocksFrom,
+				blocksTo,
+				schema.nodes.paragraph.create(null, schema.text("x")),
+			),
+		);
+		expect(blockKeys(editor)).toEqual(["ls-a", "ls-b"]);
+		expect(editor.state.doc.textContent).toBe("BeforexAfter");
+	});
+
+	for (const how of ["paste", "type"] as const) {
+		it(`replaces the whole page on a ${how} over everything: the guard keeps no layout block then`, async () => {
+			const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+			await focusEditor(pm);
+			editor.commands.selectAll();
+			if (how === "type") await userEvent.keyboard("x");
+			else {
+				const paste = new Event("paste", { bubbles: true, cancelable: true });
+				Object.defineProperty(paste, "clipboardData", {
+					value: {
+						files: [],
+						items: [],
+						types: ["text/plain"],
+						getData: (type: string) => (type === "text/plain" ? "new page" : ""),
+					},
+				});
+				editor.view.dom.dispatchEvent(paste);
+			}
+			await vi.waitFor(() => expect(editor.state.doc.textContent).not.toContain("Hello"), {
+				timeout: 2000,
+			});
+			expect(blockKeys(editor)).toEqual([]);
+		});
+	}
 });
