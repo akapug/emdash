@@ -6,6 +6,7 @@
  * toolbar behaviour, focus modes, and editor lifecycle.
  */
 
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { TableMap } from "@tiptap/pm/tables";
 import type { Editor } from "@tiptap/react";
 import * as React from "react";
@@ -2015,5 +2016,62 @@ describe("a quote that holds a paragraph and a list", () => {
 			"First",
 			"Second",
 		]);
+	});
+});
+
+describe("a page whose first block is a layout block", () => {
+	// A migrated page's own layout opens with its carrier: an atom block the editor draws as a plugin block.
+	const layoutPage = () => [
+		{
+			_type: "layout-section",
+			_key: "ls-0",
+			skeleton: { wraps: [], widgets: { l0: { wraps: [] } }, added: { wraps: [] } },
+		},
+		textBlock("Hello there"),
+		{ _type: "layout-section", _key: "ls-1", skeleton: { wraps: [], widgets: {} } },
+		textBlock("Second section"),
+	];
+	const types = (editor: Editor) =>
+		(editor.getJSON().content ?? []).map((n: { type: string }) => n.type);
+
+	it("opens with a text cursor in the first words, never with the layout block selected", async () => {
+		const { editor } = await renderAndGetEditor({ value: layoutPage() });
+		const { selection } = editor.state;
+		expect(selection).not.toBeInstanceOf(NodeSelection);
+		expect(selection).toBeInstanceOf(TextSelection);
+		expect(selection.$from.parent.textContent).toBe("Hello there");
+	});
+
+	it("puts a key typed while a layout block is selected in a new paragraph after it, and keeps the block", async () => {
+		const onChange = vi.fn();
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage(), onChange });
+		await focusEditor(pm);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
+		expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+		await userEvent.keyboard("x");
+		await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 2000 });
+		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "paragraph", "pluginBlock", "paragraph"]);
+		expect(editor.state.doc.child(1).textContent).toBe("x");
+		const saved = onChange.mock.calls.at(-1)![0] as Array<{ _type: string; _key: string }>;
+		expect(saved[0]).toMatchObject({ _type: "layout-section", _key: "ls-0" });
+		expect(saved).toHaveLength(5);
+	});
+
+	it("keeps a layout block a paste lands on, and puts the pasted words after it", async () => {
+		const { editor, pm } = await renderAndGetEditor({ value: layoutPage() });
+		await focusEditor(pm);
+		const at = editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize;
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, at)));
+		const clipboardData = {
+			files: [],
+			items: [],
+			types: ["text/plain"],
+			getData: (type: string) => (type === "text/plain" ? "pasted words" : ""),
+		};
+		const paste = new Event("paste", { bubbles: true, cancelable: true });
+		Object.defineProperty(paste, "clipboardData", { value: clipboardData });
+		editor.view.dom.dispatchEvent(paste);
+		expect(types(editor)).toEqual(["pluginBlock", "paragraph", "pluginBlock", "paragraph", "paragraph"]);
+		expect(editor.state.doc.child(3).textContent).toBe("pasted words");
 	});
 });
