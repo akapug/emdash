@@ -1,5 +1,5 @@
-import { type Kysely, sql } from "kysely";
-import { type Migration, type MigrationProvider, Migrator } from "kysely/migration";
+import { type Kysely, type QueryExecutorProvider, sql } from "kysely";
+import { type Migration, Migrator } from "kysely/migration";
 
 import {
 	busyLockHeldSince,
@@ -195,16 +195,6 @@ export const MIGRATION_NAMES: readonly string[] = Object.freeze(Object.keys(MIGR
 /** Total number of registered migrations. Exported for use in tests. */
 export const MIGRATION_COUNT = MIGRATION_NAMES.length;
 
-/**
- * Migration provider that uses statically imported migrations.
- * This approach works well with bundlers and avoids filesystem access.
- */
-class StaticMigrationProvider implements MigrationProvider {
-	async getMigrations(): Promise<Record<string, Migration>> {
-		return MIGRATIONS;
-	}
-}
-
 export interface MigrationStatus {
 	applied: string[];
 	pending: string[];
@@ -264,17 +254,131 @@ export interface MigrationOptions {
 	migrations?: Readonly<Record<string, Migration>>;
 }
 
+/** Upstream migrations are `NNN_name`; the fork's own are `embark_NNN_name`. */
+const MIGRATION_SERIES = [
+	{ series: "upstream", pattern: /^\d{3}_/ },
+	{ series: "fork", pattern: /^embark_\d{3}_/ },
+] as const;
+
+/**
+ * Thrown when the migration ledger is not, in each series, the registered
+ * migrations' leading run in name order: one is missing below one that is
+ * recorded, or they ran out of order. The migrator runs unordered so the two
+ * series interleave, and without this a lost ledger row would re-run that
+ * migration over a schema later ones have changed (039 would rebuild the FTS
+ * index 064 replaced).
+ */
+export class MigrationLedgerOrderError extends Error {
+	constructor(
+		readonly series: string,
+		readonly expected: readonly string[],
+		readonly recorded: readonly string[],
+	) {
+		const at = recorded.findIndex((name, i) => name !== expected[i]);
+		super(
+			`Migration failed: the ledger is out of order in the ${series} series: recorded ${recorded[at]} where ${expected[at]} belongs. ` +
+				"A migration recorded after a missing or later one cannot be applied safely; restore the ledger or the database.",
+		);
+		this.name = "MigrationLedgerOrderError";
+	}
+}
+
+/**
+ * Refuse a ledger whose recorded migrations, in each series, are not exactly
+ * the first ones of `registered` in name order. `recorded` is the ledger in
+ * execution order (timestamp, then name, as Kysely orders it); names in no
+ * series, or not registered, are left to Kysely's own missing-migration check.
+ */
+export function assertMigrationLedgerOrder(
+	registered: readonly string[],
+	recorded: readonly string[],
+): void {
+	const known = new Set(registered);
+	for (const { series, pattern } of MIGRATION_SERIES) {
+		const expected = registered.filter((name) => pattern.test(name)).toSorted();
+		const ran = recorded.filter((name) => pattern.test(name) && known.has(name));
+		if (ran.some((name, i) => name !== expected[i])) {
+			throw new MigrationLedgerOrderError(series, expected, ran);
+		}
+	}
+}
+
+/** The ledger's names in execution order (timestamp, then name), or [] before the table exists. */
+export async function readMigrationLedger(
+	db: QueryExecutorProvider,
+	options?: Pick<MigrationOptions, "migrationTableSchema">,
+): Promise<string[]> {
+	const table = options?.migrationTableSchema
+		? sql`${sql.ref(options.migrationTableSchema)}.${sql.ref(MIGRATION_TABLE)}`
+		: sql.ref(MIGRATION_TABLE);
+	let rows: readonly { name: string; timestamp: string }[];
+	try {
+		rows = (
+			await sql<{ name: string; timestamp: string }>`SELECT name, timestamp FROM ${table}`.execute(
+				db,
+			)
+		).rows;
+	} catch (error) {
+		if (MIGRATION_TABLE_MISSING_PATTERN.test(deepErrorMessage(error))) return [];
+		throw error;
+	}
+	return rows
+		.toSorted((a, b) =>
+			a.timestamp === b.timestamp
+				? a.name.localeCompare(b.name)
+				: new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+		)
+		.map((row) => row.name);
+}
+
+/**
+ * The migration set with every `up` and `down` checking the ledger first, on
+ * the database handle the migrator gives it: the one that holds the migration
+ * lock (and the transaction, where there is one). The first call of a run
+ * checks; a migration without `down` keeps none.
+ */
+function guardedMigrations(
+	migrations: Readonly<Record<string, Migration>>,
+	options?: MigrationOptions,
+): Record<string, Migration> {
+	const registered = Object.keys(migrations).toSorted();
+	let checked = false;
+	const check = async (db: QueryExecutorProvider) => {
+		if (checked) return;
+		checked = true;
+		assertMigrationLedgerOrder(registered, await readMigrationLedger(db, options));
+	};
+	return Object.fromEntries(
+		Object.entries(migrations).map(([name, migration]) => {
+			const { up, down } = migration;
+			const guarded: Migration = {
+				up: async (db) => {
+					await check(db);
+					await up(db);
+				},
+			};
+			if (down) {
+				guarded.down = async (db) => {
+					await check(db);
+					await down(db);
+				};
+			}
+			return [name, guarded];
+		}),
+	);
+}
+
 export function createMigrator(db: Kysely<Database>, options?: MigrationOptions): Migrator {
-	const migrations = options?.migrations;
+	const migrations = options?.migrations ?? MIGRATIONS;
 	return new Migrator({
 		db,
-		provider: migrations
-			? { getMigrations: async () => ({ ...migrations }) }
-			: new StaticMigrationProvider(),
+		// Each run gets a fresh guard: Kysely calls getMigrations once per run, under the lock.
+		provider: { getMigrations: async () => guardedMigrations(migrations, options) },
 		migrationTableName: MIGRATION_TABLE,
 		migrationLockTableName: MIGRATION_LOCK_TABLE,
 		migrationTableSchema: options?.migrationTableSchema,
-		// Fork migrations are namespaced embark_NNN and never renamed once applied.
+		// Fork migrations are namespaced embark_NNN and never renamed once applied. Unordered lets the
+		// upstream and fork series interleave; the guard above still holds each series to its order.
 		allowUnorderedMigrations: true,
 	});
 }
@@ -522,6 +626,8 @@ export async function runMigrations(
 	const applied = results?.filter((r) => r.status === "Success").map((r) => r.migrationName) ?? [];
 
 	if (error) {
+		// The ledger refusal ran before any migration and names itself (its message says it failed).
+		if (error instanceof MigrationLedgerOrderError) throw error;
 		// Walk error.cause to get the underlying driver message — Kysely
 		// often wraps with an empty top-level message.
 		const msg = deepErrorMessage(error);

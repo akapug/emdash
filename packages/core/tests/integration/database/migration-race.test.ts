@@ -103,14 +103,12 @@ describe("Migration race condition (#762)", () => {
 		// Exercises the non-race error path so a regression that swallows
 		// real errors is caught. We migrate once, then delete a single row
 		// from `_emdash_migrations` so the migrator tries to re-run that
-		// migration and fails with `duplicate column name` — a non-race
-		// error that must NOT be swallowed. (The migrator runs unordered, so
-		// the re-run is attempted rather than refused for its order; 002 is
-		// one whose re-run fails, where 001's CREATE ... IF NOT EXISTS would not.)
+		// migration and fails with `table ... already exists` — a non-race
+		// error that must NOT be swallowed.
 		const db = createDatabase({ url: `file:${dbPath}` });
 		try {
 			await runMigrations(db);
-			await sql`DELETE FROM _emdash_migrations WHERE name = '002_media_status'`.execute(db);
+			await sql`DELETE FROM _emdash_migrations WHERE name = '001_initial'`.execute(db);
 			await expect(runMigrations(db)).rejects.toThrow(/Migration failed/i);
 		} finally {
 			await db.destroy();

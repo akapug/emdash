@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { MIGRATION_NAMES } from "../../../src/database/migrations/runner.js";
+
 const MIGRATIONS_DIR = join(
 	dirname(fileURLToPath(import.meta.url)),
 	"../../../src/database/migrations",
@@ -33,18 +35,23 @@ const ALLOWED_IMPORTS = new Set([
 	"../pg-migration-lock.js",
 	"../datetime-storage.js",
 	"../../i18n/config.js",
+	// The fork's import-sync triggers: it reaches only kysely, the leaves above
+	// and ../utils/db-errors.js, which imports nothing.
+	"../import-baseline-triggers.js",
 ]);
 
 const IMPORT_SOURCE = /^\s*import\s[^;]*?from\s+"([^"]+)";/gm;
 
 describe("migration imports", () => {
 	const files = readdirSync(MIGRATIONS_DIR)
-		.filter((name) => /^\d{3}_.*\.ts$/.test(name))
+		.filter((name) => /^(?:embark_)?\d{3}_.*\.ts$/.test(name))
 		.toSorted();
 
 	// A wrong MIGRATIONS_DIR would leave `it.each` with no cases, passing vacuously.
 	it("covers every migration file", () => {
 		expect(files.length).toBeGreaterThan(70);
+		// Upstream NNN_ and the fork's embark_NNN_ alike: no registered migration goes unchecked.
+		expect(files.map((file) => file.replace(/\.ts$/, ""))).toEqual(MIGRATION_NAMES.toSorted());
 	});
 
 	it.each(files)("%s imports only migration-safe modules", (file) => {

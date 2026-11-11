@@ -7,10 +7,11 @@ import type {
 	Driver,
 	QueryResult,
 } from "kysely";
-import { SqliteAdapter, SqliteDialect, SqliteQueryCompiler } from "kysely";
+import { Kysely, SqliteAdapter, SqliteDialect, SqliteQueryCompiler, sql } from "kysely";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MIGRATION_NAMES } from "../../../src/database/migrations/runner.js";
+import { MIGRATION_NAMES, runMigrations } from "../../../src/database/migrations/runner.js";
+import type { Database as EmDashDatabase } from "../../../src/database/types.js";
 import { getI18nConfig, setI18nConfig, type I18nConfig } from "../../../src/i18n/config.js";
 import { createDirectMigrationExecutor } from "../../../src/migrations/direct-executor.js";
 import { getCoreMigrationIdentity } from "../../../src/migrations/identity.js";
@@ -416,5 +417,33 @@ describe("createDirectMigrationExecutor", () => {
 		expect(Object.isFrozen(executor.target)).toBe(true);
 		const report = await executor.execute(await migrationRequest("check"));
 		expect(report.target).toBe(executor.target);
+	});
+
+	it("refuses to apply over a ledger missing a migration below a recorded one, before running any", async () => {
+		const database = new Database(":memory:");
+		// One in-memory database for setup and executor: keep it open until the end.
+		const close = database.close.bind(database);
+		database.close = () => database;
+		const setup = new Kysely<EmDashDatabase>({ dialect: new SqliteDialect({ database }) });
+		await runMigrations(setup);
+		await sql`DELETE FROM _emdash_migrations WHERE name = '039_fix_fts5_triggers'`.execute(setup);
+		const ledger = () =>
+			database.prepare("SELECT name, timestamp FROM _emdash_migrations ORDER BY name").all();
+		const recorded = ledger();
+		const executor = createDirectMigrationExecutor({
+			target: TARGET,
+			createDialect: () => new SqliteDialect({ database }),
+		});
+
+		// Unwrapped: the executor's own check refuses, ahead of the migrator's.
+		await expect(executor.execute(await migrationRequest("apply"))).rejects.toMatchObject({
+			name: "MigrationLedgerOrderError",
+			series: "upstream",
+			message: expect.stringContaining(
+				"recorded 040_byline_i18n where 039_fix_fts5_triggers belongs",
+			),
+		});
+		expect(ledger()).toEqual(recorded);
+		close();
 	});
 });

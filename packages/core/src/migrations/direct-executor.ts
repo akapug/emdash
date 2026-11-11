@@ -2,7 +2,10 @@ import { type Dialect, Kysely } from "kysely";
 
 import { clearMigrationLock, readMigrationLock } from "../database/migration-lock.js";
 import {
+	assertMigrationLedgerOrder,
 	getExactMigrationStatus,
+	MIGRATION_NAMES,
+	readMigrationLedger,
 	runMigrations,
 	type ExactMigrationStatus,
 } from "../database/migrations/runner.js";
@@ -98,6 +101,9 @@ async function executeRequest(
 	if (initialStatus.pending.length === 0) {
 		return createReport(target, initialStatus, []);
 	}
+	// A hole or a reordering in either series refuses here, before anything runs (the migrator
+	// checks again under its lock, as an ordered migrator would).
+	assertMigrationLedgerOrder(MIGRATION_NAMES, await readMigrationLedger(db));
 
 	const result = await runMigrations(db);
 	const finalStatus = await getExactMigrationStatus(db);
