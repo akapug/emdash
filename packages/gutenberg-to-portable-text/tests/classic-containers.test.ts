@@ -105,6 +105,18 @@ describe("classic content: a list inside a list item", () => {
 			"normal number1: three",
 		]);
 	});
+
+	it("draws each list once, and a paragraph or heading in an item on a line of its own (a camp page, as saved)", () => {
+		const content = `<ul><li>Challenge<p>Write down what you ate.</p><p>Rate it.</p><ul><li><hr /><h3><strong>Upload your videos</strong></h3></li></ul><ol><li style="list-style-type: none;"><ol><li><strong>Visit the link</strong></li><li><strong>Put your name</strong></li></ol></li></ol>After the lists</li><li>Next</li></ul>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"normal bullet1: Challenge\nWrite down what you ate.\nRate it.",
+			"normal bullet2: Upload your videos",
+			"normal number3: Visit the link",
+			"normal number3: Put your name",
+			"normal bullet1: After the lists",
+			"normal bullet1: Next",
+		]);
+	});
 });
 
 describe("classic content: a table", () => {

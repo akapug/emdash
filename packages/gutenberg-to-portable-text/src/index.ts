@@ -8,6 +8,7 @@
 
 import { autop } from "@wordpress/autop";
 import { parse } from "@wordpress/block-serialization-default-parser";
+import { parseFragment, serialize, serializeOuter, type DefaultTreeAdapterMap } from "parse5";
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
@@ -21,7 +22,7 @@ import {
 	withoutUndrawn,
 } from "./inline.js";
 import { wptexturize } from "./texturize.js";
-import { list as listTransformer, table as tableTransformer } from "./transformers/core.js";
+import { table as tableTransformer } from "./transformers/core.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
@@ -88,6 +89,43 @@ const LAYOUT_TABLE_PATTERN =
 const TABLE_CAPTION_PATTERN = /<caption\b[^>]*>([\s\S]*?)<\/caption>/i;
 /** A table cell's opening or closing tag */
 const TABLE_CELL_TAG_PATTERN = /<(\/?)(?:td|th)\b[^>]*>/giu;
+/**
+ * The block elements a list item's text can hold: each is drawn on a line of
+ * its own within the item, and a list inside one is still the next level down.
+ */
+const ITEM_BLOCK_TAGS: ReadonlySet<string> = new Set([
+	"p",
+	"div",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"h5",
+	"h6",
+	"blockquote",
+	"pre",
+	"figure",
+	"section",
+	"article",
+	"aside",
+	"header",
+	"footer",
+	"address",
+	"center",
+	"details",
+	"summary",
+	"table",
+	"dl",
+	"hr",
+]);
+type HtmlNode = DefaultTreeAdapterMap["node"];
+type HtmlElement = DefaultTreeAdapterMap["element"];
+const isHtmlElement = (node: HtmlNode): node is HtmlElement => "tagName" in node;
+/** Whether an element holds a list at any depth. */
+const holdsList = (node: HtmlElement): boolean =>
+	node.childNodes.some(
+		(c) => isHtmlElement(c) && (c.tagName === "ul" || c.tagName === "ol" || holdsList(c)),
+	);
 /** A term or a description in a definition list, each drawn on a line of its own. */
 const DEFINITION_TAG_PATTERN = /<(\/?)(?:dt|dd)\b[^>]*>/giu;
 
@@ -383,6 +421,71 @@ export function htmlToPortableText(
 		BLOCK_ELEMENT_PATTERN.lastIndex = at;
 	};
 
+	/**
+	 * A list's items as list-item blocks at `level`, and a list inside an item at
+	 * the level below. An item's text is a block; a paragraph, heading or other
+	 * block it holds is a line of that text, so its words stay apart from the
+	 * next one's. Text after a list inside an item is an item of its own: a
+	 * list-item block holds no list.
+	 */
+	const pushList = (list: HtmlElement, level: number) => {
+		const listItem = list.tagName === "ol" ? "number" : "bullet";
+		for (const child of list.childNodes) {
+			if (isHtmlElement(child) && child.tagName === "li")
+				pushItem(child.childNodes, listItem, level);
+			else pushItem([child], listItem, level);
+		}
+	};
+	const pushItem = (nodes: HtmlNode[], listItem: "bullet" | "number", level: number) => {
+		const lines: string[] = [];
+		let run = "";
+		const endLine = () => {
+			const line = run.trim().replace(TRAILING_BREAK_PATTERN, "");
+			if (line) lines.push(line);
+			run = "";
+		};
+		const endItem = () => {
+			endLine();
+			if (lines.length === 0) return;
+			for (const s of parseInlineSegments(lines.join("<br>"), generateKey)) {
+				if ("_type" in s) blocks.push(s);
+				else if (drawsLine(s.children)) {
+					blocks.push({
+						_type: "block",
+						_key: generateKey(),
+						style: "normal",
+						listItem,
+						level,
+						children: s.children,
+						markDefs: s.markDefs.length > 0 ? s.markDefs : undefined,
+					});
+				}
+			}
+			lines.length = 0;
+		};
+		const walk = (children: HtmlNode[]) => {
+			for (const node of children) {
+				if (!isHtmlElement(node)) {
+					run += serializeOuter(node);
+				} else if (node.tagName === "ul" || node.tagName === "ol") {
+					endItem();
+					pushList(node, level + 1);
+				} else if (ITEM_BLOCK_TAGS.has(node.tagName)) {
+					endLine();
+					if (holdsList(node)) walk(node.childNodes);
+					else {
+						run = serialize(node);
+						endLine();
+					}
+				} else {
+					run += serializeOuter(node);
+				}
+			}
+		};
+		walk(nodes);
+		endItem();
+	};
+
 	// The HTML after a lifted iframe, without the line break and white space that led up to it
 	const after = (part: string) => part.replace(LEADING_BREAK_PATTERN, "").trimStart();
 
@@ -570,15 +673,10 @@ export function htmlToPortableText(
 
 			case "ul":
 			case "ol": {
-				// The list as the block editor's list block reads its HTML: a list inside an
-				// item is the next level down, and the items after it stay in the list.
-				blocks.push(
-					...listTransformer(
-						htmlBlock("core/list", fullMatch, { ordered: tag === "ol" }),
-						options,
-						createTransformContext(options, generateKey),
-					),
-				);
+				// The list as a browser builds it: a list inside an item is the next level down,
+				// and the items after it stay in the list.
+				const list = parseFragment(fullMatch).childNodes.find(isHtmlElement);
+				if (list) pushList(list, 1);
 				break;
 			}
 
