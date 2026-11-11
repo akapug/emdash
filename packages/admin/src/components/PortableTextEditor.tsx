@@ -4464,21 +4464,23 @@ function wordsOrPasteReplaced(transactions: readonly Transaction[]): boolean {
 		)
 	)
 		return false;
-	return transactions.some(
-		(tr) =>
-			tr.getMeta("uiEvent") === "paste" ||
-			tr.steps.some((step, i) => {
-				// By shape, not `instanceof`: the editor's steps may come from another copy of the
-				// transform package than the one this module would import.
-				const { stepType } = step.toJSON() as { stepType?: string };
-				if (stepType !== "replace" && stepType !== "replaceAround") return false;
-				const { from, to, slice } = step as unknown as { from: number; to: number; slice: Slice };
-				const before = tr.docs[i];
-				if (before && from === 0 && to === before.content.size) return false;
-				const words = slice.content;
-				return words.textBetween(0, words.size, "\n", "\n") !== "";
-			}),
-	);
+	let replaced = false;
+	for (const tr of transactions) {
+		if (tr.getMeta("uiEvent") === "paste") replaced = true;
+		for (const [i, step] of tr.steps.entries()) {
+			// By shape, not `instanceof`: the editor's steps may come from another copy of the
+			// transform package than the one this module would import.
+			const { stepType } = step.toJSON() as { stepType?: string };
+			if (stepType !== "replace" && stepType !== "replaceAround") continue;
+			const { from, to, slice } = step as unknown as { from: number; to: number; slice: Slice };
+			const before = tr.docs[i];
+			// The whole document set at once (all of it selected, then typed or pasted over) is meant.
+			if (before && from === 0 && to === before.content.size) return false;
+			const words = slice.content;
+			if (words.textBetween(0, words.size, "\n", "\n") !== "") replaced = true;
+		}
+	}
+	return replaced;
 }
 
 /** A migrated page's own layout block (`layout-section`, `layout-element`): it holds the page's design. */
@@ -4563,9 +4565,11 @@ const PluginBlockSelectionGuard = Extension.create({
 					if (lost.length === 0 || !wordsOrPasteReplaced(transactions)) return null;
 					const tr = newState.tr;
 					for (const { node, pos } of lost) {
+						// Before the words that took its place (-1), but after a block this loop already put
+						// back at the same place (1), so several come back in the page's order.
 						const mapped = tr.mapping.map(
 							transactions.reduce((at, t) => t.mapping.map(at, -1), pos),
-							-1,
+							1,
 						);
 						const $pos = tr.doc.resolve(mapped);
 						const at =
