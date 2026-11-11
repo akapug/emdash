@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 
+import { markImportBaselineCustomerOwned } from "../../database/import-baseline-triggers.js";
 import { ContentRepository } from "../../database/repositories/content.js";
 import {
 	RelationRepository,
@@ -787,6 +788,13 @@ export async function writeReferenceSelection(
 	const rel = await resolveRelation(repo, selection.relation);
 	if (!rel) return;
 
+	// An unchanged empty set emits no edge SQL, so record the save intent explicitly.
+	await markImportBaselineCustomerOwned(
+		db,
+		selection.side === "parent" ? rel.parentCollection : rel.childCollection,
+		selection.entryGroup,
+		{ translationGroup: true },
+	);
 	const rejected =
 		selection.side === "parent"
 			? await repo.setChildren(rel.id, selection.entryGroup, selection.groups)

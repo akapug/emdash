@@ -39,6 +39,8 @@ export async function seedImportBaseline(db: Kysely<Database>): Promise<void> {
 		VALUES ('post', 'entry-en', 'Title', 0)`.execute(db);
 	await sql`INSERT INTO content_taxonomies (collection, entry_id, taxonomy_id)
 		VALUES ('post', 'entry-group', 'term-group')`.execute(db);
+	await sql`INSERT INTO _emdash_content_references (id, relation_id, parent_group, child_group)
+		VALUES ('edge', 'relation-group', 'entry-group', 'loose-group')`.execute(db);
 
 	for (const [collection, id, locale] of [
 		["post", "entry-en", "en"],
@@ -233,6 +235,15 @@ export function importBaselineCases(getDb: () => Kysely<Database>): void {
 		],
 		["term identical update", sql`UPDATE taxonomies SET label = label WHERE id = 'term-row'`],
 		["term delete", sql`DELETE FROM taxonomies WHERE id = 'term-row'`],
+		[
+			"reference identical update",
+			sql`UPDATE _emdash_content_references SET sort_order = sort_order WHERE id = 'edge'`,
+		],
+		["reference delete", sql`DELETE FROM _emdash_content_references WHERE id = 'edge'`],
+		[
+			"reference insert naming the entry as child",
+			sql`INSERT INTO _emdash_content_references (id, relation_id, parent_group, child_group) VALUES ('back-edge', 'relation-group', 'loose-group', 'entry-group')`,
+		],
 		[
 			"term translation insert",
 			sql`INSERT INTO taxonomies (id, name, slug, label, locale, translation_group) VALUES ('term-fr', 'category', 'news', 'Actualités', 'fr', 'term-group')`,

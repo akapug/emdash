@@ -109,6 +109,15 @@ function collectionTriggers(collection: string): ImportTrigger[] {
 		AND assignment.taxonomy_id = COALESCE(${sql.ref(`${row}.translation_group`)}, ${sql.ref(`${row}.id`)})
 	)`,
 	);
+	// A reference edge belongs to both endpoints, so either side becomes customer-owned.
+	add(
+		"_emdash_content_references",
+		"references",
+		mutations,
+		(row) => sql`EXISTS (SELECT 1 FROM ${sql.ref(table)} AS content
+			WHERE content.id = _emdash_import_baselines.entry_id
+			AND content.translation_group IN (${sql.ref(`${row}.parent_group`)}, ${sql.ref(`${row}.child_group`)}))`,
+	);
 	add("_emdash_bylines", "bylines", mutations, (row) =>
 		bylineMatch(sql`COALESCE(${sql.ref(`${row}.translation_group`)}, ${sql.ref(`${row}.id`)})`),
 	);
@@ -146,6 +155,13 @@ export async function installImportBaselineCollectionTriggers<DB>(
 	if (!supportsImportBaselineDialect(db)) return;
 	if (!(await tableExists(db, "_emdash_import_baselines"))) return;
 	const triggers = collectionTriggers(collection);
+	// A registry row can outlive its content table (an interrupted D1 delete drops the
+	// table first). Its triggers cannot be created, so the collection stays unknown.
+	if (!(await tableExists(db, `ec_${collection}`))) {
+		await sql`UPDATE _emdash_import_baselines SET customer_owned = 1
+			WHERE collection = ${collection}`.execute(db);
+		return;
+	}
 	const { rows } = await sql<{ name: string; sql: string }>`SELECT name, sql FROM sqlite_master
 		WHERE type = 'trigger' AND name IN (${sql.join(triggers.map((trigger) => sql`${trigger.name}`))})`.execute(
 		db,
