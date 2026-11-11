@@ -547,6 +547,24 @@ describe("what a page's own layout drew on its words and links", () => {
 		);
 	});
 
+	// The admin's editor saves a span with no marks as a span with no `marks`, and a block with no links with no `markDefs`.
+	it("draws each hover text on a block the admin's editor saved, whose plain spans name no marks", async () => {
+		const { marks: _drop, ...bare } = span("a", "After, at a startup called ");
+		const saved = page().map((b) =>
+			b._key === "el-l1-2"
+				? {
+						_type: "block",
+						_key: "el-l1-2",
+						style: "normal",
+						children: [bare, span("b", "Seedco", ["strong"]), { _type: "span", _key: "c", text: ", and CSA boxes." }],
+					}
+				: b,
+		);
+		expect(squash(await render(saved))).toContain(
+			'<p>After, at <span class="citation" title="A cooperative of &quot;growers&quot;">a startup called <strong>Seedco</strong></span>, and <span title="Community Supported Agriculture">CSA</span> boxes.</p>',
+		);
+	});
+
 	it("draws no class, title or element of its own from a stored value it does not allow", async () => {
 		const html = squash(
 			await render([
