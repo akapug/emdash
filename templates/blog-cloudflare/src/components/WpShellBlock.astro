@@ -16,11 +16,13 @@
  * builder draws on it (an Elementor heading's `elementor-heading-title`),
  * which ../utils/wp-skeleton.ts puts on the block as `skeletonClass` when it
  * draws the page in the builder's skeleton; only class characters are drawn.
+ * A paragraph of a page's own layout that the page drew as a `<span>` or a
+ * `<div>` (a list item's date) is drawn as that element, `skeletonTag`.
  */
 import type { HTMLTag } from "astro/types";
 
 interface Props {
-	node: { style?: string; textAlign?: string; skeletonClass?: unknown };
+	node: { style?: string; textAlign?: string; skeletonClass?: unknown; skeletonTag?: unknown };
 	index?: number;
 	isInline?: boolean;
 }
@@ -42,7 +44,15 @@ const ALIGN_CLASS: Record<string, string> = {
 	right: "has-text-align-right",
 	justify: "has-text-align-justify",
 };
-const Tag = (node.style && Object.hasOwn(TAGS, node.style) ? TAGS[node.style] : undefined) ?? "p";
+// A paragraph drawn as the page's own element: only a span or a div, and only a paragraph.
+const AS: Record<string, HTMLTag> = { span: "span", div: "div" };
+const own =
+	(!node.style || node.style === "normal") &&
+	typeof node.skeletonTag === "string" &&
+	Object.hasOwn(AS, node.skeletonTag)
+		? AS[node.skeletonTag]
+		: undefined;
+const Tag = own ?? (node.style && Object.hasOwn(TAGS, node.style) ? TAGS[node.style] : undefined) ?? "p";
 const align = node.textAlign && Object.hasOwn(ALIGN_CLASS, node.textAlign) ? ALIGN_CLASS[node.textAlign] : undefined;
 const CLASS_NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const builder =

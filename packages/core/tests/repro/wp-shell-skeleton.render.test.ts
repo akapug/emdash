@@ -301,3 +301,100 @@ describe("the WpShell layout's page-builder skeleton", () => {
 		expect(html).toContain("In a column");
 	});
 });
+
+/**
+ * A static site's front page of sections, as Embark's import stores its own
+ * layout (packages/host/src/import/layout-pt.ts): a carrier per section, each
+ * leaf's blocks keyed by the leaf, and every element between the section and a
+ * leaf a wrap naming its node, so two leaves of one list item are drawn in one
+ * item. All data synthetic (sections.example).
+ */
+describe("a page's own layout in the WpShell skeleton", () => {
+	const node = (tag: string, cls: string, id: string) => ({ ...wrap(tag, cls), node: id });
+	const content = node("div", "content-section__content work-list", "n1");
+	const item = (id: string) => node("div", "work-list__item", id);
+	const left = (id: string) => node("div", "work-list__left", id);
+	const image = (key: string, url: string) => ({
+		_type: "image",
+		_key: key,
+		asset: { _type: "reference", _ref: url, url },
+		alt: "Logo",
+		link: "https://seedco.example/",
+	});
+	const LAYOUT = [
+		{
+			_type: "layout-section",
+			_key: "ls-0",
+			skeleton: {
+				wraps: [wrap("section", "content-section work-section", { id: "work" })],
+				widgets: {
+					l0: {
+						wraps: [node("aside", "content-section__aside", "n0")],
+						blockClass: "content-section__title",
+					},
+					l1: { wraps: [content, item("n2"), left("n3")], blockClass: "work-list__logo" },
+					l2: {
+						wraps: [content, item("n2"), left("n3")],
+						blockTag: "span",
+						blockClass: "work-list__company",
+					},
+					l3: { wraps: [content, item("n2")], body: [wrap("span", "work-list__dots")] },
+					l4: { wraps: [content, item("n2")], blockTag: "span", blockClass: "work-list__dates" },
+					l5: {
+						wraps: [content, item("n4"), left("n5")],
+						blockTag: "span",
+						blockClass: "work-list__company",
+					},
+					l6: { wraps: [content, item("n4")], blockTag: "span", blockClass: "work-list__dates" },
+				},
+				added: { wraps: [] },
+			},
+		},
+		text("el-l0", "Work", "h3"),
+		image("el-l1", "https://sections.example/logo.png"),
+		text("el-l2", "Seed Cooperative"),
+		{ _type: "layout-element", _key: "el-l3" },
+		text("el-l4", "Grower, 2020 - now"),
+		text("el-l5", "Greenhouse Volunteer"),
+		text("el-l6", "2015 - 2020"),
+		text("owner-added", "An owner's line."),
+	];
+
+	it("draws one element per node, each leaf in it in order, as the page drew them", async () => {
+		const html = squash(await render(LAYOUT));
+		expect(html).toBe(
+			'<section class="content-section work-section" id="work">' +
+				'<aside class="content-section__aside"><h3 class="content-section__title">Work</h3></aside>' +
+				'<div class="content-section__content work-list">' +
+				'<div class="work-list__item"><div class="work-list__left">' +
+				'<a href="https://seedco.example/"><img class="work-list__logo" src="https://sections.example/logo.png" alt="Logo" loading="lazy" decoding="async"></a>' +
+				'<span class="work-list__company">Seed Cooperative</span></div>' +
+				'<span class="work-list__dots"></span><span class="work-list__dates">Grower, 2020 - now</span></div>' +
+				'<div class="work-list__item"><div class="work-list__left"><span class="work-list__company">Greenhouse Volunteer</span></div>' +
+				'<span class="work-list__dates">2015 - 2020</span></div></div>' +
+				"<p>An owner&#39;s line.</p>" +
+				"</section>",
+		);
+	});
+
+	it("never merges elements that name no node, and draws a heading as a heading whatever its tag says", async () => {
+		const html = squash(
+			await render([
+				{
+					_type: "layout-section",
+					_key: "ls-0",
+					skeleton: {
+						wraps: [],
+						widgets: {
+							a: { wraps: [wrap("div", "row")] },
+							b: { wraps: [wrap("div", "row")], blockTag: "span" },
+						},
+					},
+				},
+				text("el-a", "One"),
+				text("el-b", "Two", "h2"),
+			]),
+		);
+		expect(html).toBe('<div class="row"><p>One</p></div><div class="row"><h2>Two</h2></div>');
+	});
+});
