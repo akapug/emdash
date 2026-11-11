@@ -54,13 +54,17 @@ const isElement = (n: Node): n is Element => "tagName" in n;
 const attr = (el: Element, name: string): string | undefined =>
 	el.attrs.find((a) => a.name === name)?.value;
 
-/** The action as the URL a browser posts to, when it is https on an allowed host; otherwise undefined. */
+/**
+ * The action as the URL a browser posts to, when it is https on an allowed host
+ * (https's own port, and no user name or password); otherwise undefined.
+ */
 export function externalFormAction(action: string | undefined): URL | undefined {
 	const raw = action?.trim() ?? "";
 	if (UNSAFE_URL_CHAR.test(raw) || !URL.canParse(raw)) return undefined;
 	const url = new URL(raw);
 	return url.protocol === "https:" &&
 		EXTERNAL_FORM_HOSTS.includes(url.hostname) &&
+		url.port === "" &&
 		!url.username &&
 		!url.password
 		? url

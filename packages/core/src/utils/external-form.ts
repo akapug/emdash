@@ -13,13 +13,17 @@ export const EXTERNAL_FORM_HOSTS: readonly string[] = [
 /** What a browser folds or drops in a URL: an action holding one is refused, not read. */
 const UNSAFE_URL_CHAR = /[\\\s\p{Cc}]/u;
 
-/** The action as the URL a browser posts to, when it is https on an allowed host; otherwise undefined. */
+/**
+ * The action as the URL a browser posts to, when it is https on an allowed host
+ * (https's own port, and no user name or password); otherwise undefined.
+ */
 export function externalFormAction(action: unknown): URL | undefined {
 	const raw = typeof action === "string" ? action.trim() : "";
 	if (UNSAFE_URL_CHAR.test(raw) || !URL.canParse(raw)) return undefined;
 	const url = new URL(raw);
 	return url.protocol === "https:" &&
 		EXTERNAL_FORM_HOSTS.includes(url.hostname) &&
+		url.port === "" &&
 		!url.username &&
 		!url.password
 		? url

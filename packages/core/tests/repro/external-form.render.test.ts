@@ -66,6 +66,7 @@ describe("PortableText: a carried payment form", () => {
 			"http://www.paypal.com/cgi-bin/webscr",
 			"javascript:alert(1)",
 			"https://www.paypal.com.evil.example/x",
+			"https://www.paypal.com:8443/cgi-bin/webscr",
 			7,
 		]) {
 			const html = await render([paypal({ action })]);

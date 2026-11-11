@@ -140,8 +140,13 @@ describe("a form that is not carried", () => {
 		expect(externalFormAction("https://www.paypal.com/cgi-bin/webscr")?.href).toBe(
 			"https://www.paypal.com/cgi-bin/webscr",
 		);
+		// https's own port is no port: the URL a browser posts to is the same one.
+		expect(externalFormAction("https://www.paypal.com:443/cgi-bin/webscr")?.href).toBe(
+			"https://www.paypal.com/cgi-bin/webscr",
+		);
 		for (const action of [
 			"http://www.paypal.com/cgi-bin/webscr",
+			"https://www.paypal.com:8443/cgi-bin/webscr",
 			"https://www.paypal.com.evil.example/x",
 			"https://evil.example/www.paypal.com",
 			"https://user@www.paypal.com/x",
