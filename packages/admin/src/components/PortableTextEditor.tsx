@@ -104,6 +104,7 @@ import {
 	type EditorState,
 } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
+import type { EditorView } from "@tiptap/pm/view";
 import { useEditor, EditorContent, useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
@@ -4421,13 +4422,32 @@ function afterSelectedPluginBlock(state: EditorState): number | null {
 }
 
 /**
+ * When a plugin block is selected, opens a new paragraph just after it holding `text` and puts the
+ * cursor at its end; false (and nothing changed) when no plugin block is selected.
+ */
+function openParagraphAfterSelectedPluginBlock(view: EditorView, text: string): boolean {
+	const at = afterSelectedPluginBlock(view.state);
+	const paragraph = view.state.schema.nodes.paragraph;
+	if (at === null || !paragraph) return false;
+	const tr = view.state.tr.insert(
+		at,
+		paragraph.create(null, text ? view.state.schema.text(text) : null),
+	);
+	tr.setSelection(TextSelection.create(tr.doc, at + 1 + text.length));
+	view.dispatch(tr.scrollIntoView());
+	return true;
+}
+
+/**
  * A page that opens on an atom block (a migrated page's layout carrier, an embed) would open with
  * ProseMirror's default selection, `Selection.atStart`, which selects that block as a node, so the
  * first key typed would replace the block and everything it holds. The editor opens with a text
- * cursor in the page's first words instead (or keeps the default when it holds none). A key or a
- * paste that lands on a selected plugin block, at any time, goes into a new paragraph just after the
- * block, never in its place; Backspace and Delete still remove a selected block, as
- * PluginBlockNode's shortcuts mean them to.
+ * cursor in the page's first words instead (or keeps the default when it holds none). Words that
+ * land on a selected plugin block, at any time, go into a new paragraph just after the block, never
+ * in its place: a key press, words inserted without one (a phone keyboard, dictation, an emoji
+ * picker), a composition (the cursor moves past the block as it starts), and a paste (the pasted
+ * content then goes through the editor's own paste handling, at the new cursor). Backspace and
+ * Delete still remove a selected block, as PluginBlockNode's shortcuts mean them to.
  */
 const PluginBlockSelectionGuard = Extension.create({
 	name: "emdashPluginBlockSelectionGuard",
@@ -4444,26 +4464,33 @@ const PluginBlockSelectionGuard = Extension.create({
 				key: new PluginKey("emdashPluginBlockSelectionGuard"),
 				props: {
 					handleTextInput(view, _from, _to, text) {
-						const at = afterSelectedPluginBlock(view.state);
-						const paragraph = view.state.schema.nodes.paragraph;
-						if (at === null || !paragraph) return false;
-						const tr = view.state.tr.insert(
-							at,
-							paragraph.create(null, view.state.schema.text(text)),
-						);
-						tr.setSelection(TextSelection.create(tr.doc, at + 1 + text.length));
-						view.dispatch(tr.scrollIntoView());
-						return true;
+						return openParagraphAfterSelectedPluginBlock(view, text);
 					},
+					handleDOMEvents: {
+						// Words inserted without a key press reach ProseMirror as a DOM change over the
+						// selected block, which would replace it; they are put after it instead.
+						beforeinput(view, event) {
+							if (event.isComposing) return false;
+							if (event.inputType !== "insertText" && event.inputType !== "insertReplacementText")
+								return false;
+							const text = event.data ?? event.dataTransfer?.getData("text/plain") ?? "";
+							if (!text || afterSelectedPluginBlock(view.state) === null) return false;
+							event.preventDefault();
+							return openParagraphAfterSelectedPluginBlock(view, text);
+						},
+						// A composition writes into the DOM where the selection is, over the block: the
+						// cursor moves into a new paragraph after the block before it writes anything.
+						compositionstart(view) {
+							openParagraphAfterSelectedPluginBlock(view, "");
+							return false;
+						},
+					},
+					// Only moves the cursor past the block; the paste itself is left to the editor's
+					// own handlers (a numbered list's identities, a table's cells) at the new cursor.
 					handlePaste(view, _event, slice) {
-						const at = afterSelectedPluginBlock(view.state);
-						const paragraph = view.state.schema.nodes.paragraph;
-						if (at === null || !paragraph) return false;
-						const tr = view.state.tr.insert(at, paragraph.create());
-						tr.setSelection(TextSelection.create(tr.doc, at + 1));
-						tr.replaceSelection(slice);
-						view.dispatch(tr.scrollIntoView().setMeta("paste", true).setMeta("uiEvent", "paste"));
-						return true;
+						if (slice.size === 0) return false;
+						openParagraphAfterSelectedPluginBlock(view, "");
+						return false;
 					},
 				},
 			}),
