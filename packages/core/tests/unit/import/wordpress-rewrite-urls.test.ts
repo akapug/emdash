@@ -413,3 +413,41 @@ describe("a layout's link classes follow the links the rewrite moves", () => {
 		expect(JSON.stringify(odd)).toBe(before);
 	});
 });
+
+describe("a layout's link titles follow the links the rewrite moves", () => {
+	const pdf = "https://example.com/wp-content/uploads/2026/01/cv.pdf";
+	const moved = "/_emdash/api/media/file/01CV.pdf";
+	const other = "https://elsewhere.example/";
+	const exact = { [pdf]: moved };
+	const base = buildBaseUrlMap(exact);
+	const carrier = (widget: Record<string, unknown>) => ({
+		_type: "layout-section",
+		_key: "ls-0",
+		skeleton: { wraps: [], widgets: { l0: { wraps: [], ...widget } }, added: { wraps: [] } },
+	});
+	const widgetOf = (b: PortableTextBlock) =>
+		(b.skeleton as { widgets: { l0: Record<string, unknown> } }).widgets.l0;
+
+	it("rewrites the key of a moved link's title, as it does its class, and leaves any other key", () => {
+		const blocks: PortableTextBlock[] = [
+			carrier({
+				linkClasses: { [pdf]: "cv-button" },
+				linkTitles: { [pdf]: "My CV", [other]: "Elsewhere" },
+			}),
+		];
+		expect(rewritePortableTextUrls(blocks, exact, base)).toEqual({
+			changed: true,
+			urlsRewritten: 2,
+		});
+		expect(widgetOf(blocks[0]!).linkTitles).toEqual({ [moved]: "My CV", [other]: "Elsewhere" });
+		expect(widgetOf(blocks[0]!).linkClasses).toEqual({ [moved]: "cv-button" });
+	});
+
+	it("names no title for a moved key that meets another key of a different title", () => {
+		const blocks: PortableTextBlock[] = [
+			carrier({ linkTitles: { [pdf]: "My CV", [moved]: "Another" } }),
+		];
+		rewritePortableTextUrls(blocks, exact, base);
+		expect(widgetOf(blocks[0]!).linkTitles).toEqual({});
+	});
+});
