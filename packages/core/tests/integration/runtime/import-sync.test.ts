@@ -272,58 +272,55 @@ describe("runtime import sync", () => {
 		"parent with an unchanged empty set",
 		"child",
 		"child with an unchanged empty set of parents",
-	])(
-		"treats a reference edit as the imported page's %s as a customer save",
-		async (side) => {
-			const created = await create();
-			await new SchemaRegistry(runtime.db).createCollection({ slug: "notes", label: "Notes" });
-			const content = new ContentRepository(runtime.db);
-			const note = await content.create({ type: "notes", slug: "note", data: {} });
-			const page = await content.findById("pages", created.entryId);
-			const noteGroup = note.translationGroup;
-			const pageGroup = page?.translationGroup;
-			if (!noteGroup || !pageGroup) throw new Error("entries have no translation group");
-			const relations = new RelationRepository(runtime.db);
-			const pageIsParent = side.startsWith("parent");
-			const relation = await relations.create({
-				slug: pageIsParent ? "pages_notes" : "notes_pages",
-				parentCollection: pageIsParent ? "pages" : "notes",
-				childCollection: pageIsParent ? "notes" : "pages",
-				parentLabel: pageIsParent ? "Page" : "Note",
-				childLabel: pageIsParent ? "Note" : "Page",
-			});
-			await writeReferenceSelection(
-				runtime.db,
-				side === "child"
-					? { relation: relation.id, side: "parent", entryGroup: noteGroup, groups: [pageGroup] }
-					: side === "child with an unchanged empty set of parents"
-						? { relation: relation.id, side: "child", entryGroup: pageGroup, groups: [] }
-						: {
-								relation: relation.id,
-								side: "parent",
-								entryGroup: pageGroup,
-								groups: side === "parent with a child" ? [noteGroup] : [],
-							},
-			);
-			const baseline = await runtime.db
-				.selectFrom("_emdash_import_baselines")
-				.selectAll()
-				.executeTakeFirstOrThrow();
-			expect(baseline.customer_owned).toBe(1);
-			const result = await runtime.handleImportSync(
-				{
-					...initial,
-					operationId: "receipt-2",
-					sequence: 2,
-					entryId: created.entryId,
-					expectedVersion: created.version,
-					data: { title: "Source update" },
-				},
-				actor,
-			);
-			expect(result.success && result.data.state).toBe("conflict");
-		},
-	);
+	])("treats a reference edit as the imported page's %s as a customer save", async (side) => {
+		const created = await create();
+		await new SchemaRegistry(runtime.db).createCollection({ slug: "notes", label: "Notes" });
+		const content = new ContentRepository(runtime.db);
+		const note = await content.create({ type: "notes", slug: "note", data: {} });
+		const page = await content.findById("pages", created.entryId);
+		const noteGroup = note.translationGroup;
+		const pageGroup = page?.translationGroup;
+		if (!noteGroup || !pageGroup) throw new Error("entries have no translation group");
+		const relations = new RelationRepository(runtime.db);
+		const pageIsParent = side.startsWith("parent");
+		const relation = await relations.create({
+			slug: pageIsParent ? "pages_notes" : "notes_pages",
+			parentCollection: pageIsParent ? "pages" : "notes",
+			childCollection: pageIsParent ? "notes" : "pages",
+			parentLabel: pageIsParent ? "Page" : "Note",
+			childLabel: pageIsParent ? "Note" : "Page",
+		});
+		await writeReferenceSelection(
+			runtime.db,
+			side === "child"
+				? { relation: relation.id, side: "parent", entryGroup: noteGroup, groups: [pageGroup] }
+				: side === "child with an unchanged empty set of parents"
+					? { relation: relation.id, side: "child", entryGroup: pageGroup, groups: [] }
+					: {
+							relation: relation.id,
+							side: "parent",
+							entryGroup: pageGroup,
+							groups: side === "parent with a child" ? [noteGroup] : [],
+						},
+		);
+		const baseline = await runtime.db
+			.selectFrom("_emdash_import_baselines")
+			.selectAll()
+			.executeTakeFirstOrThrow();
+		expect(baseline.customer_owned).toBe(1);
+		const result = await runtime.handleImportSync(
+			{
+				...initial,
+				operationId: "receipt-2",
+				sequence: 2,
+				entryId: created.entryId,
+				expectedVersion: created.version,
+				data: { title: "Source update" },
+			},
+			actor,
+		);
+		expect(result.success && result.data.state).toBe("conflict");
+	});
 
 	it("never adopts a legacy row from a matching slug or a supplied entry id", async () => {
 		const legacy = await new ContentRepository(runtime.db).create({
