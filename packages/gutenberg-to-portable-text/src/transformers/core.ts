@@ -371,7 +371,7 @@ export const quote: BlockTransformer = (block, _options, context) => {
 		// other block), and its saved markup is the <blockquote> and <cite> alone
 		for (const inner of context.transformBlocks(block.innerBlocks)) {
 			blocks.push(
-				inner._type === "block" && inner.style === "normal" && !inner.listItem
+				inner._type === "block" && inner.style === "normal"
 					? { ...inner, style: "blockquote" }
 					: inner,
 			);

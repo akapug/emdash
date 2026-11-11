@@ -79,4 +79,37 @@ describe("blockquote grouping (inline editor seam)", () => {
 		expect(quote.type).toBe("blockquote");
 		expect(quote.content).toHaveLength(1);
 	});
+
+	it("keeps a quote's list inside the quote through PT → PM → PT", () => {
+		const item = (key: string, text: string, style: string) => ({
+			_type: "block",
+			_key: key,
+			style,
+			listItem: "bullet",
+			level: 1,
+			children: [{ _type: "span", _key: `${key}-s`, text }],
+		});
+		const original = [
+			quoteBlock("q1", "Quote"),
+			item("l1", "quoted bullet", "blockquote"),
+			item("o1", "a bullet after the quote", "normal"),
+		];
+
+		const pm = portableTextToPM(original as never);
+		const types = (pm.content ?? []).map((n) => (n as { type: string }).type);
+		expect(types).toEqual(["blockquote", "bulletList"]);
+		const quote = pm.content?.[0] as { content?: Array<{ type: string }> };
+		expect(quote.content?.map((n) => n.type)).toEqual(["paragraph", "bulletList"]);
+
+		const back = pmToPortableText(pm) as Array<{
+			style?: string;
+			listItem?: string;
+			children?: Array<{ text?: string }>;
+		}>;
+		expect(back.map((b) => [b.style, b.listItem, b.children?.[0]?.text])).toEqual([
+			["blockquote", undefined, "Quote"],
+			["blockquote", "bullet", "quoted bullet"],
+			["normal", "bullet", "a bullet after the quote"],
+		]);
+	});
 });

@@ -72,8 +72,26 @@ export function portableTextToProsemirror(
 	while (i < blocks.length) {
 		const block = blocks[i];
 
-		// Check for list items
-		if (isTextBlock(block) && block.listItem) {
+		if (isTextBlock(block) && block.style === "blockquote") {
+			// Collect a blockquote "run": Portable Text is flat, so a
+			// multi-paragraph quote is stored as consecutive blocks with
+			// style "blockquote" (that's what the Gutenberg importer emits
+			// and what prosemirrorToPortableText serializes back to), and a
+			// list in the quote as list items styled "blockquote". Without
+			// this grouping each paragraph became its own quote node, and
+			// editor merges reverted on reload.
+			const quoteBlocks: PortableTextTextBlock[] = [];
+			while (i < blocks.length) {
+				const current = blocks[i];
+				if (!isTextBlock(current) || current.style !== "blockquote") break;
+				quoteBlocks.push({ ...current, style: "normal" });
+				i++;
+			}
+			content.push({
+				type: "blockquote",
+				content: portableTextToProsemirror(quoteBlocks, options).content,
+			});
+		} else if (isTextBlock(block) && block.listItem) {
 			// Collect a list "run": the level=1 anchor plus everything that
 			// nests under it (level > 1, regardless of listItem type — a number
 			// child under a bullet parent is still part of the same tree). A
@@ -90,7 +108,7 @@ export function portableTextToProsemirror(
 
 			while (i < blocks.length) {
 				const current = blocks[i];
-				if (!isTextBlock(current) || !current.listItem) break;
+				if (!isTextBlock(current) || !current.listItem || current.style === "blockquote") break;
 				const level = current.level || 1;
 				const currentId =
 					current.listItem === "number" ? normalizeListId(current.listId) : undefined;
@@ -107,42 +125,6 @@ export function portableTextToProsemirror(
 			}
 
 			content.push(convertList(listBlocks, listType, `root:${runStart}`, preserveIdentity));
-		} else if (isTextBlock(block) && block.style === "blockquote") {
-			// Collect a blockquote "run": Portable Text is flat, so a
-			// multi-paragraph quote is stored as consecutive blocks with
-			// style "blockquote" (that's what the Gutenberg importer emits
-			// and what prosemirrorToPortableText serializes back to).
-			// Without this grouping each paragraph became its own quote
-			// node, and editor merges reverted on reload.
-			const quoteBlocks: PortableTextTextBlock[] = [];
-			while (i < blocks.length) {
-				const current = blocks[i];
-				if (
-					!isTextBlock(current) ||
-					current.style !== "blockquote" ||
-					current.listItem !== undefined
-				) {
-					break;
-				}
-				quoteBlocks.push(current);
-				i++;
-			}
-
-			content.push({
-				type: "blockquote",
-				content: quoteBlocks.map((quoteBlock) => {
-					const paragraph = convertSpans(
-						quoteBlock.children,
-						quoteBlock.markDefs || [],
-						preserveIdentity,
-					);
-					return {
-						type: "paragraph",
-						attrs: identityAttrs(undefined, quoteBlock._key, preserveIdentity),
-						content: paragraph.length > 0 ? paragraph : undefined,
-					};
-				}),
-			});
 		} else {
 			const converted = convertBlock(block, `root:${i}`, preserveIdentity);
 			if (converted) {

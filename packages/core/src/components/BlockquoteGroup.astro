@@ -11,9 +11,11 @@
  */
 import { PortableText } from "astro-portabletext";
 
+import { buildPortableTextListTree } from "../content/portable-text-lists.js";
 import type { BlockquoteGroupNode } from "./portable-text-blockquote-group.js";
 import Block from "./Block.astro";
 import { emdashMarkComponents } from "./marks.js";
+import OrderedList from "./OrderedList.astro";
 
 export interface Props {
 	node: BlockquoteGroupNode;
@@ -22,13 +24,17 @@ export interface Props {
 const { node } = Astro.props;
 
 // Restyle the quoted blocks as "normal" so each renders as a <p> inside
-// the shared <blockquote> (and doesn't re-trigger blockquote handling).
-const paragraphs = (node?.blocks ?? []).map((block) => ({ ...block, style: "normal" }));
+// the shared <blockquote> (and doesn't re-trigger blockquote handling); its
+// list items render as the list they make, as the page's lists do.
+const paragraphs = buildPortableTextListTree(
+	(node?.blocks ?? []).map((block) => ({ ...block, style: "normal" })),
+);
 ---
 
 <blockquote>
 	<PortableText
 		value={paragraphs}
-		components={{ block: Block, mark: emdashMarkComponents }}
+		components={{ block: Block, list: { number: OrderedList }, mark: emdashMarkComponents }}
+		listNestingMode="html"
 	/>
 </blockquote>

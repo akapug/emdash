@@ -1953,3 +1953,67 @@ describe("Code block copy action", () => {
 		expect(document.querySelector(".ProseMirror")).toBeNull();
 	});
 });
+
+// =============================================================================
+// A quote that holds a list, saved and reloaded
+// =============================================================================
+
+describe("a quote that holds a paragraph and a list", () => {
+	function pasteHtml(editor: Editor, html: string) {
+		const clipboardData = {
+			files: [],
+			items: [],
+			types: ["text/html", "text/plain"],
+			getData: (type: string) => (type === "text/html" ? html : ""),
+		};
+		const paste = new Event("paste", { bubbles: true, cancelable: true });
+		Object.defineProperty(paste, "clipboardData", { value: clipboardData });
+		editor.view.dom.dispatchEvent(paste);
+	}
+
+	it("keeps the list inside the quote after a paste, a save and a reload", async () => {
+		const onChange = vi.fn();
+		const first = await renderAndGetEditor({ onChange });
+		first.editor.commands.focus();
+		pasteHtml(
+			first.editor,
+			"<blockquote><p>Before the list</p><ul><li>One</li><li>Two</li></ul></blockquote>",
+		);
+		await vi.waitFor(
+			() => {
+				const saved = onChange.mock.calls.at(-1)?.[0] as Array<{ listItem?: string }> | undefined;
+				expect(saved?.some((block) => block.listItem)).toBe(true);
+			},
+			{ timeout: 2000 },
+		);
+		const saved = onChange.mock.calls.at(-1)![0] as Parameters<
+			typeof PortableTextEditor
+		>[0]["value"];
+		await first.screen.unmount();
+
+		const { pm } = await renderAndGetEditor({ value: saved });
+		const quotes = pm.querySelectorAll("blockquote");
+		expect(quotes).toHaveLength(1);
+		expect(quotes[0]!.querySelector("p")?.textContent).toBe("Before the list");
+		expect(Array.from(quotes[0]!.querySelectorAll("ul > li"), (li) => li.textContent)).toEqual([
+			"One",
+			"Two",
+		]);
+		expect(pm.querySelectorAll("ul")).toHaveLength(1);
+	});
+
+	it("shows consecutive blockquote-styled blocks as one quote", async () => {
+		const { pm } = await renderAndGetEditor({
+			value: [
+				textBlock("First", { style: "blockquote" }),
+				textBlock("Second", { style: "blockquote" }),
+			],
+		});
+		const quotes = pm.querySelectorAll("blockquote");
+		expect(quotes).toHaveLength(1);
+		expect(Array.from(quotes[0]!.querySelectorAll("p"), (p) => p.textContent)).toEqual([
+			"First",
+			"Second",
+		]);
+	});
+});

@@ -746,27 +746,31 @@ function convertPMNode(
 			return convertList(node.content || [], "number", 1, node.attrs, path);
 
 		case "blockquote": {
-			const blocks: PortableTextTextBlock[] = [];
+			// A quote holds blocks: its paragraphs are blockquote-styled blocks, and a list
+			// in it is list items styled "blockquote", so the list stays in the quote on
+			// reload. Any other block in it (a heading, code, an image) is kept as itself:
+			// Portable Text has one style per block, so it cannot also be the quote's.
+			const blocks: PortableTextBlock[] = [];
 			const blockquoteContent = (node.content || []) as Array<{
 				type: string;
 				attrs?: Record<string, unknown>;
 				content?: unknown[];
 			}>;
-			for (const child of blockquoteContent) {
-				if (child.type === "paragraph") {
-					const { children, markDefs } = convertInlineContent(child.content || []);
-					if (children.length > 0) {
-						blocks.push({
-							_type: "block",
-							_key:
-								portableTextKeyFromAttrs(child.attrs) ??
-								portableTextKeyFromAttrs(node.attrs) ??
-								generateKey(),
-							style: "blockquote",
-							children,
-							markDefs: markDefs.length > 0 ? markDefs : undefined,
-						});
-					}
+			const quoteKey = portableTextKeyFromAttrs(node.attrs);
+			for (let childIndex = 0; childIndex < blockquoteContent.length; childIndex++) {
+				const child = blockquoteContent[childIndex]!;
+				// a one-paragraph quote carries its block's key on the quote node
+				const keyed =
+					child.type === "paragraph" && quoteKey && !portableTextKeyFromAttrs(child.attrs)
+						? { ...child, attrs: attrsWithPortableTextKey(child.attrs, quoteKey) }
+						: child;
+				const converted = convertPMNode(keyed, `${path}:${childIndex}`);
+				for (const block of converted ? (Array.isArray(converted) ? converted : [converted]) : []) {
+					blocks.push(
+						isTextBlock(block) && block.style === "normal"
+							? { ...block, style: "blockquote" }
+							: block,
+					);
 				}
 			}
 			if (blocks.length === 1) {
@@ -1149,7 +1153,21 @@ function portableTextToProsemirror(blocks: PortableTextBlock[]): {
 	while (i < blocks.length) {
 		const block = blocks[i]!;
 
-		if (isTextBlock(block) && block.listItem) {
+		if (isTextBlock(block) && block.style === "blockquote") {
+			// A run of blockquote-styled blocks is one quote (Portable Text is flat): its
+			// paragraphs, and its quote-styled list items as the lists they make.
+			const quoteBlocks: PortableTextTextBlock[] = [];
+			while (i < blocks.length) {
+				const current = blocks[i]!;
+				if (!isTextBlock(current) || current.style !== "blockquote") break;
+				quoteBlocks.push({ ...current, style: "normal" });
+				i++;
+			}
+			content.push({
+				type: "blockquote",
+				content: portableTextToProsemirror(quoteBlocks).content,
+			});
+		} else if (isTextBlock(block) && block.listItem) {
 			const listBlocks: PortableTextTextBlock[] = [];
 			const listType = block.listItem;
 			const runStart = i;
@@ -1160,7 +1178,7 @@ function portableTextToProsemirror(blocks: PortableTextBlock[]): {
 			// A level=1 block with a different listItem ends the run.
 			while (i < blocks.length) {
 				const current = blocks[i]!;
-				if (!isTextBlock(current) || !current.listItem) break;
+				if (!isTextBlock(current) || !current.listItem || current.style === "blockquote") break;
 				const level = current.level || 1;
 				const currentId =
 					current.listItem === "number" ? normalizeListId(current.listId) : undefined;

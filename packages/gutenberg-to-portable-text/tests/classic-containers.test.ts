@@ -27,7 +27,7 @@ const shape = (blocks: PortableTextBlock[]) =>
 	});
 
 describe("classic content: a quote that holds blocks", () => {
-	it("keeps a list in a quote a list, its items apart (a migrated post's quote, as saved)", () => {
+	it("keeps a list in a quote a list inside the quote, its items apart (a migrated post's quote, as saved)", () => {
 		const content = `<section itemprop="text">
 
         <blockquote>
@@ -46,10 +46,10 @@ If we want scientific breakthroughs, we should test if scientific AI models can 
       </section>`;
 		expect(shape(gutenbergToPortableText(content))).toEqual([
 			"blockquote: “To create an Einstein in a data center, we don’t just need a system that knows all the answers.\n…\nIf we want scientific breakthroughs, we should test if scientific AI models can for instance:",
-			"normal bullet1: Challenge their own training data knowledge",
-			"normal bullet1: Take bold counterfactual approaches",
-			"normal bullet1: Make general proposals based on tiny hints",
-			"normal bullet1: Ask non-obvious questions that lead to new research paths”",
+			"blockquote bullet1: Challenge their own training data knowledge",
+			"blockquote bullet1: Take bold counterfactual approaches",
+			"blockquote bullet1: Make general proposals based on tiny hints",
+			"blockquote bullet1: Ask non-obvious questions that lead to new research paths”",
 			"normal: Thomas Wolf on X",
 		]);
 	});
@@ -194,5 +194,32 @@ describe("a table's footer is drawn last", () => {
 <!-- /wp:table -->`;
 		expect(shape(gutenbergToPortableText(classic))).toEqual(["table H / B / F"]);
 		expect(shape(gutenbergToPortableText(blockEditor))).toEqual(["table H / B / F"]);
+	});
+});
+
+describe("a quote's list is the quote's (its items styled blockquote)", () => {
+	it("keeps a classic quote that is only a list a quote", () => {
+		const content = `<blockquote><ul><li>One</li><li>Two</li></ul></blockquote>`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"blockquote bullet1: One",
+			"blockquote bullet1: Two",
+		]);
+	});
+
+	it("styles a block-editor quote's inner list as the quote's", () => {
+		const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><!-- wp:paragraph -->
+<p>Said:</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:list -->
+<ul><li>One</li><li>Two</li></ul>
+<!-- /wp:list --></blockquote>
+<!-- /wp:quote -->`;
+		expect(shape(gutenbergToPortableText(content))).toEqual([
+			"blockquote: Said:",
+			"blockquote bullet1: One",
+			"blockquote bullet1: Two",
+		]);
 	});
 });

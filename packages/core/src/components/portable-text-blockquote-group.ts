@@ -8,7 +8,10 @@
  * `style: "blockquote"`. Rendering each of those as its own `<blockquote>`
  * visually splits the quote (#1884).
  *
- * Runs of a single block are left untouched, so existing single-paragraph
+ * A list in a quote is stored as list items styled "blockquote"; they belong
+ * to the quote's run, so the list renders inside the one <blockquote>.
+ *
+ * Runs of a single paragraph are left untouched, so existing single-paragraph
  * quotes render byte-for-byte as before.
  */
 
@@ -28,8 +31,7 @@ export interface BlockquoteGroupNode {
 function isBlockquoteBlock(block: unknown): block is TextBlockLike {
 	if (typeof block !== "object" || block === null) return false;
 	const b: Partial<TextBlockLike> = block;
-	// Quote-styled list items belong to their list, not to a quote run.
-	return b._type === "block" && b.style === "blockquote" && b.listItem === undefined;
+	return b._type === "block" && b.style === "blockquote";
 }
 
 export function groupBlockquoteRuns(blocks: unknown[]): unknown[] {
@@ -52,7 +54,7 @@ export function groupBlockquoteRuns(blocks: unknown[]): unknown[] {
 			next = blocks[i];
 		}
 
-		if (run.length === 1) {
+		if (run.length === 1 && run[0]?.listItem === undefined) {
 			result.push(run[0]);
 		} else {
 			const group: BlockquoteGroupNode = {

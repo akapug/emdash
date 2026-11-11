@@ -645,19 +645,20 @@ export function htmlToPortableText(
 					break;
 				}
 				// A quote that holds paragraphs, a list or a heading draws each of them inside it:
-				// its paragraphs are the quote's text, and a list or heading keeps its own shape,
-				// as a block-editor quote's inner blocks do (core/quote). Read as one run of text,
-				// a list's items joined into one line of the quote.
+				// its paragraphs and its list's items are styled "blockquote" (the list stays
+				// in the quote, as the renderer and the editors read it), and a heading keeps
+				// its own shape, as a block-editor quote's inner blocks do (core/quote). Read
+				// as one run of text, a list's items joined into one line of the quote.
 				const from = blocks.length;
 				const quoteAlign = aligned(fullMatch);
 				pushPart(content);
 				for (let i = from; i < blocks.length; i++) {
 					const block = blocks[i]!;
-					if (block._type === "block" && block.style === "normal" && !block.listItem) {
+					if (block._type === "block" && block.style === "normal") {
 						blocks[i] = {
 							...block,
 							style: "blockquote",
-							...(block.textAlign ? {} : quoteAlign),
+							...(block.textAlign || block.listItem ? {} : quoteAlign),
 						};
 					}
 				}
