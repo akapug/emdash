@@ -533,6 +533,47 @@ describe("what a page's own layout drew on its words and links", () => {
 		expect(other).toContain("<figure");
 	});
 
+	it("draws a picture's link with the title the page drew on it, by its href, with or without its class", async () => {
+		const titles = { linkTitles: { "https://badges.example/robin": 'Robin\'s "badge"' } };
+		const withTitle = (link: unknown, l1: Record<string, unknown>) =>
+			page(link).map((b) =>
+				b._type === "layout-section"
+					? carrier({
+							...(b.skeleton as { widgets: Record<string, unknown> }).widgets,
+							l1: { wraps: [wrap("div", "intro-text")], ...l1 },
+						})
+					: b,
+			);
+		const img =
+			'<img src="https://badges.example/badge.svg" alt loading="lazy" decoding="async"></a>';
+		// With its class, in either shape of link.
+		for (const link of ["https://badges.example/robin", { href: "https://badges.example/robin" }])
+			expect(
+				squash(
+					await render(
+						withTitle(link, {
+							linkClasses: { "https://badges.example/robin": "badge-widget" },
+							...titles,
+						}),
+					),
+				),
+			).toContain(
+				`<a href="https://badges.example/robin" class="badge-widget" title="Robin's &quot;badge&quot;">${img}`,
+			);
+		// A link with a title and no class is drawn as the page drew it too: the picture in its link, with its title.
+		const titledOnly = squash(await render(withTitle(undefined, titles)));
+		expect(titledOnly).toContain(
+			`<a href="https://badges.example/robin" title="Robin's &quot;badge&quot;">${img}`,
+		);
+		expect(titledOnly).not.toContain("<figure");
+		// A title for another href is not this picture's.
+		const other = squash(
+			await render(withTitle(undefined, { linkTitles: { "https://elsewhere.example/": "x" } })),
+		);
+		expect(other).not.toContain('title="x"');
+		expect(other).toContain("<figure");
+	});
+
 	it("draws each hover text on the words it is on, across the spans they are in, and leaves words it does not find alone", async () => {
 		const html = squash(await render(page()));
 		expect(html).toContain(
