@@ -161,7 +161,8 @@ describe("WordPress import URL rewriting", () => {
 			`<img src="${v}"><div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div><a href="${v}#top">x</a>`;
 		expect(rewriteStringUrls(value(oldVariantUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
 		// Only behind an entity, still found.
-		const entityOnly = (v: string) => `<div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div>`;
+		const entityOnly = (v: string) =>
+			`<div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div>`;
 		expect(rewriteStringUrls(entityOnly(oldVariantUrl), urlMap, baseMap).newValue).toBe(
 			entityOnly(newUrl),
 		);
@@ -176,8 +177,10 @@ describe("WordPress import URL rewriting", () => {
 
 		const inJson = JSON.stringify(`<img src="${oldVariantUrl}?ver=2">`);
 		const json = rewriteStringUrls(inJson, urlMap, baseMap).newValue;
-		expect(JSON.parse(json)).toMatch(/^<img src="\/_emdash\/media\/file\/imported\/hero\.jpg(\?ver=2)?">$/);
-	
+		expect(JSON.parse(json)).toMatch(
+			/^<img src="\/_emdash\/media\/file\/imported\/hero\.jpg(\?ver=2)?">$/,
+		);
+
 		const inStyle = `<div style="background:url(${oldVariantUrl}?ver=2);color:red"></div>`;
 		expect(rewriteStringUrls(inStyle, urlMap, baseMap).newValue).toBe(
 			`<div style="background:url(${newUrl});color:red"></div>`,
