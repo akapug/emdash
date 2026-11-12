@@ -111,6 +111,54 @@ describe("WordPress import URL rewriting", () => {
 		});
 	});
 
+	it("rewrites an attachment URL only where it ends, never the start of a longer file's URL", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const webp = `${oldOriginalUrl}.webp`;
+		const picture = (img: string) =>
+			`<picture><source srcset="${webp} 1x, ${webp} 2x" type="image/webp"><img src="${img}" srcset="${img} 1x, ${webp} 2x"></picture>`;
+		expect(rewriteStringUrls(picture(oldOriginalUrl), urlMap, baseMap)).toEqual({
+			newValue: picture(newUrl),
+			changed: true,
+			urlsRewritten: 1,
+		});
+
+		const longer = `${oldOriginalUrl}-1 ${oldOriginalUrl}_x ${oldOriginalUrl}/x ${oldOriginalUrl}x`;
+		expect(rewriteStringUrls(longer, urlMap, baseMap)).toEqual({
+			newValue: longer,
+			changed: false,
+			urlsRewritten: 0,
+		});
+	});
+
+	it("still rewrites an attachment URL followed by a query, a fragment, url()'s paren or an entity", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const value = (u: string) =>
+			`<img src="${u}?ver=2"><a href="${u}#top">x</a><div style="background:url(${u})"></div>{&quot;src&quot;:&quot;${u}&quot;} ${u}&#038;w=1 ${u}`;
+		expect(rewriteStringUrls(value(oldOriginalUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
+	});
+
+	it("rewrites a size variant only where it ends, beside its own .webp", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const value = (u: string) => `<img src="${u}"><source srcset="${oldVariantUrl}.webp">`;
+		expect(rewriteStringUrls(value(oldVariantUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
+	});
+
+	it("rewrites the longer of two attachment URLs as its own, when one begins the other", () => {
+		const scaled = "https://example.com/wp-content/uploads/2026/01/hero.jpg-scaled.jpg";
+		const exactMap = { [oldOriginalUrl]: newUrl, [scaled]: "/_emdash/media/file/imported/scaled.jpg" };
+		const baseMap = buildBaseUrlMap(exactMap);
+		expect(rewriteStringUrls(`<img src="${scaled}"> <img src="${oldOriginalUrl}">`, exactMap, baseMap).newValue).toBe(
+			`<img src="/_emdash/media/file/imported/scaled.jpg"> <img src="${newUrl}">`,
+		);
+
+		// A key that carries a query is its own URL, whichever key the map lists first.
+		const versioned = `${oldOriginalUrl}?ver=2`;
+		const both = { [oldOriginalUrl]: newUrl, [versioned]: "/_emdash/media/file/imported/v2.jpg" };
+		expect(rewriteStringUrls(`<img src="${versioned}"> <img src="${oldOriginalUrl}?ver=3">`, both, buildBaseUrlMap(both)).newValue).toBe(
+			`<img src="/_emdash/media/file/imported/v2.jpg"> <img src="${newUrl}?ver=3">`,
+		);
+	});
+
 	it("rewrites a legacy string image link", () => {
 		const baseMap = buildBaseUrlMap(urlMap);
 		const blocks = [
