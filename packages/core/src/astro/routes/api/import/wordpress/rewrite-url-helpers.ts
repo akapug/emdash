@@ -2,14 +2,26 @@ const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 const WORDPRESS_IMAGE_SIZE_SUFFIX = /-\d+x\d+(?=\.[^./?#]+$)/;
 const BASE_URL_EXTENSION = /^(.+)(\.[^./?#]+)$/;
 const QUERY_BEFORE_FRAGMENT = /^[^#]*\?/;
-/** What may follow a URL in a string field: its end, a quote, a tag, or the punctuation of prose. */
-const URL_END = `(?=$|["'\\s<>)\\],;:!?]|\\.(?=$|["'\\s<>)\\]]))`;
+/** A quote written as an entity: `&quot;`, `&#34;`, `&#039;`, `&apos;`, `&#x22;`. */
+const ENTITY_QUOTE = `&(?:quot|apos|#0*3[49]|#[xX]0*2[27]);`;
 /**
- * What may follow a file's URL (one without a query): what ends any URL, and a
- * fragment's `#` or an entity's `&` (`&quot;`, `&#038;`). `.webp`, `-1`, `_x`
- * or `/x` after it make it another file's URL, which is left alone.
+ * What may follow a URL in a string field: its end, a quote (bare, as an
+ * entity, or JSON-escaped: `\"`, `\u0022`), a tag, or the punctuation of prose.
  */
-const FILE_URL_END = `(?=$|["'\\s<>)\\],;:!?#&]|\\.(?=$|["'\\s<>)\\]]))`;
+const URL_END = `(?=$|["'\\s<>)\\],;:!?\\\\]|${ENTITY_QUOTE}|\\.(?=$|["'\\s<>)\\]\\\\]))`;
+/**
+ * What may follow a file's URL (one without a query): what ends any URL, its
+ * query's `?`, a fragment's `#`, an entity's `&` (`&quot;`, `&#038;`), and the
+ * `[` `]` `|` that list or wrap it. `.webp`, `-1`, `_x` or `/x` after it make
+ * it another file's URL, which is left alone.
+ */
+const FILE_URL_END = `(?=$|["'\\s<>)\\[\\],;:!?#&|\\\\]|\\.(?=$|["'\\s<>)\\]\\\\]))`;
+/**
+ * A query, up to whatever ends it: never a quote, an escape's backslash, a tag,
+ * `url()`'s closing paren or a quote written as an entity (an `&` that joins
+ * parameters stays in it), so the rewrite never takes what follows the URL.
+ */
+const URL_QUERY = `\\?(?:[^"'\\s\\\\<>)&]|(?!${ENTITY_QUOTE})&)*`;
 
 /**
  * Strip query parameters from a URL for base matching
@@ -354,8 +366,9 @@ export function rewriteStringUrls(
 				// Don't replace if we already have an exact match in the map
 				if (!exactMap[match]) {
 					// Where it ends, as the regex found it: not inside a longer file's URL.
+					const end = carriesQuery(match) ? URL_END : FILE_URL_END;
 					newValue = newValue.replace(
-						new RegExp(`${escapeRegExp(match)}${URL_END}`, "g"),
+						new RegExp(`${escapeRegExp(match)}${end}`, "g"),
 						() => newUrl,
 					);
 					changed = true;
@@ -385,5 +398,6 @@ function buildBaseUrlMatchRegex(baseUrl: string): RegExp {
 		? `${escapeRegExp(extensionMatch[1])}(?:-\\d+x\\d+)?${escapeRegExp(extensionMatch[2])}`
 		: escapeRegExp(baseUrl);
 
-	return new RegExp(`${basePattern}(\\?[^"'\\s]*)?${URL_END}`, "g");
+	// With a query, the URL ends after it; without one, the file's URL ends where any file's does.
+	return new RegExp(`${basePattern}(?:${URL_QUERY}${URL_END}|${FILE_URL_END})`, "g");
 }
