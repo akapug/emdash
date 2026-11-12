@@ -4,6 +4,12 @@ const BASE_URL_EXTENSION = /^(.+)(\.[^./?#]+)$/;
 const QUERY_BEFORE_FRAGMENT = /^[^#]*\?/;
 /** What may follow a URL in a string field: its end, a quote, a tag, or the punctuation of prose. */
 const URL_END = `(?=$|["'\\s<>)\\],;:!?]|\\.(?=$|["'\\s<>)\\]]))`;
+/**
+ * What may follow a file's URL (one without a query): what ends any URL, and a
+ * fragment's `#` or an entity's `&` (`&quot;`, `&#038;`). `.webp`, `-1`, `_x`
+ * or `/x` after it make it another file's URL, which is left alone.
+ */
+const FILE_URL_END = `(?=$|["'\\s<>)\\],;:!?#&]|\\.(?=$|["'\\s<>)\\]]))`;
 
 /**
  * Strip query parameters from a URL for base matching
@@ -319,13 +325,15 @@ export function rewriteStringUrls(
 	let changed = false;
 	let urlsRewritten = 0;
 
-	// Try exact matches first. A key that carries a query is replaced only where
-	// the URL ends with it: `?attachment_id=7` is not the start of `?attachment_id=71`.
-	for (const [oldUrl, newUrl] of Object.entries(exactMap)) {
+	// Try exact matches first, longest first, so a key that begins another (`a.jpg`
+	// and `a.jpg?ver=2`) never takes the longer one's place. Each is replaced only
+	// where the URL ends with it: `?attachment_id=7` is not the start of
+	// `?attachment_id=71`, and `a.jpg` is not the start of `a.jpg.webp`.
+	const exact = Object.entries(exactMap).toSorted(([a], [b]) => b.length - a.length);
+	for (const [oldUrl, newUrl] of exact) {
 		if (!newValue.includes(oldUrl)) continue;
-		const replaced = carriesQuery(oldUrl)
-			? newValue.replace(new RegExp(`${escapeRegExp(oldUrl)}${URL_END}`, "g"), () => newUrl)
-			: newValue.split(oldUrl).join(newUrl);
+		const end = carriesQuery(oldUrl) ? URL_END : FILE_URL_END;
+		const replaced = newValue.replace(new RegExp(`${escapeRegExp(oldUrl)}${end}`, "g"), () => newUrl);
 		if (replaced === newValue) continue;
 		newValue = replaced;
 		changed = true;
@@ -342,7 +350,8 @@ export function rewriteStringUrls(
 			for (const match of matches) {
 				// Don't replace if we already have an exact match in the map
 				if (!exactMap[match]) {
-					newValue = newValue.split(match).join(newUrl);
+					// Where it ends, as the regex found it: not inside a longer file's URL.
+					newValue = newValue.replace(new RegExp(`${escapeRegExp(match)}${URL_END}`, "g"), () => newUrl);
 					changed = true;
 					urlsRewritten++;
 				}
