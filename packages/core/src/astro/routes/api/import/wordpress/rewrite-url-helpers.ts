@@ -333,7 +333,10 @@ export function rewriteStringUrls(
 	for (const [oldUrl, newUrl] of exact) {
 		if (!newValue.includes(oldUrl)) continue;
 		const end = carriesQuery(oldUrl) ? URL_END : FILE_URL_END;
-		const replaced = newValue.replace(new RegExp(`${escapeRegExp(oldUrl)}${end}`, "g"), () => newUrl);
+		const replaced = newValue.replace(
+			new RegExp(`${escapeRegExp(oldUrl)}${end}`, "g"),
+			() => newUrl,
+		);
 		if (replaced === newValue) continue;
 		newValue = replaced;
 		changed = true;
@@ -351,7 +354,10 @@ export function rewriteStringUrls(
 				// Don't replace if we already have an exact match in the map
 				if (!exactMap[match]) {
 					// Where it ends, as the regex found it: not inside a longer file's URL.
-					newValue = newValue.replace(new RegExp(`${escapeRegExp(match)}${URL_END}`, "g"), () => newUrl);
+					newValue = newValue.replace(
+						new RegExp(`${escapeRegExp(match)}${URL_END}`, "g"),
+						() => newUrl,
+					);
 					changed = true;
 					urlsRewritten++;
 				}
