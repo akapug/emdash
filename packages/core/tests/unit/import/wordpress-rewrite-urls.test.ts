@@ -143,6 +143,47 @@ describe("WordPress import URL rewriting", () => {
 		expect(rewriteStringUrls(value(oldVariantUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
 	});
 
+	it("rewrites an attachment URL whose quote is JSON-escaped, as a block's attribute or a JSON string holds it", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		// WordPress writes a quote inside a block attribute as \u0022, and JSON writes it as \".
+		const value = (u: string, v: string) =>
+			`<!-- wp:kadence/image {"html":"\\u003cimg src=\\u0022${u}\\u0022 srcset=\\u0022${v} 1024w\\u0022\\u003e"} -->` +
+			JSON.stringify(`<img src="${u}"><img src="${v}">`) +
+			` ${u}|${v} ${u}[0]`;
+		expect(rewriteStringUrls(value(oldOriginalUrl, oldVariantUrl), urlMap, baseMap).newValue).toBe(
+			value(newUrl, newUrl),
+		);
+	});
+
+	it("rewrites every place a size variant ends, an entity's or a fragment's as well as a quote's", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const value = (v: string) =>
+			`<img src="${v}"><div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div><a href="${v}#top">x</a>`;
+		expect(rewriteStringUrls(value(oldVariantUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
+		// Only behind an entity, still found.
+		const entityOnly = (v: string) => `<div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div>`;
+		expect(rewriteStringUrls(entityOnly(oldVariantUrl), urlMap, baseMap).newValue).toBe(
+			entityOnly(newUrl),
+		);
+	});
+
+	it("keeps what follows a size variant's query when an entity or an escape ends it", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const inEntity = `<div data-settings="{&quot;url&quot;:&quot;${oldVariantUrl}?ver=2&quot;}" class="x"></div>`;
+		const out = rewriteStringUrls(inEntity, urlMap, baseMap).newValue;
+		expect(out).toContain(`&quot;}" class="x"></div>`);
+		expect(out).not.toContain(oldVariantUrl);
+
+		const inJson = JSON.stringify(`<img src="${oldVariantUrl}?ver=2">`);
+		const json = rewriteStringUrls(inJson, urlMap, baseMap).newValue;
+		expect(JSON.parse(json)).toMatch(/^<img src="\/_emdash\/media\/file\/imported\/hero\.jpg(\?ver=2)?">$/);
+	
+		const inStyle = `<div style="background:url(${oldVariantUrl}?ver=2);color:red"></div>`;
+		expect(rewriteStringUrls(inStyle, urlMap, baseMap).newValue).toBe(
+			`<div style="background:url(${newUrl});color:red"></div>`,
+		);
+	});
+
 	it("rewrites the longer of two attachment URLs as its own, when one begins the other", () => {
 		const scaled = "https://example.com/wp-content/uploads/2026/01/hero.jpg-scaled.jpg";
 		const exactMap = {
