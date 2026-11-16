@@ -1057,7 +1057,9 @@ function checkPart(
 		case "featured":
 		case "trailTerm":
 		case "authorBio":
-		case "adjacent": {
+		case "adjacent":
+		case "readingTime":
+		case "related": {
 			const has =
 				p.slot === "featured"
 					? post?.featured
@@ -1065,7 +1067,11 @@ function checkPart(
 						? post?.trailTerm
 						: p.slot === "authorBio"
 							? post?.author
-							: post?.adjacent;
+							: p.slot === "adjacent"
+								? post?.adjacent
+								: p.slot === "readingTime"
+									? post?.readingTime
+									: post?.related;
 			return has ? null : `a ${String(p.slot)} slot outside a post layout that carries one`;
 		}
 		case "comments":
