@@ -28,6 +28,7 @@ import { Comments, CommentForm } from "emdash/ui/comments";
 import WpShellComments from "../../components/WpShellComments.astro";
 import WpShell from "../../layouts/WpShell.astro";
 import { featuredImageUrl } from "../../utils/og-image";
+import { getReadingTime } from "../../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
 import { wpShellPostFill, wpShellRoute } from "../../utils/wp-shell";
 import { loadWpShell } from "../../utils/wp-shell-loader";
@@ -101,6 +102,43 @@ async function adjacent(published: Date | null | undefined) {
 	});
 	return { prev, next };
 }
+/**
+ * The reading time as the source's line phrases it: "less than 1" under a
+ * minute, "N" otherwise. The record's line keeps the theme's own unit and word
+ * ("minute read"), so the reader gives it only the quantity. EmDash's own
+ * `getReadingTime` counts the post's words.
+ */
+function readingQuantity(content: unknown): string {
+	const blocks = Array.isArray(content) ? (content as Parameters<typeof getReadingTime>[0]) : undefined;
+	const minutes = getReadingTime(blocks);
+	return minutes < 1 ? "less than 1" : String(Math.round(minutes));
+}
+
+/**
+ * The posts related to this one, drawn from the NEW site's own content: the
+ * posts sharing most of its tags, newest first, at most the count the source
+ * drew. The source's own related posts are never copied — their links would
+ * rot as the site changes.
+ */
+async function relatedPosts(tags: readonly { slug: string }[], count: number, self: string) {
+	if (count <= 0) return [];
+	const newest = await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: 50 });
+	if (Astro.cache?.enabled) Astro.cache.set(newest.cacheHint);
+	const mine = new Set(tags.map((t) => t.slug));
+	return newest.entries
+		.filter((e) => e.id !== self)
+		.map((e) => {
+			const theirs = (Array.isArray(e.data.terms?.tag) ? e.data.terms.tag : []).filter((t): t is { slug: string } => isObject(t) && typeof t.slug === "string");
+			return { entry: e, shared: theirs.filter((t) => mine.has(t.slug)).length };
+		})
+		.filter((r) => r.shared > 0)
+		.sort((a, b) => b.shared - a.shared)
+		.slice(0, count)
+		.map((r) => ({ title: r.entry.data.title, url: `/posts/${r.entry.id}` }));
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const relatedCount = shell?.post?.related?.count ?? 0;
 const post =
 	isPost && shell.post
 		? wpShellPostFill(data, {
@@ -108,6 +146,8 @@ const post =
 				origin: Astro.url.origin,
 				comments: shell.post.comments ? await getCommentCount("posts", data.id) : null,
 				...(await adjacent(data.publishedAt)),
+				readingTime: shell.post.readingTime ? readingQuantity(data.content) : null,
+				related: shell.post.related ? await relatedPosts(data.terms?.tag ?? [], relatedCount, data.id) : null,
 			})
 		: null;
 // The post layout's comment element holds EmDash's comments itself: in the theme's comment area where
