@@ -3641,6 +3641,13 @@ describe("a post's reading time and related posts, drawn from the record's slots
 	const html = (fill: Partial<WpShellPostFill>) =>
 		drawPost(aPost(fill), withPost(postWithFeatures()));
 
+	// The record validator must know every slot a real record can carry: a record
+	// with one it does not know is rejected WHOLE, so a post would lose its layout
+	// entirely. The unit tests never reached this check; the route arm did.
+	it("accepts a record whose post layout carries the reading-time and related slots", () => {
+		expect(wpShellProblem(withPost(postWithFeatures()))).toBeNull();
+	});
+
 	it("draws the reading time in the source's line, with the whole phrase the reader gives it", () => {
 		expect(html({ readingTime: "less than 1" })).toContain('<div class="page__meta-readtime"><i class="far fa-clock"></i> less than 1 minute read</div>');
 		expect(html({ readingTime: "12" })).toContain('<div class="page__meta-readtime"><i class="far fa-clock"></i> 12 minute read</div>');
