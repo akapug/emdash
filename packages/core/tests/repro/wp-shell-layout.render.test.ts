@@ -693,6 +693,48 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 		/<div class="comment-respond" id="respond">\s*<section class="ec-comments" data-for="posts\/01POST">EMDASH COMMENTS<\/section>\s*<form class="ec-comment-form" data-for="posts\/01POST"><\/form>\s*<\/div>/;
 	const OG_IMAGE = `<meta property="og:image" content="https://example.org/_emdash/api/media/file/${KEY}"`;
 
+	// task/12360 step 2: the related strip is derived from the NEW site's own posts,
+	// and the post being drawn must not appear in its own strip. The route compares
+	// the collection's `entry.id` (the public id) against each entry's `id`; doing
+	// that with `data.id` (the database id) never matched, so this arm pins which.
+	it("leaves the post itself out of its own related strip, matching ids in the collection's own space", async () => {
+		const related = { item: ["<div class=\"post-related\">", HOLE("related"), "</div>"], card: ["<a href=\"", HOLE("adjHref"), "\">", HOLE("adjTitle"), "</a>"], count: 3 };
+		reads.shell = { ...withPost(), post: { ...withPost().post, parts: [...withPost().post.parts.filter((p: any) => !("slot" in p && p.slot === "comments")), { slot: "related" }, { slot: "comments", tag: "div", class: "comment-respond", id: "respond" }], related } };
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getCommentCount.mockResolvedValue(0);
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				// The public id is the slug; the database id is the ULID.
+				id: "the-pond",
+				data: {
+					id: "01POST",
+					title: "The Pond",
+					content: [{ _type: "block", _key: "b", style: "normal", children: [{ _type: "span", _key: "s", text: "a word ".repeat(200), marks: [] }], markDefs: [] }],
+					translationGroup: "01POST",
+					updatedAt: new Date("2026-02-01T00:00:00Z"),
+					publishedAt: new Date("2026-01-15T08:30:00Z"),
+					terms: { tag: [{ label: "debt", slug: "debt" }] },
+					bylines: [{ byline: { displayName: "Pat Author" }, sortOrder: 0 }],
+					featured_image: IMPORTED.resolved,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: [
+				{ id: "the-pond", data: { title: "The Pond", terms: { tag: [{ label: "debt", slug: "debt" }] } } },
+				{ id: "the-other", data: { title: "Another", terms: { tag: [{ label: "debt", slug: "debt" }] } } },
+			],
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShellRoute, { params: { path: "posts/the-pond" }, request: new Request("https://example.org/posts/the-pond") });
+		expect(html).toContain('href="/posts/the-other"');
+		// the post is not in its own strip
+		expect(html).not.toMatch(/post-related[\s\S]*href="\/posts\/the-pond"/u);
+	});
+
 	it("fills the layout from the post: its featured image at the file's own size, its meta and its comment count", async () => {
 		const html = await post(IMPORTED.resolved);
 		expect(reads.getEmDashEntry).toHaveBeenCalledWith("posts", "the-pond");
