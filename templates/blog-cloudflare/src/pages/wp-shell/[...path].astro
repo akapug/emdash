@@ -147,7 +147,10 @@ const post =
 				comments: shell.post.comments ? await getCommentCount("posts", data.id) : null,
 				...(await adjacent(data.publishedAt)),
 				readingTime: shell.post.readingTime ? readingQuantity(data.content) : null,
-				related: shell.post.related ? await relatedPosts(data.terms?.tag ?? [], relatedCount, data.id) : null,
+				// `entry.id`, not `data.id`: the collection's entries are keyed by the public id
+				// (the slug), and comparing the database id against it never matched, so a post
+				// listed itself in its own strip.
+				related: shell.post.related ? await relatedPosts(data.terms?.tag ?? [], relatedCount, entry.id) : null,
 			})
 		: null;
 // The post layout's comment element holds EmDash's comments itself: in the theme's comment area where
