@@ -356,9 +356,10 @@ describe("event rendering in the actual Astro template", () => {
 				cacheHint: {},
 			})
 			.mockResolvedValueOnce({
-				entries: Array.from({ length: 30 }, (_, i) => entry(`later-${i}`)).concat([
+				entries: [
+					...Array.from({ length: 30 }, (_, i) => entry(`later-${i}`)),
 					entry("series-tail", { start_date: "2020-01-01", occurrences: '["2026-11-22"]' }),
-				]),
+				],
 				hasMore: false,
 				cacheHint: {},
 			});

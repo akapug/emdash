@@ -372,7 +372,7 @@ export async function importContent(
 			if (mappedFields.data !== undefined) {
 				validateMappedFields(
 					mappedData,
-					manifest.collections[collection]!.fields,
+					manifest.collections[collection].fields,
 					postType === "mec-events",
 				);
 			}

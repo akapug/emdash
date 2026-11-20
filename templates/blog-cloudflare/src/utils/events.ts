@@ -1,7 +1,21 @@
 import type { ContentEntry } from "emdash";
 
 export const EVENT_URL_PATTERN = "/events/{slug}";
-export type EventEntry = ContentEntry<Record<string, unknown>>;
+const EVENT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const EVENT_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
+const EVENT_MONTH_PATTERN = /^(?!0000)\d{4}-(?:0[1-9]|1[0-2])$/;
+const EVENT_VIEW_KEYS = new Set([
+	"version",
+	"viewSlug",
+	"mode",
+	"order",
+	"layout",
+	"start",
+	"limit",
+	"navigation",
+	"filters",
+]);
+export type EventEntry = ContentEntry;
 export type EventView = {
 	version: 1;
 	viewSlug: string;
@@ -34,14 +48,12 @@ export function eventString(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value : undefined;
 }
 export function eventDate(value: unknown): value is string {
-	if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+	if (typeof value !== "string" || !EVENT_DATE_PATTERN.test(value)) return false;
 	const date = new Date(`${value}T00:00:00Z`);
 	return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 function clock(value: unknown): string | undefined {
-	return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value)
-		? value
-		: undefined;
+	return typeof value === "string" && EVENT_TIME_PATTERN.test(value) ? value : undefined;
 }
 export function eventToday(now: Date, timezone?: string): string {
 	if (timezone) {
@@ -107,7 +119,7 @@ export function eventSummary(
 			const value: unknown =
 				typeof data.occurrences === "string" ? JSON.parse(data.occurrences) : data.occurrences;
 			if (!Array.isArray(value) || !value.every(eventDate)) return null;
-			dates = [...new Set(value)].sort();
+			dates = [...new Set(value)].toSorted();
 		} catch {
 			return null;
 		}
@@ -151,21 +163,10 @@ export function eventSummary(
 	};
 }
 
-export function parseEventView(value: unknown): EventView | null {
-	if (!object(value)) return null;
-	const keys = [
-		"version",
-		"viewSlug",
-		"mode",
-		"order",
-		"layout",
-		"start",
-		"limit",
-		"navigation",
-		"filters",
-	];
+function isEventView(value: unknown): value is EventView {
+	if (!object(value)) return false;
 	if (
-		Object.keys(value).some((key) => !keys.includes(key)) ||
+		Object.keys(value).some((key) => !EVENT_VIEW_KEYS.has(key)) ||
 		value.version !== 1 ||
 		!eventString(value.viewSlug) ||
 		(value.mode !== "upcoming" && value.mode !== "past") ||
@@ -180,9 +181,9 @@ export function parseEventView(value: unknown): EventView | null {
 				value.limit < 1 ||
 				value.limit > 100))
 	)
-		return null;
+		return false;
 	if (value.filters !== undefined) {
-		if (!object(value.filters)) return null;
+		if (!object(value.filters)) return false;
 		for (const [key, terms] of Object.entries(value.filters)) {
 			if (
 				!["category", "location", "organizer"].includes(key) ||
@@ -191,10 +192,14 @@ export function parseEventView(value: unknown): EventView | null {
 				terms.length > 100 ||
 				!terms.every((term) => typeof term === "string" && term.trim().length > 0)
 			)
-				return null;
+				return false;
 		}
 	}
-	return value as EventView;
+	return true;
+}
+
+export function parseEventView(value: unknown): EventView | null {
+	return isEventView(value) ? value : null;
 }
 
 function names(entry: EventEntry, field: string): string[] {
@@ -228,7 +233,7 @@ export function eventMonthNavigation(
 	const values = url.searchParams.getAll(key);
 	if (values.length > 1) return null;
 	const month = values[0] ?? eventToday(now, timezone).slice(0, 7);
-	if (!/^(?!0000)\d{4}-(?:0[1-9]|1[0-2])$/.test(month)) return null;
+	if (!EVENT_MONTH_PATTERN.test(month)) return null;
 	const year = Number(month.slice(0, 4));
 	const index = year * 12 + Number(month.slice(5)) - 1;
 	function link(step: number): string | undefined {
