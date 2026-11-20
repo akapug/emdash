@@ -1,4 +1,5 @@
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import { serializeProps } from "astro/runtime/server/serialize.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import EventArticle from "../../../../templates/blog-cloudflare/src/components/EventArticle.astro";
@@ -24,10 +25,14 @@ const reads = vi.hoisted(() => ({
 	collection: vi.fn(),
 	entry: vi.fn(),
 	schema: vi.fn(),
+	editMeta: vi.fn(),
 }));
 async function emdashReads() {
+	const { getEditMeta } =
+		await vi.importActual<typeof import("../../src/query.js")>("../../src/query.js");
+	reads.editMeta.mockImplementation(getEditMeta);
 	return {
-		getEditMeta: () => undefined,
+		getEditMeta: reads.editMeta,
 		getCollectionByUrlPattern: reads.schema,
 		getEmDashCollection: reads.collection,
 		getEmDashEntry: reads.entry,
@@ -90,6 +95,7 @@ beforeEach(() => {
 	vi.useRealTimers();
 	reads.shell = null;
 	reads.timezone = undefined;
+	reads.editMeta.mockClear();
 	reads.schema
 		.mockReset()
 		.mockResolvedValue({ slug: "custom_meetups", urlPattern: "/events/{slug}" });
@@ -540,65 +546,117 @@ describe("event rendering in the actual Astro template", () => {
 		expect(html.indexOf("/events/running-today/")).toBeLessThan(html.indexOf("Past events"));
 	});
 	it("preserves rich shell skeleton, link and note marks while dispatching an event embed", async () => {
-		const html = await render(WpShellPortableText, {
-			value: [
-				{
-					_type: "elementor-section",
-					_key: "el-1000001",
-					skeleton: {
-						document: {
-							tag: "div",
-							class: "elementor elementor-42",
-							attrs: { "data-elementor-type": "wp-page", "data-elementor-id": "42" },
+		const value = [
+			{
+				_type: "elementor-section",
+				_key: "el-1000001",
+				skeleton: {
+					document: {
+						tag: "div",
+						class: "elementor elementor-42",
+						attrs: { "data-elementor-type": "wp-page", "data-elementor-id": "42" },
+					},
+					wraps: [
+						{
+							tag: "section",
+							class:
+								"elementor-section elementor-top-section elementor-element elementor-element-1000001",
 						},
-						wraps: [
-							{
-								tag: "section",
-								class:
-									"elementor-section elementor-top-section elementor-element elementor-element-1000001",
-							},
-						],
-						widgets: {
-							"1000003": {
-								wraps: [
-									{
-										tag: "div",
-										class: "elementor-element elementor-widget elementor-widget-text-editor",
-									},
-									{ tag: "div", class: "elementor-widget-container" },
-								],
-							},
+					],
+					widgets: {
+						"1000003": {
+							wraps: [
+								{
+									tag: "div",
+									class: "elementor-element elementor-widget elementor-widget-text-editor",
+								},
+								{ tag: "div", class: "elementor-widget-container" },
+							],
 						},
 					},
 				},
-				{
-					_type: "block",
-					_key: "el-1000003",
-					style: "normal",
-					markDefs: [
-						{ _type: "wpShellNote", _key: "hint", title: "Source note", class: "source-note" },
-						{
-							_type: "link",
-							_key: "link",
-							href: "/contact/",
-							skeletonClass: "source-link",
-							skeletonTitle: "Source link",
-						},
-					],
-					children: [
-						{ _type: "span", _key: "note", text: "Event source text", marks: ["hint"] },
-						{ _type: "span", _key: "link-text", text: "Contact", marks: ["link"] },
-					],
-				},
-				{ _type: "embed", _key: "extra", provider: "embark-events", events: { version: 1 } },
-			],
-		});
+			},
+			{
+				_type: "block",
+				_key: "el-1000003",
+				style: "normal",
+				markDefs: [
+					{ _type: "wpShellNote", _key: "hint", title: "Source note", class: "source-note" },
+					{
+						_type: "link",
+						_key: "link",
+						href: "/contact/",
+						skeletonClass: "source-link",
+						skeletonTitle: "Source link",
+					},
+				],
+				children: [
+					{ _type: "span", _key: "note", text: "Event source text", marks: ["hint"] },
+					{ _type: "span", _key: "link-text", text: "Contact", marks: ["link"] },
+				],
+			},
+			{ _type: "embed", _key: "extra", provider: "embark-events", events: { version: 1 } },
+		];
+		const html = await render(WpShellPortableText, { value });
 		expect(html).toContain('class="elementor elementor-42"');
 		expect(html).toContain('class="source-note"');
 		expect(html).toContain('title="Source note"');
 		expect(html).toContain('class="source-link"');
 		expect(html).toContain('title="Source link"');
 		expect(html).toContain("Saved event view unavailable");
+		expect(html).not.toContain("<astro-island");
+
+		// The native query interface tags the ORIGINAL PT array non-enumerably.
+		const metadata = { collection: "custom_meetups", id: "editable-event", field: "content" };
+		Object.defineProperty(value, Symbol.for("__emdash"), { value: metadata });
+		const container = await AstroContainer.create();
+		// As in portable-text-table.render.test.ts, no React/browser execution is involved.
+		container.addServerRenderer({
+			name: "@astrojs/react",
+			renderer: {
+				check: async () => false,
+				renderToStaticMarkup: async () => {
+					throw new Error("Expected the native client-only editor");
+				},
+			},
+		});
+		container.addClientRenderer({ name: "@astrojs/react", entrypoint: "@astrojs/react/client.js" });
+		const editor = await container.renderToString(WpShellPortableText, { props: { value } });
+		expect(reads.editMeta.mock.calls.at(-1)?.[0]).toBe(value);
+		const assertEditor = (output: string) => {
+			const island = output.match(/<astro-island\b[^>]*>/)?.[0];
+			expect(island).toBeDefined();
+			expect(island).toContain('component-export="InlinePortableTextEditor"');
+			expect(island).toContain('client="only"');
+			const encoded = island!.match(/\bprops="([^"]*)"/)?.[1];
+			expect(encoded).toBeDefined();
+			const props = JSON.parse(encoded!.replaceAll("&quot;", '"'));
+			expect(props).toMatchObject(
+				JSON.parse(
+					serializeProps(
+						{
+							value,
+							collection: metadata.collection,
+							entryId: metadata.id,
+							field: metadata.field,
+						},
+						{ displayName: "InlinePortableTextEditor" } as never,
+					),
+				),
+			);
+		};
+		assertEditor(editor);
+		expect(editor).not.toContain('<div class="elementor elementor-42"');
+		expect(Object.getOwnPropertyDescriptor(value, Symbol.for("__emdash"))?.value).toBe(metadata);
+
+		// Negative control: force the wrapper's always-skeleton decision without changing source.
+		reads.editMeta.mockReturnValueOnce(undefined);
+		const alwaysSkeleton = await container.renderToString(WpShellPortableText, {
+			props: { value },
+		});
+		expect(alwaysSkeleton).toContain('class="elementor elementor-42"');
+		expect(alwaysSkeleton).not.toContain("<astro-island");
+		expect(() => assertEditor(alwaysSkeleton)).toThrow();
 	});
 	it("intercepts event embeds in both regular and shell Portable Text", async () => {
 		const node = {
