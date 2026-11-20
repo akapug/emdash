@@ -50,6 +50,7 @@ export const wpExecuteConfig = z.object({
 	authorMappings: z.record(z.string(), z.string().nullable()).optional(),
 	locale: z.string().optional(),
 	importSeo: z.boolean().optional(),
+	importComments: z.boolean().optional(),
 	mappedFields: mappedFieldsSchema,
 	embeds: mappedEmbedsSchema,
 });

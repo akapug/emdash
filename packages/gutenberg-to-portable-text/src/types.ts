@@ -289,6 +289,11 @@ export interface ConvertOptions {
 	mediaMap?: Map<number, string>;
 	/** Custom block transformers */
 	customTransformers?: Record<string, BlockTransformer>;
+	/** Resolve an unescaped shortcode in raw visible text, before entity decoding. Undefined keeps it literal. */
+	shortcode?: (
+		raw: string,
+		context: { generateKey: () => string },
+	) => PortableTextBlock[] | undefined;
 	/** Whether to generate keys (default: true) */
 	generateKeys?: boolean;
 	/** Custom key generator */
@@ -314,6 +319,8 @@ export type BlockTransformer = (
  * Context passed to transformers
  */
 export interface TransformContext {
+	/** The caller's source-aware inline shortcode resolver. */
+	shortcode?: ConvertOptions["shortcode"];
 	/** Transform child blocks recursively */
 	transformBlocks: (blocks: GutenbergBlock[]) => PortableTextBlock[];
 	/** Parse inline HTML to spans */

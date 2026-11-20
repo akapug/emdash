@@ -40,6 +40,7 @@ const DATA_ID_PATTERN = /data-id=["'](\d+)["']/i;
 const CODE_TAG_PATTERN_SINGLE = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const TABLE_TAG_PATTERN = /<table[^>]*>([\s\S]*?)<\/table>/i;
 const THEAD_TAG_PATTERN = /<thead[^>]*>([\s\S]*?)<\/thead>/i;
+const COLUMN_WIDTH_PATTERN = /^\d+(?:\.\d+)?(?:%|px|em|rem|vw)$/u;
 const TFOOT_TAG_PATTERN = /<tfoot[^>]*>([\s\S]*?)<\/tfoot>/i;
 const IMG_TAG_GLOBAL = /<img[^>]+>/gi;
 const IMG_TAG_SINGLE = /<img[^>]+>/i;
@@ -104,11 +105,13 @@ function textAndImages(
 		markDefs: NonNullable<PortableTextTextBlock["markDefs"]>,
 	) => PortableTextTextBlock | undefined,
 ): PortableTextBlock[] {
-	return parseInlineSegments(html, context.generateKey).flatMap((s): PortableTextBlock[] => {
-		if ("_type" in s) return [s];
-		const text = textBlock(s.children, s.markDefs);
-		return text ? [text] : [];
-	});
+	return parseInlineSegments(html, context.generateKey, context.shortcode).flatMap(
+		(s): PortableTextBlock[] => {
+			if ("_type" in s) return [s];
+			const text = textBlock(s.children, s.markDefs);
+			return text ? [text] : [];
+		},
+	);
 }
 
 /**
@@ -608,7 +611,12 @@ export const columns: BlockTransformer = (block, _options, context) => {
 	// percent) is what lays the row out; dropped, every column is equal.
 	const columnBlocks = block.innerBlocks.map((col) => {
 		const raw = col.attrs?.width;
-		const width = typeof raw === "number" && Number.isFinite(raw) ? `${raw}%` : typeof raw === "string" && /^\d+(?:\.\d+)?(?:%|px|em|rem|vw)$/u.test(raw.trim()) ? raw.trim() : undefined;
+		const width =
+			typeof raw === "number" && Number.isFinite(raw)
+				? `${raw}%`
+				: typeof raw === "string" && COLUMN_WIDTH_PATTERN.test(raw.trim())
+					? raw.trim()
+					: undefined;
 		return {
 			_type: "column" as const,
 			_key: context.generateKey(),

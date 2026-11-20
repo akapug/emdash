@@ -42,6 +42,11 @@ const video =
 const cases = [
 	{ name: "classic", body: `${before}\n\n[MEC id=73]\n\n${after}\n\n${video}` },
 	{ name: "case-insensitive shortcode", body: `${before}\n\n[mEc id=73]\n\n${after}\n\n${video}` },
+	{ name: "double-quoted ID", body: `${before}\n\n[MEC id="73"]\n\n${after}\n\n${video}` },
+	{
+		name: "single-quoted zero-padded ID",
+		body: `${before}\n\n[MEC id='073']\n\n${after}\n\n${video}`,
+	},
 	{
 		name: "Gutenberg shortcode",
 		body: `<!-- wp:paragraph -->${before}<!-- /wp:paragraph --><!-- wp:shortcode -->[MEC id=73]<!-- /wp:shortcode --><!-- wp:paragraph -->${after}<!-- /wp:paragraph --><!-- wp:embed {"url":"https://www.youtube.com/watch?v=abc123DEF45","providerNameSlug":"youtube"} -->${video}<!-- /wp:embed -->`,
@@ -97,7 +102,11 @@ describe("WXR carried embeds at the original content mutation", () => {
 		await teardownTestDatabase(db);
 	});
 
-	async function run(body: string, embeds: unknown = { "7": embed }, extra: Record<string, unknown> = {}) {
+	async function run(
+		body: string,
+		embeds: unknown = { "7": embed },
+		extra: Record<string, unknown> = {},
+	) {
 		const form = new FormData();
 		form.set("file", new File([wxr(body)], "synthetic-views.xml", { type: "application/xml" }));
 		form.set(
@@ -139,7 +148,7 @@ describe("WXR carried embeds at the original content mutation", () => {
 			const blocks: Block[] = JSON.parse(stored.content as string);
 			const at = blocks.findIndex((block) => block.provider === "embark-events");
 			expect(at).toBeGreaterThan(0);
-			expect(blocks[at]).toEqual(embed);
+			expect(blocks[at]).toEqual({ ...embed, _key: "mec-7-73-1" });
 			expect(blocks.slice(0, at).map(textOf).join("\n")).toContain("Before bold and linked.");
 			expect(
 				blocks
@@ -196,7 +205,7 @@ describe("WXR carried embeds at the original content mutation", () => {
 		expect((await (await run(body)).json()).data).toMatchObject({ success: true, imported: 1 });
 		const blocks: Block[] = JSON.parse((await row()).content as string);
 		expect(blocks).toHaveLength(3);
-		expect(blocks[1]).toEqual(embed);
+		expect(blocks[1]).toEqual({ ...embed, _key: "mec-7-73-1" });
 		expect(textOf(blocks[0]!)).toBe("Before ");
 		expect(textOf(blocks[2]!)).toBe(" after and [[MEC id=73]].");
 		for (const index of [0, 2]) {
@@ -208,33 +217,55 @@ describe("WXR carried embeds at the original content mutation", () => {
 	});
 
 	it("replaces only source shortcodes, not entity-encoded lookalikes or attribute text", async () => {
-		const response = await run('<p><a href="https://example.org/?literal=[MEC id=84]">Before</a></p>[MEC id=73]<p>Literal &#91;MEC id=84&#93; remains.</p>');
+		const response = await run(
+			'<p><a href="https://example.org/?literal=[MEC id=84]">Before</a></p>[MEC id=73]<p>Literal &#91;MEC id=84&#93; remains.</p>',
+		);
 		expect((await response.json()).data).toMatchObject({ success: true, imported: 1, errors: [] });
 		const blocks: Block[] = JSON.parse((await row()).content as string);
-		expect(blocks.filter((block) => block.provider === "embark-events")).toEqual([embed]);
+		expect(blocks.filter((block) => block.provider === "embark-events")).toEqual([
+			{ ...embed, _key: "mec-7-73-1" },
+		]);
 		expect(blocks.map(textOf).join("\n")).toContain("Literal [MEC id=84] remains.");
-		expect(blocks.flatMap((block) => block.markDefs ?? [])).toContainEqual(expect.objectContaining({ href: "https://example.org/?literal=[MEC id=84]" }));
+		expect(blocks.flatMap((block) => block.markDefs ?? [])).toContainEqual(
+			expect.objectContaining({ href: "https://example.org/?literal=[MEC id=84]" }),
+		);
 	});
 
 	it("persists each dictionary view by explicit source ID with stable occurrence keys, not supplied keys", async () => {
-		const tile = { ...embed, _key: "spoof-73", events: { ...embed.events, viewSlug: "tile-pager", layout: "tile", navigation: true } };
-		const response = await run('<p>Before</p>[MEC id=73]<p>Between [[MEC id=84]] literal.</p>[MEC id=84]<p>Again</p>[MEC id=73]<p>After</p>', { "7": { "73": { ...embed, _key: "spoof-84" }, "84": tile } });
+		const tile = {
+			...embed,
+			_key: "spoof-73",
+			events: { ...embed.events, viewSlug: "tile-pager", layout: "tile", navigation: true },
+		};
+		const response = await run(
+			"<p>Before</p>[MEC id=73]<p>Between [[MEC id=84]] literal.</p>[MEC id=84]<p>Again</p>[MEC id=73]<p>After</p>",
+			{ "7": { "73": { ...embed, _key: "spoof-84" }, "84": tile } },
+		);
 		expect((await response.json()).data).toMatchObject({ success: true, imported: 1, errors: [] });
 		const stored = await row();
 		const blocks: Block[] = JSON.parse(stored.content as string);
 		expect(blocks.filter((b) => b.provider === "embark-events")).toEqual([
-			{ ...embed, _key: "mec-7-73-1" }, { ...tile, _key: "mec-7-84-1" }, { ...embed, _key: "mec-7-73-2" },
+			{ ...embed, _key: "mec-7-73-1" },
+			{ ...tile, _key: "mec-7-84-1" },
+			{ ...embed, _key: "mec-7-73-2" },
 		]);
 		expect(blocks.map(textOf).join("\n")).toContain("Between [[MEC id=84]] literal.");
 		expect((await emdash.handleContentPublish("pages", stored.id as string)).success).toBe(true);
-		const revisions = await db.selectFrom("revisions").selectAll().where("entry_id", "=", stored.id as string).execute();
+		const revisions = await db
+			.selectFrom("revisions")
+			.selectAll()
+			.where("entry_id", "=", stored.id as string)
+			.execute();
 		expect(revisions).toHaveLength(1);
 		expect(JSON.parse(revisions[0]!.data).content).toEqual(blocks);
-		expect(await emdash.handleContentGet("pages", stored.id as string)).toMatchObject({ success: true, data: { item: { data: { content: blocks } } } });
+		expect(await emdash.handleContentGet("pages", stored.id as string)).toMatchObject({
+			success: true,
+			data: { item: { data: { content: blocks } } },
+		});
 	});
 
 	it("does not substitute another dictionary entry when the source view ID has no definition", async () => {
-		const response = await run('[MEC id=73]', { "7": { "84": { ...embed, _key: "mec-73" } } });
+		const response = await run("[MEC id=73]", { "7": { "84": { ...embed, _key: "mec-73" } } });
 		const result = (await response.json()).data;
 		expect(result).toMatchObject({ success: false, imported: 1 });
 		expect(JSON.stringify(result.errors)).toMatch(/73.*definition|definition.*73/i);
@@ -242,8 +273,46 @@ describe("WXR carried embeds at the original content mutation", () => {
 		expect(blocks).toEqual([{ ...unavailable, _key: "mec-7-73-1" }]);
 	});
 
+	it.each([false, true])(
+		"ignores unused dictionary definitions and activates only the real visible token: %s",
+		async (real) => {
+			const source =
+				'<p data-literal="[MEC id=73]">Before [[MEC id=73]] &#91;MEC id=73&#93;.</p><!-- [MEC id=73] --><script>[MEC id=73]</script><style>[MEC id=73]</style>' +
+				(real ? "<p>[MEC id=73]</p>" : "") +
+				"<p>After.</p>";
+			const response = await run(source, { "7": { "73": embed, "84": unavailable } });
+			expect((await response.json()).data).toMatchObject({
+				success: true,
+				imported: 1,
+				errors: [],
+			});
+			const blocks: Block[] = JSON.parse((await row()).content as string);
+			expect(blocks.filter((b) => b.provider === "embark-events")).toEqual(
+				real ? [{ ...embed, _key: "mec-7-73-1" }] : [],
+			);
+			expect(blocks.map(textOf).join("\n")).toContain("Before [[MEC id=73]] [MEC id=73].");
+			expect(blocks.map(textOf).join("\n")).toContain("After.");
+		},
+	);
+
+	it("reports a resolved shortcode in a span-only table cell rather than silently importing its raw token", async () => {
+		const response = await run(
+			'<!-- wp:table --><figure class="wp-block-table"><table><tbody><tr><td>[MEC id=73]</td></tr></tbody></table></figure><!-- /wp:table -->',
+			{ "7": { "73": embed } },
+		);
+		const result = (await response.json()).data;
+		expect(result).toMatchObject({ success: false, imported: 0 });
+		expect(JSON.stringify(result.errors)).toMatch(/MEC.*span|span.*MEC/i);
+		expect(
+			await db
+				.selectFrom("ec_pages" as keyof Database)
+				.selectAll()
+				.execute(),
+		).toEqual([]);
+	});
+
 	it("preserves the explicit upstream comments opt-out through the actual execute request", async () => {
-		const response = await run('<p>Body</p>', omitEmbeds, { importComments: false });
+		const response = await run("<p>Body</p>", omitEmbeds, { importComments: false });
 		const result = (await response.json()).data;
 		expect(result).toMatchObject({ success: true, imported: 1 });
 		expect(result.comments).toBeUndefined();
@@ -313,6 +382,10 @@ describe("WXR carried embeds at the original content mutation", () => {
 			{ "7": { ...embed, events: { ...embed.events, limit: "3" } } },
 			{ "7": { ...embed, events: { ...embed.events, navigation: true } } },
 			{ wrong: embed },
+			{ "7": { bad: embed } },
+			{ "7": { "73": null } },
+			{ "7": { "73": { ...embed, events: { ...embed.events, filters: { category: [] } } } } },
+			{ "7": { "73": { ...embed, events: { ...embed.events, navigation: true } } } },
 		].map((embeds) => ({ embeds })),
 	)("rejects malformed embeds before writing: $embeds", async ({ embeds }) => {
 		const response = await run("[MEC id=73]", embeds);

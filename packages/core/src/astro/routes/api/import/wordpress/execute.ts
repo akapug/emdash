@@ -53,7 +53,11 @@ import { slugify } from "#utils/slugify.js";
 
 import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
 import { sanitizeSlug } from "./analyze.js";
-import { contentWithMappedEmbed, mappedEmbedsSchema, type MappedEmbed } from "./mapped-embeds.js";
+import {
+	contentWithMappedEmbed,
+	mappedEmbedsSchema,
+	type MappedPostEmbeds,
+} from "./mapped-embeds.js";
 import { mappedFieldsSchema, validateMappedFields, wpExecuteConfig } from "./mapped-fields.js";
 
 export const prerender = false;
@@ -79,8 +83,8 @@ export interface ImportConfig {
 	importSeo?: boolean;
 	/** Additive collection fields keyed by WordPress source post ID, included in the original create. */
 	mappedFields?: Record<string, Record<string, unknown>>;
-	/** A resolved event-view block per source post, replacing its unescaped MEC shortcode in place. */
-	embeds?: Record<string, MappedEmbed>;
+	/** View definitions by source post and MEC view ID; legacy single-block values remain accepted. */
+	embeds?: Record<string, MappedPostEmbeds>;
 	/** Carry each item's approved comments (`importWxrComments`). Defaults to true. */
 	importComments?: boolean;
 }
@@ -379,7 +383,7 @@ export async function importContent(
 			// Convert content to Portable Text
 			const mappedEmbed = embeds.data?.[String(post.id)];
 			const converted = mappedEmbed
-				? contentWithMappedEmbed(post.content ?? "", mappedEmbed, { texturize })
+				? contentWithMappedEmbed(post.content ?? "", mappedEmbed, String(post.id), { texturize })
 				: {
 						content: post.content ? gutenbergToPortableText(post.content, { texturize }) : [],
 						warnings: [],

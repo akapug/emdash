@@ -372,7 +372,7 @@ export function htmlToPortableText(
 		inner: string,
 		shape: Pick<PortableTextTextBlock, "style" | "listItem" | "level" | "textAlign">,
 	) => {
-		for (const s of parseInlineSegments(inner, generateKey)) {
+		for (const s of parseInlineSegments(inner, generateKey, options.shortcode)) {
 			blocks.push(
 				"_type" in s
 					? s
@@ -389,6 +389,10 @@ export function htmlToPortableText(
 
 	const pushParagraph = (text: string) => {
 		if (!text) return;
+		if (options.shortcode) {
+			pushInline(text, { style: "normal" });
+			return;
+		}
 		const { children, markDefs } = parseInlineContent(text, generateKey);
 		if (drawsLine(children)) {
 			blocks.push({
@@ -460,7 +464,7 @@ export function htmlToPortableText(
 		const endItem = () => {
 			endLine();
 			if (lines.length === 0) return;
-			for (const s of parseInlineSegments(lines.join("<br>"), generateKey)) {
+			for (const s of parseInlineSegments(lines.join("<br>"), generateKey, options.shortcode)) {
 				if ("_type" in s) blocks.push(s);
 				else if (drawsLine(s.children)) {
 					blocks.push({
@@ -585,6 +589,10 @@ export function htmlToPortableText(
 		switch (tag) {
 			case "p":
 			case "div": {
+				if (options.shortcode) {
+					pushInline(content, { style: "normal", ...aligned(fullMatch) });
+					break;
+				}
 				// Extract any images first (including those wrapped in <a> tags)
 				// Match: <a...><img...></a> or standalone <img...>
 				// Track positions of linked images so we don't double-process
@@ -820,7 +828,8 @@ function createTransformContext(
 ): TransformContext {
 	const context: TransformContext = {
 		generateKey,
-		parseInlineContent: (html: string) => parseInlineContent(html, generateKey),
+		shortcode: options.shortcode,
+		parseInlineContent: (html: string) => parseInlineContent(html, generateKey, options.shortcode),
 		transformBlocks: (blocks: GutenbergBlock[]) =>
 			blocks.flatMap((block) => transformBlock(block, options, context)),
 	};
@@ -836,6 +845,25 @@ function transformBlock(
 	context: TransformContext,
 ): PortableTextBlock[] {
 	const transformer = getTransformer(block.blockName, options.customTransformers);
+	if (
+		options.shortcode &&
+		(block.blockName === null ||
+			block.blockName === "core/html" ||
+			block.blockName === "core/shortcode") &&
+		!options.customTransformers?.[block.blockName ?? ""]
+	) {
+		let resolved = false;
+		const converted = htmlToPortableText(block.innerHTML, {
+			...options,
+			keyGenerator: context.generateKey,
+			shortcode: (raw, at) => {
+				const result = options.shortcode?.(raw, at);
+				if (result !== undefined) resolved = true;
+				return result;
+			},
+		});
+		if (resolved) return converted;
+	}
 	if (block.blockName !== null) {
 		return transformer(block, options, context);
 	}

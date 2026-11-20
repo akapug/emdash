@@ -7,7 +7,13 @@
 
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 
-import type { PortableTextImageBlock, PortableTextMarkDef, PortableTextSpan } from "./types.js";
+import type {
+	ConvertOptions,
+	PortableTextBlock,
+	PortableTextImageBlock,
+	PortableTextMarkDef,
+	PortableTextSpan,
+} from "./types.js";
 import { sanitizeHref } from "./url.js";
 
 // Regex patterns for inline parsing
@@ -73,7 +79,9 @@ interface ParseResult {
 }
 
 /** A run of an element's text, or an image the element holds. */
-export type InlineSegment = ParseResult | PortableTextImageBlock;
+export type InlineSegment = ParseResult | PortableTextBlock;
+
+const SHORTCODE_PATTERN = /(?<!\[)\[[a-z][\w-]*(?:\s[^\]\r\n]*)?\](?!\])/gi;
 
 /** Where a walk of inline content is: the spans of the run it is in, and the links it met. */
 interface Walk {
@@ -83,19 +91,47 @@ interface Walk {
 	generateKey: () => string;
 	/** An `<img>` met on the way, and the link of the `<a>` around it; without it an image holds nothing and is passed over. */
 	image?: (walk: Walk, img: Element, link: string | undefined) => void;
+	shortcode?: ConvertOptions["shortcode"];
+	emit?: (walk: Walk, blocks: PortableTextBlock[]) => void;
+	source: string;
 }
 
 /** Walk inline HTML (a block tag around it taken off) into spans. */
-function walkInline(html: string, generateKey: () => string, image?: Walk["image"]): Walk {
-	const walk: Walk = { children: [], markDefs: [], markDefMap: new Map(), generateKey, image };
-	walkNodes(parseFragment(stripBlockTags(html)).childNodes, [], undefined, walk);
+function walkInline(
+	html: string,
+	generateKey: () => string,
+	image?: Walk["image"],
+	shortcode?: Walk["shortcode"],
+	emit?: Walk["emit"],
+): Walk {
+	const source = stripBlockTags(html);
+	const walk: Walk = {
+		children: [],
+		markDefs: [],
+		markDefMap: new Map(),
+		generateKey,
+		image,
+		shortcode,
+		emit,
+		source,
+	};
+	walkNodes(
+		parseFragment(source, shortcode ? { sourceCodeLocationInfo: true } : undefined).childNodes,
+		[],
+		undefined,
+		walk,
+	);
 	return walk;
 }
 
 /**
  * Parse inline HTML content into Portable Text spans
  */
-export function parseInlineContent(html: string, generateKey: () => string): ParseResult {
+export function parseInlineContent(
+	html: string,
+	generateKey: () => string,
+	shortcode?: ConvertOptions["shortcode"],
+): ParseResult {
 	// Handle whitespace-only input BEFORE stripping (parse5 normalizes whitespace away)
 	if (html.length > 0 && !WHITESPACE_PATTERN.test(html)) {
 		return {
@@ -103,7 +139,7 @@ export function parseInlineContent(html: string, generateKey: () => string): Par
 			markDefs: [],
 		};
 	}
-	const { children, markDefs } = walkInline(html, generateKey);
+	const { children, markDefs } = walkInline(html, generateKey, undefined, shortcode);
 	// Ensure at least one span exists
 	if (children.length === 0) {
 		children.push({ _type: "span", _key: generateKey(), text: "" });
@@ -122,17 +158,32 @@ export function parseInlineContent(html: string, generateKey: () => string): Par
  *
  * Content that holds no image is the one run `parseInlineContent` makes of it.
  */
-export function parseInlineSegments(html: string, generateKey: () => string): InlineSegment[] {
+export function parseInlineSegments(
+	html: string,
+	generateKey: () => string,
+	shortcode?: ConvertOptions["shortcode"],
+): InlineSegment[] {
 	if (html.length > 0 && !WHITESPACE_PATTERN.test(html)) {
 		return [parseInlineContent(html, generateKey)];
 	}
-	const pieces: Array<PortableTextSpan[] | PortableTextImageBlock> = [];
-	const walk = walkInline(html, generateKey, (at, img, link) => {
-		const block = imageBlock(img, link, generateKey);
-		if (!block) return;
-		pieces.push(at.children, block);
-		at.children = [];
-	});
+	const pieces: Array<PortableTextSpan[] | PortableTextBlock> = [];
+	let resolvedShortcode = false;
+	const walk = walkInline(
+		html,
+		generateKey,
+		(at, img, link) => {
+			const block = imageBlock(img, link, generateKey);
+			if (!block) return;
+			pieces.push(at.children, block);
+			at.children = [];
+		},
+		shortcode,
+		(at, blocks) => {
+			resolvedShortcode = true;
+			pieces.push(at.children, ...blocks);
+			at.children = [];
+		},
+	);
 	if (pieces.length === 0) {
 		if (walk.children.length === 0) {
 			walk.children.push({ _type: "span", _key: generateKey(), text: "" });
@@ -142,7 +193,7 @@ export function parseInlineSegments(html: string, generateKey: () => string): In
 	pieces.push(walk.children);
 	return pieces.flatMap((piece): InlineSegment[] => {
 		if (!Array.isArray(piece)) return [piece];
-		const children = trimRun(piece);
+		const children = resolvedShortcode ? piece : trimRun(piece);
 		if (!drawsLine(children)) return [];
 		const named = new Set(children.flatMap((c) => c.marks ?? []));
 		const markDefs = walk.markDefs.filter((d) => named.has(d._key)).map((d) => ({ ...d }));
@@ -233,6 +284,34 @@ function stripBlockTags(html: string): string {
 	return stripped;
 }
 
+/** Source offsets, rather than decoded node.value, keep entity-encoded brackets literal. */
+function resolveTextShortcodes(
+	node: TextNode,
+	marks: string[],
+	link: string | undefined,
+	walk: Walk,
+): boolean {
+	if (!walk.shortcode || !node.sourceCodeLocation) return false;
+	const { startOffset, endOffset } = node.sourceCodeLocation;
+	const raw = walk.source.slice(startOffset, endOffset);
+	let cursor = 0;
+	let resolved = false;
+	for (const match of raw.matchAll(SHORTCODE_PATTERN)) {
+		const blocks = walk.shortcode(match[0], { generateKey: walk.generateKey });
+		if (blocks === undefined) continue;
+		if (!walk.emit)
+			throw new Error(`Shortcode ${match[0]} cannot be placed inside a span-only field`);
+		resolved = true;
+		// These text fragments have no source locations: decode them through the same
+		// native walker, without treating their decoded brackets as another shortcode.
+		walkNodes(parseFragment(raw.slice(cursor, match.index)).childNodes, marks, link, walk);
+		walk.emit(walk, blocks);
+		cursor = match.index + match[0].length;
+	}
+	if (resolved) walkNodes(parseFragment(raw.slice(cursor)).childNodes, marks, link, walk);
+	return resolved;
+}
+
 /**
  * Recursively walk DOM nodes and build spans
  */
@@ -246,6 +325,7 @@ function walkNodes(
 	for (const node of nodes) {
 		const children = walk.children;
 		if (isTextNode(node)) {
+			if (resolveTextShortcodes(node, currentMarks, link, walk)) continue;
 			const text = node.value;
 			if (text) {
 				// Handle line breaks in text
