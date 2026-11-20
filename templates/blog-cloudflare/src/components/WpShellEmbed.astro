@@ -20,15 +20,18 @@ import type { ComponentProps } from "astro/types";
 import { Embed } from "emdash/ui";
 
 import { classicVideoEmbed } from "../utils/wp-shell";
+import EventEmbed from "./EventEmbed.astro";
 
-type Props = ComponentProps<typeof Embed>;
+type Props = ComponentProps<typeof Embed> & { node: { events?: unknown } };
 
 const { node } = Astro.props;
 const video = classicVideoEmbed(node);
 ---
 
 {
-	video ? (
+	node?.provider === "embark-events" ? (
+		<EventEmbed node={node} />
+	) : video ? (
 		<p>
 			<iframe
 				class="wp-shell-embed"

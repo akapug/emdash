@@ -151,14 +151,40 @@ Its `data` value is `{ success: true, result }`. `result` contains `url`, `isWor
 }
 ```
 
-Its `data` value contains `success`, `collectionsCreated`, `fieldsCreated`, and per-collection `errors`.
+Its `data` value contains `success`, `collectionsCreated`, `fieldsCreated`, per-collection `errors`, and an optional `urlPatternsUpdated` list.
+
+A `mec-events` mapping uses `/events/{slug}` for the selected collection. Prepare adds that pattern when it is absent. A conflicting existing pattern or event field definition produces an error; reconcile it before executing the import.
 
 ### Execute a WXR import
 
 `POST /_emdash/api/import/wordpress/execute` accepts `multipart/form-data` with:
 
 - `file`: the WXR file.
-- `config`: a JSON string containing `postTypeMappings`, `skipExisting`, optional `authorMappings`, optional `importSections`, and an optional import-wide `locale`.
+- `config`: a JSON string containing `postTypeMappings`, `skipExisting`, optional `authorMappings`, optional `importSections`, an optional import-wide `locale`, and optional `mappedFields`.
+
+`mappedFields` maps WordPress post IDs to additional field values. Prepare those fields on the target collection first. The values are written with the entry's title and body in the original create operation. Reserved names, standard content fields such as `title`, and fields absent from the target schema are rejected.
+
+For `mec-events`, prepare `start_date` as a required string containing a `YYYY-MM-DD` date, `all_day` as an optional boolean, and `occurrences` as optional JSON containing an array of date strings. Other event dates and times remain strings. Use `event_status` for cancellation status; `status` is reserved for publication state. Omit times and timezones that the source does not provide.
+
+The following `config` imports an event's native boolean and occurrence array into a prepared collection.
+
+```json title="config multipart field"
+{
+  "postTypeMappings": {
+    "mec-events": { "collection": "community_calendar", "enabled": true }
+  },
+  "skipExisting": true,
+  "mappedFields": {
+    "101": {
+      "start_date": "2030-06-01",
+      "all_day": true,
+      "occurrences": ["2030-06-08", "2030-06-15"]
+    }
+  }
+}
+```
+
+Omitting `mappedFields` keeps the standard import behavior. `skipExisting` still skips an existing entry rather than updating its fields.
 
 Its `data` value contains `success`, `imported`, `skipped`, `errors`, `byCollection`, and optional section and taxonomy summaries.
 

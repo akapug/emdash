@@ -1,0 +1,56 @@
+---
+import { getSiteSettingsWithCacheHint } from "emdash";
+import EventList from "./EventList.astro";
+import {
+	eventMonthNavigation,
+	eventString,
+	parseEventView,
+} from "../utils/events.js";
+import { loadEvents } from "../utils/event-data.js";
+interface Props {
+	node: { events?: unknown };
+}
+const view = parseEventView(Astro.props.node?.events);
+const now = new Date();
+const site = view ? await getSiteSettingsWithCacheHint() : null;
+const navigation = view?.navigation
+	? eventMonthNavigation(
+			view,
+			new URL(Astro.originPathname + Astro.url.search, Astro.url.origin),
+			now,
+			eventString(site?.data.timezone),
+		)
+	: undefined;
+const result =
+	view && navigation !== null ? await loadEvents(Astro.currentLocale) : null;
+if (Astro.cache?.enabled) {
+	if (site) Astro.cache.set(site.cacheHint);
+	if (result) {
+		for (const hint of result.hints) Astro.cache.set(hint);
+		if (result.unavailable) Astro.cache.set(false);
+	}
+	if (view?.navigation) Astro.cache.set(false);
+}
+---
+
+{
+	!view || navigation === null || result?.unavailable ? (
+		<aside class="event-view-unavailable" role="status">
+			<p>
+				Saved event view unavailable. Its settings or requested month could not
+				be read or are not supported.
+			</p>
+			<a href="/events/">View all events</a>
+		</aside>
+	) : (
+		result && (
+			<EventList
+				entries={result.entries}
+				view={view}
+				now={now}
+				navigation={navigation}
+				timezone={eventString(site?.data.timezone)}
+			/>
+		)
+	)
+}

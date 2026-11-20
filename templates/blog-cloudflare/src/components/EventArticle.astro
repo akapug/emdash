@@ -1,0 +1,66 @@
+---
+import { getSiteSettingsWithCacheHint } from "emdash";
+import EventCover from "./EventCover.astro";
+import BlogPortableText from "./BlogPortableText.astro";
+import WpShellPortableText from "./WpShellPortableText.astro";
+import EventFacts from "./EventFacts.astro";
+import { eventSummary, eventString, type EventEntry } from "../utils/events.js";
+import { safeHref } from "../utils/wp-shell.js";
+interface Props {
+	entry: EventEntry;
+	now?: Date;
+	title?: boolean;
+	shell?: boolean;
+}
+const { entry, now, title = true, shell = false } = Astro.props;
+const PortableText = shell ? WpShellPortableText : BlogPortableText;
+const site = await getSiteSettingsWithCacheHint();
+// A recurrence preview's next date can change without a content write.
+if (Astro.cache?.enabled) {
+	Astro.cache.set(site.cacheHint);
+	Astro.cache.set(false);
+}
+const event = eventSummary(entry, now, undefined, eventString(site.data.timezone));
+const data = entry.data;
+const more = eventString(data.more_info);
+const href = more ? safeHref(more) : "#";
+---
+
+<article class="event-article">
+	{
+		title && (
+			<h1 {...entry.edit?.title}>{eventString(data.title) ?? entry.id}</h1>
+		)
+	}
+	<EventCover image={data.featured_image} />
+	{
+		event ? (
+			<EventFacts event={event} />
+		) : (
+			<p>Event schedule unavailable. Please check with the organizer.</p>
+		)
+	}
+	<div {...entry.edit?.content}>
+		<PortableText value={Array.isArray(data.content) ? data.content : []} />
+	</div>
+	{
+		href !== "#" && (
+			<p>
+				<a href={href}>
+					{eventString(data.more_info_title) ?? "More information"}
+				</a>
+			</p>
+		)
+	}
+</article>
+<style>
+	.event-article {
+		max-width: var(--content-width, 680px);
+		margin: 2rem auto;
+		padding-inline: 1rem;
+	}
+	.event-article :global(img) {
+		max-width: 100%;
+		height: auto;
+	}
+</style>

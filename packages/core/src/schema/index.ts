@@ -45,7 +45,7 @@ export type {
 } from "./types.js";
 export { FIELD_TYPE_TO_COLUMN, RESERVED_FIELD_SLUGS, RESERVED_COLLECTION_SLUGS } from "./types.js";
 
-export { getCollectionInfo, getCollectionInfoWithDb } from "./query.js";
+export { getCollectionByUrlPattern, getCollectionInfo, getCollectionInfoWithDb } from "./query.js";
 
 export {
 	generateZodSchema,

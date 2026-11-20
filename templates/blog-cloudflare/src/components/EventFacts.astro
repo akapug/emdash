@@ -1,0 +1,63 @@
+---
+import { eventString, type EventSummary } from "../utils/events.js";
+interface Props {
+	event: EventSummary;
+}
+const { event } = Astro.props;
+const data = event.entry.data;
+---
+
+<div class="event-facts">
+	<p>
+		<time datetime={event.date}>{event.date}</time>{
+			event.endDate && event.endDate !== event.date && (
+				<>
+					{" "}
+					– <time datetime={event.endDate}>{event.endDate}</time>
+				</>
+			)
+		}
+	</p>
+	{
+		event.allDay ? (
+			<p>All day</p>
+		) : (
+			(event.startTime || event.endTime) && (
+				<p>
+					{event.startTime}
+					{event.endTime && <> – {event.endTime}</>}
+					{event.timezone && <> ({event.timezone})</>}
+				</p>
+			)
+		)
+	}
+	{eventString(data.time_note) && <p>{eventString(data.time_note)}</p>}
+	{eventString(data.location) && <p>Location: {eventString(data.location)}</p>}
+	{
+		eventString(data.organizer) && (
+			<p>Organizer: {eventString(data.organizer)}</p>
+		)
+	}
+	{eventString(data.category) && <p>Category: {eventString(data.category)}</p>}
+	{eventString(data.cost) && <p>Cost: {eventString(data.cost)}</p>}
+	{
+		event.cancelled && (
+			<p role="status">
+				<strong>Cancelled</strong>
+				{eventString(data.cancelled_reason) && (
+					<>: {eventString(data.cancelled_reason)}</>
+				)}
+			</p>
+		)
+	}
+	{
+		event.preview && (
+			<p>
+				Recurrence preview
+				{event.period === "preview"
+					? ": no upcoming dates in the imported preview. The series may continue; check with the organizer."
+					: ": next date in the imported preview."}
+			</p>
+		)
+	}
+</div>

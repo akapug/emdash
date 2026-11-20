@@ -15,7 +15,8 @@ import {
 	type ObjectCacheBackend,
 } from "../../src/object-cache/index.js";
 import { invalidateUrlPatternCache } from "../../src/query.js";
-import { getCollectionInfo } from "../../src/schema/query.js";
+import { getCollectionByUrlPattern, getCollectionInfo } from "../../src/schema/query.js";
+import { SchemaRegistry } from "../../src/schema/registry.js";
 import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../utils/test-db.js";
 
 function memoryBackend(): ObjectCacheBackend {
@@ -63,6 +64,94 @@ describe("object cache: schema (getCollectionInfo)", () => {
 		invalidateUrlPatternCache();
 		await flush();
 		await expect(getCollectionInfo("post")).rejects.toThrow(/D1 unavailable/);
+	});
+
+	it("discovers an empty custom-named collection from its URL pattern", async () => {
+		const registry = new SchemaRegistry(db);
+		await registry.createCollection({ slug: "mec_events", label: "Unmapped events" });
+		await registry.createCollection({
+			slug: "community_calendar",
+			label: "Community calendar",
+			urlPattern: "/events/{slug}",
+		});
+
+		const collection = await getCollectionByUrlPattern("/events/{slug}");
+		expect(collection?.slug).toBe("community_calendar");
+		expect(collection?.urlPattern).toBe("/events/{slug}");
+	});
+
+	it("does not expose an unroutable collection or match a different URL pattern", async () => {
+		const registry = new SchemaRegistry(db);
+		await registry.createCollection({
+			slug: "internal_calendar",
+			label: "Internal calendar",
+			urlPattern: "/events/{slug}",
+			routable: false,
+		});
+		await registry.createCollection({
+			slug: "public_calendar",
+			label: "Public calendar",
+			urlPattern: "/calendar/{slug}",
+		});
+
+		await expect(getCollectionByUrlPattern("/events/{slug}")).resolves.toBeNull();
+		await expect(getCollectionByUrlPattern("/missing/{slug}")).resolves.toBeNull();
+	});
+
+	it("refuses ambiguous routable collections rather than picking the first", async () => {
+		const registry = new SchemaRegistry(db);
+		for (const slug of ["first_calendar", "second_calendar"]) {
+			await registry.createCollection({ slug, label: slug, urlPattern: "/events/{slug}" });
+		}
+
+		await expect(getCollectionByUrlPattern("/events/{slug}")).rejects.toThrow(/ambiguous/i);
+	});
+
+	it("caches pattern discovery and reloads after schema invalidation", async () => {
+		await new SchemaRegistry(db).createCollection({
+			slug: "community_calendar",
+			label: "Community calendar",
+			urlPattern: "/events/{slug}",
+		});
+		expect((await getCollectionByUrlPattern("/events/{slug}"))?.slug).toBe("community_calendar");
+		await flush();
+
+		vi.mocked(getDb).mockRejectedValue(new Error("D1 unavailable"));
+		expect((await getCollectionByUrlPattern("/events/{slug}"))?.slug).toBe("community_calendar");
+		invalidateUrlPatternCache();
+		await flush();
+		await expect(getCollectionByUrlPattern("/events/{slug}")).rejects.toThrow(/D1 unavailable/);
+	});
+
+	it("does not collide between distinct URL pattern cache keys", async () => {
+		const registry = new SchemaRegistry(db);
+		await registry.createCollection({
+			slug: "community_calendar",
+			label: "Community calendar",
+			urlPattern: "/events/{slug}",
+		});
+		await registry.createCollection({
+			slug: "sessions",
+			label: "Sessions",
+			urlPattern: "/sessions/{slug}",
+		});
+
+		expect((await getCollectionByUrlPattern("/events/{slug}"))?.slug).toBe("community_calendar");
+		await flush();
+		expect((await getCollectionByUrlPattern("/sessions/{slug}"))?.slug).toBe("sessions");
+	});
+
+	it("invalidates a cached missing collection when routing metadata changes", async () => {
+		await expect(getCollectionByUrlPattern("/events/{slug}")).resolves.toBeNull();
+		await flush();
+		await new SchemaRegistry(db).createCollection({
+			slug: "community_calendar",
+			label: "Community calendar",
+			urlPattern: "/events/{slug}",
+		});
+		invalidateUrlPatternCache();
+		await flush();
+		expect((await getCollectionByUrlPattern("/events/{slug}"))?.slug).toBe("community_calendar");
 	});
 });
 

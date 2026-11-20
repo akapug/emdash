@@ -1,0 +1,30 @@
+---
+import Base from "../../layouts/Base.astro";
+import EventList from "../../components/EventList.astro";
+import { loadEvents } from "../../utils/event-data.js";
+import { loadWpShell } from "../../utils/wp-shell-loader.js";
+export const prerender = false;
+const shellResult = await loadWpShell();
+if (Astro.cache?.enabled) Astro.cache.set(shellResult.cacheHint);
+if (shellResult.shell)
+	return Astro.rewrite(`/wp-shell/events/${Astro.url.search}`);
+const result = await loadEvents(Astro.currentLocale);
+if (Astro.cache?.enabled)
+	for (const hint of result.hints) Astro.cache.set(hint);
+---
+
+<Base title="Events">
+	<main class="events-index">
+		<h1>Events</h1><EventList
+			entries={result.entries}
+			unavailable={result.unavailable}
+		/>
+	</main>
+</Base>
+<style>
+	.events-index {
+		max-width: var(--wide-width, 1200px);
+		margin: 2rem auto;
+		padding-inline: 1rem;
+	}
+</style>

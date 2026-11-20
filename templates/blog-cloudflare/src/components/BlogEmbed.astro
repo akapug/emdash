@@ -1,0 +1,15 @@
+---
+import { Embed } from "emdash/ui";
+import type { ComponentProps } from "astro/types";
+import EventEmbed from "./EventEmbed.astro";
+type Props = ComponentProps<typeof Embed> & { node: { events?: unknown } };
+const { node } = Astro.props;
+---
+
+{
+	node?.provider === "embark-events" ? (
+		<EventEmbed node={node} />
+	) : (
+		<Embed {...Astro.props} />
+	)
+}

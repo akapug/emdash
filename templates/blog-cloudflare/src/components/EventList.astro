@@ -1,0 +1,135 @@
+---
+import { getSiteSettingsWithCacheHint } from "emdash";
+import EventFacts from "./EventFacts.astro";
+import EventCover from "./EventCover.astro";
+import {
+	eventSummary,
+	eventString,
+	selectEventView,
+	sortEvents,
+	type EventEntry,
+	type EventView,
+	type EventMonthNavigation,
+} from "../utils/events.js";
+interface Props {
+	entries: EventEntry[];
+	now?: Date;
+	view?: EventView;
+	unavailable?: boolean;
+	navigation?: EventMonthNavigation;
+	timezone?: string;
+}
+const {
+	entries,
+	now = new Date(),
+	view,
+	unavailable = false,
+	navigation,
+	timezone,
+} = Astro.props;
+const site = timezone === undefined ? await getSiteSettingsWithCacheHint() : null;
+const referenceTimezone = timezone ?? eventString(site?.data.timezone);
+// The source-zone day changes the selection even when no content is edited.
+if (Astro.cache?.enabled) {
+	if (site) Astro.cache.set(site.cacheHint);
+	Astro.cache.set(false);
+}
+const events = entries.flatMap((entry) => {
+	const summary = eventSummary(entry, now, undefined, referenceTimezone);
+	return summary ? [summary] : [];
+});
+const groups = view
+	? [
+			{
+				title: view.mode === "past" ? "Past events" : "Upcoming events",
+				events: selectEventView(events, view, now, navigation?.month),
+			},
+		]
+	: [
+			{
+				title: "Upcoming events",
+				events: sortEvents(events.filter((e) => e.period === "upcoming")),
+			},
+			{
+				title: "Past events",
+				events: sortEvents(
+					events.filter((e) => e.period === "past"),
+					"desc",
+				),
+			},
+			{
+				title: "Recurrence previews",
+				events: sortEvents(events.filter((e) => e.period === "preview")),
+			},
+		];
+---
+
+<div class:list={["event-list", view?.layout && `event-list--${view.layout}`]}>
+	{
+		navigation && (
+			<nav aria-label={`Event months for ${view?.viewSlug}`}>
+				{navigation.prev && (
+					<a href={navigation.prev} rel="prev">
+						Previous month
+					</a>
+				)}
+				<strong>{navigation.month}</strong>
+				{navigation.next && (
+					<a href={navigation.next} rel="next">
+						Next month
+					</a>
+				)}
+			</nav>
+		)
+	}
+	{
+		unavailable ? (
+			<p>
+				Event listing unavailable. The complete schedule could not be read.
+				Please try again later.
+			</p>
+		) : (
+			groups.map((group) => (
+				<section>
+					<h2>{group.title}</h2>
+					{group.events.length === 0 ? (
+						<p>No {group.title.toLowerCase()} to show.</p>
+					) : (
+						<ul>
+							{group.events.map((event) => (
+								<li>
+									<EventCover image={event.entry.data.featured_image} />
+									<h3>
+										<a href={`/events/${encodeURIComponent(event.entry.id)}/`}>
+											{eventString(event.entry.data.title) ?? event.entry.id}
+										</a>
+									</h3>
+									<EventFacts event={event} />
+								</li>
+							))}
+						</ul>
+					)}
+				</section>
+			))
+		)
+	}
+</div>
+<style>
+	.event-list {
+		margin-block: 2rem;
+	}
+	.event-list ul {
+		list-style: none;
+		padding: 0;
+	}
+	.event-list li {
+		padding-block: 1rem;
+		border-bottom: 1px solid var(--color-border, #ccc);
+	}
+	.event-list--grid ul,
+	.event-list--tile ul {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+		gap: 1rem;
+	}
+</style>

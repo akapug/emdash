@@ -1,0 +1,25 @@
+---
+import { Image } from "emdash/ui";
+import type { ImageValue } from "emdash";
+import { safeHref } from "../utils/wp-shell.js";
+interface Props {
+	image: unknown;
+}
+const value = Astro.props.image;
+const record =
+	value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+const src = record?.src ?? record?.previewUrl;
+const safe =
+	typeof src === "string"
+		? safeHref(src) === src && /^(?:https?:\/\/|\/(?![\/\\]))/i.test(src)
+		: src === undefined && typeof record?.id === "string";
+// Event covers use the imported primary image, not unvalidated alternate URLs.
+const image =
+	record && safe
+		? ({ ...record, darkVariant: undefined } as ImageValue)
+		: undefined;
+---
+
+{image && <Image image={image} />}

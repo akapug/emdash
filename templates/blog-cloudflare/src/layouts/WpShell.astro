@@ -36,13 +36,10 @@ import {
 	type PortableTextBlock,
 } from "emdash";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
-import { EmDashHead, EmDashBodyStart, EmDashBodyEnd, PortableText } from "emdash/ui";
+import { EmDashHead, EmDashBodyStart, EmDashBodyEnd } from "emdash/ui";
 import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
-import WpShellBlock from "../components/WpShellBlock.astro";
-import WpShellImage from "../components/WpShellImage.astro";
-import WpShellEmbed from "../components/WpShellEmbed.astro";
-import WpShellForm from "../components/WpShellForm.astro";
+import PortableText from "../components/WpShellPortableText.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
 	bodyClassFor,
@@ -83,7 +80,7 @@ interface Props {
 	author?: string | null;
 	content?: { collection: string; id: string; slug?: string | null };
 	/** The entry: its title, body and excerpt (a subtitle slot draws the excerpt), with its edit markers. */
-	entry: { title: string; body?: PortableTextBlock[]; excerpt?: string | null; edit: EditProxy };
+	entry: { title: string; body?: PortableTextBlock[]; excerpt?: string | null; edit?: EditProxy };
 	/** Markup drawn in the content's place instead of the entry's body: a date archive's posts. */
 	contentHtml?: string;
 	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
@@ -213,14 +210,6 @@ const pieces = composeWpShell(shell, {
 // one (a post), and after the content otherwise.
 const commentsInLayout = pieces.some((piece) => "comments" in piece);
 
-// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
-// video embedded from a link in classic content, and a form imported from the site's form plugin,
-// in that plugin's markup (EmDash's form, its submit path).
-const components = {
-	block: WpShellBlock,
-	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
-};
-
 const pageCtx = createPublicPageContext({
 	url: new URL(path + Astro.url.search, Astro.url.origin),
 	locale: Astro.currentLocale,
@@ -270,7 +259,7 @@ const pageCtx = createPublicPageContext({
 				if ("subtitle" in piece) {
 					const Subtitle = piece.subtitle.tag as HTMLTag;
 					return (
-						<Subtitle class={piece.subtitle.class} id={piece.subtitle.id} {...entry.edit.excerpt}>
+						<Subtitle class={piece.subtitle.class} id={piece.subtitle.id} {...entry.edit?.excerpt}>
 							{entry.excerpt}
 						</Subtitle>
 					);
@@ -278,7 +267,7 @@ const pageCtx = createPublicPageContext({
 				if ("title" in piece) {
 					const Title = piece.title.tag as HTMLTag;
 					return (
-						<Title class={piece.title.class} id={piece.title.id} {...entry.edit.title}>
+						<Title class={piece.title.class} id={piece.title.id} {...entry.edit?.title}>
 							{entry.title}
 						</Title>
 					);
@@ -286,11 +275,13 @@ const pageCtx = createPublicPageContext({
 				const Content = piece.content.tag as HTMLTag;
 				return (
 					<Fragment>
-						<Content class={piece.content.class} id={piece.content.id} {...entry.edit.content}>
-							{contentHtml !== undefined ? (
+						<Content class={piece.content.class} id={piece.content.id} {...entry.edit?.content}>
+							{Astro.slots.has("content") ? (
+								<slot name="content" />
+							) : contentHtml !== undefined ? (
 								<Fragment set:html={contentHtml} />
 							) : (
-								<PortableText value={entry.body} components={components} />
+								<PortableText value={entry.body} />
 							)}
 							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>

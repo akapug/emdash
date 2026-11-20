@@ -1,0 +1,24 @@
+---
+import { PortableText } from "emdash/ui";
+import type { ComponentProps } from "astro/types";
+import WpShellBlock from "./WpShellBlock.astro";
+import WpShellImage from "./WpShellImage.astro";
+import WpShellEmbed from "./WpShellEmbed.astro";
+import WpShellForm from "./WpShellForm.astro";
+type Props = ComponentProps<typeof PortableText>;
+const { components, ...props } = Astro.props;
+---
+
+<PortableText
+	{...props}
+	components={{
+		block: WpShellBlock,
+		...components,
+		type: {
+			image: WpShellImage,
+			embed: WpShellEmbed,
+			"emdash-form": WpShellForm,
+			...components?.type,
+		},
+	}}
+/>

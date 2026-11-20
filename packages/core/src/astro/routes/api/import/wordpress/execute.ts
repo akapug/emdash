@@ -24,6 +24,7 @@ import {
 
 import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
+import { isParseError, parseBody } from "#api/parse.js";
 import { BylineRepository } from "#db/repositories/byline.js";
 import { SeoRepository } from "#db/repositories/seo.js";
 import { resolveImportByline } from "#import/utils.js";
@@ -51,6 +52,8 @@ import { slugify } from "#utils/slugify.js";
 
 import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
 import { sanitizeSlug } from "./analyze.js";
+import { contentWithMappedEmbed, mappedEmbedsSchema, type MappedEmbed } from "./mapped-embeds.js";
+import { mappedFieldsSchema, validateMappedFields, wpExecuteConfig } from "./mapped-fields.js";
 
 export const prerender = false;
 
@@ -73,6 +76,10 @@ export interface ImportConfig {
 	locale?: string;
 	/** Carry per-post SEO from Yoast SEO, Rank Math and All in One SEO postmeta. Defaults to true. */
 	importSeo?: boolean;
+	/** Additive collection fields keyed by WordPress source post ID, included in the original create. */
+	mappedFields?: Record<string, Record<string, unknown>>;
+	/** A resolved event-view block per source post, replacing its unescaped MEC shortcode in place. */
+	embeds?: Record<string, MappedEmbed>;
 }
 
 export interface ImportResult {
@@ -139,7 +146,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			return apiError("VALIDATION_ERROR", "No config provided", 400);
 		}
 
-		const config: ImportConfig = JSON.parse(configJson);
+		const config = await parseBody(
+			new Request(request.url, { method: "POST", body: configJson }),
+			wpExecuteConfig,
+		);
+		if (isParseError(config)) return config;
 
 		// Parse WXR
 		const text = await file.text();
@@ -270,6 +281,23 @@ export async function importContent(
 		},
 	};
 
+	const mappedFields = mappedFieldsSchema.safeParse(config.mappedFields);
+	if (!mappedFields.success) {
+		result.success = false;
+		result.errors.push({
+			title: "Import configuration",
+			error: "Invalid mappedFields configuration",
+		});
+		return result;
+	}
+
+	const embeds = mappedEmbedsSchema.safeParse(config.embeds);
+	if (!embeds.success) {
+		result.success = false;
+		result.errors.push({ title: "Import configuration", error: "Invalid embeds configuration" });
+		return result;
+	}
+
 	const seoTally = seoSite && config.importSeo !== false ? emptyWxrSeoTally() : undefined;
 	if (seoTally) result.seo = seoTally;
 
@@ -308,11 +336,27 @@ export async function importContent(
 		}
 
 		try {
+			const mappedData = mappedFields.data?.[String(post.id)] ?? {};
+			if (mappedFields.data !== undefined) {
+				validateMappedFields(
+					mappedData,
+					manifest.collections[collection]!.fields,
+					postType === "mec-events",
+				);
+			}
+
 			// The text as WordPress printed it, in English (texturizes); a post's own locale decides for it.
 			const texturize = texturizes(post.locale ?? siteLanguage);
 
 			// Convert content to Portable Text
-			const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
+			const mappedEmbed = embeds.data?.[String(post.id)];
+			const converted = mappedEmbed
+				? contentWithMappedEmbed(post.content ?? "", mappedEmbed, { texturize })
+				: {
+						content: post.content ? gutenbergToPortableText(post.content, { texturize }) : [],
+						warnings: [],
+					};
+			const content = converted.content;
 
 			// Generate slug from post name or title
 			const slug = post.postName || slugify(post.title || `post-${post.id || Date.now()}`);
@@ -380,6 +424,7 @@ export async function importContent(
 				title: typed(post.title || "Untitled"),
 				content,
 				excerpt: post.excerpt ? typed(post.excerpt) : undefined,
+				...mappedData,
 			};
 
 			// Only add featured_image if the collection has this field and we have a value
@@ -434,6 +479,9 @@ export async function importContent(
 
 			if (createResult.success) {
 				result.imported++;
+				for (const warning of converted.warnings) {
+					result.errors.push({ title: post.title || "Untitled", error: warning });
+				}
 				if (seoTally && seo) {
 					if (collectionHasSeo) tallyWxrSeo(seoTally, seo);
 					else tallyWxrSeoNoCollection(seoTally, seo);

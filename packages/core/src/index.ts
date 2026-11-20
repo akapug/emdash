@@ -487,6 +487,7 @@ export {
 	expandCollectionBlockFields,
 	normalizeBlocksData,
 	resolveBlockTypes,
+	getCollectionByUrlPattern,
 	getCollectionInfo,
 } from "./schema/index.js";
 export type {

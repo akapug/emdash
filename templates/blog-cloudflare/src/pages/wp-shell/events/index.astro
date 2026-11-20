@@ -1,0 +1,31 @@
+---
+import WpShell from "../../../layouts/WpShell.astro";
+import EventList from "../../../components/EventList.astro";
+import { loadEvents } from "../../../utils/event-data.js";
+import { loadWpShell } from "../../../utils/wp-shell-loader.js";
+export const prerender = false;
+const origin = Astro.originPathname;
+if (origin.startsWith("/wp-shell")) return new Response(null, { status: 404 });
+const shellResult = await loadWpShell();
+if (!shellResult.shell) return Astro.rewrite(`${origin}${Astro.url.search}`);
+const result = await loadEvents(Astro.currentLocale);
+if (Astro.cache?.enabled) {
+	Astro.cache.set(shellResult.cacheHint);
+	for (const hint of result.hints) Astro.cache.set(hint);
+}
+---
+
+<WpShell
+	shell={shellResult.shell}
+	kind="page"
+	path={origin}
+	title="Events"
+	entry={{ title: "Events" }}
+	comments={false}
+>
+	<EventList
+		slot="content"
+		entries={result.entries}
+		unavailable={result.unavailable}
+	/>
+</WpShell>

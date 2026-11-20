@@ -1,0 +1,38 @@
+---
+import { decodeSlug } from "emdash";
+import WpShell from "../../../layouts/WpShell.astro";
+import EventArticle from "../../../components/EventArticle.astro";
+import { loadEvent } from "../../../utils/event-data.js";
+import { eventString } from "../../../utils/events.js";
+import { loadWpShell } from "../../../utils/wp-shell-loader.js";
+export const prerender = false;
+const origin = Astro.originPathname;
+if (origin.startsWith("/wp-shell")) return new Response(null, { status: 404 });
+const shellResult = await loadWpShell();
+if (!shellResult.shell) return Astro.rewrite(`${origin}${Astro.url.search}`);
+const slug = decodeSlug(Astro.params.slug);
+if (!slug) return new Response(null, { status: 404 });
+const result = await loadEvent(slug, Astro.currentLocale);
+if (!result) return new Response(null, { status: 404 });
+if (Astro.cache?.enabled) {
+	Astro.cache.set(shellResult.cacheHint);
+	Astro.cache.set(result.cacheHint);
+}
+const title = eventString(result.entry.data.title) ?? slug;
+---
+
+<WpShell
+	shell={shellResult.shell}
+	kind="page"
+	path={origin}
+	title={title}
+	entry={{ title, edit: result.entry.edit }}
+	content={{
+		collection: result.collection,
+		id: String(result.entry.data.id),
+		slug,
+	}}
+	comments={false}
+>
+	<EventArticle slot="content" entry={result.entry} title={false} shell />
+</WpShell>

@@ -15,11 +15,17 @@ The maintained templates call these runtime helpers:
 
 | Function | Used for |
 | -------- | -------- |
+| `createNoop` | Providing an edit proxy outside visual editing |
 | `decodeSlug` | Decoding a dynamic route parameter before lookup |
+| `getCollectionInfo` | Reading collection metadata such as comment settings |
+| `getCommentCount` | Counting approved comments on an entry |
+| `getComments` | Reading approved comments for an entry |
+| `getContentSeo` | Reading an entry's stored SEO values |
 | `getEmDashCollection` | Reading and filtering entries in a collection |
 | `getEmDashEntry` | Reading one entry by ID or slug |
 | `getHomepage` | Rendering the entry chosen as the site's homepage |
 | `getMenuWithCacheHint` | Rendering a navigation menu with cache invalidation |
+| `getPublishedDates` | Reading publication date metadata |
 | `getSeoMeta` | Resolving an entry's SEO panel values and template fallbacks |
 | `getSiteSettings` | Reading public site identity and other global settings |
 | `getSiteSettingsWithCacheHint` | Reading global settings with cache invalidation |

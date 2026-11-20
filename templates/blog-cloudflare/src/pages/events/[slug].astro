@@ -1,0 +1,31 @@
+---
+import { decodeSlug } from "emdash";
+import Base from "../../layouts/Base.astro";
+import EventArticle from "../../components/EventArticle.astro";
+import { loadEvent } from "../../utils/event-data.js";
+import { eventString } from "../../utils/events.js";
+import { loadWpShell } from "../../utils/wp-shell-loader.js";
+export const prerender = false;
+const slug = decodeSlug(Astro.params.slug);
+if (!slug) return new Response(null, { status: 404 });
+const result = await loadEvent(slug, Astro.currentLocale);
+if (!result) return new Response(null, { status: 404 });
+if (Astro.cache?.enabled) Astro.cache.set(result.cacheHint);
+const shellResult = await loadWpShell();
+if (Astro.cache?.enabled) Astro.cache.set(shellResult.cacheHint);
+if (shellResult.shell)
+	return Astro.rewrite(
+		`/wp-shell/events/${encodeURIComponent(slug)}/${Astro.url.search}`,
+	);
+---
+
+<Base
+	title={eventString(result.entry.data.title) ?? slug}
+	content={{
+		collection: result.collection,
+		id: String(result.entry.data.id),
+		slug,
+	}}
+>
+	<EventArticle entry={result.entry} />
+</Base>

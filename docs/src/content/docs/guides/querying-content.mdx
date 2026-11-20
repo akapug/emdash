@@ -345,6 +345,20 @@ Preview URLs need no separate query. The middleware validates the `_preview` tok
 [Preview and visual editing guide](/guides/preview/) explains URL generation and the `entry.edit`
 annotations used for inline editing.
 
+## Find a collection by route
+
+Use `getCollectionByUrlPattern()` when an import chooses a collection name but your template knows its URL pattern. It matches the stored pattern exactly, so pass `/events/{slug}` rather than an entry's URL.
+
+The following server-side query finds the collection configured for event detail pages.
+
+```ts
+import { getCollectionByUrlPattern } from "emdash";
+
+const collection = await getCollectionByUrlPattern("/events/{slug}");
+```
+
+The result is the routable collection's metadata, including its `slug`, even when it contains no entries. The function returns `null` if none matches and throws `SchemaError` with code `AMBIGUOUS_URL_PATTERN` if multiple routable collections match. Resolve that schema conflict rather than choosing an arbitrary collection. Reads share EmDash's request and schema caches.
+
 ## Generate TypeScript types
 
 The dev server generates `emdash-env.d.ts` from the active schema. Keep that file included in the

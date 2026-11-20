@@ -17,6 +17,7 @@ import { FIELD_TYPES, type FieldType } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
 import { capitalize, sanitizeSlug, singularize, type ImportFieldDef } from "./analyze.js";
+import { mecEventFieldType } from "./mapped-fields.js";
 
 /** Validate that a string is a known FieldType, returning undefined if not */
 function asFieldType(value: string): FieldType | undefined {
@@ -30,13 +31,14 @@ interface PrepareRequest {
 	postTypes: Array<{
 		name: string;
 		collection: string;
-		fields: ImportFieldDef[];
+		fields?: ImportFieldDef[];
 	}>;
 }
 
 export interface PrepareResult {
 	success: boolean;
 	collectionsCreated: string[];
+	urlPatternsUpdated?: string[];
 	fieldsCreated: Array<{ collection: string; field: string }>;
 	errors: Array<{ collection: string; error: string }>;
 }
@@ -58,12 +60,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Zod schema output narrowed to PrepareRequest
 		const result = await prepareImport(emdash.db, body as PrepareRequest);
 
-		// Invalidate the URL pattern cache when prepare adds new collections so
-		// public routing picks up their patterns immediately. The manifest
-		// itself is built fresh per admin request, so cross-request
-		// staleness (the original failure mode in #747) is no longer
-		// possible — the execute step always reads live schema.
-		if (result.collectionsCreated.length > 0) {
+		// Routing caches schema separately from the per-request manifest, so repaired
+		// patterns must invalidate that cache just like newly created collections.
+		if (result.collectionsCreated.length > 0 || (result.urlPatternsUpdated?.length ?? 0) > 0) {
 			emdash.invalidateUrlPatternCache();
 		}
 
@@ -89,6 +88,7 @@ async function prepareImport(
 
 	for (const postType of request.postTypes) {
 		const collectionSlug = sanitizeSlug(postType.collection);
+		const isMecEvent = postType.name === "mec-events";
 
 		try {
 			// Check if collection exists
@@ -107,8 +107,9 @@ async function prepareImport(
 				}
 
 				// Default URL patterns for known post types
-				const urlPattern =
-					collectionSlug === "pages"
+				const urlPattern = isMecEvent
+					? "/events/{slug}"
+					: collectionSlug === "pages"
 						? "/{slug}"
 						: collectionSlug === "posts"
 							? "/blog/{slug}"
@@ -126,13 +127,45 @@ async function prepareImport(
 				result.collectionsCreated.push(collectionSlug);
 			}
 
+			if (isMecEvent && collection.urlPattern !== "/events/{slug}") {
+				if (collection.urlPattern) {
+					result.errors.push({
+						collection: collectionSlug,
+						error: `Existing URL pattern "${collection.urlPattern}" conflicts with "/events/{slug}". Reconcile the collection route before importing events.`,
+					});
+					continue;
+				}
+				await registry.updateCollection(collectionSlug, { urlPattern: "/events/{slug}" });
+				(result.urlPatternsUpdated ??= []).push(collectionSlug);
+			}
+
 			// Create missing fields
 			const existingFields = await registry.listFields(collection.id);
-			const existingFieldSlugs = new Set(existingFields.map((f) => f.slug));
+			const existingFieldsBySlug = new Map(existingFields.map((field) => [field.slug, field]));
 
-			for (const field of postType.fields) {
-				if (existingFieldSlugs.has(field.slug)) {
-					// Field already exists - skip
+			for (const field of postType.fields ?? []) {
+				const eventFieldType = isMecEvent ? mecEventFieldType(field.slug) : undefined;
+				if (
+					eventFieldType &&
+					(field.type !== eventFieldType || field.required !== (field.slug === "start_date"))
+				) {
+					result.errors.push({
+						collection: collectionSlug,
+						error: `Invalid event field "${field.slug}": expected ${eventFieldType} (required: ${field.slug === "start_date"})`,
+					});
+					continue;
+				}
+				const existingField = existingFieldsBySlug.get(field.slug);
+				if (existingField) {
+					if (
+						isMecEvent &&
+						(existingField.type !== field.type || existingField.required !== field.required)
+					) {
+						result.errors.push({
+							collection: collectionSlug,
+							error: `Existing field "${field.slug}" conflicts with the requested ${field.type} field (required: ${field.required}). Reconcile its schema before importing events.`,
+						});
+					}
 					continue;
 				}
 
@@ -186,5 +219,6 @@ async function prepareImport(
 		}
 	}
 
+	result.success = result.errors.length === 0;
 	return result;
 }
