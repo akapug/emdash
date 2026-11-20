@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { gutenbergToPortableText as compiledConverter } from "../dist/index.mjs";
+import {
+	gutenbergToPortableText as compiledConverter,
+	htmlToPortableText as compiledHtmlConverter,
+} from "../dist/index.mjs";
 import {
 	gutenbergToPortableText,
 	htmlToPortableText,
 	type ConvertOptions,
 	type PortableTextBlock,
 } from "../src/index.js";
-import { withoutUndrawn } from "../src/inline.js";
+import { drawsLine, withoutUndrawn } from "../src/inline.js";
 
 const publicOptions = (): ConvertOptions => ({
 	texturize: false,
@@ -35,6 +38,73 @@ const text = (blocks: PortableTextBlock[]) =>
 	spans(blocks)
 		.map((s) => s.text)
 		.join("");
+
+describe.each([
+	{ name: "source Gutenberg", convert: gutenbergToPortableText },
+	{ name: "compiled Gutenberg", convert: compiledConverter },
+	{ name: "source HTML", convert: htmlToPortableText },
+	{ name: "compiled HTML", convert: compiledHtmlConverter },
+])("single-cell embed layout: $name", ({ convert }) => {
+	it.each([
+		"<table><tr><td> \n<br>[MEC id=73]<br /> \n</td></tr></table>",
+		'<!-- wp:table --><figure class="wp-block-table"><table><tbody><tr><td><br>[MEC id=73]</td></tr></tbody></table></figure><!-- /wp:table -->',
+	])("unwraps only the single resolved embed and invokes its resolver once: %s", (source) => {
+		const options = publicOptions();
+		const calls: string[] = [];
+		const blocks = convert(source, {
+			...options,
+			shortcode: (raw, context) => {
+				calls.push(raw);
+				return options.shortcode?.(raw, context);
+			},
+		});
+		// The HTML entrypoint keeps empty runs around Gutenberg delimiter comments;
+		// they are outside the table and draw nothing, just as they did without this cure.
+		expect(blocks.filter((block) => block._type !== "block" || drawsLine(block.children))).toEqual([
+			{
+				_type: "embed",
+				_key: "synthetic-event",
+				provider: "synthetic",
+				url: "https://example.org",
+			},
+		]);
+		expect(calls).toEqual(["[MEC id=73]"]);
+	});
+
+	it.each([
+		"<table><tr><td>[MEC id=73]</td><td></td></tr></table>",
+		"<table><tr><td>[MEC id=73] Real content</td></tr></table>",
+		"<table><tr><td>[MEC id=73] [MEC id=73]</td></tr></table>",
+		"<table><tr><td colspan=2>[MEC id=73]</td></tr></table>",
+		"<table><caption>Real caption</caption><tr><td>[MEC id=73]</td></tr></table>",
+	])("keeps the named refusal for a genuine table or meaningful other content: %s", (source) => {
+		expect(() => convert(source, publicOptions())).toThrow(/span-only/);
+	});
+
+	it("preserves no-hook and unknown-hook tables without duplicate callback invocations", () => {
+		const source = "<table><tr><td><br>[UNKNOWN id=73]</td></tr></table>";
+		const options = { texturize: false, keyGenerator: () => "synthetic" };
+		const calls: string[] = [];
+		const ordinary = convert(source, options);
+		expect(ordinary[0]?._type).toBe("table");
+		expect(
+			convert(source, {
+				...options,
+				shortcode: (raw) => {
+					calls.push(raw);
+					return undefined;
+				},
+			}),
+		).toEqual(ordinary);
+		expect(calls).toEqual(["[UNKNOWN id=73]"]);
+	});
+
+	it("does not activate encoded literal brackets in the sole cell", () => {
+		const blocks = convert("<table><tr><td>&#91;MEC id=73&#93;</td></tr></table>", publicOptions());
+		expect(blocks).toHaveLength(1);
+		expect(blocks[0]?._type).toBe("table");
+	});
+});
 
 describe.each([
 	{ name: "source", convert: gutenbergToPortableText },
@@ -66,9 +136,12 @@ describe.each([
 	});
 
 	it("does not leak a throwing table conversion's cursor into the next entry", () => {
-		expect(() => convert("<table><tr><td>[MEC id=73]</td></tr></table>", publicOptions())).toThrow(
-			/span-only/,
-		);
+		expect(() =>
+			convert(
+				"<table><tr><td>[MEC id=73]</td><td>Other content</td></tr></table>",
+				publicOptions(),
+			),
+		).toThrow(/span-only/);
 		const next = convert("<h2>Visible heading</h2><p>Visible paragraph</p>", publicOptions());
 		expect(next.map((b) => (b._type === "block" ? b.style : b._type))).toEqual(["h2", "normal"]);
 		expect(text(next)).toBe("Visible headingVisible paragraph");

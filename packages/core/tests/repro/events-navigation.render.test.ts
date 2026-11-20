@@ -26,7 +26,7 @@ const options = {
 };
 const key = "events-month[tile-a]";
 function entry(id: string, fields: Record<string, unknown>) {
-	return { id, data: { id, title: id, status: "published", ...fields }, edit: {} };
+	return { id, data: { id, title: id, status: "published", locale: "en-US", ...fields }, edit: {} };
 }
 async function render(url: URL, events: Record<string, unknown> = options) {
 	const container = await AstroContainer.create();
@@ -71,6 +71,7 @@ describe("a saved tile's month navigation", () => {
 			limit: 1,
 			filters: { category: ["Arts"] },
 		});
+		expect(html).toContain("December 2026");
 		expect(html).toContain("/events/later-december/");
 		for (const slug of ["december", "january", "other-category"])
 			expect(html).not.toContain(`/events/${slug}/`);
@@ -113,7 +114,7 @@ describe("a saved tile's month navigation", () => {
 			cacheHint: {},
 		});
 		const html = await render(new URL("https://example.org/calendar/"));
-		expect(html).toContain("2026-11");
+		expect(html).toContain("November 2026");
 		expect(html).toContain("/events/last-evening/");
 		expect(html).not.toContain("/events/first-december/");
 	});
@@ -132,7 +133,8 @@ describe("a saved tile's month navigation", () => {
 		expect(html).toContain("/events/series/");
 		expect(html).toContain("2026-12-12");
 		expect(html).not.toContain("2026-11-25");
-		expect(html).toContain("Recurrence preview");
+		expect(html).not.toContain("Recurrence preview");
+		expect(html).not.toContain("Every ");
 	});
 	it("navigation never widens upcoming/past or current-month start semantics, and false remains non-navigating", async () => {
 		reads.list.mockResolvedValue({

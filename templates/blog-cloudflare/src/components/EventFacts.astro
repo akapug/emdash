@@ -1,45 +1,58 @@
 ---
-import { eventString, type EventSummary } from "../utils/events.js";
+import {
+	eventString,
+	formatEventDate,
+	formatEventTimes,
+	type EventSummary,
+} from "../utils/events.js";
 interface Props {
 	event: EventSummary;
+	compact?: boolean;
 }
-const { event } = Astro.props;
+const { event, compact = false } = Astro.props;
 const data = event.entry.data;
+// Query results carry the native row locale even on single-language sites,
+// where Astro's routing locale is absent. Neither path needs a settings read.
+const locale = Astro.currentLocale ?? eventString(data.locale);
+const times = formatEventTimes(event, locale);
 ---
 
 <div class="event-facts">
 	<p>
-		<time datetime={event.date}>{event.date}</time>{
+		<time datetime={event.date}>{formatEventDate(event.date, locale)}</time>{
 			event.endDate && event.endDate !== event.date && (
 				<>
 					{" "}
-					– <time datetime={event.endDate}>{event.endDate}</time>
+					–{" "}
+					<time datetime={event.endDate}>
+						{formatEventDate(event.endDate, locale)}
+					</time>
+				</>
+			)
+		}
+		{
+			times && (
+				<>
+					<span aria-hidden="true"> · </span>
+					{times}
+					{event.timezone && <> ({event.timezone})</>}
 				</>
 			)
 		}
 	</p>
-	{
-		event.allDay ? (
-			<p>All day</p>
-		) : (
-			(event.startTime || event.endTime) && (
-				<p>
-					{event.startTime}
-					{event.endTime && <> – {event.endTime}</>}
-					{event.timezone && <> ({event.timezone})</>}
-				</p>
-			)
-		)
-	}
 	{eventString(data.time_note) && <p>{eventString(data.time_note)}</p>}
 	{eventString(data.location) && <p>Location: {eventString(data.location)}</p>}
 	{
-		eventString(data.organizer) && (
+		!compact && eventString(data.organizer) && (
 			<p>Organizer: {eventString(data.organizer)}</p>
 		)
 	}
-	{eventString(data.category) && <p>Category: {eventString(data.category)}</p>}
-	{eventString(data.cost) && <p>Cost: {eventString(data.cost)}</p>}
+	{
+		!compact && eventString(data.category) && (
+			<p>Category: {eventString(data.category)}</p>
+		)
+	}
+	{!compact && eventString(data.cost) && <p>Cost: {eventString(data.cost)}</p>}
 	{
 		event.cancelled && (
 			<p role="status">
@@ -51,13 +64,16 @@ const data = event.entry.data;
 		)
 	}
 	{
-		event.preview && (
-			<p>
-				Recurrence preview
-				{event.period === "preview"
-					? ": no upcoming dates in the imported preview. The series may continue; check with the organizer."
-					: ": next date in the imported preview."}
-			</p>
+		event.period === "preview" && (
+			<p>More dates may be available. Please check with the organizer.</p>
 		)
 	}
 </div>
+<style>
+	.event-facts p {
+		margin-block: 0 0.5rem;
+	}
+	.event-facts p:last-child {
+		margin-bottom: 0;
+	}
+</style>

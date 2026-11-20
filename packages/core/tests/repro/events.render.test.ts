@@ -54,7 +54,14 @@ const now = new Date("2026-11-20T00:30:00Z");
 function entry(slug: string, data: Record<string, unknown> = {}) {
 	return {
 		id: slug,
-		data: { id: `ID-${slug}`, status: "published", title: slug, start_date: "2026-11-21", ...data },
+		data: {
+			id: `ID-${slug}`,
+			status: "published",
+			title: slug,
+			locale: "en-US",
+			start_date: "2026-11-21",
+			...data,
+		},
 		edit: { title: {}, content: {} },
 	};
 }
@@ -190,6 +197,58 @@ describe("source event dates and saved view validation", () => {
 });
 
 describe("event rendering in the actual Astro template", () => {
+	it("uses the native query locale for human dates and clocks in list, home embed and detail", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+		const localized = entry("rencontre", {
+			locale: "fr-FR",
+			start_date: "2026-11-20",
+			start_time: "19:00",
+			end_time: "21:00",
+			location: "Salle",
+		});
+		reads.collection.mockResolvedValue({ entries: [localized], hasMore: false, cacheHint: {} });
+		const surfaces = [
+			await render(EventList, { entries: [localized], now }),
+			await render(EventArticle, { entry: localized, now }),
+			await render(EventEmbed, { node: { events: view } }),
+		];
+		for (const html of surfaces) {
+			expect(html).toContain("ven. 20 nov. 2026");
+			expect(html).toContain('datetime="2026-11-20"');
+			expect(html).toMatch(/19:00\s*–\s*21:00/);
+			expect(html).toContain("Salle");
+			expect(html).not.toContain("Nov 20");
+			expect(html).not.toContain("Recurrence preview");
+		}
+	});
+	it("renders a next-three home grid with a cover before each linked title and no fourth card", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+		reads.collection.mockResolvedValue({
+			entries: [4, 2, 1, 3].map((day) =>
+				entry(`day-${day}`, {
+					start_date: `2026-11-${20 + day}`,
+					featured_image: { src: `/cover-${day}.jpg`, alt: `Cover ${day}` },
+					location: "Main Hall",
+				}),
+			),
+			hasMore: false,
+			cacheHint: {},
+		});
+		const html = await render(EventEmbed, { node: { events: { ...view, limit: 3 } } });
+		expect(html).toContain("event-list--grid");
+		expect(html.match(/<li[^>]*class="event-card"/g)).toHaveLength(3);
+		expect(html.match(/<img\b/g)).toHaveLength(3);
+		for (const day of [1, 2, 3]) {
+			expect(html).toContain(`/events/day-${day}/`);
+			expect(html.indexOf(`/cover-${day}.jpg`)).toBeLessThan(html.indexOf(`/events/day-${day}/`));
+		}
+		expect(html).toContain("Sat, Nov 21, 2026");
+		expect(html).toContain("Main Hall");
+		expect(html).not.toContain("/events/day-4/");
+		expect(html).not.toContain("Recurrence preview");
+	});
 	it("renders nonempty date, clock, location, cover, cancellation and Portable Text body safely", async () => {
 		const e = entry("Open <day>", {
 			start_time: "19:30",
@@ -214,8 +273,9 @@ describe("event rendering in the actual Astro template", () => {
 		const html = await render(EventArticle, { entry: e, now });
 		for (const text of [
 			"2026-11-21",
-			"19:30",
-			"20:30",
+			"Sat, Nov 21, 2026",
+			"7:30",
+			"8:30",
 			"Europe/London",
 			"Hall &lt;west&gt;",
 			"/cover.jpg",
@@ -227,7 +287,7 @@ describe("event rendering in the actual Astro template", () => {
 		expect(html).not.toContain("All day");
 		expect(html).not.toContain('href="javascript:');
 	});
-	it("index groups upcoming before past and labels recurrence preview uncertainty", async () => {
+	it("index groups upcoming before past and keeps uncertainty without internal preview wording", async () => {
 		const entries = [
 			entry("old", { start_date: "2026-01-01" }),
 			entry("future"),
@@ -235,7 +295,9 @@ describe("event rendering in the actual Astro template", () => {
 		];
 		const html = await render(EventList, { entries, now });
 		expect(html.indexOf("Upcoming events")).toBeLessThan(html.indexOf("Past events"));
-		expect(html).toContain("Recurrence preview");
+		expect(html).toContain("More dates may be available");
+		expect(html).not.toContain("Recurrence preview");
+		expect(html).not.toContain("Every ");
 		expect(html).toContain("/events/future/");
 	});
 	it("an unread saved view is visible and never reads or renders an unfiltered listing", async () => {
@@ -332,7 +394,8 @@ describe("event rendering in the actual Astro template", () => {
 			});
 			for (const text of [
 				"2026-11-21",
-				"18:45",
+				"Sat, Nov 21, 2026",
+				"6:45 PM",
 				"America/Los_Angeles",
 				"Main Hall",
 				"/cover.jpg",
@@ -449,7 +512,9 @@ describe("event rendering in the actual Astro template", () => {
 			}),
 			now,
 		});
-		expect(html).toContain("All day");
+		expect(html).toContain("Sat, Nov 21, 2026");
+		expect(html).not.toContain("All day");
+		expect(html).not.toMatch(/\d{1,2}:\d{2}/);
 		expect(html).toContain("Doors at dusk &lt;script&gt;");
 		expect(html).not.toContain("<script>alert");
 	});

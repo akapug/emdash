@@ -55,6 +55,65 @@ export function eventDate(value: unknown): value is string {
 function clock(value: unknown): string | undefined {
 	return typeof value === "string" && EVENT_TIME_PATTERN.test(value) ? value : undefined;
 }
+function displayLocale(locale?: string): string | undefined {
+	try {
+		return locale ? Intl.getCanonicalLocales(locale.replaceAll("_", "-"))[0] : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function formatEventDate(date: string, locale?: string): string {
+	if (!eventDate(date)) return date;
+	// These are civil dates, not instants in the event's or the server's zone.
+	return new Intl.DateTimeFormat(displayLocale(locale), {
+		weekday: "short",
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		timeZone: "UTC",
+	}).format(new Date(`${date}T12:00:00Z`));
+}
+
+export function formatEventMonth(month: string, locale?: string): string {
+	if (!EVENT_MONTH_PATTERN.test(month)) return month;
+	return new Intl.DateTimeFormat(displayLocale(locale), {
+		year: "numeric",
+		month: "long",
+		timeZone: "UTC",
+	}).format(new Date(`${month}-01T12:00:00Z`));
+}
+
+function civilClock(value: string): Date {
+	return new Date(`2000-01-01T${value.length === 5 ? `${value}:00` : value}Z`);
+}
+
+export function formatEventTimes(
+	event: Pick<EventSummary, "allDay" | "startTime" | "endTime">,
+	locale?: string,
+): string | undefined {
+	if (event.allDay) return undefined;
+	const start = clock(event.startTime);
+	const end = clock(event.endTime);
+	if (!start && !end) return undefined;
+	const formatter = new Intl.DateTimeFormat(displayLocale(locale), {
+		hour: "numeric",
+		minute: "2-digit",
+		timeZone: "UTC",
+	});
+	if (start && end) {
+		// An overnight interval keeps its supplied clocks; no end date is fabricated.
+		return civilClock(end) >= civilClock(start)
+			? formatter.formatRange(civilClock(start), civilClock(end))
+			: `${formatter.format(civilClock(start))} – ${formatter.format(civilClock(end))}`;
+	}
+	return start
+		? formatter.format(civilClock(start))
+		: end
+			? `Until ${formatter.format(civilClock(end))}`
+			: undefined;
+}
+
 export function eventToday(now: Date, timezone?: string): string {
 	if (timezone) {
 		try {

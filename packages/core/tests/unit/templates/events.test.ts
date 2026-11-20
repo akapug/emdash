@@ -6,6 +6,9 @@ import {
 } from "../../../../../templates/blog-cloudflare/src/utils/event-data.js";
 import {
 	eventSummary,
+	formatEventDate,
+	formatEventMonth,
+	formatEventTimes,
 	parseEventView,
 	selectEventView,
 	type EventEntry,
@@ -37,7 +40,76 @@ beforeEach(() => {
 	reads.list.mockReset().mockResolvedValue({ entries: [], hasMore: false, cacheHint: {} });
 	reads.entry.mockReset();
 });
+describe("human event dates and clocks", () => {
+	it("formats civil dates in the actual locale, including WordPress locale separators", () => {
+		expect(formatEventDate("2026-11-20", "en_US")).toBe("Fri, Nov 20, 2026");
+		expect(formatEventDate("2026-11-20", "fr-FR")).toBe("ven. 20 nov. 2026");
+		expect(formatEventDate("2026-12-01", "en-US")).toBe("Tue, Dec 1, 2026");
+		expect(formatEventDate("2026-02-30", "en-US")).toBe("2026-02-30");
+	});
+	it("formats the navigation month without changing its query identity", () => {
+		expect(formatEventMonth("2026-11", "en-US")).toBe("November 2026");
+		expect(formatEventMonth("2026-11", "fr-FR")).toBe("novembre 2026");
+	});
+	it("uses locale clocks rather than forcing a twelve-hour or twenty-four-hour cycle", () => {
+		const times = { startTime: "19:00", endTime: "21:00" };
+		expect(formatEventTimes(times, "en-US")?.replace(/\s+/g, " ")).toBe("7:00 – 9:00 PM");
+		expect(formatEventTimes(times, "en-GB")).toMatch(/^19:00\s*–\s*21:00$/);
+	});
+	it("keeps overnight clocks and missing endpoints honest without inventing a date", () => {
+		expect(formatEventTimes({ startTime: "22:30", endTime: "01:15" }, "en-US")).toBe(
+			"10:30 PM – 1:15 AM",
+		);
+		expect(formatEventTimes({ startTime: "00:00" }, "en-US")).toBe("12:00 AM");
+		expect(formatEventTimes({ endTime: "21:00" }, "en-US")).toBe("Until 9:00 PM");
+	});
+	it("shows no clock for all-day, absent, invalid or prose-only times", () => {
+		expect(formatEventTimes({ allDay: true, startTime: "19:00" }, "en-US")).toBeUndefined();
+		expect(formatEventTimes({}, "en-US")).toBeUndefined();
+		expect(formatEventTimes({ startTime: "Doors at dusk" }, "en-US")).toBeUndefined();
+		const noted = eventSummary(entry("noted", { time_note: "Doors at dusk" }), now)!;
+		expect(formatEventTimes(noted, "en-US")).toBeUndefined();
+	});
+	it("does not rewrite source clocks/dates or turn a reference zone into a display zone", () => {
+		const event = eventSummary(
+			entry("civil", { start_time: "19:00" }),
+			now,
+			undefined,
+			"Asia/Tokyo",
+		)!;
+		expect(formatEventDate(event.date, "en-US")).toBe("Sat, Nov 21, 2026");
+		expect(formatEventTimes(event, "en-US")).toBe("7:00 PM");
+		expect(event.date).toBe("2026-11-21");
+		expect(event.startTime).toBe("19:00");
+		expect(event.timezone).toBeUndefined();
+	});
+});
+
 describe("event data trust boundaries", () => {
+	it("reads the actual native database row locale through the live loader", async () => {
+		const { setupTestDatabaseWithCollections, teardownTestDatabase } =
+			await import("../../utils/test-db.js");
+		const { handleContentCreate } = await import("../../../src/api/index.js");
+		const { emdashLoader } = await import("../../../src/loader.js");
+		const { runWithContext } = await import("../../../src/request-context.js");
+		const db = await setupTestDatabaseWithCollections();
+		try {
+			const created = await handleContentCreate(db, "post", {
+				data: { title: "Native locale contract" },
+				status: "published",
+				locale: "fr-FR",
+			});
+			expect(created.success).toBe(true);
+			const loader = emdashLoader();
+			const result = await runWithContext({ editMode: false, db }, () =>
+				loader.loadCollection!({ filter: { type: "post", locale: "fr-FR" } }),
+			);
+			expect(result.entries).toHaveLength(1);
+			expect(result.entries![0]!.data.locale).toBe("fr-FR");
+		} finally {
+			await teardownTestDatabase(db);
+		}
+	});
 	it("does not coerce saved view fields into supported enum values", () => {
 		expect(parseEventView({ ...wire, mode: { toString: () => "upcoming" } })).toBeNull();
 		expect(parseEventView({ ...wire, filters: { category: [false] } })).toBeNull();

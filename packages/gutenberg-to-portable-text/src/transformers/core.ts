@@ -2,6 +2,8 @@
  * Transformers for WordPress core/* blocks
  */
 
+import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
+
 import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
 import { splitExternalForms } from "../external-form.js";
@@ -46,6 +48,7 @@ const IMG_TAG_GLOBAL = /<img[^>]+>/gi;
 const IMG_TAG_SINGLE = /<img[^>]+>/i;
 const TABLE_ROW_PATTERN = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
 const TABLE_CELL_PATTERN = /<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi;
+const TABLE_SECTION_TAGS = new Set(["thead", "tbody", "tfoot"]);
 const CITE_TAG_PATTERN = /<cite[^>]*>([\s\S]*?)<\/cite>/i;
 const LT_ENTITY_PATTERN = /&lt;/g;
 const GT_ENTITY_PATTERN = /&gt;/g;
@@ -641,10 +644,79 @@ export const group: BlockTransformer = (block, _options, context) => {
 	return context.transformBlocks(block.innerBlocks);
 };
 
+/** One element, apart from whitespace. Comments and other nodes are not layout whitespace. */
+function soleTableElement(nodes: DefaultTreeAdapterMap["childNode"][]) {
+	const meaningful = nodes.filter((node) => !("value" in node) || node.value.trim() !== "");
+	const node = meaningful[0];
+	return meaningful.length === 1 && node && "tagName" in node ? node : undefined;
+}
+
+/** A genuine 1×1 wrapper, recovered from its original cell source, never serialized text. */
+function soleTableCellSource(html: string): string | undefined {
+	let element = soleTableElement(parseFragment(html, { sourceCodeLocationInfo: true }).childNodes);
+	if (element?.tagName === "figure") element = soleTableElement(element.childNodes);
+	if (element?.tagName !== "table") return undefined;
+	element = soleTableElement(element.childNodes);
+	if (element && TABLE_SECTION_TAGS.has(element.tagName))
+		element = soleTableElement(element.childNodes);
+	if (element?.tagName !== "tr") return undefined;
+	const cell = soleTableElement(element.childNodes);
+	if (!cell || (cell.tagName !== "td" && cell.tagName !== "th")) return undefined;
+	if (
+		cell.attrs.some(
+			(attr) => (attr.name === "colspan" || attr.name === "rowspan") && attr.value !== "1",
+		) ||
+		cell.childNodes.some(
+			(node) => node.nodeName !== "#text" && !("tagName" in node && node.tagName === "br"),
+		)
+	)
+		return undefined;
+	const location = cell.sourceCodeLocation;
+	if (!location?.startTag || !location.endTag) return undefined;
+	return html.slice(location.startTag.endOffset, location.endTag.startOffset);
+}
+
 /**
- * core/table → table block
+ * core/table → table block, or the sole embed that an otherwise empty 1×1 layout wraps.
  */
 export const table: BlockTransformer = (block, _options, context) => {
+	let tableContext = context;
+	if (context.shortcode) {
+		const source = soleTableCellSource(block.innerHTML);
+		if (source !== undefined) {
+			const resolved: string[] = [];
+			const segments = parseInlineSegments(source, context.generateKey, (raw, keyContext) => {
+				const blocks = context.shortcode?.(raw, keyContext);
+				if (blocks !== undefined) resolved.push(raw);
+				return blocks;
+			});
+			if (resolved.length > 0) {
+				const embeds = segments.filter((segment) => "_type" in segment);
+				const hasText = segments.some(
+					(segment) =>
+						!("_type" in segment) && segment.children.some((span) => span.text.trim() !== ""),
+				);
+				if (
+					resolved.length === 1 &&
+					embeds.length === 1 &&
+					embeds[0]?._type === "embed" &&
+					!hasText
+				)
+					return [embeds[0]];
+				throw new Error(
+					`Shortcode ${resolved.join(", ")} cannot be placed inside a span-only field`,
+				);
+			}
+			// An unknown token remains an ordinary cell; do not invoke its resolver twice.
+			const inline = segments[0];
+			if (segments.length === 1 && inline && !("_type" in inline))
+				tableContext = {
+					...context,
+					parseInlineContent: (html) =>
+						html === source ? inline : context.parseInlineContent(html),
+				};
+		}
+	}
 	// Parse the table HTML
 	const tableMatch = block.innerHTML.match(TABLE_TAG_PATTERN);
 	if (!tableMatch) {
@@ -670,7 +742,7 @@ export const table: BlockTransformer = (block, _options, context) => {
 
 	// Parse header rows
 	if (theadMatch?.[1]) {
-		const headerRows = parseTableRows(theadMatch[1], context, true);
+		const headerRows = parseTableRows(theadMatch[1], tableContext, true);
 		rows.push(...headerRows);
 	}
 
@@ -681,8 +753,8 @@ export const table: BlockTransformer = (block, _options, context) => {
 	let bodyContent = tableContent;
 	if (theadMatch) bodyContent = bodyContent.replace(theadMatch[0], "");
 	if (tfootMatch) bodyContent = bodyContent.replace(tfootMatch[0], "");
-	rows.push(...parseTableRows(bodyContent, context, false));
-	if (tfootMatch?.[1]) rows.push(...parseTableRows(tfootMatch[1], context, false));
+	rows.push(...parseTableRows(bodyContent, tableContext, false));
+	if (tfootMatch?.[1]) rows.push(...parseTableRows(tfootMatch[1], tableContext, false));
 
 	if (rows.length === 0) {
 		return [];

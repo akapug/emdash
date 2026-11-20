@@ -305,6 +305,15 @@ describe("WXR carried embeds at the original content mutation", () => {
 			source: "<ul><li>&#91;MEC id=73&#93;</li><li>[MEC id=73]</li></ul>",
 		},
 		{
+			name: "Gutenberg single-cell layout wrapper",
+			source:
+				'<!-- wp:table --><figure class="wp-block-table"><table><tbody><tr><td><br>[MEC id=73]</td></tr></tbody></table></figure><!-- /wp:table -->',
+		},
+		{
+			name: "classic single-cell layout wrapper",
+			source: "<table><tr><td> <br>[MEC id=73]<br /> </td></tr></table>",
+		},
+		{
 			name: "browser comment order",
 			source: "<!-- <script> --><p>[MEC id=73]</p><!-- </script> -->",
 		},
@@ -322,6 +331,8 @@ describe("WXR carried embeds at the original content mutation", () => {
 			expect(blocks.filter((b) => b.provider === "embark-events")).toEqual([
 				{ ...embed, _key: "mec-7-73-1" },
 			]);
+			if (name.endsWith("single-cell layout wrapper"))
+				expect(blocks).toEqual([{ ...embed, _key: "mec-7-73-1" }]);
 			if (name === "list source provenance")
 				expect(blocks.map(textOf).join("\n")).toContain("[MEC id=73]");
 			expect((await emdash.handleContentPublish("pages", stored.id as string)).success).toBe(true);
@@ -341,7 +352,7 @@ describe("WXR carried embeds at the original content mutation", () => {
 
 	it("imports the next entry intact after the prior entry's span-only table refusal", async () => {
 		const response = await run(
-			"<table><tr><td>[MEC id=73]</td></tr></table>",
+			"<table><tr><td>[MEC id=73]</td><td>Other content</td></tr></table>",
 			{ "7": { "73": embed } },
 			{},
 			"<h2>Visible heading</h2><p>Visible paragraph</p>",
@@ -361,9 +372,9 @@ describe("WXR carried embeds at the original content mutation", () => {
 		});
 	});
 
-	it("reports a resolved shortcode in a span-only table cell rather than silently importing its raw token", async () => {
+	it("reports a resolved shortcode in a multi-cell table rather than silently importing its raw token", async () => {
 		const response = await run(
-			'<!-- wp:table --><figure class="wp-block-table"><table><tbody><tr><td>[MEC id=73]</td></tr></tbody></table></figure><!-- /wp:table -->',
+			'<!-- wp:table --><figure class="wp-block-table"><table><tbody><tr><td>[MEC id=73]</td><td>Other content</td></tr></tbody></table></figure><!-- /wp:table -->',
 			{ "7": { "73": embed } },
 		);
 		const result = (await response.json()).data;

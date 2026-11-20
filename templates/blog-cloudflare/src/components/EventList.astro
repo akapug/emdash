@@ -5,6 +5,7 @@ import EventCover from "./EventCover.astro";
 import {
 	eventSummary,
 	eventString,
+	formatEventMonth,
 	selectEventView,
 	sortEvents,
 	type EventEntry,
@@ -30,6 +31,7 @@ const {
 const site =
 	timezone === undefined ? await getSiteSettingsWithCacheHint() : null;
 const referenceTimezone = timezone ?? eventString(site?.data.timezone);
+const locale = Astro.currentLocale ?? eventString(entries[0]?.data.locale);
 // The source-zone day changes the selection even when no content is edited.
 if (Astro.cache?.enabled) {
 	if (site) Astro.cache.set(site.cacheHint);
@@ -59,13 +61,13 @@ const groups = view
 				),
 			},
 			{
-				title: "Recurrence previews",
+				title: "More events",
 				events: sortEvents(events.filter((e) => e.period === "preview")),
 			},
 		];
 ---
 
-<div class:list={["event-list", view?.layout && `event-list--${view.layout}`]}>
+<div class:list={["event-list", `event-list--${view?.layout ?? "grid"}`]}>
 	{
 		navigation && (
 			<nav aria-label={`Event months for ${view?.viewSlug}`}>
@@ -74,7 +76,7 @@ const groups = view
 						Previous month
 					</a>
 				)}
-				<strong>{navigation.month}</strong>
+				<strong>{formatEventMonth(navigation.month, locale)}</strong>
 				{navigation.next && (
 					<a href={navigation.next} rel="next">
 						Next month
@@ -98,14 +100,14 @@ const groups = view
 					) : (
 						<ul>
 							{group.events.map((event) => (
-								<li>
+								<li class="event-card">
 									<EventCover image={event.entry.data.featured_image} />
 									<h3>
 										<a href={`/events/${encodeURIComponent(event.entry.id)}/`}>
 											{eventString(event.entry.data.title) ?? event.entry.id}
 										</a>
 									</h3>
-									<EventFacts event={event} />
+									<EventFacts event={event} compact />
 								</li>
 							))}
 						</ul>
@@ -122,15 +124,48 @@ const groups = view
 	.event-list ul {
 		list-style: none;
 		padding: 0;
+		margin: 0;
 	}
-	.event-list li {
-		padding-block: 1rem;
-		border-bottom: 1px solid var(--color-border, #ccc);
+	.event-list .event-card {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		gap: 0.75rem;
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+	}
+	.event-card h3 {
+		margin: 0;
+		font: inherit;
+		font-size: 1.25em;
+		font-weight: 600;
+		line-height: 1.35;
+		overflow-wrap: anywhere;
+	}
+	.event-card :global(img) {
+		display: block;
+		width: 100%;
+		height: auto;
+		aspect-ratio: 4 / 3;
+		margin: 0;
+		object-fit: cover;
 	}
 	.event-list--grid ul,
 	.event-list--tile ul {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
-		gap: 1rem;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		align-items: stretch;
+		gap: 2rem;
+	}
+	.event-list--list .event-card + .event-card {
+		margin-top: 2rem;
+	}
+	@media (max-width: 767px) {
+		.event-list--grid ul,
+		.event-list--tile ul {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
 </style>

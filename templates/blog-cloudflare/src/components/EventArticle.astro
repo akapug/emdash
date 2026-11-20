@@ -37,7 +37,9 @@ const href = more ? safeHref(more) : "#";
 			<h1 {...entry.edit?.title}>{eventString(data.title) ?? entry.id}</h1>
 		)
 	}
-	<EventCover image={data.featured_image} />
+	<div class="event-article__cover">
+		<EventCover image={data.featured_image} />
+	</div>
 	{
 		event ? (
 			<EventFacts event={event} />
@@ -67,5 +69,12 @@ const href = more ? safeHref(more) : "#";
 	.event-article :global(img) {
 		max-width: 100%;
 		height: auto;
+	}
+	.event-article__cover :global(img) {
+		display: block;
+		width: auto;
+		max-height: 36rem;
+		margin: 0 auto 1.5rem;
+		object-fit: contain;
 	}
 </style>
