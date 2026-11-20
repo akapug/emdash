@@ -160,11 +160,11 @@ A `mec-events` mapping uses `/events/{slug}` for the selected collection. Prepar
 `POST /_emdash/api/import/wordpress/execute` accepts `multipart/form-data` with:
 
 - `file`: the WXR file.
-- `config`: a JSON string containing `postTypeMappings`, `skipExisting`, optional `authorMappings`, optional `importSections`, an optional import-wide `locale`, and optional `mappedFields`.
+- `config`: a JSON string containing `postTypeMappings`, `skipExisting`, optional `authorMappings`, optional `importSections`, optional `importSeo` and `importComments`, an optional import-wide `locale`, optional `mappedFields`, and optional `embeds`.
 
 `mappedFields` maps WordPress post IDs to additional field values. Prepare those fields on the target collection first. The values are written with the entry's title and body in the original create operation. Reserved names, standard content fields such as `title`, and fields absent from the target schema are rejected.
 
-For `mec-events`, prepare `start_date` as a required string containing a `YYYY-MM-DD` date, `all_day` as an optional boolean, and `occurrences` as optional JSON containing an array of date strings. Other event dates and times remain strings. Use `event_status` for cancellation status; `status` is reserved for publication state. Omit times and timezones that the source does not provide.
+For `mec-events`, prepare `start_date` as a required string containing a `YYYY-MM-DD` date, `all_day` as an optional boolean, and `occurrences` as optional JSON containing an array of date strings. Other event dates and times remain strings. `time_note` is an optional plain string for source wording such as "After sunset"; it does not supply a clock time. Use `event_status` for cancellation status; `status` is reserved for publication state. Omit times and timezones that the source does not provide.
 
 The following `config` imports an event's native boolean and occurrence array into a prepared collection.
 
@@ -184,7 +184,25 @@ The following `config` imports an event's native boolean and occurrence array in
 }
 ```
 
-Omitting `mappedFields` keeps the standard import behavior. `skipExisting` still skips an existing entry rather than updating its fields.
+Omitting `mappedFields` keeps the standard import behavior. `skipExisting` still skips an existing entry rather than updating its fields. `importSeo` and `importComments` default to enabled; set either to `false` to leave that import stage out.
+
+#### Carry a saved event view
+
+`embeds` maps a WordPress source post ID to a dictionary keyed by source MEC calendar ID. Each dictionary value is a resolved Portable Text event embed supplied by the event integration. For example, given its `resolvedEventEmbed` for view `73`, the following map supplies that view for its `[MEC id=73]` occurrences in source page `7`:
+
+```js title="embeds config field"
+const embeds = {
+	"7": {
+		"73": resolvedEventEmbed,
+	},
+};
+```
+
+Carry the integration's resolved block unchanged, including its provider and saved-view settings. The dictionary chooses source identity; it does not invent a provider or replace the view's settings.
+
+The source calendar ID is the dictionary key, not the embed's `_key`. Multiple views on a page have separate definitions; repeated occurrences of one view reuse its definition and receive distinct block keys. Embeds enter the original content write at their source positions, preserving the surrounding content and marks. Escaped shortcode examples and entity-encoded bracket literals do not become calendars; definitions do not activate tokens in HTML attributes, comments, scripts, or styles.
+
+The earlier single-embed value per source post remains accepted. Prefer the dictionary when a page can contain different views. Imports without `embeds` retain the existing conversion behavior. A view that cannot be resolved uses `events: { "version": 1, "viewSlug": "" }`, which renders an unavailable notice rather than silently showing an unfiltered calendar.
 
 Its `data` value contains `success`, `imported`, `skipped`, `errors`, `byCollection`, and optional section and taxonomy summaries.
 

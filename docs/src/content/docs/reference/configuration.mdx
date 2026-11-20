@@ -260,16 +260,34 @@ Node.js deployments use the workerd runner module documented in [Plugin Sandbox:
 
 ### `sandbox`
 
-**Optional.** Controls whether a configured sandbox runner isolates plugins. Sandboxing is enabled when `sandboxRunner` is configured. Set `sandbox: false` only to diagnose whether a problem comes from a plugin or its sandbox runtime:
+**Optional.** Controls whether a configured sandbox runner isolates plugins. Sandboxing is enabled when `sandboxRunner` is configured. On Node.js only, set `sandbox: false` temporarily to diagnose whether a problem comes from a plugin or its sandbox runtime:
 
 ```js
 emdash({
-	sandboxRunner: sandbox(),
 	sandbox: false,
 });
 ```
 
-With `false`, plugins declared in `sandboxed` and installed from the marketplace run in the main server process without isolation or resource limits. Restore sandboxing after the diagnosis.
+With `false` on Node.js, plugins declared in `sandboxed` and installed from the marketplace run in the main server process without isolation or resource limits. Restore sandboxing after the diagnosis.
+
+Cloudflare Workers always refuse `sandbox: false`, including when no sandboxed plugin was declared at build time. Keep the Cloudflare sandbox runner enabled; there is no in-process fallback for these plugins on Workers.
+
+### `systemMail`
+
+**Optional. Cloudflare Workers only.** Routes EmDash's magic links, sign-up verification, invitations, and recovery mail through a separately deployed mail broker. `binding` names its service binding; `capability` names the Worker secret containing the site's generation capability and defaults to `MAIL_BROKER_CAPABILITY`.
+
+```js title="astro.config.mjs"
+emdash({
+	systemMail: {
+		binding: "MAIL_BROKER",
+		capability: "MAIL_BROKER_CAPABILITY",
+	},
+});
+```
+
+The broker authenticates the operation, issues its token, and sends the message. These messages do not pass through this Worker's plugin email hooks. This option references an already configured broker; it does not deploy one or grant mail access.
+
+When `systemMail` is configured but its binding or capability is unavailable, EmDash sends no sign-in mail and does not fall back to this Worker's email pipeline. An invitation can instead return its copyable link. Omitting the option retains the existing mail configuration.
 
 ### `registry`
 

@@ -21,6 +21,7 @@ The maintained templates call these runtime helpers:
 | `getCommentCount` | Counting approved comments on an entry |
 | `getComments` | Reading approved comments for an entry |
 | `getContentSeo` | Reading an entry's stored SEO values |
+| `getEditMeta` | Checking whether a Portable Text value carries visual-editing metadata |
 | `getEmDashCollection` | Reading and filtering entries in a collection |
 | `getEmDashEntry` | Reading one entry by ID or slug |
 | `getHomepage` | Rendering the entry chosen as the site's homepage |
@@ -239,6 +240,18 @@ const meta = getEditMeta(post.data.content);
 ```
 
 It returns `{ collection, id, field }` for an annotated value, or `undefined` when the value has no annotation.
+
+### `getCollectionByUrlPattern()`
+
+Find a routable collection by its exact stored URL pattern rather than assuming its collection slug:
+
+```ts
+import { getCollectionByUrlPattern } from "emdash";
+
+const events = await getCollectionByUrlPattern("/events/{slug}");
+```
+
+The result is collection metadata, including its `slug`, even if the collection contains no entries. The helper returns `null` when no routable collection matches and throws `SchemaError` with code `AMBIGUOUS_URL_PATTERN` when multiple collections match. Resolve that schema conflict rather than selecting one arbitrarily. Reads share the request and schema caches. See [Find a collection by route](/guides/querying-content/#find-a-collection-by-route).
 
 ## Content types
 
