@@ -974,6 +974,31 @@ https://${domain}/123456
 		});
 	});
 
+	describe("column widths", () => {
+		it("a column keeps the width WordPress laid the row out with", () => {
+			const content = `<!-- wp:columns -->
+<div class="wp-block-columns"><!-- wp:column {"width":"10%"} -->
+<div class="wp-block-column" style="flex-basis:10%"></div>
+<!-- /wp:column -->
+<!-- wp:column {"verticalAlignment":"top","width":"80%"} -->
+<div class="wp-block-column is-vertically-aligned-top" style="flex-basis:80%"><!-- wp:paragraph -->
+<p>Middle</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column -->
+<!-- wp:column {"width":33.33} -->
+<div class="wp-block-column" style="flex-basis:33.33%"></div>
+<!-- /wp:column -->
+<!-- wp:column -->
+<div class="wp-block-column"></div>
+<!-- /wp:column --></div>
+<!-- /wp:columns -->`;
+
+			const [row] = gutenbergToPortableText(content) as Array<{ columns: Array<{ width?: string }> }>;
+
+			expect(row!.columns.map((c) => c.width)).toEqual(["10%", "80%", "33.33%", undefined]);
+		});
+	});
+
 	describe("cover blocks", () => {
 		it("converts a cover block", () => {
 			const content = `<!-- wp:cover {"url":"https://example.com/bg.jpg","id":42} -->
