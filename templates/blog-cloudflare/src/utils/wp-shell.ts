@@ -860,6 +860,8 @@ const POST_FILL: Record<WpShellPostHole, string> = {
 	comments: "<b></b>",
 	prev: "<b></b>",
 	next: "<b></b>",
+	readtime: "<b></b>",
+	related: "<b></b>",
 };
 
 function postMarkupForCheck(post: WpShellPostLayout): string[] {
@@ -875,8 +877,9 @@ function postMarkupForCheck(post: WpShellPostLayout): string[] {
 		comments: post.comments ? fill(post.comments.item) : "",
 	};
 	const out = post.meta.map((m) => fill(m, markup));
-	for (const t of [post.featured?.item, post.trailTerm, post.share, post.comments?.item])
+	for (const t of [post.featured?.item, post.trailTerm, post.share, post.comments?.item, post.readingTime?.item, post.related?.card])
 		if (t) out.push(fill(t));
+	if (post.related) out.push(fill(post.related.item, { related: fill(post.related.card) }));
 	out.push(markup.categories, markup.tags);
 	if (post.author)
 		out.push(
