@@ -9,3 +9,6 @@ packages/cloudflare/tests/mail-broker-workerd.test.ts fleet-bulk=quotes
 packages/core/tests/integration/wordpress-import/fixtures/comments-export.xml fleet-bulk=quotes
 # A test that builds a small WordPress export inline: quoted test input, not bulk data.
 packages/core/tests/integration/wordpress-import/wxr-password.test.ts fleet-bulk=quotes
+# Parser tests build synthetic example.org WXR input inline; neither source is a customer export.
+packages/core/tests/integration/wordpress-import/wxr-mapped-fields.test.ts fleet-bulk=quotes
+packages/core/tests/integration/wordpress-import/wxr-mapped-embeds.test.ts fleet-bulk=quotes
