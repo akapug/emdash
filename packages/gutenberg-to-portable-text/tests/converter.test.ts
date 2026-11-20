@@ -997,6 +997,19 @@ https://${domain}/123456
 			expect(cover.content[0]).toMatchObject({ _type: "block", style: "normal" });
 		});
 
+		it("a video cover (backgroundType video) carries its URL as backgroundVideo, never as an image", () => {
+			// The shape WordPress saves for a cover whose background is a video
+			// (measured on a real site's hero: url, id, dimRatio, backgroundType).
+			const content = `<!-- wp:cover {"url":"https://example.com/hero.mov","id":68,"dimRatio":20,"backgroundType":"video","minHeight":600} -->
+<div class="wp-block-cover"><video class="wp-block-cover__video-background" autoplay muted loop playsinline src="https://example.com/hero.mov"></video></div>
+<!-- /wp:cover -->`;
+
+			const cover = gutenbergToPortableText(content)[0] as PortableTextCoverBlock;
+
+			expect(cover).toMatchObject({ _type: "cover", backgroundVideo: "https://example.com/hero.mov", minHeight: "600px" });
+			expect(cover.backgroundImage).toBeUndefined();
+		});
+
 		it.each(["left", "center", "right"] as const)(
 			"maps contentPosition %s to equivalent alignment",
 			(position) => {
