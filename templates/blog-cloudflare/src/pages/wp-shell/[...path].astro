@@ -132,7 +132,7 @@ async function relatedPosts(tags: readonly { slug: string }[], count: number, se
 			return { entry: e, shared: theirs.filter((slug) => mine.has(slug)).length };
 		})
 		.filter((r) => r.shared > 0)
-		.sort((a, b) => b.shared - a.shared)
+		.toSorted((a, b) => b.shared - a.shared)
 		.slice(0, count)
 		.map((r) => ({ title: r.entry.data.title, url: `/posts/${r.entry.id}` }));
 }

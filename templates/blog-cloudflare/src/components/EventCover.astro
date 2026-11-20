@@ -13,7 +13,7 @@ const record =
 const src = record?.src ?? record?.previewUrl;
 const safe =
 	typeof src === "string"
-		? safeHref(src) === src && /^(?:https?:\/\/|\/(?![\/\\]))/i.test(src)
+		? safeHref(src) === src && /^(?:https?:\/\/|\/(?![/\\]))/i.test(src)
 		: src === undefined && typeof record?.id === "string";
 // Event covers use the imported primary image, not unvalidated alternate URLs.
 const image =

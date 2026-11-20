@@ -890,7 +890,14 @@ function postMarkupForCheck(post: WpShellPostLayout): string[] {
 		comments: post.comments ? fill(post.comments.item) : "",
 	};
 	const out = post.meta.map((m) => fill(m, markup));
-	for (const t of [post.featured?.item, post.trailTerm, post.share, post.comments?.item, post.readingTime?.item, post.related?.card])
+	for (const t of [
+		post.featured?.item,
+		post.trailTerm,
+		post.share,
+		post.comments?.item,
+		post.readingTime?.item,
+		post.related?.card,
+	])
 		if (t) out.push(fill(t));
 	if (post.related) out.push(fill(post.related.item, { related: fill(post.related.card) }));
 	out.push(markup.categories, markup.tags);
@@ -1837,7 +1844,10 @@ function checkPost(v: Record<string, unknown>): string | null {
 			!checkPostTemplate(adjacent.next, new Set(["adjHref", "adjTitle"])))
 	)
 		return "the post layout's adjacent posts are malformed";
-	if (readingTime !== undefined && (!isObject(readingTime) || !checkPostTemplate(readingTime.item, new Set(["readtime"]))))
+	if (
+		readingTime !== undefined &&
+		(!isObject(readingTime) || !checkPostTemplate(readingTime.item, new Set(["readtime"])))
+	)
 		return "the post layout's reading time is malformed";
 	if (
 		related !== undefined &&
@@ -3425,7 +3435,9 @@ function fillPost(
 			const posts = p.related ?? [];
 			if (!card || posts.length === 0) return null;
 			for (const r of posts.slice(0, post.related?.count ?? posts.length)) {
-				out += fillPost(card, post, p, { href: "#", label: "", adj: { title: r.title, url: r.url } }) ?? "";
+				out +=
+					fillPost(card, post, p, { href: "#", label: "", adj: { title: r.title, url: r.url } }) ??
+					"";
 			}
 		} else if (h === "adjHref") out += escapeAttr(safeHref(term?.adj?.url ?? "#"));
 		else if (h === "adjTitle") out += escapeHtml(term?.adj?.title ?? "");

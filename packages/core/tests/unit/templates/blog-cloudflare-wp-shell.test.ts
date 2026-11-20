@@ -2062,10 +2062,26 @@ const postWithFeatures = (): WpShellPostLayout => {
 			{ slot: "related" },
 			{ slot: "adjacent" },
 		],
-		readingTime: { item: ['<div class="page__meta-readtime"><i class="far fa-clock"></i> ', { s: "readtime" }, " minute read</div>"] },
+		readingTime: {
+			item: [
+				'<div class="page__meta-readtime"><i class="far fa-clock"></i> ',
+				{ s: "readtime" },
+				" minute read</div>",
+			],
+		},
 		related: {
-			item: ['<section class="post-related"><h2>You May Also Enjoy</h2><div class="post-related-grid">', { s: "related" }, "</div></section>"],
-			card: ['<article class="post-related-card"><h3><a href="', { s: "adjHref" }, '">', { s: "adjTitle" }, "</a></h3></article>"],
+			item: [
+				'<section class="post-related"><h2>You May Also Enjoy</h2><div class="post-related-grid">',
+				{ s: "related" },
+				"</div></section>",
+			],
+			card: [
+				'<article class="post-related-card"><h3><a href="',
+				{ s: "adjHref" },
+				'">',
+				{ s: "adjTitle" },
+				"</a></h3></article>",
+			],
 			count: 2,
 		},
 	};
@@ -3770,8 +3786,12 @@ describe("a post's reading time and related posts, drawn from the record's slots
 	});
 
 	it("draws the reading time in the source's line, with the whole phrase the reader gives it", () => {
-		expect(html({ readingTime: "less than 1" })).toContain('<div class="page__meta-readtime"><i class="far fa-clock"></i> less than 1 minute read</div>');
-		expect(html({ readingTime: "12" })).toContain('<div class="page__meta-readtime"><i class="far fa-clock"></i> 12 minute read</div>');
+		expect(html({ readingTime: "less than 1" })).toContain(
+			'<div class="page__meta-readtime"><i class="far fa-clock"></i> less than 1 minute read</div>',
+		);
+		expect(html({ readingTime: "12" })).toContain(
+			'<div class="page__meta-readtime"><i class="far fa-clock"></i> 12 minute read</div>',
+		);
 	});
 
 	it("draws no reading-time line when the post has no reading time", () => {
