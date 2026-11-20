@@ -5,12 +5,14 @@ import EventCover from "./EventCover.astro";
 import {
 	eventSummary,
 	eventString,
+	eventPage,
 	formatEventMonth,
 	selectEventView,
 	sortEvents,
 	type EventEntry,
 	type EventView,
 	type EventMonthNavigation,
+	type EventPage,
 } from "../utils/events.js";
 interface Props {
 	entries: EventEntry[];
@@ -19,6 +21,7 @@ interface Props {
 	unavailable?: boolean;
 	navigation?: EventMonthNavigation;
 	timezone?: string;
+	pageSize?: number;
 }
 const {
 	entries,
@@ -27,9 +30,14 @@ const {
 	unavailable = false,
 	navigation,
 	timezone,
+	pageSize,
 } = Astro.props;
+const paginated = !view || view.layout === "list";
 const site =
-	timezone === undefined ? await getSiteSettingsWithCacheHint() : null;
+	timezone === undefined || (paginated && pageSize === undefined)
+		? await getSiteSettingsWithCacheHint()
+		: null;
+const perPage = pageSize ?? site?.data.postsPerPage;
 const referenceTimezone = timezone ?? eventString(site?.data.timezone);
 const locale = Astro.currentLocale ?? eventString(entries[0]?.data.locale);
 // The source-zone day changes the selection even when no content is edited.
@@ -41,19 +49,22 @@ const events = entries.flatMap((entry) => {
 	const summary = eventSummary(entry, now, undefined, referenceTimezone);
 	return summary ? [summary] : [];
 });
-const groups = view
+const grouped = view
 	? [
 			{
+				key: view.viewSlug,
 				title: view.mode === "past" ? "Past events" : "Upcoming events",
 				events: selectEventView(events, view, now, navigation?.month),
 			},
 		]
 	: [
 			{
+				key: "index-upcoming",
 				title: "Upcoming events",
 				events: sortEvents(events.filter((e) => e.period === "upcoming")),
 			},
 			{
+				key: "index-past",
 				title: "Past events",
 				events: sortEvents(
 					events.filter((e) => e.period === "past"),
@@ -61,13 +72,29 @@ const groups = view
 				),
 			},
 			{
+				key: "index-more",
 				title: "More events",
 				events: sortEvents(events.filter((e) => e.period === "preview")),
 			},
 		];
+const url = new URL(Astro.originPathname + Astro.url.search, Astro.url.origin);
+const groups = grouped.map((group) => {
+	const page: EventPage | null = paginated
+		? eventPage(group.events, group.key, url, perPage)
+		: { events: group.events };
+	const first = new URL(url);
+	first.searchParams.delete(`events-page[${group.key}]`);
+	return { ...group, page, first: `${first.pathname}${first.search}` };
+});
 ---
 
-<div class:list={["event-list", `event-list--${view?.layout ?? "grid"}`]}>
+<div
+	class:list={[
+		"event-list",
+		`event-list--${view?.layout ?? "grid"}`,
+		paginated && "event-list--contained",
+	]}
+>
 	{
 		navigation && (
 			<nav aria-label={`Event months for ${view?.viewSlug}`}>
@@ -95,22 +122,47 @@ const groups = view
 			groups.map((group) => (
 				<section>
 					<h2>{group.title}</h2>
-					{group.events.length === 0 ? (
+					{group.page === null ? (
+						<p>
+							Event page unavailable. <a href={group.first}>View first page</a>.
+						</p>
+					) : group.page.events.length === 0 ? (
 						<p>No {group.title.toLowerCase()} to show.</p>
 					) : (
 						<ul>
-							{group.events.map((event) => (
+							{group.page.events.map((event) => (
 								<li class="event-card">
 									<EventCover image={event.entry.data.featured_image} />
-									<h3>
-										<a href={`/events/${encodeURIComponent(event.entry.id)}/`}>
-											{eventString(event.entry.data.title) ?? event.entry.id}
-										</a>
-									</h3>
-									<EventFacts event={event} compact />
+									<div class="event-card__body">
+										<h3>
+											<a
+												href={`/events/${encodeURIComponent(event.entry.id)}/`}
+											>
+												{eventString(event.entry.data.title) ?? event.entry.id}
+											</a>
+										</h3>
+										<EventFacts event={event} compact />
+									</div>
 								</li>
 							))}
 						</ul>
+					)}
+					{group.page && (group.page.prev || group.page.next) && (
+						<nav
+							class="pagination event-pagination"
+							aria-label={`Event pages for ${group.key}`}
+						>
+							{group.page.prev && (
+								<a href={group.page.prev} rel="prev">
+									Previous events
+								</a>
+							)}
+							{group.page.next && (
+								<a href={group.page.next} rel="next">
+									More events
+								</a>
+							)}
+						</nav>
 					)}
 				</section>
 			))
@@ -120,6 +172,16 @@ const groups = view
 <style>
 	.event-list {
 		margin-block: 2rem;
+	}
+	.event-list--contained {
+		box-sizing: border-box;
+		width: 100%;
+		max-width: var(
+			--container-max-width,
+			var(--wp--style--global--content-size, var(--max-width, 1140px))
+		);
+		margin-inline: auto;
+		padding-inline: var(--spacing-6, 1.5rem);
 	}
 	.event-list ul {
 		list-style: none;
@@ -135,6 +197,14 @@ const groups = view
 		min-width: 0;
 		margin: 0;
 		padding: 0;
+	}
+	.event-card__body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		flex: 1;
+		min-width: 0;
+		width: 100%;
 	}
 	.event-card h3 {
 		margin: 0;
@@ -159,10 +229,34 @@ const groups = view
 		align-items: stretch;
 		gap: 2rem;
 	}
+	.event-list--list .event-card {
+		flex-direction: row;
+		align-items: flex-start;
+		gap: 1.5rem;
+	}
+	.event-list--list .event-card :global(img) {
+		width: 15rem;
+		max-width: 40%;
+		flex: 0 0 15rem;
+	}
 	.event-list--list .event-card + .event-card {
 		margin-top: 2rem;
 	}
+	.event-pagination {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+		margin-block-start: 1.5rem;
+	}
 	@media (max-width: 767px) {
+		.event-list--list .event-card {
+			flex-direction: column;
+		}
+		.event-list--list .event-card :global(img) {
+			width: min(100%, 15rem);
+			max-width: 100%;
+			flex: none;
+		}
 		.event-list--grid ul,
 		.event-list--tile ul {
 			grid-template-columns: minmax(0, 1fr);

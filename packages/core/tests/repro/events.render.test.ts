@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { serializeProps } from "astro/runtime/server/serialize.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +24,7 @@ import {
 const reads = vi.hoisted(() => ({
 	shell: null as unknown,
 	timezone: undefined as string | undefined,
+	postsPerPage: 10,
 	collection: vi.fn(),
 	entry: vi.fn(),
 	schema: vi.fn(),
@@ -38,7 +41,12 @@ async function emdashReads() {
 		getEmDashEntry: reads.entry,
 		decodeSlug: (s: string) => (s ? decodeURIComponent(s) : null),
 		getSiteSettingsWithCacheHint: async () => ({
-			data: { title: "Example", wpShell: reads.shell, timezone: reads.timezone },
+			data: {
+				title: "Example",
+				wpShell: reads.shell,
+				timezone: reads.timezone,
+				postsPerPage: reads.postsPerPage,
+			},
 			cacheHint: { tags: ["settings"] },
 		}),
 		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
@@ -102,6 +110,7 @@ beforeEach(() => {
 	vi.useRealTimers();
 	reads.shell = null;
 	reads.timezone = undefined;
+	reads.postsPerPage = 10;
 	reads.editMeta.mockClear();
 	reads.schema
 		.mockReset()
@@ -193,6 +202,191 @@ describe("source event dates and saved view validation", () => {
 				now,
 			).map((e) => e.entry.id),
 		).toEqual(["old"]);
+	});
+});
+
+function eventPageLink(html: string, rel: "prev" | "next") {
+	const tag = html.match(new RegExp(`<a[^>]*rel="${rel}"[^>]*>`))?.[0];
+	expect(tag, `${rel} event page link`).toBeDefined();
+	return new URL(tag!.match(/href="([^"]+)"/)![1]!.replaceAll("&amp;", "&"), "https://example.org");
+}
+
+describe("bounded event list rows and pages", () => {
+	it("bounds desktop list thumbnails beside content and stacks the same row on mobile", async () => {
+		const html = await render(EventList, {
+			entries: [
+				entry("pictured", {
+					featured_image: { src: "/cover.jpg", alt: "Cover" },
+					location: "Hall",
+				}),
+			],
+			now,
+			view: parseEventView({ ...view, layout: "list" }),
+		});
+		expect(html).toContain("event-card__body");
+		expect(html).toContain("/cover.jpg");
+		expect(html).toContain("/events/pictured/");
+		expect(html).toContain("Sat, Nov 21, 2026");
+		expect(html).toContain("Hall");
+		const source = readFileSync(
+			new URL(
+				"../../../../templates/blog-cloudflare/src/components/EventList.astro",
+				import.meta.url,
+			),
+			"utf8",
+		);
+		expect(source).toMatch(/\.event-list--list \.event-card\s*\{[^}]*flex-direction:\s*row/);
+		expect(source).toMatch(
+			/\.event-list--list \.event-card :global\(img\)\s*\{[^}]*width:\s*15rem/,
+		);
+		expect(source).toContain("aspect-ratio: 4 / 3");
+		expect(source).toMatch(
+			/@media\s*\(max-width: 767px\)[\s\S]*\.event-list--list \.event-card\s*\{[^}]*flex-direction:\s*column/,
+		);
+	});
+	it("contains index and list views in body-width gutters without narrowing the home grid", async () => {
+		const entries = [entry("one")];
+		for (const props of [
+			{ entries, now },
+			{ entries, now, view: parseEventView({ ...view, layout: "list" }) },
+		]) {
+			expect(await render(EventList, props)).toContain("event-list--contained");
+		}
+		const grid = await render(EventList, { entries, now, view: parseEventView(view) });
+		expect(grid).toContain("event-list--grid");
+		expect(grid).not.toContain("event-list--contained");
+		const source = readFileSync(
+			new URL(
+				"../../../../templates/blog-cloudflare/src/components/EventList.astro",
+				import.meta.url,
+			),
+			"utf8",
+		);
+		expect(source).toContain("--wp--style--global--content-size");
+		expect(source).toContain("--max-width");
+		expect(source).toMatch(/\.event-list--contained\s*\{[^}]*padding-inline:/);
+	});
+	it("pages a filtered past list newest-first through real more links without dropping state or entries", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+		reads.postsPerPage = 2;
+		reads.collection.mockResolvedValue({
+			entries: [
+				...[2, 5, 1, 4, 3].map((day) =>
+					entry(`past-${day}`, { start_date: `2026-11-${10 + day}`, category: "Arts" }),
+				),
+				entry("excluded", { start_date: "2026-11-19", category: "Other" }),
+			],
+			hasMore: false,
+			cacheHint: {},
+		});
+		const node = {
+			events: {
+				...view,
+				viewSlug: "past",
+				mode: "past",
+				order: "desc",
+				layout: "list",
+				limit: undefined,
+				filters: { category: ["Arts"] },
+			},
+		};
+		let url = new URL(
+			"https://example.org/past-events/?q=one%20two&events-page%5Bother%5D=3&events-month%5Btile%5D=2026-11",
+		);
+		const seen: string[] = [];
+		for (const [page, expected] of [
+			[1, [5, 4]],
+			[2, [3, 2]],
+			[3, [1]],
+		] as const) {
+			const html = await render(EventEmbed, { node }, url.href);
+			const ids = Array.from(html.matchAll(/href="\/events\/(past-\d)\//g), (m) => m[1]);
+			expect(ids).toEqual(expected.map((day) => `past-${day}`));
+			seen.push(...ids);
+			expect(html).not.toContain("/events/excluded/");
+			if (page > 1) {
+				const prev = eventPageLink(html, "prev");
+				expect(prev.pathname).toBe("/past-events/");
+				expect(prev.searchParams.get("events-page[past]")).toBe(
+					page === 2 ? null : String(page - 1),
+				);
+			}
+			if (page < 3) {
+				url = eventPageLink(html, "next");
+				expect(url.pathname).toBe("/past-events/");
+				expect(url.searchParams.get("q")).toBe("one two");
+				expect(url.searchParams.get("events-page[other]")).toBe("3");
+				expect(url.searchParams.get("events-month[tile]")).toBe("2026-11");
+				expect(url.searchParams.get("events-page[past]")).toBe(String(page + 1));
+			} else expect(html).not.toContain('rel="next"');
+		}
+		expect(seen).toEqual(["past-5", "past-4", "past-3", "past-2", "past-1"]);
+	});
+	it("pages index groups independently using the same site page size", async () => {
+		reads.postsPerPage = 2;
+		const entries = [1, 2, 3].flatMap((day) => [
+			entry(`up-${day}`, { start_date: `2026-11-${20 + day}` }),
+			entry(`old-${day}`, { start_date: `2026-11-${10 + day}` }),
+		]);
+		const first = await render(EventList, { entries, now });
+		for (const id of ["up-1", "up-2", "old-3", "old-2"]) expect(first).toContain(`/events/${id}/`);
+		for (const id of ["up-3", "old-1"]) expect(first).not.toContain(`/events/${id}/`);
+		const next = eventPageLink(first, "next");
+		expect(next.pathname).toBe("/events/");
+		expect(next.searchParams.get("events-page[index-upcoming]")).toBe("2");
+		const second = await render(EventList, { entries, now }, next.href);
+		for (const id of ["up-3", "old-3", "old-2"]) expect(second).toContain(`/events/${id}/`);
+		for (const id of ["up-1", "up-2", "old-1"]) expect(second).not.toContain(`/events/${id}/`);
+	});
+	it("keeps a missing home cover absent and does not paginate the next-three grid", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+		reads.postsPerPage = 1;
+		reads.collection.mockResolvedValue({
+			entries: [1, 2, 3, 4].map((day) =>
+				entry(`home-${day}`, {
+					start_date: `2026-11-${20 + day}`,
+					featured_image: day < 3 ? { src: `/cover-${day}.jpg`, alt: "Cover" } : undefined,
+				}),
+			),
+			hasMore: false,
+			cacheHint: {},
+		});
+		const html = await render(EventEmbed, { node: { events: { ...view, limit: 3 } } });
+		expect(html.match(/<li[^>]*class="event-card"/g)).toHaveLength(3);
+		expect(html.match(/<img\b/g)).toHaveLength(2);
+		expect(html).toContain("/events/home-3/");
+		expect(html).not.toContain("/events/home-4/");
+		expect(html).not.toContain("event-card__cover");
+		expect(html).not.toContain('rel="next"');
+	});
+	it("fails visibly on invalid, duplicate and out-of-range page selectors instead of silently resetting", async () => {
+		for (const page of [
+			"0",
+			"-1",
+			"1.5",
+			"02",
+			"not-a-page",
+			"99999999999999999999",
+			"2&events-page[example]=3",
+		]) {
+			const html = await render(
+				EventList,
+				{ entries: [entry("one")], now, view: parseEventView({ ...view, layout: "list" }) },
+				`https://example.org/upcoming/?q=keep&events-page[other]=3&events-page[example]=${page}`,
+			);
+			expect(html).toContain("Event page unavailable");
+			expect(html).not.toContain("/events/one/");
+			const first = new URL(
+				html.match(/href="([^"]+)"[^>]*>View first page/)![1]!.replaceAll("&amp;", "&"),
+				"https://example.org",
+			);
+			expect(first.pathname).toBe("/upcoming/");
+			expect(first.searchParams.has("events-page[example]")).toBe(false);
+			expect(first.searchParams.get("events-page[other]")).toBe("3");
+			expect(first.searchParams.get("q")).toBe("keep");
+		}
 	});
 });
 

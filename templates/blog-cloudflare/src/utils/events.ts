@@ -4,6 +4,7 @@ export const EVENT_URL_PATTERN = "/events/{slug}";
 const EVENT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const EVENT_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
 const EVENT_MONTH_PATTERN = /^(?!0000)\d{4}-(?:0[1-9]|1[0-2])$/;
+const EVENT_PAGE_PATTERN = /^[1-9]\d*$/;
 const EVENT_VIEW_KEYS = new Set([
 	"version",
 	"viewSlug",
@@ -305,6 +306,41 @@ export function eventMonthNavigation(
 		return `${next.pathname}${next.search}${next.hash}`;
 	}
 	return { month, prev: link(-1), next: link(1) };
+}
+
+export interface EventPage {
+	events: EventSummary[];
+	prev?: string;
+	next?: string;
+}
+
+export function eventPage(
+	events: EventSummary[],
+	name: string,
+	url: URL,
+	pageSize = 10,
+): EventPage | null {
+	const size = Number.isFinite(pageSize) ? Math.min(50, Math.max(1, Math.floor(pageSize))) : 10;
+	const key = `events-page[${name}]`;
+	const values = url.searchParams.getAll(key);
+	if (values.length > 1) return null;
+	const value = values[0] ?? "1";
+	if (!EVENT_PAGE_PATTERN.test(value)) return null;
+	const page = Number(value);
+	if (!Number.isSafeInteger(page) || page > Math.max(1, Math.ceil(events.length / size)))
+		return null;
+	const offset = (page - 1) * size;
+	function link(target: number): string {
+		const next = new URL(url);
+		if (target === 1) next.searchParams.delete(key);
+		else next.searchParams.set(key, String(target));
+		return `${next.pathname}${next.search}${next.hash}`;
+	}
+	return {
+		events: events.slice(offset, offset + size),
+		prev: page > 1 ? link(page - 1) : undefined,
+		next: offset + size < events.length ? link(page + 1) : undefined,
+	};
 }
 
 export function sortEvents(events: EventSummary[], order: "asc" | "desc" = "asc"): EventSummary[] {

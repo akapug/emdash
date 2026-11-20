@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import {
 	loadEvent,
@@ -6,6 +6,7 @@ import {
 } from "../../../../../templates/blog-cloudflare/src/utils/event-data.js";
 import {
 	eventSummary,
+	eventPage,
 	formatEventDate,
 	formatEventMonth,
 	formatEventTimes,
@@ -13,6 +14,10 @@ import {
 	selectEventView,
 	type EventEntry,
 } from "../../../../../templates/blog-cloudflare/src/utils/events.js";
+import { handleContentCreate } from "../../../src/api/index.js";
+import { emdashLoader } from "../../../src/loader.js";
+import { runWithContext } from "../../../src/request-context.js";
+import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../../utils/test-db.js";
 const reads = vi.hoisted(() => ({ schema: vi.fn(), list: vi.fn(), entry: vi.fn() }));
 vi.mock("emdash", () => ({
 	getCollectionByUrlPattern: reads.schema,
@@ -85,31 +90,89 @@ describe("human event dates and clocks", () => {
 	});
 });
 
-describe("event data trust boundaries", () => {
-	it("reads the actual native database row locale through the live loader", async () => {
-		const { setupTestDatabaseWithCollections, teardownTestDatabase } =
-			await import("../../utils/test-db.js");
-		const { handleContentCreate } = await import("../../../src/api/index.js");
-		const { emdashLoader } = await import("../../../src/loader.js");
-		const { runWithContext } = await import("../../../src/request-context.js");
-		const db = await setupTestDatabaseWithCollections();
-		try {
-			const created = await handleContentCreate(db, "post", {
-				data: { title: "Native locale contract" },
-				status: "published",
-				locale: "fr-FR",
-			});
-			expect(created.success).toBe(true);
-			const loader = emdashLoader();
-			const result = await runWithContext({ editMode: false, db }, () =>
-				loader.loadCollection!({ filter: { type: "post", locale: "fr-FR" } }),
-			);
-			expect(result.entries).toHaveLength(1);
-			expect(result.entries![0]!.data.locale).toBe("fr-FR");
-		} finally {
-			await teardownTestDatabase(db);
+describe("event result pages", () => {
+	const events = ["first", "second", "third"].map((id) => eventSummary(entry(id), now)!);
+	it("pages the selected order and retains independent query state without mutating the URL", () => {
+		const url = new URL(
+			"https://example.org/past-events/?q=one%20two&events-page[other]=3#schedule",
+		);
+		const first = eventPage(events, "past", url, 2)!;
+		expect(first.events.map((event) => event.entry.id)).toEqual(["first", "second"]);
+		expect(first.prev).toBeUndefined();
+		const next = new URL(first.next!, url);
+		expect(next.pathname).toBe("/past-events/");
+		expect(next.searchParams.get("events-page[past]")).toBe("2");
+		expect(next.searchParams.get("events-page[other]")).toBe("3");
+		expect(next.searchParams.get("q")).toBe("one two");
+		expect(next.hash).toBe("#schedule");
+		expect(url.searchParams.has("events-page[past]")).toBe(false);
+		const last = eventPage(events, "past", next, 2)!;
+		expect(last.events.map((event) => event.entry.id)).toEqual(["third"]);
+		expect(last.next).toBeUndefined();
+		expect(new URL(last.prev!, url).searchParams.has("events-page[past]")).toBe(false);
+	});
+	it("does not widen an explicit saved view limit to fill a page", () => {
+		const selected = selectEventView(events, parseEventView({ ...wire, limit: 2 })!, now);
+		const url = new URL("https://example.org/upcoming/?events-page[example]=2");
+		const page = eventPage(selected, "example", url, 1)!;
+		expect(page.events.map((event) => event.entry.id)).toEqual(["second"]);
+		expect(page.next).toBeUndefined();
+	});
+	it("uses bounded native page sizes and keeps an empty first page valid", () => {
+		const many = Array.from({ length: 60 }, () => events[0]!);
+		const url = new URL("https://example.org/events/");
+		expect(eventPage(many, "index", url, 1000)?.events).toHaveLength(50);
+		expect(eventPage(many, "index", url, Number.NaN)?.events).toHaveLength(10);
+		expect(eventPage([], "index", url)?.events).toEqual([]);
+	});
+	it("rejects invalid, duplicate and out-of-range pages", () => {
+		for (const query of [
+			"0",
+			"-1",
+			"1.5",
+			"02",
+			"",
+			"4",
+			"99999999999999999999",
+			"1&events-page[past]=2",
+		]) {
+			expect(
+				eventPage(
+					events,
+					"past",
+					new URL(`https://example.org/past-events/?events-page[past]=${query}`),
+					1,
+				),
+			).toBeNull();
 		}
 	});
+});
+
+describe("native event locale contract", () => {
+	let db: Awaited<ReturnType<typeof setupTestDatabaseWithCollections>>;
+	beforeEach(async () => {
+		db = await setupTestDatabaseWithCollections();
+	});
+	afterEach(async () => {
+		await teardownTestDatabase(db);
+	});
+	it("reads the actual native database row locale through the live loader", async () => {
+		const created = await handleContentCreate(db, "post", {
+			data: { title: "Native locale contract" },
+			status: "published",
+			locale: "fr-FR",
+		});
+		expect(created.success).toBe(true);
+		const loader = emdashLoader();
+		const result = await runWithContext({ editMode: false, db }, () =>
+			loader.loadCollection!({ filter: { type: "post", locale: "fr-FR" } }),
+		);
+		expect(result.entries).toHaveLength(1);
+		expect(result.entries![0]!.data.locale).toBe("fr-FR");
+	});
+});
+
+describe("event data trust boundaries", () => {
 	it("does not coerce saved view fields into supported enum values", () => {
 		expect(parseEventView({ ...wire, mode: { toString: () => "upcoming" } })).toBeNull();
 		expect(parseEventView({ ...wire, filters: { category: [false] } })).toBeNull();
