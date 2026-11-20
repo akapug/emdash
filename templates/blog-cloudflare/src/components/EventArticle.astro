@@ -20,7 +20,12 @@ if (Astro.cache?.enabled) {
 	Astro.cache.set(site.cacheHint);
 	Astro.cache.set(false);
 }
-const event = eventSummary(entry, now, undefined, eventString(site.data.timezone));
+const event = eventSummary(
+	entry,
+	now,
+	undefined,
+	eventString(site.data.timezone),
+);
 const data = entry.data;
 const more = eventString(data.more_info);
 const href = more ? safeHref(more) : "#";

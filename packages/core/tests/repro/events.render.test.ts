@@ -6,6 +6,7 @@ import EventEmbed from "../../../../templates/blog-cloudflare/src/components/Eve
 import EventList from "../../../../templates/blog-cloudflare/src/components/EventList.astro";
 import PageArticle from "../../../../templates/blog-cloudflare/src/components/PageArticle.astro";
 import WpShellEmbed from "../../../../templates/blog-cloudflare/src/components/WpShellEmbed.astro";
+import WpShellPortableText from "../../../../templates/blog-cloudflare/src/components/WpShellPortableText.astro";
 import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.astro";
 import EventDetail from "../../../../templates/blog-cloudflare/src/pages/events/[slug].astro";
 import EventsIndex from "../../../../templates/blog-cloudflare/src/pages/events/index.astro";
@@ -26,6 +27,7 @@ const reads = vi.hoisted(() => ({
 }));
 async function emdashReads() {
 	return {
+		getEditMeta: () => undefined,
 		getCollectionByUrlPattern: reads.schema,
 		getEmDashCollection: reads.collection,
 		getEmDashEntry: reads.entry,
@@ -412,14 +414,34 @@ describe("event rendering in the actual Astro template", () => {
 		expect(reads.collection).not.toHaveBeenCalled();
 	});
 	it("draws the source's bounded fifteen-year past view, not just the current month", async () => {
-		vi.useFakeTimers(); vi.setSystemTime(now);
-		reads.collection.mockResolvedValue({ entries: [entry("last-month", { start_date: "2026-10-20" }), entry("last-year", { start_date: "2025-06-10" }), entry("too-old", { start_date: "2010-10-10" }), entry("after-anchor", { start_date: "2026-11-10" }), entry("future", { start_date: "2027-01-01" })], hasMore: false, cacheHint: {} });
-		const html = await render(EventEmbed, { node: { events: { ...view, mode: "past", start: "start_current_month", limit: undefined } } });
+		vi.useFakeTimers();
+		vi.setSystemTime(now);
+		reads.collection.mockResolvedValue({
+			entries: [
+				entry("last-month", { start_date: "2026-10-20" }),
+				entry("last-year", { start_date: "2025-06-10" }),
+				entry("too-old", { start_date: "2010-10-10" }),
+				entry("after-anchor", { start_date: "2026-11-10" }),
+				entry("future", { start_date: "2027-01-01" }),
+			],
+			hasMore: false,
+			cacheHint: {},
+		});
+		const html = await render(EventEmbed, {
+			node: { events: { ...view, mode: "past", start: "start_current_month", limit: undefined } },
+		});
 		for (const slug of ["last-month", "last-year"]) expect(html).toContain(`/events/${slug}/`);
-		for (const slug of ["too-old", "after-anchor", "future"]) expect(html).not.toContain(`/events/${slug}/`);
+		for (const slug of ["too-old", "after-anchor", "future"])
+			expect(html).not.toContain(`/events/${slug}/`);
 	});
 	it("renders the imported time note as text even for an all-day event", async () => {
-		const html = await render(EventArticle, { entry: entry("notes", { all_day: 1, time_note: 'Doors at dusk <script>alert("no")</script>' }), now });
+		const html = await render(EventArticle, {
+			entry: entry("notes", {
+				all_day: 1,
+				time_note: 'Doors at dusk <script>alert("no")</script>',
+			}),
+			now,
+		});
 		expect(html).toContain("All day");
 		expect(html).toContain("Doors at dusk &lt;script&gt;");
 		expect(html).not.toContain("<script>alert");
@@ -427,11 +449,20 @@ describe("event rendering in the actual Astro template", () => {
 	it("uses the site's source day when an event omits its zone, without fabricating a displayed event zone", async () => {
 		reads.timezone = "America/Los_Angeles";
 		const boundary = new Date("2026-12-01T00:30:00Z");
-		const series = entry("local-preview", { start_date: "2020-01-01", start_time: "18:00", occurrences: '["2026-11-30","2026-12-02"]' });
+		const series = entry("local-preview", {
+			start_date: "2020-01-01",
+			start_time: "18:00",
+			occurrences: '["2026-11-30","2026-12-02"]',
+		});
 		const article = await render(EventArticle, { entry: series, now: boundary });
 		expect(article).toContain('datetime="2026-11-30"');
 		expect(article).not.toContain("America/Los_Angeles");
-		const listing = await render(EventList, { entries: [entry("local-today", { start_date: "2026-11-30" })], now: boundary });
+		const listing = await render(EventList, {
+			entries: [entry("local-today", { start_date: "2026-11-30" })],
+			now: boundary,
+		});
+		expect(listing).toContain("/events/local-today/");
+		expect(listing).toContain("Past events");
 		expect(listing.indexOf("/events/local-today/")).toBeLessThan(listing.indexOf("Past events"));
 	});
 	it("uses the first day of the overflowed lower month and strict start/end cutoffs for past views", () => {
@@ -444,16 +475,130 @@ describe("event rendering in the actual Astro template", () => {
 			entry("ends-at-cutoff", { start_date: "2026-11-20", start_time: "09:00", end_time: "12:00" }),
 			entry("unknown-clock", { start_date: "2026-11-20" }),
 		].map((item) => eventSummary(item as any, clockNow)!);
-		expect(selectEventView(entries, { ...view, mode: "past", limit: undefined }, clockNow).map((item) => item.entry.id)).toEqual(["first-lower-month", "ended-today"]);
+		expect(
+			selectEventView(entries, { ...view, mode: "past", limit: undefined }, clockNow).map(
+				(item) => item.entry.id,
+			),
+		).toEqual(["first-lower-month", "ended-today"]);
 		const upper = [
-			entry("ends-before-final-second", { start_date: "2026-11-01", start_time: "23:59:57", end_time: "23:59:58" }),
-			entry("ends-at-final-second", { start_date: "2026-11-01", start_time: "23:59:57", end_time: "23:59:59" }),
-			entry("spans-anchor", { start_date: "2026-10-31", end_date: "2026-11-02", start_time: "12:00", end_time: "12:00" }),
+			entry("ends-before-final-second", {
+				start_date: "2026-11-01",
+				start_time: "23:59:57",
+				end_time: "23:59:58",
+			}),
+			entry("ends-at-final-second", {
+				start_date: "2026-11-01",
+				start_time: "23:59:57",
+				end_time: "23:59:59",
+			}),
+			entry("spans-anchor", {
+				start_date: "2026-10-31",
+				end_date: "2026-11-02",
+				start_time: "12:00",
+				end_time: "12:00",
+			}),
 		].map((item) => eventSummary(item as any, clockNow)!);
-		expect(selectEventView(upper, { ...view, mode: "past", start: "start_current_month", limit: undefined }, clockNow).map((item) => item.entry.id)).toEqual(["ends-before-final-second"]);
+		expect(
+			selectEventView(
+				upper,
+				{ ...view, mode: "past", start: "start_current_month", limit: undefined },
+				clockNow,
+			).map((item) => item.entry.id),
+		).toEqual(["ends-before-final-second"]);
 		const leapNow = new Date("2028-02-29T12:00:00Z");
-		const leap = [entry("overflow-month", { start_date: "2013-03-01" }), entry("before-overflow-month", { start_date: "2013-02-28" })].map((item) => eventSummary(item as any, leapNow)!);
-		expect(selectEventView(leap, { ...view, mode: "past", limit: undefined }, leapNow).map((item) => item.entry.id)).toEqual(["overflow-month"]);
+		const leap = [
+			entry("overflow-month", { start_date: "2013-03-01" }),
+			entry("before-overflow-month", { start_date: "2013-02-28" }),
+		].map((item) => eventSummary(item as any, leapNow)!);
+		expect(
+			selectEventView(leap, { ...view, mode: "past", limit: undefined }, leapNow).map(
+				(item) => item.entry.id,
+			),
+		).toEqual(["overflow-month"]);
+	});
+	it("puts an already-ended event from today under past, while a running event stays upcoming", async () => {
+		const clockNow = new Date("2026-11-20T12:00:00Z");
+		const html = await render(EventList, {
+			now: clockNow,
+			entries: [
+				entry("ended-today", {
+					start_date: "2026-11-20",
+					start_time: "09:00",
+					end_time: "11:59:59",
+				}),
+				entry("running-today", {
+					start_date: "2026-11-20",
+					start_time: "09:00",
+					end_time: "13:00",
+				}),
+			],
+		});
+		expect(html).toContain("/events/ended-today/");
+		expect(html).toContain("/events/running-today/");
+		expect(html).toContain("Past events");
+		expect(html.indexOf("/events/ended-today/")).toBeGreaterThan(html.indexOf("Past events"));
+		expect(html.indexOf("/events/running-today/")).toBeLessThan(html.indexOf("Past events"));
+	});
+	it("preserves rich shell skeleton, link and note marks while dispatching an event embed", async () => {
+		const html = await render(WpShellPortableText, {
+			value: [
+				{
+					_type: "elementor-section",
+					_key: "el-1000001",
+					skeleton: {
+						document: {
+							tag: "div",
+							class: "elementor elementor-42",
+							attrs: { "data-elementor-type": "wp-page", "data-elementor-id": "42" },
+						},
+						wraps: [
+							{
+								tag: "section",
+								class:
+									"elementor-section elementor-top-section elementor-element elementor-element-1000001",
+							},
+						],
+						widgets: {
+							"1000003": {
+								wraps: [
+									{
+										tag: "div",
+										class: "elementor-element elementor-widget elementor-widget-text-editor",
+									},
+									{ tag: "div", class: "elementor-widget-container" },
+								],
+							},
+						},
+					},
+				},
+				{
+					_type: "block",
+					_key: "el-1000003",
+					style: "normal",
+					markDefs: [
+						{ _type: "wpShellNote", _key: "hint", title: "Source note", class: "source-note" },
+						{
+							_type: "link",
+							_key: "link",
+							href: "/contact/",
+							skeletonClass: "source-link",
+							skeletonTitle: "Source link",
+						},
+					],
+					children: [
+						{ _type: "span", _key: "note", text: "Event source text", marks: ["hint"] },
+						{ _type: "span", _key: "link-text", text: "Contact", marks: ["link"] },
+					],
+				},
+				{ _type: "embed", _key: "extra", provider: "embark-events", events: { version: 1 } },
+			],
+		});
+		expect(html).toContain('class="elementor elementor-42"');
+		expect(html).toContain('class="source-note"');
+		expect(html).toContain('title="Source note"');
+		expect(html).toContain('class="source-link"');
+		expect(html).toContain('title="Source link"');
+		expect(html).toContain("Saved event view unavailable");
 	});
 	it("intercepts event embeds in both regular and shell Portable Text", async () => {
 		const node = {

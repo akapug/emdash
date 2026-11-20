@@ -52,18 +52,16 @@ beforeEach(() => {
 	vi.useFakeTimers();
 	vi.setSystemTime(new Date("2026-11-20T00:30:00Z"));
 	reads.timezone = "UTC";
-	reads.list
-		.mockReset()
-		.mockResolvedValue({
-			entries: [
-				entry("december", { start_date: "2026-12-20", category: "Arts" }),
-				entry("later-december", { start_date: "2026-12-25", category: "Arts" }),
-				entry("other-category", { start_date: "2026-12-28", category: "Other" }),
-				entry("january", { start_date: "2027-01-05", category: "Arts" }),
-			],
-			hasMore: false,
-			cacheHint: {},
-		});
+	reads.list.mockReset().mockResolvedValue({
+		entries: [
+			entry("december", { start_date: "2026-12-20", category: "Arts" }),
+			entry("later-december", { start_date: "2026-12-25", category: "Arts" }),
+			entry("other-category", { start_date: "2026-12-28", category: "Other" }),
+			entry("january", { start_date: "2027-01-05", category: "Arts" }),
+		],
+		hasMore: false,
+		cacheHint: {},
+	});
 });
 describe("a saved tile's month navigation", () => {
 	it("bounds December before applying order/filters/limit and carries independent query state into January", async () => {

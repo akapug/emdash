@@ -27,7 +27,8 @@ const {
 	navigation,
 	timezone,
 } = Astro.props;
-const site = timezone === undefined ? await getSiteSettingsWithCacheHint() : null;
+const site =
+	timezone === undefined ? await getSiteSettingsWithCacheHint() : null;
 const referenceTimezone = timezone ?? eventString(site?.data.timezone);
 // The source-zone day changes the selection even when no content is edited.
 if (Astro.cache?.enabled) {

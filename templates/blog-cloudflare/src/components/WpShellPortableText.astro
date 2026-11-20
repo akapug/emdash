@@ -1,24 +1,44 @@
 ---
+import { getEditMeta } from "emdash";
 import { PortableText } from "emdash/ui";
 import type { ComponentProps } from "astro/types";
 import WpShellBlock from "./WpShellBlock.astro";
 import WpShellImage from "./WpShellImage.astro";
 import WpShellEmbed from "./WpShellEmbed.astro";
 import WpShellForm from "./WpShellForm.astro";
+import WpShellLink from "./WpShellLink.astro";
+import WpShellNote from "./WpShellNote.astro";
+import WpShellSkeleton from "./WpShellSkeleton.astro";
+import { hasSkeleton, skeletonTree } from "../utils/wp-skeleton.js";
 type Props = ComponentProps<typeof PortableText>;
 const { components, ...props } = Astro.props;
+const resolved = {
+	block: WpShellBlock,
+	...components,
+	type: {
+		image: WpShellImage,
+		embed: WpShellEmbed,
+		"emdash-form": WpShellForm,
+		...components?.type,
+	},
+	mark: {
+		link: WpShellLink,
+		wpShellNote: WpShellNote,
+		...components?.mark,
+	},
+};
+// Match the native shell layout: retain the builder's elements outside editing,
+// and pass the original value to the inline editor while the owner edits.
+const skeleton =
+	!getEditMeta(props.value) && hasSkeleton(props.value)
+		? skeletonTree(props.value as never)
+		: null;
 ---
 
-<PortableText
-	{...props}
-	components={{
-		block: WpShellBlock,
-		...components,
-		type: {
-			image: WpShellImage,
-			embed: WpShellEmbed,
-			"emdash-form": WpShellForm,
-			...components?.type,
-		},
-	}}
-/>
+{
+	skeleton ? (
+		<WpShellSkeleton nodes={skeleton} components={resolved} />
+	) : (
+		<PortableText {...props} components={resolved} />
+	)
+}

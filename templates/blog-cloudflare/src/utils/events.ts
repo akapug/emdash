@@ -62,6 +62,33 @@ export function eventToday(now: Date, timezone?: string): string {
 	return now.toISOString().slice(0, 10);
 }
 
+function eventCurrentClock(now: Date, timezone?: string): string {
+	if (timezone) {
+		try {
+			const parts = new Intl.DateTimeFormat("en-US", {
+				timeZone: timezone,
+				hourCycle: "h23",
+				hour: "2-digit",
+				minute: "2-digit",
+				second: "2-digit",
+			}).formatToParts(now);
+			return ["hour", "minute", "second"]
+				.map((type) => parts.find((part) => part.type === type)!.value)
+				.join(":");
+		} catch {
+			/* Use the same UTC reference as eventToday for an unknown source zone. */
+		}
+	}
+	return now.toISOString().slice(11, 19);
+}
+
+function beforeEventCutoff(date: string, value: unknown, anchor: string, cutoff: string): boolean {
+	if (date !== anchor) return date < anchor;
+	const time = clock(value);
+	// A missing clock cannot prove that an event on the cutoff day has already ended.
+	return time !== undefined && (time.length === 5 ? `${time}:00` : time) < cutoff;
+}
+
 export function eventSummary(
 	entry: EventEntry,
 	now = new Date(),
@@ -96,6 +123,13 @@ export function eventSummary(
 	const date = upcoming ?? dates?.at(-1) ?? data.start_date;
 	const endDate =
 		eventDate(data.end_date) && data.end_date >= data.start_date ? data.end_date : undefined;
+	let past = (endDate ?? date) < today;
+	if (!preview && (endDate ?? date) === today) {
+		const cutoff = eventCurrentClock(now, referenceTimezone);
+		past =
+			beforeEventCutoff(date, data.start_time, today, cutoff) &&
+			beforeEventCutoff(endDate ?? date, data.end_time, today, cutoff);
+	}
 	const allDay =
 		data.all_day === true || data.all_day === 1
 			? true
@@ -113,13 +147,7 @@ export function eventSummary(
 		allDay,
 		cancelled: data.event_status === "cancelled" || data.event_status === "canceled",
 		preview,
-		period: preview
-			? upcoming
-				? "upcoming"
-				: "preview"
-			: (endDate ?? date) >= today
-				? "upcoming"
-				: "past",
+		period: preview ? (upcoming ? "upcoming" : "preview") : past ? "past" : "upcoming",
 	};
 }
 
@@ -229,18 +257,28 @@ export function selectEventView(
 ): EventSummary[] {
 	const projected = month
 		? events.flatMap((event) => {
-				const summary = eventSummary(event.entry, now, month);
+				const summary = eventSummary(event.entry, now, month, event.referenceTimezone);
 				return summary ? [summary] : [];
 			})
 		: events;
 	const selected = projected.filter((event) => {
-		const today = eventToday(now, event.timezone);
+		const referenceTimezone = event.referenceTimezone ?? event.timezone;
+		const today = eventToday(now, referenceTimezone);
 		const anchor = view.start === "start_current_month" ? `${today.slice(0, 7)}-01` : today;
 		let period = event.period === "upcoming" && event.date >= anchor;
 		if (view.mode === "past") {
+			// task/12677: MEC fixes this lookback at fifteen years, overflows the year
+			// subtraction, then takes the first day of that resulting month.
 			const oldest = new Date(`${anchor}T00:00:00Z`);
 			oldest.setUTCFullYear(oldest.getUTCFullYear() - 15);
-			period = event.period === "past" && event.date >= oldest.toISOString().slice(0, 10) && event.date <= anchor;
+			oldest.setUTCDate(1);
+			const cutoff = anchor === today ? eventCurrentClock(now, referenceTimezone) : "23:59:59";
+			// Exhausting a recurrence preview does not prove that its series has ended.
+			period =
+				!event.preview &&
+				event.date >= oldest.toISOString().slice(0, 10) &&
+				beforeEventCutoff(event.date, event.entry.data.start_time, anchor, cutoff) &&
+				beforeEventCutoff(event.endDate ?? event.date, event.entry.data.end_time, anchor, cutoff);
 		}
 		return (
 			period &&
