@@ -128,8 +128,8 @@ async function relatedPosts(tags: readonly { slug: string }[], count: number, se
 	return newest.entries
 		.filter((e) => e.id !== self)
 		.map((e) => {
-			const theirs = (Array.isArray(e.data.terms?.tag) ? e.data.terms.tag : []).filter((t): t is { slug: string } => isObject(t) && typeof t.slug === "string");
-			return { entry: e, shared: theirs.filter((t) => mine.has(t.slug)).length };
+			const theirs = (Array.isArray(e.data.terms?.tag) ? e.data.terms.tag : []).flatMap((t: unknown) => (isObject(t) && typeof t.slug === "string" ? [t.slug] : []));
+			return { entry: e, shared: theirs.filter((slug) => mine.has(slug)).length };
 		})
 		.filter((r) => r.shared > 0)
 		.sort((a, b) => b.shared - a.shared)
