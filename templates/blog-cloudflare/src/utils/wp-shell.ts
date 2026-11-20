@@ -291,6 +291,8 @@ export interface WpShellMenu {
 	leaf: WpShellTemplatePart[];
 	parent: WpShellTemplatePart[];
 	fallback: string;
+	/** Item-specific markup, keyed by its relinked destination. */
+	items?: Array<{ href: string; leaf: WpShellTemplatePart[]; parent: WpShellTemplatePart[] }>;
 	/** The classes the theme gives the item for the page being shown (a Bootstrap walker's `active`); `current-menu-item` when unset. */
 	current?: string;
 }
@@ -478,7 +480,15 @@ export type WpShellSubscribeHole =
 	| { s: "label"; for?: string; class?: string }
 	| { s: "/label" }
 	| { s: "control"; id?: string; class?: string; placeholder?: string }
-	| { s: "submit"; tag: "button" | "input"; id?: string; class?: string; label: string }
+	| {
+			s: "submit";
+			tag: "button" | "input";
+			id?: string;
+			class?: string;
+			label: string;
+			/** Sanitized template; a complex static label may have no label hole. */
+			content?: Array<string | { s: "label" }>;
+	  }
 	| { s: "phrase" };
 export type WpShellSubscribePart = string | WpShellSubscribeHole;
 
@@ -805,7 +815,7 @@ function drawnMarkup(s: WpShell): string[] {
 	for (const l of layoutsOf(s)) for (const p of l.parts) if ("html" in p) out.push(p.html);
 	for (const m of s.menus) {
 		out.push(m.fallback);
-		for (const t of [m.leaf, m.parent])
+		for (const t of [m.leaf, m.parent, ...(m.items ?? []).flatMap((v) => [v.leaf, v.parent])])
 			out.push(t.map((x) => (typeof x === "string" ? x : HOLE_FILL[x.s])).join(""));
 	}
 	for (const l of s.listings ?? []) {
@@ -824,6 +834,9 @@ function drawnMarkup(s: WpShell): string[] {
 				count: x.count ? fill(x.count.item) : "",
 			}),
 		);
+		for (const f of x.fields)
+			if (typeof f !== "string" && f.s === "submit" && f.content)
+				out.push(f.content.map((p) => (typeof p === "string" ? p : HOLE_FILL.label)).join(""));
 	}
 	if (s.post) out.push(...postMarkupForCheck(s.post));
 	return out;
@@ -1121,6 +1134,29 @@ function checkMenu(m: unknown): string | null {
 	if (!optionalToken(m.current)) return "a menu's current classes are not tokens";
 	if (!hrefInAttribute(leaf) || !hrefInAttribute(parent))
 		return "a menu link is not inside an href attribute";
+	if (m.items !== undefined) {
+		if (!Array.isArray(m.items)) return "a menu's item templates are not a list";
+		const seen = new Set<string>();
+		for (const v of m.items) {
+			if (
+				!isObject(v) ||
+				typeof v.href !== "string" ||
+				!v.href ||
+				v.href.length > 2048 ||
+				safeHref(v.href) !== v.href ||
+				seen.has(normalPath(v.href))
+			)
+				return "a menu's item destination is malformed or duplicated";
+			if (
+				!checkTemplate(v.leaf) ||
+				!checkTemplate(v.parent) ||
+				!hrefInAttribute(v.leaf) ||
+				!hrefInAttribute(v.parent)
+			)
+				return "a menu's item template is malformed";
+			seen.add(normalPath(v.href));
+		}
+	}
 	return null;
 }
 
@@ -1231,14 +1267,23 @@ function markupOf(s: WpShell): string[] {
 	for (const l of layoutsOf(s)) for (const p of l.parts) if ("html" in p) out.push(p.html);
 	for (const m of s.menus) {
 		out.push(m.fallback);
-		for (const x of [...m.leaf, ...m.parent]) if (typeof x === "string") out.push(x);
+		for (const x of [
+			...m.leaf,
+			...m.parent,
+			...(m.items ?? []).flatMap((v) => [...v.leaf, ...v.parent]),
+		])
+			if (typeof x === "string") out.push(x);
 	}
 	for (const l of s.listings ?? [])
 		for (const x of [...l.item, ...(l.thumb ?? [])]) if (typeof x === "string") out.push(x);
 	for (const f of s.forms ?? []) for (const x of f.parts) if (typeof x === "string") out.push(x);
-	for (const x of s.subscribe ?? [])
+	for (const x of s.subscribe ?? []) {
 		for (const t of [x.parts, x.fields, ...(x.count ? [x.count.item] : [])])
 			for (const y of t) if (typeof y === "string") out.push(y);
+		for (const f of x.fields)
+			if (typeof f !== "string" && f.s === "submit")
+				for (const p of f.content ?? []) if (typeof p === "string") out.push(p);
+	}
 	if (s.post) {
 		for (const t of postTemplatesOf(s.post))
 			for (const x of t) if (typeof x === "string") out.push(x);
@@ -1424,8 +1469,18 @@ function subscribeHoles(t: unknown, allowed: ReadonlySet<string>): Record<string
 		count[x.s] = (count[x.s] ?? 0) + 1;
 		if (!optionalToken(x.id) || !optionalToken(x.class) || !optionalToken(x.for)) return null;
 		if (!optionalShortText(x.placeholder)) return null;
-		if (x.s === "submit" && ((x.tag !== "button" && x.tag !== "input") || !isShortText(x.label)))
-			return null;
+		if (x.s === "submit") {
+			if ((x.tag !== "button" && x.tag !== "input") || !isShortText(x.label)) return null;
+			if (
+				x.content !== undefined &&
+				(x.tag !== "button" ||
+					!checkTemplate(x.content) ||
+					x.content.length === 0 ||
+					!x.content.every((p) => typeof p === "string" || p.s === "label") ||
+					x.content.filter((p) => typeof p !== "string" && p.s === "label").length > 1)
+			)
+				return null;
+		}
 		if (x.s === "label") depth++;
 		if (x.s === "/label" && --depth < 0) return null;
 		const before = t
@@ -2026,13 +2081,15 @@ export function renderMenu(
 ): string {
 	if (!items) return menu.fallback;
 	const currentClass = menu.current ?? "current-menu-item";
+	const byHref = new Map((menu.items ?? []).map((v) => [normalPath(v.href), v]));
 	const draw = (list: readonly WpShellMenuItem[]): string =>
 		list
-			.map((item) =>
-				item.children.length > 0
-					? fillTemplate(menu.parent, item, currentPath, draw(item.children), currentClass)
-					: fillTemplate(menu.leaf, item, currentPath, "", currentClass),
-			)
+			.map((item) => {
+				const skin = byHref.get(normalPath(item.url)) ?? menu;
+				return item.children.length > 0
+					? fillTemplate(skin.parent, item, currentPath, draw(item.children), currentClass)
+					: fillTemplate(skin.leaf, item, currentPath, "", currentClass);
+			})
 			.join("");
 	return draw(items);
 }
@@ -2578,7 +2635,7 @@ export function renderWpShellSubscribe(x: WpShellSubscribe, fill: WpShellSubscri
 			case "submit":
 				return h.tag === "input"
 					? `<input type="submit"${attr("id", h.id)}${attr("class", h.class)} value="${escapeAttr(h.label)}">`
-					: `<button type="submit"${attr("id", h.id)}${attr("class", h.class)}>${escapeHtml(h.label)}</button>`;
+					: `<button type="submit"${attr("id", h.id)}${attr("class", h.class)}>${h.content ? h.content.map((p) => (typeof p === "string" ? p : escapeHtml(h.label))).join("") : escapeHtml(h.label)}</button>`;
 			default:
 				return "";
 		}

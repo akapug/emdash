@@ -299,6 +299,127 @@ describe("wp-shell record", () => {
 	});
 });
 
+describe("wp-shell source icon templates", () => {
+	const decorated = () => {
+		const s = sample();
+		const menu = s.menus[0]!;
+		const leaf = menu.leaf.map((x) =>
+			typeof x !== "string" && x.s === "label" ? '<i class="icon-heart"></i> ' : x,
+		);
+		leaf.splice(leaf.length - 1, 0, { s: "label" });
+		Object.assign(menu, { items: [{ href: "/pages/donate", leaf, parent: menu.parent }] });
+		return s;
+	};
+	const signup = (): WpShellSubscribe => ({
+		plugin: "generic",
+		parts: [{ s: "form" }, { s: "fields" }, { s: "/form" }],
+		fields: [
+			{ s: "control" },
+			{
+				s: "submit",
+				tag: "button",
+				label: "Subscribe <&>",
+				content: ["<span>", { s: "label" }, '</span> <i class="icon-newsletter"></i>'],
+			},
+		],
+	});
+
+	it("renders a source heart only for its exact destination, not an unrelated or similarly named link", () => {
+		const s = decorated();
+		expect(wpShellProblem(s)).toBeNull();
+		const html = renderMenu(
+			s.menus[0]!,
+			[
+				{ label: "Donate", url: "/pages/donate", children: [] },
+				{ label: "Other", url: "/pages/other", children: [] },
+				{ label: "Donate", url: "https://other.example/pages/donate", children: [] },
+			],
+			"/",
+		);
+		expect(html.match(/icon-heart/g)).toHaveLength(1);
+		expect(html).toContain('href="/pages/donate"><i class="icon-heart"></i> Donate');
+	});
+
+	it("renders sanitized nested newsletter markup with an escaped label and keeps old records working", () => {
+		const s = sample();
+		s.subscribe = [signup()];
+		s.parts.push({ slot: "subscribe", subscribe: 0 });
+		expect(wpShellProblem(s)).toBeNull();
+		const fill = { action: "/subscribe", source: "/", status: null, count: null };
+		expect(renderWpShellSubscribe(s.subscribe[0]!, fill)).toContain(
+			'<span>Subscribe &lt;&amp;&gt;</span> <i class="icon-newsletter"></i>',
+		);
+		const old = signup();
+		old.fields = [{ s: "control" }, { s: "submit", tag: "button", label: "Subscribe <&>" }];
+		expect(renderWpShellSubscribe(old, fill)).toContain(">Subscribe &lt;&amp;&gt;</button>");
+	});
+
+	it("accepts a constant sanitized button template when the source label has several text nodes", () => {
+		const s = sample();
+		const sub = signup();
+		Object.assign(sub.fields[1]!, {
+			content: ['<span>Subscribe</span> <strong>now</strong> <i class="icon-newsletter"></i>'],
+		});
+		s.subscribe = [sub];
+		expect(wpShellProblem(s)).toBeNull();
+		const fill = { action: "/subscribe", source: "/", status: null, count: null };
+		expect(renderWpShellSubscribe(sub, fill)).toContain(
+			'<strong>now</strong> <i class="icon-newsletter"></i>',
+		);
+	});
+
+	it.each([
+		"not a template",
+		[],
+		["<span>", { s: "href" }, "</span>"],
+		['<i class="', { s: "label" }, '"></i>'],
+	])("refuses malformed submit content %j", (content) => {
+		const s = sample();
+		const sub = signup();
+		Object.assign(sub.fields[1]!, { content });
+		s.subscribe = [sub];
+		expect(wpShellProblem(s)).not.toBeNull();
+	});
+
+	it("counts nested markup against the record budget", () => {
+		const m = decorated();
+		m.menus[0]!.items![0]!.leaf.unshift("x".repeat(1_000_001));
+		expect(wpShellProblem(m)).not.toBeNull();
+		const s = sample();
+		s.subscribe = [signup()];
+		const field = s.subscribe[0]!.fields[1]!;
+		if (typeof field !== "string" && field.s === "submit")
+			field.content!.unshift("x".repeat(1_000_001));
+		expect(wpShellProblem(s)).not.toBeNull();
+	});
+
+	it("refuses malformed or duplicate destination templates", () => {
+		for (const href of ["javascript:bad", "/pages/donate/"]) {
+			const s = decorated();
+			s.menus[0]!.items!.push({ ...s.menus[0]!.items![0]!, href });
+			expect(wpShellProblem(s)).not.toBeNull();
+		}
+	});
+
+	it.each(["<script>x</script>", '<i onclick="x"></i>', '<img src="https://other.example/i.png">'])(
+		"refuses executable or remote markup in either new template: %s",
+		(payload) => {
+			const menuRecord = decorated();
+			(
+				menuRecord.menus[0] as unknown as { items: Array<{ leaf: unknown[] }> }
+			).items[0]!.leaf.unshift(payload);
+			expect(wpShellProblem(menuRecord)).not.toBeNull();
+			const subRecord = sample();
+			subRecord.subscribe = [signup()];
+			subRecord.parts.push({ slot: "subscribe", subscribe: 0 });
+			(subRecord.subscribe[0]!.fields[1] as unknown as { content: unknown[] }).content.unshift(
+				payload,
+			);
+			expect(wpShellProblem(subRecord)).not.toBeNull();
+		},
+	);
+});
+
 describe("wp-shell menus", () => {
 	const menu = sample().menus[0]!;
 
