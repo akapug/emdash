@@ -1,11 +1,29 @@
 import { describe, expect, it } from "vitest";
 
+import { gutenbergToPortableText as compiledConverter } from "../dist/index.mjs";
 import {
 	gutenbergToPortableText,
 	htmlToPortableText,
 	type ConvertOptions,
 	type PortableTextBlock,
 } from "../src/index.js";
+import { withoutUndrawn } from "../src/inline.js";
+
+const publicOptions = (): ConvertOptions => ({
+	texturize: false,
+	keyGenerator: () => "synthetic",
+	shortcode: (raw) =>
+		raw.startsWith("[MEC")
+			? [
+					{
+						_type: "embed",
+						_key: "synthetic-event",
+						provider: "synthetic",
+						url: "https://example.org",
+					},
+				]
+			: undefined,
+});
 
 const shortcode: NonNullable<ConvertOptions["shortcode"]> = (raw, { generateKey }) =>
 	/^\[MEC\s+id=73\]$/i.test(raw)
@@ -17,6 +35,85 @@ const text = (blocks: PortableTextBlock[]) =>
 	spans(blocks)
 		.map((s) => s.text)
 		.join("");
+
+describe.each([
+	{ name: "source", convert: gutenbergToPortableText },
+	{ name: "compiled dist/index.mjs", convert: compiledConverter },
+])("public shortcode boundary regressions: $name", ({ convert }) => {
+	it.each([
+		"<ul><li>&#91;MEC id=73&#93;</li></ul>",
+		"<ul><li><strong>&lbrack;MEC id=73&rbrack;</strong></li></ul>",
+		"<ol><li><p>&#x5b;MEC id=73&#x5d;</p></li></ol>",
+		"<ol><li>Before<ul><li>&#91;MEC id=73&#93;</li></ul>After</li></ol>",
+	])("preserves raw literal provenance through list DOM traversal: %s", (source) => {
+		const blocks = convert(source, publicOptions());
+		expect(blocks.filter((b) => b._type === "embed")).toHaveLength(0);
+		expect(text(blocks)).toContain("[MEC id=73]");
+	});
+
+	it.each([
+		"<!-- <script> --><p>[MEC id=73]</p><!-- </script> -->",
+		'<div data-open="<script>">Before</div><p>[MEC id=73]</p><div data-close="</script>">After</div>',
+		"<script>const note = '<!--'; [MEC id=73]</script><p>[MEC id=73]</p>",
+	])("observes browser comment, attribute and raw-text order: %s", (source) => {
+		expect(convert(source, publicOptions()).filter((b) => b._type === "embed")).toHaveLength(1);
+	});
+
+	it("keeps the refuted comment-only shortcode negative control inactive", () => {
+		const blocks = convert("<!-- <p>[MEC id=73]</p> --><p>Visible text</p>", publicOptions());
+		expect(blocks.filter((b) => b._type === "embed")).toHaveLength(0);
+		expect(text(blocks)).toContain("Visible text");
+	});
+
+	it("does not leak a throwing table conversion's cursor into the next entry", () => {
+		expect(() => convert("<table><tr><td>[MEC id=73]</td></tr></table>", publicOptions())).toThrow(
+			/span-only/,
+		);
+		const next = convert("<h2>Visible heading</h2><p>Visible paragraph</p>", publicOptions());
+		expect(next.map((b) => (b._type === "block" ? b.style : b._type))).toEqual(["h2", "normal"]);
+		expect(text(next)).toBe("Visible headingVisible paragraph");
+		const table = convert(
+			"<table><tr><td>First</td><td>Second</td></tr><tr><td>Third</td><td>Fourth</td></tr></table>",
+			publicOptions(),
+		)[0];
+		expect(table?._type).toBe("table");
+		if (table?._type !== "table") throw new Error("Missing next table");
+		expect(
+			table.rows.map((row) =>
+				row.cells.map((cell) => cell.content.map((span) => span.text).join("")),
+			),
+		).toEqual([
+			["First", "Second"],
+			["Third", "Fourth"],
+		]);
+	});
+
+	it("keeps the outer cursor private when a public shortcode callback converts recursively", () => {
+		let calls = 0;
+		const options = publicOptions();
+		const blocks = convert("<p>[MEC id=73]</p><h2>Outer heading</h2>", {
+			...options,
+			shortcode: (raw, context) => {
+				calls++;
+				if (calls === 1) convert("<div><p>Inner paragraph</p></div>", { texturize: false });
+				return options.shortcode?.(raw, context);
+			},
+		});
+		expect(calls).toBe(1);
+		expect(blocks.map((b) => (b._type === "block" ? b.style : b._type))).toEqual(["embed", "h2"]);
+	});
+});
+
+it("removes only actual undrawn element source ranges and preserves ordinary bytes", () => {
+	const ordinary =
+		'<div title="<script>">Before</div><!-- <style> --><p>Visible</p><!-- </style> --><div title="</script>">After</div>';
+	expect(withoutUndrawn(ordinary)).toBe(ordinary);
+	expect(
+		withoutUndrawn(
+			'<p>Before</p><script data-note=">">ignored</script><style>ignored</style><noscript>ignored</noscript><p>After</p>',
+		),
+	).toBe("<p>Before</p><p>After</p>");
+});
 
 describe("native visible-source shortcode hook", () => {
 	it.each([

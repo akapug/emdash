@@ -69,8 +69,8 @@ interface Block {
 const textOf = (block: Block) =>
 	block.children?.map((child) => child.text).join("") ?? block.html ?? "";
 
-const wxr = (body: string) =>
-	`<?xml version="1.0"?><rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Synthetic views</title><link>https://example.org</link><language>en</language><item><title>Homepage</title><wp:post_id>7</wp:post_id><wp:post_type>page</wp:post_type><wp:post_name>home</wp:post_name><wp:status>publish</wp:status><content:encoded><![CDATA[${body}]]></content:encoded></item></channel></rss>`;
+const wxr = (body: string, nextBody?: string) =>
+	`<?xml version="1.0"?><rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Synthetic views</title><link>https://example.org</link><language>en</language><item><title>Homepage</title><wp:post_id>7</wp:post_id><wp:post_type>page</wp:post_type><wp:post_name>home</wp:post_name><wp:status>publish</wp:status><content:encoded><![CDATA[${body}]]></content:encoded></item>${nextBody === undefined ? "" : `<item><title>Following page</title><wp:post_id>8</wp:post_id><wp:post_type>page</wp:post_type><wp:post_name>following</wp:post_name><wp:status>publish</wp:status><content:encoded><![CDATA[${nextBody}]]></content:encoded></item>`}</channel></rss>`;
 
 describe("WXR carried embeds at the original content mutation", () => {
 	let db: Kysely<Database>;
@@ -106,9 +106,13 @@ describe("WXR carried embeds at the original content mutation", () => {
 		body: string,
 		embeds: unknown = { "7": embed },
 		extra: Record<string, unknown> = {},
+		nextBody?: string,
 	) {
 		const form = new FormData();
-		form.set("file", new File([wxr(body)], "synthetic-views.xml", { type: "application/xml" }));
+		form.set(
+			"file",
+			new File([wxr(body, nextBody)], "synthetic-views.xml", { type: "application/xml" }),
+		);
 		form.set(
 			"config",
 			JSON.stringify({
@@ -294,6 +298,68 @@ describe("WXR carried embeds at the original content mutation", () => {
 			expect(blocks.map(textOf).join("\n")).toContain("After.");
 		},
 	);
+
+	it.each([
+		{
+			name: "list source provenance",
+			source: "<ul><li>&#91;MEC id=73&#93;</li><li>[MEC id=73]</li></ul>",
+		},
+		{
+			name: "browser comment order",
+			source: "<!-- <script> --><p>[MEC id=73]</p><!-- </script> -->",
+		},
+	])(
+		"preserves $name in the original row, published revision and actual readback",
+		async ({ name, source }) => {
+			const response = await run(source, { "7": { "73": embed } });
+			expect((await response.json()).data).toMatchObject({
+				success: true,
+				imported: 1,
+				errors: [],
+			});
+			const stored = await row();
+			const blocks: Block[] = JSON.parse(stored.content as string);
+			expect(blocks.filter((b) => b.provider === "embark-events")).toEqual([
+				{ ...embed, _key: "mec-7-73-1" },
+			]);
+			if (name === "list source provenance")
+				expect(blocks.map(textOf).join("\n")).toContain("[MEC id=73]");
+			expect((await emdash.handleContentPublish("pages", stored.id as string)).success).toBe(true);
+			const revisions = await db
+				.selectFrom("revisions")
+				.selectAll()
+				.where("entry_id", "=", stored.id as string)
+				.execute();
+			expect(revisions).toHaveLength(1);
+			expect(JSON.parse(revisions[0]!.data).content).toEqual(blocks);
+			expect(await emdash.handleContentGet("pages", stored.id as string)).toMatchObject({
+				success: true,
+				data: { item: { data: { content: blocks } } },
+			});
+		},
+	);
+
+	it("imports the next entry intact after the prior entry's span-only table refusal", async () => {
+		const response = await run(
+			"<table><tr><td>[MEC id=73]</td></tr></table>",
+			{ "7": { "73": embed } },
+			{},
+			"<h2>Visible heading</h2><p>Visible paragraph</p>",
+		);
+		const result = (await response.json()).data;
+		expect(result).toMatchObject({ success: false, imported: 1 });
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].error).toContain("span-only");
+		const stored = await row();
+		expect(stored.slug).toBe("following");
+		const blocks: Array<Block & { style?: string }> = JSON.parse(stored.content as string);
+		expect(blocks.map((b) => b.style)).toEqual(["h2", "normal"]);
+		expect(blocks.map(textOf)).toEqual(["Visible heading", "Visible paragraph"]);
+		expect(await emdash.handleContentGet("pages", stored.id as string)).toMatchObject({
+			success: true,
+			data: { item: { data: { content: blocks } } },
+		});
+	});
 
 	it("reports a resolved shortcode in a span-only table cell rather than silently importing its raw token", async () => {
 		const response = await run(

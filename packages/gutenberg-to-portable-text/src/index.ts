@@ -122,6 +122,18 @@ const ITEM_BLOCK_TAGS: ReadonlySet<string> = new Set([
 type HtmlNode = DefaultTreeAdapterMap["node"];
 type HtmlElement = DefaultTreeAdapterMap["element"];
 const isHtmlElement = (node: HtmlNode): node is HtmlElement => "tagName" in node;
+
+/** Reuse the list DOM's source ranges: serialization decodes literal bracket provenance. */
+function outerSource(node: HtmlNode, source: string): string {
+	const at = "sourceCodeLocation" in node ? node.sourceCodeLocation : undefined;
+	return at ? source.slice(at.startOffset, at.endOffset) : serializeOuter(node);
+}
+function innerSource(node: HtmlElement, source: string): string {
+	const at = node.sourceCodeLocation;
+	return at?.startTag
+		? source.slice(at.startTag.endOffset, at.endTag?.startOffset ?? at.endOffset)
+		: serialize(node);
+}
 /** Whether an element holds a list at any depth. */
 const holdsList = (node: HtmlElement): boolean =>
 	node.childNodes.some(
@@ -359,6 +371,8 @@ export function htmlToPortableText(
 ): PortableTextBlock[] {
 	// What the reader sees: no stylesheet, script or scripts-off fallback, read as text or split into blocks.
 	const html = withoutUndrawn(source);
+	// Each invocation owns its cursor, including recursion and throwing callbacks.
+	const blockElements = new RegExp(BLOCK_ELEMENT_PATTERN);
 	const generateKey = options.keyGenerator || createKeyGenerator();
 	const blocks: PortableTextBlock[] = [];
 	const autoembeds = findAutoembeds(html);
@@ -429,13 +443,9 @@ export function htmlToPortableText(
 		pushParagraph(reopen + html.slice(cursor, to).trim());
 	};
 
-	// A part of this HTML converted on its own. The block pattern is shared and global,
-	// so its place in this HTML is kept across the call.
+	// A part of this HTML converted on its own, with its own block cursor.
 	const pushPart = (part: string) => {
-		const at = BLOCK_ELEMENT_PATTERN.lastIndex;
-		BLOCK_ELEMENT_PATTERN.lastIndex = 0;
 		blocks.push(...htmlToPortableText(part, { ...options, keyGenerator: generateKey }));
-		BLOCK_ELEMENT_PATTERN.lastIndex = at;
 	};
 
 	/**
@@ -445,15 +455,20 @@ export function htmlToPortableText(
 	 * next one's. Text after a list inside an item is an item of its own: a
 	 * list-item block holds no list.
 	 */
-	const pushList = (list: HtmlElement, level: number) => {
+	const pushList = (list: HtmlElement, level: number, listSource: string) => {
 		const listItem = list.tagName === "ol" ? "number" : "bullet";
 		for (const child of list.childNodes) {
 			if (isHtmlElement(child) && child.tagName === "li")
-				pushItem(child.childNodes, listItem, level);
-			else pushItem([child], listItem, level);
+				pushItem(child.childNodes, listItem, level, listSource);
+			else pushItem([child], listItem, level, listSource);
 		}
 	};
-	const pushItem = (nodes: HtmlNode[], listItem: "bullet" | "number", level: number) => {
+	const pushItem = (
+		nodes: HtmlNode[],
+		listItem: "bullet" | "number",
+		level: number,
+		listSource: string,
+	) => {
 		const lines: string[] = [];
 		let run = "";
 		const endLine = () => {
@@ -483,21 +498,21 @@ export function htmlToPortableText(
 		const walk = (children: HtmlNode[]) => {
 			for (const node of children) {
 				if (!isHtmlElement(node)) {
-					run += serializeOuter(node);
+					run += outerSource(node, listSource);
 				} else if (node.tagName === "ul" || node.tagName === "ol") {
 					endItem();
-					pushList(node, level + 1);
+					pushList(node, level + 1, listSource);
 				} else if (ITEM_BLOCK_TAGS.has(node.tagName)) {
 					endLine();
 					if (holdsList(node) || holdsBlock(node)) {
 						walk(node.childNodes);
 						endLine();
 					} else {
-						run = serialize(node);
+						run = innerSource(node, listSource);
 						endLine();
 					}
 				} else {
-					run += serializeOuter(node);
+					run += outerSource(node, listSource);
 				}
 			}
 		};
@@ -512,7 +527,7 @@ export function htmlToPortableText(
 	let lastIndex = 0;
 	let match;
 
-	while ((match = BLOCK_ELEMENT_PATTERN.exec(html)) !== null) {
+	while ((match = blockElements.exec(html)) !== null) {
 		let fullMatch = match[0];
 		const tag = (match[1] || match[3] || "").toLowerCase();
 		let content = match[2] || "";
@@ -524,7 +539,7 @@ export function htmlToPortableText(
 			if (close && close.end > start + fullMatch.length) {
 				content = html.slice(start + fullMatch.indexOf(">") + 1, close.start);
 				fullMatch = html.slice(start, close.end);
-				BLOCK_ELEMENT_PATTERN.lastIndex = close.end;
+				blockElements.lastIndex = close.end;
 			}
 		}
 
@@ -549,12 +564,8 @@ export function htmlToPortableText(
 
 		// A <div> that holds paragraphs (a classic post wrapped whole in one `<div>`):
 		// WordPress draws each of its paragraphs apart, so each is a block, not one run of text.
-		// The block pattern is shared and global, so its place in this content is kept across the call.
 		if (tag === "div" && BLOCK_INSIDE_PATTERN.test(content)) {
-			const at = BLOCK_ELEMENT_PATTERN.lastIndex;
-			BLOCK_ELEMENT_PATTERN.lastIndex = 0;
 			blocks.push(...htmlToPortableText(content, { ...options, keyGenerator: generateKey }));
-			BLOCK_ELEMENT_PATTERN.lastIndex = at;
 			continue;
 		}
 
@@ -699,8 +710,10 @@ export function htmlToPortableText(
 			case "ol": {
 				// The list as a browser builds it: a list inside an item is the next level down,
 				// and the items after it stay in the list.
-				const list = parseFragment(fullMatch).childNodes.find(isHtmlElement);
-				if (list) pushList(list, 1);
+				const list = parseFragment(fullMatch, { sourceCodeLocationInfo: true }).childNodes.find(
+					isHtmlElement,
+				);
+				if (list) pushList(list, 1, fullMatch);
 				break;
 			}
 

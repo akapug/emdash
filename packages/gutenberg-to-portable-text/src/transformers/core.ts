@@ -728,9 +728,12 @@ function parseTableRows(
 		}>;
 	}> = [];
 
+	// A span-only refusal or reentrant callback must not move another table's cursors.
+	const rowPattern = new RegExp(TABLE_ROW_PATTERN);
+	const cellPattern = new RegExp(TABLE_CELL_PATTERN);
 	let rowMatch;
 
-	while ((rowMatch = TABLE_ROW_PATTERN.exec(html)) !== null) {
+	while ((rowMatch = rowPattern.exec(html)) !== null) {
 		const rowContent = rowMatch[1]!;
 		const cells: Array<{
 			_type: "tableCell";
@@ -743,7 +746,7 @@ function parseTableRows(
 		// Match both th and td cells
 		let cellMatch;
 
-		while ((cellMatch = TABLE_CELL_PATTERN.exec(rowContent)) !== null) {
+		while ((cellMatch = cellPattern.exec(rowContent)) !== null) {
 			const isHeaderCell = cellMatch[1]!.toLowerCase() === "th" || isHeader;
 			const cellContent = cellMatch[2]!;
 

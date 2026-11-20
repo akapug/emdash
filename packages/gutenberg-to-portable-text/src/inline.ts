@@ -58,11 +58,6 @@ const CLASS_SEPARATOR = /\s+/;
  */
 const UNDRAWN = ["script", "style", "noscript"];
 const UNDRAWN_ELEMENTS: ReadonlySet<string> = new Set(UNDRAWN);
-/** Each undrawn element from its opener to its first closer, where a browser ends its raw text. */
-const UNDRAWN_ELEMENT_PATTERN = new RegExp(
-	`<(${UNDRAWN.join("|")})(?=[\\s/>])[^>]*>[\\s\\S]*?</\\1\\s*>`,
-	"gi",
-);
 const IMG_ALIGNMENTS: ReadonlyMap<string, "left" | "right" | "center"> = new Map([
 	["alignleft", "left"],
 	["alignright", "right"],
@@ -515,7 +510,30 @@ function getTextContent(nodes: Node[]): string {
  * `<noscript>`, that no reader ever sees.
  */
 export function withoutUndrawn(html: string): string {
-	return html.replace(UNDRAWN_ELEMENT_PATTERN, "");
+	const hidden: Array<{ start: number; end: number }> = [];
+	const walk = (nodes: Node[]) => {
+		for (const node of nodes) {
+			if (!isElement(node)) continue;
+			const at = node.sourceCodeLocation;
+			if (UNDRAWN_ELEMENTS.has(node.tagName) && at) {
+				hidden.push({ start: at.startOffset, end: at.endOffset });
+			} else {
+				walk(node.childNodes);
+			}
+		}
+	};
+	// Let the browser-order parser distinguish actual raw-text elements from
+	// lookalikes inside comments or quoted attributes; keep every other byte.
+	walk(parseFragment(html, { sourceCodeLocationInfo: true }).childNodes);
+	if (hidden.length === 0) return html;
+	const visible: string[] = [];
+	let cursor = 0;
+	for (const { start, end } of hidden.toSorted((a, b) => a.start - b.start)) {
+		visible.push(html.slice(cursor, start));
+		cursor = end;
+	}
+	visible.push(html.slice(cursor));
+	return visible.join("");
 }
 
 /**
