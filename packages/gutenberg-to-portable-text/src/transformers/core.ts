@@ -604,11 +604,18 @@ export const gallery: BlockTransformer = (block, options, context) => {
  * core/columns → columns block
  */
 export const columns: BlockTransformer = (block, _options, context) => {
-	const columnBlocks = block.innerBlocks.map((col) => ({
-		_type: "column" as const,
-		_key: context.generateKey(),
-		content: context.transformBlocks(col.innerBlocks),
-	}));
+	// A column's `width` ("80%", "250px", or an older bare number meaning
+	// percent) is what lays the row out; dropped, every column is equal.
+	const columnBlocks = block.innerBlocks.map((col) => {
+		const raw = col.attrs?.width;
+		const width = typeof raw === "number" && Number.isFinite(raw) ? `${raw}%` : typeof raw === "string" && /^\d+(?:\.\d+)?(?:%|px|em|rem|vw)$/u.test(raw.trim()) ? raw.trim() : undefined;
+		return {
+			_type: "column" as const,
+			_key: context.generateKey(),
+			...(width ? { width } : {}),
+			content: context.transformBlocks(col.innerBlocks),
+		};
+	});
 
 	return [
 		{

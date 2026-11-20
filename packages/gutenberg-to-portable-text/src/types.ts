@@ -118,6 +118,8 @@ export interface PortableTextColumnsBlock {
 	columns: Array<{
 		_type: "column";
 		_key: string;
+		/** WordPress's column width ("80%", "250px"); Columns.astro draws it as flex-basis. */
+		width?: string;
 		content: PortableTextBlock[];
 	}>;
 }
