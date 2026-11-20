@@ -18,6 +18,7 @@ import { readOrderedListMetadata, type OrderedListMetadata } from "./numbered-li
 import {
 	PORTABLE_TEXT_BLOCK_NODE,
 	PORTABLE_TEXT_SPAN_MARK,
+	attrsWithPortableTextKey,
 	portableTextBlockFromAttrs,
 	portableTextKeyFromAttrs,
 	portableTextMarkDefsFromMarks,
@@ -105,7 +106,7 @@ function convertNode(
 			return convertList(node, "number", path);
 
 		case "blockquote":
-			return convertBlockquote(node);
+			return convertBlockquote(node, path);
 
 		case "codeBlock":
 			return convertCodeBlock(node);
@@ -306,30 +307,32 @@ function convertListItemNested(
  */
 function convertBlockquote(
 	node: ProseMirrorNode,
-): PortableTextTextBlock | PortableTextTextBlock[] | null {
-	// Blockquotes in PT are just blocks with style: "blockquote"
-	const blocks: PortableTextTextBlock[] = [];
+	path: string,
+): PortableTextBlock | PortableTextBlock[] | null {
+	// Blockquotes in PT are blocks with style: "blockquote": the quote's paragraphs, and
+	// a list in it as list items styled "blockquote", so the list stays in the quote.
+	// Any other block in it (a heading, code, an image) is kept as itself: a block has
+	// one style, so it cannot also be the quote's.
+	const blocks: PortableTextBlock[] = [];
+	const quoteKey = portableTextKeyFromAttrs(node.attrs);
 
-	for (const child of node.content || []) {
-		if (child.type === "paragraph") {
-			const { children, markDefs } = convertInlineContent(child.content || []);
-
-			if (children.length > 0) {
-				blocks.push({
-					_type: "block",
-					_key:
-						portableTextKeyFromAttrs(child.attrs) ??
-						portableTextKeyFromAttrs(node.attrs) ??
-						generateKey(),
-					style: "blockquote",
-					children,
-					markDefs: markDefs.length > 0 ? markDefs : undefined,
-				});
-			}
+	for (const [childIndex, child] of (node.content || []).entries()) {
+		// a one-paragraph quote carries its block's key on the quote node
+		const keyed =
+			child.type === "paragraph" && quoteKey && !portableTextKeyFromAttrs(child.attrs)
+				? { ...child, attrs: attrsWithPortableTextKey(child.attrs, quoteKey) }
+				: child;
+		const converted = convertNode(keyed, `${path}:${childIndex}`);
+		for (const block of converted ? (Array.isArray(converted) ? converted : [converted]) : []) {
+			blocks.push(
+				block._type === "block" && (block as PortableTextTextBlock).style === "normal"
+					? { ...(block as PortableTextTextBlock), style: "blockquote" }
+					: block,
+			);
 		}
 	}
 
-	return blocks.length === 1 ? blocks[0] : blocks.length > 0 ? blocks : null;
+	return blocks.length === 1 ? blocks[0]! : blocks.length > 0 ? blocks : null;
 }
 
 /**

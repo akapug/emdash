@@ -1,0 +1,26 @@
+---
+/**
+ * Words a page of a migrated WordPress design drew a hover text on (a
+ * tooltip library's `data-tippy-content`, an element's own `title`), which
+ * ../utils/wp-skeleton.ts marks as the page is drawn: the element's class and
+ * the text as its `title`, so the browser shows it on hover with no script.
+ * Only class characters are drawn; the title is an attribute value, escaped.
+ */
+interface Props {
+	node: { markDef?: { title?: unknown; class?: unknown } };
+}
+
+const { node } = Astro.props;
+const CLASS_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+const title = typeof node?.markDef?.title === "string" ? node.markDef.title : undefined;
+const raw = node?.markDef?.class;
+const cls =
+	typeof raw === "string"
+		? raw
+				.split(/\s+/)
+				.filter((c) => CLASS_NAME.test(c))
+				.join(" ") || undefined
+		: undefined;
+---
+
+<span class={cls} title={title}><slot /></span>

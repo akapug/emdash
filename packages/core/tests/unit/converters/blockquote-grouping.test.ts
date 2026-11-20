@@ -76,17 +76,35 @@ describe("blockquote grouping (#1884)", () => {
 		expect(reloaded.content[0]?.type).toBe("blockquote");
 	});
 
-	it("does not group quote-styled list items into the quote run", () => {
-		const listQuote: PortableTextBlock = {
+	it("keeps a quote's list inside the quote, and a list after it outside", () => {
+		// A list in a quote is stored as list items styled "blockquote"; it opens inside
+		// the quote node, and a save writes it back the same, so it survives a reload.
+		const item = (key: string, text: string, style: string, level = 1): PortableTextBlock => ({
 			_type: "block",
-			_key: "lq",
-			style: "blockquote",
+			_key: key,
+			style,
 			listItem: "bullet",
-			level: 1,
-			children: [{ _type: "span", _key: "lq-s", text: "quoted bullet", marks: [] }],
-		};
-		const doc = portableTextToProsemirror([quoteBlock("q1", "Quote"), listQuote]);
+			level,
+			children: [{ _type: "span", _key: `${key}-s`, text, marks: [] }],
+		});
+		const original = [
+			quoteBlock("q1", "Quote"),
+			item("l1", "quoted bullet", "blockquote"),
+			item("l2", "nested bullet", "blockquote", 2),
+			item("o1", "a bullet after the quote", "normal"),
+		];
+
+		const doc = portableTextToProsemirror(original);
 
 		expect(doc.content?.map((n) => n.type)).toEqual(["blockquote", "bulletList"]);
+		expect(doc.content[0]?.content?.map((n) => n.type)).toEqual(["paragraph", "bulletList"]);
+
+		const back = prosemirrorToPortableText(doc) as PortableTextTextBlock[];
+		expect(back.map((b) => [b.style, b.listItem, b.level, b.children[0]?.text])).toEqual([
+			["blockquote", undefined, undefined, "Quote"],
+			["blockquote", "bullet", 1, "quoted bullet"],
+			["blockquote", "bullet", 2, "nested bullet"],
+			["normal", "bullet", 1, "a bullet after the quote"],
+		]);
 	});
 });

@@ -1,0 +1,112 @@
+---
+/**
+ * A form that posts to a payment provider (PayPal's Buy Now, Donate or cart
+ * button), drawn as the form it is: the visitor's browser posts it straight to
+ * the provider, with its hidden fields. Nothing is drawn unless the action is
+ * https on a host utils/external-form.ts allows, so stored content cannot make
+ * the page post anywhere else.
+ */
+import { externalFormAction, httpsSrc } from "../utils/external-form.js";
+
+export interface Props {
+	node: unknown;
+}
+
+type Item = Record<string, unknown> & { _type?: unknown; _key?: unknown };
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const list = (v: unknown): Item[] =>
+	Array.isArray(v) ? v.filter((x): x is Item => typeof x === "object" && x !== null) : [];
+
+const node = (Astro.props.node ?? {}) as Record<string, unknown>;
+const action = externalFormAction(node.action);
+const method = node.method === "get" ? "get" : "post";
+const target =
+	node.target === "_blank" || node.target === "_top" || node.target === "_self"
+		? node.target
+		: undefined;
+const hidden = list(node.hidden).filter((h) => str(h.name) !== "");
+const items = list(node.items);
+const INPUT_TYPES = new Set(["text", "email", "number", "tel", "url"]);
+---
+
+{
+	action && (
+		<form class="emdash-external-form" action={action.href} method={method} target={target}>
+			{hidden.map((h) => (
+				<input type="hidden" name={str(h.name)} value={str(h.value)} />
+			))}
+			{items.map((item) => {
+				switch (item._type) {
+					case "text":
+						return <p>{str(item.text)}</p>;
+					case "select":
+						return str(item.name) ? (
+							<p>
+								<select name={str(item.name)} required={item.required === true}>
+									{list(item.options).map((o) => (
+										<option value={str(o.value)} selected={o.selected === true}>
+											{str(o.label)}
+										</option>
+									))}
+								</select>
+							</p>
+						) : null;
+					case "input":
+						return str(item.name) ? (
+							<p>
+								<input
+									type={INPUT_TYPES.has(str(item.inputType)) ? str(item.inputType) : "text"}
+									name={str(item.name)}
+									value={str(item.value) || undefined}
+									placeholder={str(item.placeholder) || undefined}
+									maxlength={typeof item.maxLength === "number" ? item.maxLength : undefined}
+									required={item.required === true}
+								/>
+							</p>
+						) : null;
+					case "textarea":
+						return str(item.name) ? (
+							<p>
+								<textarea name={str(item.name)} />
+							</p>
+						) : null;
+					case "image": {
+						const src = httpsSrc(item.src);
+						return src ? (
+							<p>
+								<img src={src} alt={str(item.alt)} />
+							</p>
+						) : null;
+					}
+					case "submit": {
+						const image = httpsSrc(item.image);
+						const label = str(item.label) || "Submit";
+						const name = str(item.name) || undefined;
+						return (
+							<p>
+								{image ? (
+									<input type="image" src={image} alt={label} name={name} />
+								) : (
+									<button type="submit" name={name} value={name ? str(item.value) : undefined}>
+										{label}
+									</button>
+								)}
+							</p>
+						);
+					}
+					default:
+						return null;
+				}
+			})}
+		</form>
+	)
+}
+
+<style>
+	.emdash-external-form {
+		margin: 1.5rem 0;
+	}
+	.emdash-external-form p {
+		margin: 0.5rem 0;
+	}
+</style>

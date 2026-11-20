@@ -5,7 +5,8 @@ import { defineConfig, fontProviders } from "astro/config";
 import emdash from "emdash/astro";
 
 // The config `emdash migrate` evaluates: the site's own config without its
-// plugins. Plugin storage lives in core tables, so migrating needs no plugin.
+// plugins (the forms plugin, and the email provider EMDASH_EMAIL_FROM adds).
+// Plugin storage lives in core tables, so migrating needs no plugin.
 
 export default defineConfig({
 	output: "server",

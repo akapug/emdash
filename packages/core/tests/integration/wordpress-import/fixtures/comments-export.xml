@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- A WordPress export whose post carries every kind of comment WordPress keeps:
+     approved ones (one thread three deep), a pending one, spam, a trashed one, a
+     pingback, and an approved one whose body is markup a reader never saw run.
+     Item 9 is a post type the import does not map, so its comment has nowhere to go. -->
+<rss version="2.0"
+	xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:wp="http://wordpress.org/export/1.2/"
+>
+<channel>
+	<title>Pond Notes</title>
+	<link>https://example.org</link>
+	<language>en-US</language>
+	<wp:wxr_version>1.2</wp:wxr_version>
+	<wp:base_site_url>https://example.org</wp:base_site_url>
+	<wp:base_blog_url>https://example.org</wp:base_blog_url>
+	<item>
+		<title>The Pond</title>
+		<link>https://example.org/the-pond/</link>
+		<dc:creator><![CDATA[pat]]></dc:creator>
+		<content:encoded><![CDATA[<p>Still water.</p>]]></content:encoded>
+		<wp:post_id>7</wp:post_id>
+		<wp:post_date_gmt><![CDATA[2026-01-15 08:30:00]]></wp:post_date_gmt>
+		<wp:comment_status><![CDATA[open]]></wp:comment_status>
+		<wp:post_name><![CDATA[the-pond]]></wp:post_name>
+		<wp:status><![CDATA[publish]]></wp:status>
+		<wp:post_type><![CDATA[post]]></wp:post_type>
+		<wp:postmeta>
+			<wp:meta_key><![CDATA[mood]]></wp:meta_key>
+			<wp:meta_value><![CDATA[calm]]></wp:meta_value>
+		</wp:postmeta>
+		<wp:comment>
+			<wp:comment_id>101</wp:comment_id>
+			<wp:comment_author><![CDATA[Alice]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[alice@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url>https://alice.example.net</wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[203.0.113.9]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-16 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-16 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[First!
+
+Lovely <a href="https://example.org/fish">fish</a> &amp; frogs.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[1]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+			<wp:commentmeta>
+				<wp:meta_key><![CDATA[mood]]></wp:meta_key>
+				<wp:meta_value><![CDATA[a comment's own meta]]></wp:meta_value>
+			</wp:commentmeta>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>102</wp:comment_id>
+			<wp:comment_author><![CDATA[Bob]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[bob@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url></wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.4]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-17 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-17 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[Agreed, <em>quite</em> lovely.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[1]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>101</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>103</wp:comment_id>
+			<wp:comment_author><![CDATA[Cy]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[cy@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url></wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.5]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-18 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-18 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[A reply to the reply.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[1]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[]]></wp:comment_type>
+			<wp:comment_parent>102</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>104</wp:comment_id>
+			<wp:comment_author><![CDATA[Dee]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[dee@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url></wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.6]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-19 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-19 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[Awaiting moderation, never shown.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[0]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>105</wp:comment_id>
+			<wp:comment_author><![CDATA[Cheap Pills]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[spam@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url>https://spam.example.net</wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.7]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-19 03:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-19 11:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[Buy now, spam words.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[spam]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>106</wp:comment_id>
+			<wp:comment_author><![CDATA[Eve]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[eve@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url></wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.8]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-19 04:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-19 12:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[Trashed words.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[trash]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>107</wp:comment_id>
+			<wp:comment_author><![CDATA[Another Blog]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[]]></wp:comment_author_email>
+			<wp:comment_author_url>https://another.example.net/linked/</wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.9]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-20 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-20 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[[&#8230;] a pingback excerpt [&#8230;]]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[1]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[pingback]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>108</wp:comment_id>
+			<wp:comment_author><![CDATA[Mallory]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[mallory@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url></wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.10]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-21 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-21 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[<script>document.title="pwned"</script>Hi <b onclick="steal()">there</b><style>body{display:none}</style>]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[1]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+	</item>
+	<item>
+		<title>A Product</title>
+		<link>https://example.org/product/a-product/</link>
+		<dc:creator><![CDATA[pat]]></dc:creator>
+		<content:encoded><![CDATA[<p>For sale.</p>]]></content:encoded>
+		<wp:post_id>9</wp:post_id>
+		<wp:post_date_gmt><![CDATA[2026-01-15 09:00:00]]></wp:post_date_gmt>
+		<wp:post_name><![CDATA[a-product]]></wp:post_name>
+		<wp:status><![CDATA[publish]]></wp:status>
+		<wp:post_type><![CDATA[product]]></wp:post_type>
+		<wp:comment>
+			<wp:comment_id>201</wp:comment_id>
+			<wp:comment_author><![CDATA[Fay]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[fay@example.net]]></wp:comment_author_email>
+			<wp:comment_author_url></wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[198.51.100.11]]></wp:comment_author_IP>
+			<wp:comment_date><![CDATA[2026-01-22 02:00:00]]></wp:comment_date>
+			<wp:comment_date_gmt><![CDATA[2026-01-22 10:00:00]]></wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[On an item that does not come over.]]></wp:comment_content>
+			<wp:comment_approved><![CDATA[1]]></wp:comment_approved>
+			<wp:comment_type><![CDATA[comment]]></wp:comment_type>
+			<wp:comment_parent>0</wp:comment_parent>
+			<wp:comment_user_id>0</wp:comment_user_id>
+		</wp:comment>
+	</item>
+</channel>
+</rss>

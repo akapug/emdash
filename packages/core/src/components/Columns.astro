@@ -39,7 +39,7 @@ const nested = nestedRenderOf(node);
 		columns.map((column) => (
 			<div
 				class="emdash-column"
-				style={column.width ? `flex-basis: ${column.width}` : undefined}
+				style={column.width ? `flex-grow: 0; flex-basis: ${column.width}` : undefined}
 			>
 				<PortableText value={column.content} {...nested} />
 			</div>

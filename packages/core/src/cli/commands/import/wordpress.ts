@@ -21,6 +21,7 @@ import pc from "picocolors";
 import { slugify } from "#utils/slugify.js";
 
 import { validateExternalUrl, ssrfSafeFetch } from "../../../import/ssrf.js";
+import { isPasswordProtected } from "../../../import/utils.js";
 import { parseWxr, type WxrData, type WxrPost, type WxrAttachment } from "../../wxr/parser.js";
 
 // Regex patterns for WordPress import
@@ -153,6 +154,13 @@ export interface ImportResult {
 	 * export names no language, as written otherwise.
 	 */
 	typography?: { language: string | null; texturized: boolean; note: string };
+	/**
+	 * Each post written (or, in a dry run, to be written) as a draft whatever
+	 * its WordPress status, and why: `password-protected` for one WordPress kept
+	 * behind a post password, which EmDash cannot gate (the password is not
+	 * written). Absent when there is none.
+	 */
+	drafted?: Array<{ id?: number; title: string; reason: "password-protected" }>;
 }
 
 // ============================================================================
@@ -631,8 +639,8 @@ export async function executeWordPressImport(
 	// The site's typography: as WordPress printed it, in English (texturizes).
 	result.typography = {
 		language: wxr.site.language?.trim() || null,
-		texturized: texturizes(wxr.site.language),
-		note: texturizeNote(wxr.site.language),
+		texturized: texturizes(wxr.site.language, wxr.site.generator),
+		note: texturizeNote(wxr.site.language, wxr.site.generator),
 	};
 	log(pc.dim(`Typography: ${result.typography.note}`));
 
@@ -685,6 +693,7 @@ export async function executeWordPressImport(
 				config,
 				mediaMap,
 				wxr.site.language,
+				wxr.site.generator,
 			);
 
 			const outputPath = join(options.outputDir, converted.collection, `${converted.slug}.json`);
@@ -711,6 +720,13 @@ export async function executeWordPressImport(
 			}
 
 			stats.imported++;
+			if (isPasswordProtected(post)) {
+				(result.drafted ??= []).push({
+					id: post.id,
+					title: post.title || "Untitled",
+					reason: "password-protected",
+				});
+			}
 			stats.byCollection.set(
 				mapping.collection,
 				(stats.byCollection.get(mapping.collection) || 0) + 1,
@@ -831,6 +847,9 @@ export async function executeWordPressImport(
 		log(`Resumed (skipped): ${pc.blue(stats.resumed.toString())}`);
 	}
 	log(`Skipped (disabled): ${pc.yellow(stats.skipped.toString())}`);
+	if (result.drafted) {
+		log(`Draft (password-protected in WordPress): ${pc.yellow(result.drafted.length.toString())}`);
+	}
 	if (stats.errors > 0) {
 		log(`Errors: ${pc.red(stats.errors.toString())}`);
 	}
@@ -907,10 +926,11 @@ function convertPostWithConfig(
 	config: MigrationConfig,
 	mediaMap: Map<number, string>,
 	siteLanguage?: string,
+	generator?: string,
 ): ConvertedContent {
 	// As WordPress printed it, in English (texturizes): the title and excerpt like the content.
 	// A post's own locale decides for it.
-	const texturize = texturizes(post.locale ?? siteLanguage);
+	const texturize = texturizes(post.locale ?? siteLanguage, generator);
 	const typed = (text: string) => (texturize ? wptexturize(text) : text);
 
 	// Convert content to Portable Text
@@ -923,7 +943,8 @@ function convertPostWithConfig(
 	const data: Record<string, unknown> = {
 		title: post.title === undefined ? post.title : typed(post.title),
 		content,
-		status: mapStatus(post.status),
+		// EmDash has no password gate: an item WordPress kept behind a password is never published.
+		status: isPasswordProtected(post) ? "draft" : mapStatus(post.status),
 		publishedAt: post.pubDate ? new Date(post.pubDate).toISOString() : null,
 		createdAt: post.postDate ? new Date(post.postDate).toISOString() : null,
 		author: post.creator,

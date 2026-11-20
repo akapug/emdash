@@ -2,6 +2,7 @@
  * Tests for WXR parser
  */
 
+import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 
 import { describe, it, expect } from "vitest";
@@ -36,6 +37,42 @@ describe("parseWxr", () => {
 		expect(result.site.link).toBe("https://example.com");
 		expect(result.site.description).toBe("A test WordPress site");
 		expect(result.site.language).toBe("en-US");
+	});
+
+	it("reads the export's <generator>, from a stream and from a string", async () => {
+		const wxr = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel>
+    <title>Test Site</title>
+    <generator>https://wordpress.org/?v=6.6.2</generator>
+    <item><title>Post</title><generator>not the channel's</generator></item>
+  </channel>
+</rss>`;
+		expect((await parseWxr(createStream(wxr))).site.generator).toBe(
+			"https://wordpress.org/?v=6.6.2",
+		);
+		expect((await parseWxrString(wxr)).site.generator).toBe("https://wordpress.org/?v=6.6.2");
+		const none = wxr.replace("<generator>https://wordpress.org/?v=6.6.2</generator>", "");
+		expect((await parseWxrString(none)).site.generator).toBeUndefined();
+		expect((await parseWxr(createStream(none))).site.generator).toBeUndefined();
+	});
+
+	it("reads a <generator> in CDATA, with entities or padded with whitespace the same from a stream and from a string", async () => {
+		const at = (generator: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel>
+    <title>Test Site</title>
+    <generator>${generator}</generator>
+  </channel>
+</rss>`;
+		for (const [raw, read] of [
+			["<![CDATA[https://wordpress.org/?v=6.8]]>", "https://wordpress.org/?v=6.8"],
+			["https://wordpress.org/?v=6.8&amp;x=1", "https://wordpress.org/?v=6.8&x=1"],
+			["\n      Embark site import\n    ", "Embark site import"],
+		]) {
+			expect((await parseWxr(createStream(at(raw!)))).site.generator, raw).toBe(read);
+			expect((await parseWxrString(at(raw!))).site.generator, raw).toBe(read);
+		}
 	});
 
 	it("reads the same site metadata from a string, ignoring an item's own title and link", async () => {
@@ -775,4 +812,53 @@ describe("parseWxr", () => {
 			expect(post?.taxonomyLabels?.get("genre\u0000sci-fi")).toBe("Science Fiction");
 		});
 	});
+});
+
+describe("an item's comments", () => {
+	const fixture = readFileSync(
+		new URL("../../integration/wordpress-import/fixtures/comments-export.xml", import.meta.url),
+		"utf8",
+	);
+
+	for (const [name, parse] of [
+		["parseWxr", (xml: string) => parseWxr(createStream(xml))],
+		["parseWxrString", (xml: string) => parseWxrString(xml)],
+	] as const) {
+		it(`${name} reads every <wp:comment> of an item, whatever its status, without its IP or URL`, async () => {
+			const result = await parse(fixture);
+			const pond = result.posts.find((p) => p.id === 7)!;
+			expect(pond.comments?.map((c) => [c.id, c.parent, c.approved, c.type])).toEqual([
+				[101, 0, "1", "comment"],
+				[102, 101, "1", "comment"],
+				[103, 102, "1", ""],
+				[104, 0, "0", "comment"],
+				[105, 0, "spam", "comment"],
+				[106, 0, "trash", "comment"],
+				[107, 0, "1", "pingback"],
+				[108, 0, "1", "comment"],
+			]);
+			expect(pond.comments?.[0]).toEqual({
+				id: 101,
+				parent: 0,
+				author: "Alice",
+				authorEmail: "alice@example.net",
+				date: "2026-01-16 02:00:00",
+				dateGmt: "2026-01-16 10:00:00",
+				content: 'First!\n\nLovely <a href="https://example.org/fish">fish</a> &amp; frogs.',
+				approved: "1",
+				type: "comment",
+			});
+			expect(JSON.stringify(pond.comments)).not.toContain("203.0.113.9");
+			expect(JSON.stringify(pond.comments)).not.toContain("alice.example.net");
+			expect(result.posts.find((p) => p.id === 9)?.comments?.map((c) => c.id)).toEqual([201]);
+		});
+
+		it(`${name} keeps a comment's meta off the post's meta`, async () => {
+			const result = await parse(fixture);
+			const pond = result.posts.find((p) => p.id === 7)!;
+			expect(pond.meta.get("mood")).toBe("calm");
+			expect(pond.title).toBe("The Pond");
+			expect(pond.status).toBe("publish");
+		});
+	}
 });

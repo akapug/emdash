@@ -7,7 +7,7 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
-import { formatDigestText } from "../format.js";
+import { formatDigestText, sendFailure } from "../format.js";
 import type { FormDefinition, Submission } from "../types.js";
 
 /** Typed access to plugin storage collections */
@@ -142,10 +142,7 @@ export async function handleDigest(formId: string, ctx: PluginContext) {
 				text,
 			})
 			.catch((err: unknown) => {
-				ctx.log.error("Failed to send digest email", {
-					error: String(err),
-					to: email,
-				});
+				ctx.log.error("Failed to send digest email", sendFailure(err, email));
 			});
 	}
 }

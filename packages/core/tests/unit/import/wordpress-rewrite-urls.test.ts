@@ -111,6 +111,106 @@ describe("WordPress import URL rewriting", () => {
 		});
 	});
 
+	it("rewrites an attachment URL only where it ends, never the start of a longer file's URL", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const webp = `${oldOriginalUrl}.webp`;
+		const picture = (img: string) =>
+			`<picture><source srcset="${webp} 1x, ${webp} 2x" type="image/webp"><img src="${img}" srcset="${img} 1x, ${webp} 2x"></picture>`;
+		expect(rewriteStringUrls(picture(oldOriginalUrl), urlMap, baseMap)).toEqual({
+			newValue: picture(newUrl),
+			changed: true,
+			urlsRewritten: 1,
+		});
+
+		const longer = `${oldOriginalUrl}-1 ${oldOriginalUrl}_x ${oldOriginalUrl}/x ${oldOriginalUrl}x`;
+		expect(rewriteStringUrls(longer, urlMap, baseMap)).toEqual({
+			newValue: longer,
+			changed: false,
+			urlsRewritten: 0,
+		});
+	});
+
+	it("still rewrites an attachment URL followed by a query, a fragment, url()'s paren or an entity", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const value = (u: string) =>
+			`<img src="${u}?ver=2"><a href="${u}#top">x</a><div style="background:url(${u})"></div>{&quot;src&quot;:&quot;${u}&quot;} ${u}&#038;w=1 ${u}`;
+		expect(rewriteStringUrls(value(oldOriginalUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
+	});
+
+	it("rewrites a size variant only where it ends, beside its own .webp", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const value = (u: string) => `<img src="${u}"><source srcset="${oldVariantUrl}.webp">`;
+		expect(rewriteStringUrls(value(oldVariantUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
+	});
+
+	it("rewrites an attachment URL whose quote is JSON-escaped, as a block's attribute or a JSON string holds it", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		// WordPress writes a quote inside a block attribute as \u0022, and JSON writes it as \".
+		const value = (u: string, v: string) =>
+			`<!-- wp:kadence/image {"html":"\\u003cimg src=\\u0022${u}\\u0022 srcset=\\u0022${v} 1024w\\u0022\\u003e"} -->` +
+			JSON.stringify(`<img src="${u}"><img src="${v}">`) +
+			` ${u}|${v} ${u}[0]`;
+		expect(rewriteStringUrls(value(oldOriginalUrl, oldVariantUrl), urlMap, baseMap).newValue).toBe(
+			value(newUrl, newUrl),
+		);
+	});
+
+	it("rewrites every place a size variant ends, an entity's or a fragment's as well as a quote's", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const value = (v: string) =>
+			`<img src="${v}"><div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div><a href="${v}#top">x</a>`;
+		expect(rewriteStringUrls(value(oldVariantUrl), urlMap, baseMap).newValue).toBe(value(newUrl));
+		// Only behind an entity, still found.
+		const entityOnly = (v: string) =>
+			`<div data-settings="{&quot;url&quot;:&quot;${v}&quot;}"></div>`;
+		expect(rewriteStringUrls(entityOnly(oldVariantUrl), urlMap, baseMap).newValue).toBe(
+			entityOnly(newUrl),
+		);
+	});
+
+	it("keeps what follows a size variant's query when an entity or an escape ends it", () => {
+		const baseMap = buildBaseUrlMap(urlMap);
+		const inEntity = `<div data-settings="{&quot;url&quot;:&quot;${oldVariantUrl}?ver=2&quot;}" class="x"></div>`;
+		const out = rewriteStringUrls(inEntity, urlMap, baseMap).newValue;
+		expect(out).toContain(`&quot;}" class="x"></div>`);
+		expect(out).not.toContain(oldVariantUrl);
+
+		const inJson = JSON.stringify(`<img src="${oldVariantUrl}?ver=2">`);
+		const json = rewriteStringUrls(inJson, urlMap, baseMap).newValue;
+		expect(JSON.parse(json)).toMatch(
+			/^<img src="\/_emdash\/media\/file\/imported\/hero\.jpg(\?ver=2)?">$/,
+		);
+
+		const inStyle = `<div style="background:url(${oldVariantUrl}?ver=2);color:red"></div>`;
+		expect(rewriteStringUrls(inStyle, urlMap, baseMap).newValue).toBe(
+			`<div style="background:url(${newUrl});color:red"></div>`,
+		);
+	});
+
+	it("rewrites the longer of two attachment URLs as its own, when one begins the other", () => {
+		const scaled = "https://example.com/wp-content/uploads/2026/01/hero.jpg-scaled.jpg";
+		const exactMap = {
+			[oldOriginalUrl]: newUrl,
+			[scaled]: "/_emdash/media/file/imported/scaled.jpg",
+		};
+		const baseMap = buildBaseUrlMap(exactMap);
+		expect(
+			rewriteStringUrls(`<img src="${scaled}"> <img src="${oldOriginalUrl}">`, exactMap, baseMap)
+				.newValue,
+		).toBe(`<img src="/_emdash/media/file/imported/scaled.jpg"> <img src="${newUrl}">`);
+
+		// A key that carries a query is its own URL, whichever key the map lists first.
+		const versioned = `${oldOriginalUrl}?ver=2`;
+		const both = { [oldOriginalUrl]: newUrl, [versioned]: "/_emdash/media/file/imported/v2.jpg" };
+		expect(
+			rewriteStringUrls(
+				`<img src="${versioned}"> <img src="${oldOriginalUrl}?ver=3">`,
+				both,
+				buildBaseUrlMap(both),
+			).newValue,
+		).toBe(`<img src="/_emdash/media/file/imported/v2.jpg"> <img src="${newUrl}?ver=3">`);
+	});
+
 	it("rewrites a legacy string image link", () => {
 		const baseMap = buildBaseUrlMap(urlMap);
 		const blocks = [
@@ -343,5 +443,111 @@ describe("a URL map key that carries a query stands for that URL alone", () => {
 			changed: true,
 			urlsRewritten: 1,
 		});
+	});
+});
+
+/**
+ * A page drawn in its own layout (Embark's layout-pt.ts) keeps the class the page drew on
+ * each link in its skeleton, by the link's href (templates/blog-cloudflare
+ * src/utils/wp-skeleton.ts `linkClasses`). The rewrite moves the href of a link to an
+ * imported file, so it moves the key that names that href too, or the link loses its class.
+ */
+describe("a layout's link classes follow the links the rewrite moves", () => {
+	const pdf = "https://example.com/wp-content/uploads/2026/01/cv.pdf";
+	const moved = "/_emdash/api/media/file/01CV.pdf";
+	const other = "https://elsewhere.example/";
+	const exact = { [pdf]: moved };
+	const base = buildBaseUrlMap(exact);
+	const carrier = (linkClasses: Record<string, string>) => ({
+		_type: "layout-section",
+		_key: "ls-0",
+		skeleton: { wraps: [], widgets: { l0: { wraps: [], linkClasses } }, added: { wraps: [] } },
+	});
+
+	it("rewrites the key of a moved link's class, with the link's own href, and leaves any other key", () => {
+		const blocks: PortableTextBlock[] = [
+			carrier({ [pdf]: "cv-button", [other]: "pill" }),
+			{
+				_type: "block",
+				_key: "el-l0",
+				children: [],
+				markDefs: [{ _type: "link", _key: "a", href: pdf }],
+			},
+		];
+		expect(rewritePortableTextUrls(blocks, exact, base)).toEqual({
+			changed: true,
+			urlsRewritten: 2,
+		});
+		const skeleton = blocks[0]!.skeleton as {
+			widgets: { l0: { linkClasses: Record<string, string> } };
+		};
+		expect(skeleton.widgets.l0.linkClasses).toEqual({ [moved]: "cv-button", [other]: "pill" });
+		expect(blocks[1]!.markDefs).toEqual([expect.objectContaining({ href: moved })]);
+	});
+
+	it("reports a layout whose only moved URL is a class's key as changed, so it is written", () => {
+		const blocks: PortableTextBlock[] = [carrier({ [pdf]: "cv-button" })];
+		expect(rewritePortableTextUrls(blocks, exact, base)).toEqual({
+			changed: true,
+			urlsRewritten: 1,
+		});
+	});
+
+	it("names no class for a moved key that meets another key of a different class, as the import names none for links that disagree", () => {
+		const blocks: PortableTextBlock[] = [carrier({ [pdf]: "cv-button", [moved]: "pill" })];
+		rewritePortableTextUrls(blocks, exact, base);
+		const skeleton = blocks[0]!.skeleton as {
+			widgets: { l0: { linkClasses: Record<string, string> } };
+		};
+		expect(skeleton.widgets.l0.linkClasses).toEqual({});
+	});
+
+	it("leaves a skeleton it cannot read, and one with no link classes, as they are", () => {
+		const odd = [
+			{ _type: "layout-section", _key: "a", skeleton: { widgets: { l0: { linkClasses: [pdf] } } } },
+			{ _type: "layout-section", _key: "b", skeleton: { widgets: "x" } },
+			{ _type: "layout-section", _key: "c", skeleton: { wraps: [] } },
+		] as PortableTextBlock[];
+		const before = JSON.stringify(odd);
+		expect(rewritePortableTextUrls(odd, exact, base)).toEqual({ changed: false, urlsRewritten: 0 });
+		expect(JSON.stringify(odd)).toBe(before);
+	});
+});
+
+describe("a layout's link titles follow the links the rewrite moves", () => {
+	const pdf = "https://example.com/wp-content/uploads/2026/01/cv.pdf";
+	const moved = "/_emdash/api/media/file/01CV.pdf";
+	const other = "https://elsewhere.example/";
+	const exact = { [pdf]: moved };
+	const base = buildBaseUrlMap(exact);
+	const carrier = (widget: Record<string, unknown>) => ({
+		_type: "layout-section",
+		_key: "ls-0",
+		skeleton: { wraps: [], widgets: { l0: { wraps: [], ...widget } }, added: { wraps: [] } },
+	});
+	const widgetOf = (b: PortableTextBlock) =>
+		(b.skeleton as { widgets: { l0: Record<string, unknown> } }).widgets.l0;
+
+	it("rewrites the key of a moved link's title, as it does its class, and leaves any other key", () => {
+		const blocks: PortableTextBlock[] = [
+			carrier({
+				linkClasses: { [pdf]: "cv-button" },
+				linkTitles: { [pdf]: "My CV", [other]: "Elsewhere" },
+			}),
+		];
+		expect(rewritePortableTextUrls(blocks, exact, base)).toEqual({
+			changed: true,
+			urlsRewritten: 2,
+		});
+		expect(widgetOf(blocks[0]!).linkTitles).toEqual({ [moved]: "My CV", [other]: "Elsewhere" });
+		expect(widgetOf(blocks[0]!).linkClasses).toEqual({ [moved]: "cv-button" });
+	});
+
+	it("names no title for a moved key that meets another key of a different title", () => {
+		const blocks: PortableTextBlock[] = [
+			carrier({ linkTitles: { [pdf]: "My CV", [moved]: "Another" } }),
+		];
+		rewritePortableTextUrls(blocks, exact, base);
+		expect(widgetOf(blocks[0]!).linkTitles).toEqual({});
 	});
 });

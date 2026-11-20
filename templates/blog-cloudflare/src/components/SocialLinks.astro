@@ -1,0 +1,29 @@
+---
+/**
+ * The site's "social" menu as the footer's list items: one link per item, in
+ * the menu's order, nested items left out (a profile row is flat). Nothing
+ * when the site has no such menu.
+ */
+import type { Menu } from "emdash";
+
+interface Props {
+	menu: Menu | null | undefined;
+}
+
+const { menu } = Astro.props;
+---
+
+{
+	menu?.items.map((item) => (
+		<li>
+			<a
+				href={item.url}
+				target={item.target}
+				rel={item.target === "_blank" ? "noopener noreferrer" : undefined}
+				title={item.titleAttr}
+			>
+				{item.label}
+			</a>
+		</li>
+	))
+}

@@ -81,7 +81,14 @@ export type {
 } from "./content-policy.js";
 
 // Email pipeline
-export { EmailPipeline, EmailNotConfiguredError, EmailRecursionError } from "./email.js";
+export {
+	EmailPipeline,
+	EmailNotConfiguredError,
+	EmailRecursionError,
+	ReservedEmailSourceError,
+	SYSTEM_EMAIL_SOURCE,
+} from "./email.js";
+export type { EmailSendResult } from "./email.js";
 export { DEV_CONSOLE_EMAIL_PLUGIN_ID, getDevEmails, clearDevEmails } from "./email-console.js";
 export type { StoredEmail } from "./email-console.js";
 

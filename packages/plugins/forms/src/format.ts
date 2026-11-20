@@ -2,6 +2,8 @@
  * Formatting utilities for email notifications and webhook payloads.
  */
 
+import { describeRedacted } from "emdash";
+
 import type { FormDefinition, Submission, SubmissionFile } from "./types.js";
 import { getFormFields } from "./types.js";
 
@@ -158,4 +160,15 @@ function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * What a failed send's log carries: the recipient's domain and the error, its
+ * causes included, with every address replaced by its domain, in any letter
+ * case (EmDash's describeRedacted, the one redaction the email pipeline and
+ * the providers use too). Workers Logs keep what a plugin logs, and a
+ * notification's recipient is whoever the form notifies.
+ */
+export function sendFailure(err: unknown, to: string): { error: string; toDomain: string } {
+	return { error: describeRedacted(err, [to]), toDomain: to.slice(to.lastIndexOf("@") + 1) };
 }

@@ -10,6 +10,8 @@
  * - Dev console provider captures emails
  */
 
+import { inspect } from "node:util";
+
 import Database from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -27,6 +29,7 @@ import {
 	EmailNotConfiguredError,
 	EmailPipeline,
 	EmailRecursionError,
+	ReservedEmailSourceError,
 } from "../../../src/plugins/email.js";
 import { HookPipeline } from "../../../src/plugins/hooks.js";
 import { PluginManager } from "../../../src/plugins/manager.js";
@@ -414,7 +417,9 @@ describe("EmailPipeline", () => {
 
 		const emailPipeline = new EmailPipeline(hookPipeline);
 		// Use non-system source so beforeSend hooks run
-		await emailPipeline.send(createTestMessage(), "some-plugin");
+		expect(await emailPipeline.send(createTestMessage(), "some-plugin")).toEqual({
+			status: "sent",
+		});
 
 		// afterSend is fire-and-forget, give it a tick
 		await new Promise((resolve) => setTimeout(resolve, 10));
@@ -462,8 +467,12 @@ describe("EmailPipeline", () => {
 		hookPipeline.setExclusiveSelection("email:deliver", "provider");
 
 		const emailPipeline = new EmailPipeline(hookPipeline);
-		// Use non-system source so beforeSend hooks run (and can cancel)
-		await emailPipeline.send(createTestMessage(), "some-plugin");
+		// Use non-system source so beforeSend hooks run (and can cancel).
+		// A cancelled send returns normally, so it says it was cancelled, and by whom.
+		expect(await emailPipeline.send(createTestMessage(), "some-plugin")).toEqual({
+			status: "cancelled",
+			by: "canceller",
+		});
 
 		// Give fire-and-forget a tick
 		await new Promise((resolve) => setTimeout(resolve, 10));
@@ -558,11 +567,184 @@ describe("EmailPipeline", () => {
 			expect.stringContaining('[email:deliver] Provider "cloudflare-email" failed'),
 			expect.objectContaining({ message: "binding.send rejected: sender domain not verified" }),
 		);
+		// The log names the recipient's domain, never the address.
 		expect(errorSpy).toHaveBeenCalledWith(
-			expect.stringContaining("admin@example.com"),
+			expect.stringContaining("an address at example.com"),
 			expect.anything(),
 		);
+		expect(errorSpy.mock.calls.flat().map(String).join("\n")).not.toContain("admin@example.com");
 
+		errorSpy.mockRestore();
+	});
+
+	it("redacts a provider error whole, in any letter case: its message, stack and cause, logged and thrown", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const deliverHandler: EmailDeliverHandler = async () => {
+			throw Object.assign(
+				new Error('rejected "Admin@Example.COM" (cc Team@Example.com)', {
+					cause: new Error(
+						"E_RECIPIENT_NOT_ALLOWED: ADMIN@EXAMPLE.COM, reply-to Visitor@Example.net",
+					),
+				}),
+				{ code: "E_RECIPIENT_NOT_ALLOWED" },
+			);
+		};
+		const provider = createTestPlugin({
+			id: "cloudflare-email",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("cloudflare-email", deliverHandler, { exclusive: true }),
+			},
+		});
+		const hookPipeline = new HookPipeline([provider], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "cloudflare-email");
+
+		const thrown = await new EmailPipeline(hookPipeline)
+			.send(
+				createTestMessage({
+					to: "admin@example.com",
+					cc: ["team@example.com"],
+					replyTo: "visitor@example.net",
+				}),
+				"forms",
+			)
+			.catch((e: unknown) => e as Error & { cause: Error; code: string });
+
+		expect(thrown.code).toBe("E_RECIPIENT_NOT_ALLOWED");
+		const logged = errorSpy.mock.calls
+			.flat()
+			.map((v) =>
+				v instanceof Error ? `${v.stack} ${String((v.cause as Error)?.stack)}` : String(v),
+			)
+			.join("\n");
+		const told = `${thrown.message} ${thrown.stack} ${thrown.cause.message} ${thrown.cause.stack} ${logged}`;
+		for (const local of ["admin@", "team@", "visitor@"])
+			expect(told.toLowerCase()).not.toContain(local);
+		expect(thrown.message).toBe(
+			'rejected "<an address at example.com>" (cc <an address at example.com>)',
+		);
+
+		errorSpy.mockRestore();
+	});
+
+	it("redacts what a provider throws whatever its shape: a string, or an error carrying a response body", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		for (const thrown of [
+			"bounced Admin@Example.com",
+			Object.assign(new Error("refused"), {
+				code: "E_RECIPIENT_NOT_ALLOWED",
+				response: { rejected: ["ADMIN@example.com", "Team@Example.com"], status: 403 },
+			}),
+		]) {
+			errorSpy.mockClear();
+			const provider = createTestPlugin({
+				id: "cloudflare-email",
+				capabilities: ["hooks.email-transport:register"],
+				hooks: {
+					"email:deliver": createTestHook(
+						"cloudflare-email",
+						(async () => {
+							throw thrown;
+						}) as EmailDeliverHandler,
+						{ exclusive: true },
+					),
+				},
+			});
+			const hookPipeline = new HookPipeline([provider], { db });
+			hookPipeline.setExclusiveSelection("email:deliver", "cloudflare-email");
+			const error = await new EmailPipeline(hookPipeline)
+				.send(createTestMessage({ to: "admin@example.com", cc: ["team@example.com"] }), "forms")
+				.catch((e: unknown) => e as Error);
+			const told = [error, ...errorSpy.mock.calls.flat()]
+				.map((v) => inspect(v, { depth: 20 }))
+				.join("\n")
+				.toLowerCase();
+			expect(told).not.toMatch(/admin@|team@/);
+			expect(error).toBeInstanceOf(Error);
+		}
+		errorSpy.mockRestore();
+	});
+
+	it("redacts the error an aborting email:beforeSend plugin throws, before it is logged or reaches the caller", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", deliverHandler, { exclusive: true }),
+			},
+		});
+		const guard = createTestPlugin({
+			id: "guard",
+			capabilities: ["hooks.email-events:register"],
+			hooks: {
+				"email:beforeSend": createTestHook(
+					"guard",
+					(async () => {
+						throw Object.assign(
+							new Error("blocked Admin@Example.com and TEAM@example.com", {
+								cause: new Error("list says admin@EXAMPLE.com"),
+							}),
+							{ code: "E_BLOCKED", rejected: ["Admin@Example.com"] },
+						);
+					}) as EmailBeforeSendHandler,
+					{ errorPolicy: "abort" },
+				),
+			},
+		});
+		const hookPipeline = new HookPipeline([provider, guard], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		const error = await new EmailPipeline(hookPipeline)
+			.send(createTestMessage({ to: "admin@example.com", cc: ["team@example.com"] }), "forms")
+			.catch((e: unknown) => e as Error);
+		expect(deliverHandler).not.toHaveBeenCalled();
+		expect(error).toBeInstanceOf(Error);
+		expect(error).toMatchObject({ code: "E_BLOCKED" });
+		const told = [error, ...errorSpy.mock.calls.flat()]
+			.map((v) => inspect(v, { depth: 20 }))
+			.join("\n")
+			.toLowerCase();
+		expect(told).not.toMatch(/admin@|team@/);
+		expect(told).toContain("<an address at example.com>");
+		errorSpy.mockRestore();
+	});
+
+	it("redacts an afterSend error before it is logged", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", (async () => {}) as EmailDeliverHandler, {
+					exclusive: true,
+				}),
+			},
+		});
+		const metrics = createTestPlugin({
+			id: "metrics",
+			capabilities: ["hooks.email-events:register"],
+			hooks: {
+				"email:afterSend": createTestHook("metrics", (async () => {
+					throw new Error("could not record Admin@Example.com", {
+						cause: new Error("ADMIN@example.com unknown"),
+					});
+				}) as EmailAfterSendHandler),
+			},
+		});
+		const hookPipeline = new HookPipeline([provider, metrics], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		await new EmailPipeline(hookPipeline).send(
+			createTestMessage({ to: "admin@example.com" }),
+			"forms",
+		);
+		await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
+		const told = errorSpy.mock.calls
+			.flat()
+			.map((v) => inspect(v, { depth: 20 }))
+			.join("\n");
+		expect(told.toLowerCase()).not.toContain("admin@");
+		expect(told).toContain("<an address at example.com>");
 		errorSpy.mockRestore();
 	});
 
@@ -928,6 +1110,87 @@ describe("ctx.email gating", () => {
 		await ctx.email!.send(createTestMessage());
 
 		expect(receivedSource).toBe("forms-plugin");
+	});
+
+	it('a plugin whose id is "system" cannot send as the reserved source, natively or through a sandbox bridge', async () => {
+		// Built without definePlugin (which refuses the id), as a sandboxed
+		// manifest that skipped the schema would be.
+		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
+		const beforeSend = vi.fn(async (event: EmailBeforeSendEvent) => event.message);
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", deliverHandler, { exclusive: true }),
+			},
+		});
+		const watcher = createTestPlugin({
+			id: "watcher",
+			capabilities: ["hooks.email-events:register"],
+			hooks: {
+				"email:beforeSend": createTestHook("watcher", beforeSend as EmailBeforeSendHandler),
+			},
+		});
+		const impostor = createTestPlugin({ id: "system", capabilities: ["email:send"] });
+		const hookPipeline = new HookPipeline([provider, watcher], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		const emailPipeline = new EmailPipeline(hookPipeline);
+		const ctx = new PluginContextFactory({ db, emailPipeline }).createContext(impostor);
+
+		// Native: ctx.email.send.
+		await expect(ctx.email!.send(createTestMessage())).rejects.toBeInstanceOf(
+			ReservedEmailSourceError,
+		);
+		// The sandbox bridges' send (the runtime wires them to sendAsPlugin with the manifest id).
+		await expect(emailPipeline.sendAsPlugin(createTestMessage(), "system")).rejects.toBeInstanceOf(
+			ReservedEmailSourceError,
+		);
+		expect(deliverHandler).not.toHaveBeenCalled();
+		expect(beforeSend).not.toHaveBeenCalled();
+
+		// THE CONTROL: EmDash's own auth mail still sends as "system", hooks bypassed,
+		// and any other plugin id sends as itself, through the hooks.
+		expect(await emailPipeline.send(createTestMessage(), "system")).toEqual({ status: "sent" });
+		expect(beforeSend).not.toHaveBeenCalled();
+		expect(await emailPipeline.sendAsPlugin(createTestMessage(), "forms")).toEqual({
+			status: "sent",
+		});
+		expect(beforeSend).toHaveBeenCalledOnce();
+		expect(deliverHandler).toHaveBeenCalledTimes(2);
+	});
+
+	it("ctx.email.send() tells the plugin what its send came to: sent, or cancelled and by whom, with nothing delivered", async () => {
+		const deliverHandler = vi.fn(async () => {}) as unknown as EmailDeliverHandler;
+		const provider = createTestPlugin({
+			id: "provider",
+			capabilities: ["hooks.email-transport:register"],
+			hooks: {
+				"email:deliver": createTestHook("provider", deliverHandler, { exclusive: true }),
+			},
+		});
+		let cancel = false;
+		const beforeSend: EmailBeforeSendHandler = async (event) => (cancel ? false : event.message);
+		const quietHours = createTestPlugin({
+			id: "quiet-hours",
+			capabilities: ["hooks.email-events:register"],
+			hooks: { "email:beforeSend": createTestHook("quiet-hours", beforeSend) },
+		});
+		const consumer = createTestPlugin({ id: "forms-plugin", capabilities: ["email:send"] });
+		const hookPipeline = new HookPipeline([provider, quietHours], { db });
+		hookPipeline.setExclusiveSelection("email:deliver", "provider");
+		const ctx = new PluginContextFactory({
+			db,
+			emailPipeline: new EmailPipeline(hookPipeline),
+		}).createContext(consumer);
+
+		expect(await ctx.email!.send(createTestMessage())).toEqual({ status: "sent" });
+		expect(deliverHandler).toHaveBeenCalledOnce();
+		cancel = true;
+		expect(await ctx.email!.send(createTestMessage())).toEqual({
+			status: "cancelled",
+			by: "quiet-hours",
+		});
+		expect(deliverHandler).toHaveBeenCalledOnce();
 	});
 });
 
@@ -1377,7 +1640,9 @@ describe("EmailPipeline — cancellation audit", () => {
 		await emailPipeline.send(createTestMessage({ to: "user@example.com" }), "some-plugin");
 
 		expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("filter-plugin"));
-		expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("user@example.com"));
+		// The log names the recipient's domain, never the address.
+		expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("an address at example.com"));
+		expect(infoSpy.mock.calls.flat().map(String).join("\n")).not.toContain("user@example.com");
 
 		infoSpy.mockRestore();
 	});

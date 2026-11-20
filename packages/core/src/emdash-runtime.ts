@@ -36,6 +36,7 @@ import {
 } from "./api/handlers/staged-references.js";
 import { validateRev } from "./api/rev.js";
 import { getSiteBaseUrl } from "./api/site-url.js";
+import type { ApiResult } from "./api/types.js";
 import type {
 	EmDashConfig,
 	PluginAdminPage,
@@ -62,6 +63,15 @@ import { AuditRepository } from "./database/repositories/audit.js";
 import { CommentRepository } from "./database/repositories/comment.js";
 import type { CommentStatus } from "./database/repositories/comment.js";
 import { ContentRepository } from "./database/repositories/content.js";
+import {
+	ImportSyncGrantRepository,
+	type ImportSyncGrant,
+} from "./database/repositories/import-sync-grant.js";
+import {
+	ImportSyncRepository,
+	supportsAtomicImportSync,
+	type ImportSyncResult,
+} from "./database/repositories/import-sync.js";
 import { RevisionRepository } from "./database/repositories/revision.js";
 import { selectTaxonomyDefs } from "./database/repositories/taxonomy-def.js";
 import { ContentMutationConflictError } from "./database/repositories/types.js";
@@ -73,6 +83,16 @@ import type { ImageValue } from "./fields/types.js";
 import { getI18nConfig, resolveContentCreateLocale } from "./i18n/config.js";
 import { repairLocaleCasing } from "./i18n/repair-locale-casing.js";
 import { warnAboutUnconfiguredTaxonomyLocales } from "./i18n/taxonomy-locale-diagnostic.js";
+import {
+	hashImportSyncRequest,
+	importSyncGrantCreateSchema,
+	importSyncGrantRevokeSchema,
+	type ImportSyncGrantCreateRequest,
+	type ImportSyncGrantRevokeRequest,
+	importSyncRequestSchema,
+	IMPORT_SYNC_VERSION,
+	type ImportSyncRequest,
+} from "./import/sync.js";
 import { normalizeMediaValue } from "./media/normalize.js";
 import type { MediaProvider, MediaProviderCapabilities } from "./media/types.js";
 import { activateMediaUsageCapture } from "./media/usage/activation.js";
@@ -254,6 +274,7 @@ import { CronExecutor, type InvokeCronHookFn } from "./plugins/cron.js";
 import { definePlugin } from "./plugins/define-plugin.js";
 import { DEV_CONSOLE_EMAIL_PLUGIN_ID, devConsoleEmailDeliver } from "./plugins/email-console.js";
 import { EmailPipeline } from "./plugins/email.js";
+import { executionPolicyRefusal } from "./plugins/execution-policy.js";
 import {
 	createHookPipeline,
 	getActiveContentSaveHookName,
@@ -273,6 +294,7 @@ import {
 	type RouteCallerInput,
 	type RouteMeta,
 } from "./plugins/routes.js";
+import { assertSandboxBypassAllowed, sandboxBypassRefusal } from "./plugins/sandbox-bypass.js";
 import { isContentSaveRejection } from "./plugins/save-rejection.js";
 import type { CronScheduler } from "./plugins/scheduler/types.js";
 import { PluginStateRepository } from "./plugins/state.js";
@@ -544,7 +566,7 @@ function beforeSaveFailure(error: unknown) {
 				error: {
 					code: ErrorCode.SAVE_REJECTED,
 					message: error.message,
-					details: sandbox,
+					details: { ...sandbox },
 				},
 			};
 		}
@@ -877,7 +899,9 @@ export class EmDashRuntime {
 	 * marketplace plugins in-process via syncMarketplacePlugins().
 	 */
 	isSandboxBypassed(): boolean {
-		return this.runtimeDeps.sandboxBypassed === true;
+		// Never on Cloudflare Workers (plugins/sandbox-bypass.ts): an install or
+		// update asked there keeps the SANDBOX_NOT_AVAILABLE gate.
+		return this.runtimeDeps.sandboxBypassed === true && sandboxBypassRefusal(true) === null;
 	}
 
 	/**
@@ -1148,7 +1172,10 @@ export class EmDashRuntime {
 		// marketplace plugins to refresh in-process. Hooks/routes still won't
 		// execute (matches the cold-start bypass behavior), but Configure
 		// links and admin pages appear immediately.
-		if (this.runtimeDeps.sandboxBypassed) {
+		if (
+			this.runtimeDeps.sandboxBypassed !== undefined &&
+			this.runtimeDeps.sandboxBypassed !== false
+		) {
 			await this.syncMarketplacePluginsBypassed();
 			return;
 		}
@@ -1331,6 +1358,8 @@ export class EmDashRuntime {
 	 * fix would be vm.SourceTextModule for explicit lifecycle management.
 	 */
 	private async syncMarketplacePluginsBypassed(): Promise<void> {
+		// Refused before any state or bundle is read, never caught below.
+		assertSandboxBypassAllowed(this.runtimeDeps.sandboxBypassed);
 		if (!this.storage) return;
 		try {
 			const stateRepo = new PluginStateRepository(this.db);
@@ -1482,6 +1511,20 @@ export class EmDashRuntime {
 		deps: RuntimeDependencies,
 		timings?: Array<{ name: string; dur: number; desc?: string }>,
 	): Promise<EmDashRuntime> {
+		// Before anything else runs, and before any plugin code is loaded:
+		// `sandbox: false` is never honoured on Cloudflare Workers, however many
+		// sandboxed entries the build has (plugins/sandbox-bypass.ts). With none,
+		// marketplace plugins would still be loaded in-process below.
+		assertSandboxBypassAllowed(deps.sandboxBypassed ?? false);
+		// The build's own record of what it lets run (plugins/execution-policy.ts),
+		// when its config has one: malformed, or naming another sandbox mode than
+		// the one this runtime was given, and nothing starts.
+		const policyRefused = executionPolicyRefusal(
+			Reflect.get(deps.config, "execution"),
+			deps.sandboxBypassed,
+		);
+		if (policyRefused) throw new Error(`EmDash: ${policyRefused}: refusing to start`);
+
 		// Helper: time a phase and push into the shared timings array when
 		// provided. Uses performance.now() — monotonic across async boundaries.
 		// No-op when `timings` wasn't passed (preserves backwards compatibility
@@ -1810,19 +1853,8 @@ export class EmDashRuntime {
 
 		// sandbox: false escape hatch - load sandboxed plugin entries in-process
 		// as trusted plugins (no isolation) so they participate in the hook pipeline.
-		// Block this on Cloudflare Workers where dynamic import(dataUrl) is not
-		// available and running untrusted code in-process is a security risk.
+		// Refused on Cloudflare Workers at the top of create(), before this point.
 		if (deps.sandboxBypassed && deps.sandboxedPluginEntries.length > 0) {
-			const isCfWorkers =
-				typeof navigator !== "undefined" &&
-				typeof navigator.userAgent === "string" &&
-				navigator.userAgent.includes("Cloudflare-Workers");
-			if (isCfWorkers) {
-				throw new Error(
-					"sandbox: false is not supported in Cloudflare Workers. " +
-						"Remove the sandbox: false option or use the Cloudflare sandbox runner.",
-				);
-			}
 			console.info(
 				"EmDash: Sandbox disabled (sandbox: false). " +
 					"Sandboxed plugins will run in-process without isolation.",
@@ -2043,7 +2075,12 @@ export class EmDashRuntime {
 		// Wire email send into sandbox runner (created earlier but without
 		// email pipeline since it didn't exist yet)
 		if (sandboxRunner) {
-			sandboxRunner.setEmailSend((message, pluginId) => emailPipeline.send(message, pluginId));
+			// A sandboxed plugin's send resolves to what it came to ("sent", or
+			// "cancelled" by an email:beforeSend plugin), across its bridge. Its
+			// source is its manifest id, never the reserved "system".
+			sandboxRunner.setEmailSend((message, pluginId) =>
+				emailPipeline.sendAsPlugin(message, pluginId),
+			);
 		}
 
 		// ── Cron system ──────────────────────────────────────────────────
@@ -2392,6 +2429,7 @@ export class EmDashRuntime {
 	private static async loadBypassedPlugins(
 		entries: SandboxedPluginEntry[],
 	): Promise<ResolvedPlugin[]> {
+		assertSandboxBypassAllowed();
 		const { adaptSandboxEntry } = await import("./plugins/adapt-sandbox-entry.js");
 		const plugins: ResolvedPlugin[] = [];
 		for (const entry of entries) {
@@ -2750,6 +2788,7 @@ export class EmDashRuntime {
 		db: Kysely<Database>,
 		storage: Storage,
 	): Promise<ResolvedPlugin[]> {
+		assertSandboxBypassAllowed();
 		const resolved: ResolvedPlugin[] = [];
 		try {
 			const stateRepo = new PluginStateRepository(db);
@@ -3318,6 +3357,243 @@ export class EmDashRuntime {
 			console.error("[emdash] draft hydration failed:", error);
 			return result;
 		}
+	}
+
+	async getImportSyncCapability(collection?: string): Promise<{
+		version: typeof IMPORT_SYNC_VERSION;
+		available: boolean;
+		mappedFieldsOnly: true;
+		grantGenerationFence: true;
+	}> {
+		let available = await new ImportSyncRepository(this.db).supports(collection);
+		if (available && collection !== undefined) {
+			const schema = await this.schemaRegistry.getCollectionWithFields(collection);
+			available = schema?.supports?.includes("revisions") ?? false;
+		}
+		return {
+			version: IMPORT_SYNC_VERSION,
+			available,
+			mappedFieldsOnly: true,
+			grantGenerationFence: true,
+		};
+	}
+
+	async handleImportSyncGrantCreate(
+		request: ImportSyncGrantCreateRequest,
+		actor: ActorInfo,
+	): Promise<ApiResult<ImportSyncGrant>> {
+		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
+			return {
+				success: false,
+				error: { code: "FORBIDDEN", message: "Import permission required" },
+			};
+		}
+		const parsed = importSyncGrantCreateSchema.safeParse(request);
+		if (!parsed.success) {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" },
+			};
+		}
+		if (!supportsAtomicImportSync(this.db)) {
+			return {
+				success: false,
+				error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" },
+			};
+		}
+		return {
+			success: true,
+			data: await new ImportSyncGrantRepository(this.db).create(parsed.data),
+		};
+	}
+
+	async handleImportSyncGrantRevoke(
+		request: ImportSyncGrantRevokeRequest,
+		actor: ActorInfo,
+	): Promise<ApiResult<ImportSyncGrant>> {
+		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
+			return {
+				success: false,
+				error: { code: "FORBIDDEN", message: "Import permission required" },
+			};
+		}
+		const parsed = importSyncGrantRevokeSchema.safeParse(request);
+		if (!parsed.success) {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid import grant request" },
+			};
+		}
+		if (!supportsAtomicImportSync(this.db)) {
+			return {
+				success: false,
+				error: { code: "NOT_IMPLEMENTED", message: "Import sync is unavailable" },
+			};
+		}
+		const grant = await new ImportSyncGrantRepository(this.db).revoke(parsed.data.id);
+		return grant
+			? { success: true, data: grant }
+			: { success: false, error: { code: "NOT_FOUND", message: "Import grant not found" } };
+	}
+
+	async handleImportSync(
+		request: ImportSyncRequest,
+		actor: ActorInfo,
+	): Promise<ApiResult<ImportSyncResult>> {
+		if (!actor?.id || !Number.isFinite(actor.role) || actor.role < Permissions["import:execute"]) {
+			return {
+				success: false,
+				error: { code: "FORBIDDEN", message: "Import permission required" },
+			};
+		}
+		const parsed = importSyncRequestSchema.safeParse(request);
+		if (!parsed.success) {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid import sync request" },
+			};
+		}
+		request = parsed.data;
+		try {
+			request.locale = resolveContentCreateLocale(request.locale);
+		} catch {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Invalid or unconfigured import locale" },
+			};
+		}
+		actor = { ...actor };
+		const repo = new ImportSyncRepository(this.db);
+		if (!(await repo.supports(request.collection))) {
+			return { success: true, data: { state: "unknown", reason: "unsupported_capability" } };
+		}
+		const requestHash = await hashImportSyncRequest(request, actor.id);
+		const input = { ...request, requestHash, authorId: actor.id };
+		const replay = await repo.lookup(request.operationId, input);
+		if (replay) return { success: true, data: replay };
+
+		const grant = await new ImportSyncGrantRepository(this.db).find(request.grant.id);
+		if (
+			!grant ||
+			grant.revoked ||
+			grant.generation !== request.grant.generation ||
+			grant.bindingId !== request.grant.bindingId ||
+			grant.sourceSite !== request.source.site ||
+			grant.actorId !== actor.id
+		) {
+			return { success: true, data: { state: "conflict", reason: "import_grant_changed" } };
+		}
+
+		const collectionInfo = await this.schemaRegistry.getCollectionWithFields(request.collection);
+		if (!collectionInfo?.supports?.includes("revisions")) {
+			return { success: true, data: { state: "unknown", reason: "revisions_required" } };
+		}
+		const contentRepo = new ContentRepository(this.db);
+		const existing = request.entryId
+			? await contentRepo.findById(request.collection, request.entryId)
+			: null;
+		const baseline = await this.db
+			.selectFrom("_emdash_import_baselines")
+			.selectAll()
+			.where("source_site", "=", request.source.site)
+			.where("source_type", "=", request.source.type)
+			.where("source_id", "=", request.source.id)
+			.where("locale", "=", request.locale)
+			.executeTakeFirst();
+		if (request.entryId) {
+			if (
+				!baseline ||
+				!existing ||
+				baseline.collection !== request.collection ||
+				baseline.entry_id !== request.entryId
+			) {
+				return { success: true, data: { state: "unknown", reason: "baseline_missing" } };
+			}
+			if (
+				baseline.customer_owned !== 0 ||
+				existing.version !== request.expectedVersion ||
+				baseline.version !== existing.version ||
+				existing.draftRevisionId ||
+				existing.liveRevisionId !== baseline.live_revision_id ||
+				existing.locale !== request.locale ||
+				existing.status !== "published" ||
+				request.sequence <= baseline.last_sequence
+			) {
+				return { success: true, data: { state: "conflict", reason: "baseline_changed" } };
+			}
+		} else if (
+			baseline ||
+			(await contentRepo.findBySlugIncludingTrashed(
+				request.collection,
+				request.slug,
+				request.locale,
+			))
+		) {
+			return { success: true, data: { state: "conflict", reason: "source_or_slug_exists" } };
+		}
+		const mappedFields = Object.keys(request.data);
+		let data = structuredClone(request.data);
+		if (this.hooks.hasHooks("content:beforeSave")) {
+			try {
+				const result = await this.hooks.runContentBeforeSave(
+					data,
+					request.collection,
+					!request.entryId,
+					request.entryId,
+					actor,
+				);
+				data = result.content;
+			} catch (error) {
+				return beforeSaveFailure(error);
+			}
+		}
+		// Hooks may normalize mapped values, but cannot expand the import's write set.
+		data = Object.fromEntries(mappedFields.map((field) => [field, data[field]]));
+		const blockTypes = collectionInfo.fields.some((field) => field.type === "blocks")
+			? await resolveBlockTypes(this.db)
+			: undefined;
+		try {
+			data = await normalizeBlocksData(
+				this.db,
+				collectionInfo,
+				data,
+				existing?.data,
+				{},
+				false,
+				blockTypes,
+			);
+			data = await this.normalizeFieldValues(request.collection, data, collectionInfo, blockTypes);
+		} catch (error) {
+			if (error instanceof SchemaError) {
+				return {
+					success: false,
+					error: { code: error.code, message: error.message, details: error.details },
+				};
+			}
+			throw error;
+		}
+		const { validateContentData } = await import("./api/handlers/validation.js");
+		const validation = await validateContentData(this.db, request.collection, data, {
+			partial: Boolean(request.entryId),
+		});
+		if (!validation.ok) return { success: false, error: validation.error };
+
+		// The repository rechecks ownership and the caller's version inside the atomic
+		// write. A hook or editor save in the preparation window cannot grant a new base.
+		const result = await repo.apply({ ...input, mappedFields, data });
+		if (result.state === "applied" && !result.replayed) {
+			await this.refreshContentUsageAfterSuccessfulWrite(request.collection, [result.entryId]);
+			// A mapped update leaves omitted fields in place, so afterSave reports the stored
+			// entry rather than the partial write set.
+			const saved = await contentRepo.findById(request.collection, result.entryId);
+			this.runAfterSaveHooks(
+				{ ...data, ...saved?.data, id: result.entryId, _slug: request.slug },
+				request.collection,
+				!request.entryId,
+				actor,
+			);
+		}
+		return { success: true, data: result };
 	}
 
 	async handleContentCreate(

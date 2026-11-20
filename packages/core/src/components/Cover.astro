@@ -22,14 +22,21 @@ export interface Props {
 
 const { node } = Astro.props;
 const {
-	backgroundImage,
-	backgroundVideo,
+	backgroundImage: storedImage,
+	backgroundVideo: storedVideo,
 	overlayColor,
 	overlayOpacity = 0.5,
 	content = [],
 	minHeight = "300px",
 	alignment = "center",
 } = node ?? {};
+
+// Content imported before the converter read WordPress's `backgroundType` holds a
+// video's URL as `backgroundImage`; drawn as an <img> it is a broken image. A
+// video file's extension is the one signal that survives in that stored block.
+const VIDEO_FILE = /\.(?:mp4|m4v|mov|webm|ogv)(?:[?#]|$)/iu;
+const backgroundVideo = storedVideo ?? (storedImage && VIDEO_FILE.test(storedImage) ? storedImage : undefined);
+const backgroundImage = backgroundVideo ? undefined : storedImage;
 
 // The content is drawn with EmDash's own PortableText and the components the
 // page drew this block with (portable-text-nested.ts). Imported when drawn:

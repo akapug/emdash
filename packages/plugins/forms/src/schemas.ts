@@ -80,6 +80,14 @@ const formPageSchema = z.object({
 
 // ─── Settings Schema ─────────────────────────────────────────────
 
+/**
+ * The most addresses one form notifies. Each submission mails every one of
+ * them, and a form's addresses come from whoever creates or edits it (an
+ * admin, or a migration from another site's export), so the list is bounded
+ * where it is stored.
+ */
+export const MAX_NOTIFY_EMAILS = 10;
+
 const autoresponderSchema = z
 	.object({
 		subject: z.string().min(1),
@@ -98,7 +106,7 @@ const autoresponderSchema = z
 const formSettingsShape = {
 	confirmationMessage: z.string().min(1),
 	redirectUrl: httpUrl.optional().or(z.literal("")),
-	notifyEmails: z.array(z.email()),
+	notifyEmails: z.array(z.email()).max(MAX_NOTIFY_EMAILS),
 	digestEnabled: z.boolean(),
 	digestHour: z.number().int().min(0).max(23),
 	autoresponder: autoresponderSchema,

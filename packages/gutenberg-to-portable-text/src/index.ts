@@ -8,9 +8,11 @@
 
 import { autop } from "@wordpress/autop";
 import { parse } from "@wordpress/block-serialization-default-parser";
+import { parseFragment, serialize, serializeOuter, type DefaultTreeAdapterMap } from "parse5";
 
 import { textAlignOfTag } from "./align.js";
 import { autoembedBlock, findAutoembeds, findTopLevelAutoembeds } from "./autoembed.js";
+import { externalFormBlock, splitExternalForms } from "./external-form.js";
 import { findIframes, iframeBlock, reopened } from "./iframe.js";
 import {
 	drawsLine,
@@ -21,6 +23,7 @@ import {
 	withoutUndrawn,
 } from "./inline.js";
 import { wptexturize } from "./texturize.js";
+import { table as tableTransformer } from "./transformers/core.js";
 import { getTransformer } from "./transformers/index.js";
 import type {
 	GutenbergBlock,
@@ -42,16 +45,21 @@ import { sanitizeHref } from "./url.js";
 const LINKED_IMAGE = String.raw`<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:\s|<br\s*\/?>)*<img\s+([^>]+)\/?>(?:\s|<br\s*\/?>)*<\/a>`;
 /** A block element, a rule or line break, or an image outside any (the link around it too: groups 4 and 5). */
 const BLOCK_ELEMENT_PATTERN = new RegExp(
-	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|hr)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
+	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr|form)[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
 	"gu",
 );
+/**
+ * An element that can hold one of its own kind (a list in a list, a quote in a
+ * quote, a table in a table): the block pattern ends it at the first closing
+ * tag, which is the inner one's, so its end is found by counting.
+ */
+const NESTING_TAGS = new Set(["ul", "ol", "blockquote", "table"]);
 const LINKED_IMAGE_PATTERN = new RegExp(LINKED_IMAGE, "gu");
 const LINKED_IMAGE_ONE = new RegExp(LINKED_IMAGE, "u");
 const STANDALONE_IMAGE_PATTERN = /<img\s+[^>]+\/?>/gu;
 const IMG_TAG_PATTERN = /<img[^>]+>/i;
 const SRC_ATTR_PATTERN = /src=["']([^"']+)["']/i;
 const ALT_ATTR_PATTERN = /alt=["']([^"']*)["']/i;
-const LIST_ITEM_PATTERN = /<li[^>]*>([\s\S]*?)<\/li>/gu;
 const CODE_TAG_PATTERN = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const HTML_TAG_PATTERN = /<[^>]+>/g;
 const FIGCAPTION_TAG_PATTERN = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i;
@@ -67,7 +75,63 @@ const NUMERIC_AMP_ENTITY_PATTERN = /&#0?38;/g;
 const HEX_AMP_ENTITY_PATTERN = /&#x26;/gi;
 const NBSP_ENTITY_PATTERN = /&nbsp;/g;
 /** A block-level element inside a `<div>`: its paragraphs are the div's content, one block each. */
-const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|hr)\b/i;
+const BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|table|dl|hr|form)\b/i;
+/** A block-level element inside a quote: the quote holds blocks, not one run of text. */
+const QUOTE_BLOCK_INSIDE_PATTERN = /<(?:p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr)\b/i;
+/** The one paragraph wpautop wraps a quote's text in */
+const ONE_PARAGRAPH_PATTERN = /^\s*<p\b[^>]*>([\s\S]*)<\/p>\s*$/i;
+/**
+ * What makes a table a layout and not a grid of text: an image, an iframe or a
+ * block element in a cell (a table cell holds text alone), or a cell of more
+ * than one paragraph.
+ */
+const LAYOUT_TABLE_PATTERN =
+	/<(?:img|iframe|table|ul|ol|blockquote|pre|figure|div|dl|h[1-6])\b|<p\b[^>]*>[\s\S]*?<\/p>\s*<p\b/i;
+const TABLE_CAPTION_PATTERN = /<caption\b[^>]*>([\s\S]*?)<\/caption>/i;
+/** A table cell's opening or closing tag */
+const TABLE_CELL_TAG_PATTERN = /<(\/?)(?:td|th)\b[^>]*>/giu;
+/**
+ * The block elements a list item's text can hold: each is drawn on a line of
+ * its own within the item, and a list inside one is still the next level down.
+ */
+const ITEM_BLOCK_TAGS: ReadonlySet<string> = new Set([
+	"p",
+	"div",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"h5",
+	"h6",
+	"blockquote",
+	"pre",
+	"figure",
+	"section",
+	"article",
+	"aside",
+	"header",
+	"footer",
+	"address",
+	"center",
+	"details",
+	"summary",
+	"table",
+	"dl",
+	"hr",
+]);
+type HtmlNode = DefaultTreeAdapterMap["node"];
+type HtmlElement = DefaultTreeAdapterMap["element"];
+const isHtmlElement = (node: HtmlNode): node is HtmlElement => "tagName" in node;
+/** Whether an element holds a list at any depth. */
+const holdsList = (node: HtmlElement): boolean =>
+	node.childNodes.some(
+		(c) => isHtmlElement(c) && (c.tagName === "ul" || c.tagName === "ol" || holdsList(c)),
+	);
+/** Whether an element holds a block of its own (a div's heading and paragraph), each a line of the item. */
+const holdsBlock = (node: HtmlElement): boolean =>
+	node.childNodes.some((c) => isHtmlElement(c) && ITEM_BLOCK_TAGS.has(c.tagName));
+/** A term or a description in a definition list, each drawn on a line of its own. */
+const DEFINITION_TAG_PATTERN = /<(\/?)(?:dt|dd)\b[^>]*>/giu;
 
 // Re-export types
 export type {
@@ -98,8 +162,17 @@ export { defaultTransformers, fallbackTransformer } from "./transformers/index.j
 export * as coreTransformers from "./transformers/core.js";
 export * as embedTransformers from "./transformers/embed.js";
 
+// A form that posts to a payment provider, carried as a form; and why one is not.
+export {
+	EXTERNAL_FORM_HOSTS,
+	FORM_PATTERN,
+	externalFormAction,
+	externalFormBlock,
+	externalFormRefusal,
+} from "./external-form.js";
+
 // WordPress's typography, for the text an importer stores beside the content (a title, an excerpt).
-export { texturizeNote, texturizes, wptexturize } from "./texturize.js";
+export { printedByWordPress, texturizeNote, texturizes, wptexturize } from "./texturize.js";
 
 // Re-export inline utilities
 export {
@@ -361,6 +434,73 @@ export function htmlToPortableText(
 		BLOCK_ELEMENT_PATTERN.lastIndex = at;
 	};
 
+	/**
+	 * A list's items as list-item blocks at `level`, and a list inside an item at
+	 * the level below. An item's text is a block; a paragraph, heading or other
+	 * block it holds is a line of that text, so its words stay apart from the
+	 * next one's. Text after a list inside an item is an item of its own: a
+	 * list-item block holds no list.
+	 */
+	const pushList = (list: HtmlElement, level: number) => {
+		const listItem = list.tagName === "ol" ? "number" : "bullet";
+		for (const child of list.childNodes) {
+			if (isHtmlElement(child) && child.tagName === "li")
+				pushItem(child.childNodes, listItem, level);
+			else pushItem([child], listItem, level);
+		}
+	};
+	const pushItem = (nodes: HtmlNode[], listItem: "bullet" | "number", level: number) => {
+		const lines: string[] = [];
+		let run = "";
+		const endLine = () => {
+			const line = run.trim().replace(TRAILING_BREAK_PATTERN, "");
+			if (line) lines.push(line);
+			run = "";
+		};
+		const endItem = () => {
+			endLine();
+			if (lines.length === 0) return;
+			for (const s of parseInlineSegments(lines.join("<br>"), generateKey)) {
+				if ("_type" in s) blocks.push(s);
+				else if (drawsLine(s.children)) {
+					blocks.push({
+						_type: "block",
+						_key: generateKey(),
+						style: "normal",
+						listItem,
+						level,
+						children: s.children,
+						markDefs: s.markDefs.length > 0 ? s.markDefs : undefined,
+					});
+				}
+			}
+			lines.length = 0;
+		};
+		const walk = (children: HtmlNode[]) => {
+			for (const node of children) {
+				if (!isHtmlElement(node)) {
+					run += serializeOuter(node);
+				} else if (node.tagName === "ul" || node.tagName === "ol") {
+					endItem();
+					pushList(node, level + 1);
+				} else if (ITEM_BLOCK_TAGS.has(node.tagName)) {
+					endLine();
+					if (holdsList(node) || holdsBlock(node)) {
+						walk(node.childNodes);
+						endLine();
+					} else {
+						run = serialize(node);
+						endLine();
+					}
+				} else {
+					run += serializeOuter(node);
+				}
+			}
+		};
+		walk(nodes);
+		endItem();
+	};
+
 	// The HTML after a lifted iframe, without the line break and white space that led up to it
 	const after = (part: string) => part.replace(LEADING_BREAK_PATTERN, "").trimStart();
 
@@ -369,10 +509,20 @@ export function htmlToPortableText(
 	let match;
 
 	while ((match = BLOCK_ELEMENT_PATTERN.exec(html)) !== null) {
-		const fullMatch = match[0];
+		let fullMatch = match[0];
 		const tag = (match[1] || match[3] || "").toLowerCase();
-		const content = match[2] || "";
+		let content = match[2] || "";
 		const start = match.index;
+
+		// A list, quote or table that holds one of its own kind ends at its own closing tag
+		if (NESTING_TAGS.has(tag)) {
+			const close = closingTag(html, tag, start);
+			if (close && close.end > start + fullMatch.length) {
+				content = html.slice(start + fullMatch.indexOf(">") + 1, close.start);
+				fullMatch = html.slice(start, close.end);
+				BLOCK_ELEMENT_PATTERN.lastIndex = close.end;
+			}
+		}
 
 		// Handle text between matches
 		pushText(lastIndex, start);
@@ -499,7 +649,29 @@ export function htmlToPortableText(
 			}
 
 			case "blockquote": {
-				pushInline(content, { style: "blockquote", ...aligned(fullMatch) });
+				const paragraph = ONE_PARAGRAPH_PATTERN.exec(content)?.[1];
+				if (!QUOTE_BLOCK_INSIDE_PATTERN.test(paragraph ?? content)) {
+					pushInline(content, { style: "blockquote", ...aligned(fullMatch) });
+					break;
+				}
+				// A quote that holds paragraphs, a list or a heading draws each of them inside it:
+				// its paragraphs and its list's items are styled "blockquote" (the list stays
+				// in the quote, as the renderer and the editors read it), and a heading keeps
+				// its own shape, as a block-editor quote's inner blocks do (core/quote). Read
+				// as one run of text, a list's items joined into one line of the quote.
+				const from = blocks.length;
+				const quoteAlign = aligned(fullMatch);
+				pushPart(content);
+				for (let i = from; i < blocks.length; i++) {
+					const block = blocks[i]!;
+					if (block._type === "block" && block.style === "normal") {
+						blocks[i] = {
+							...block,
+							style: "blockquote",
+							...(block.textAlign || block.listItem ? {} : quoteAlign),
+						};
+					}
+				}
 				break;
 			}
 
@@ -517,11 +689,45 @@ export function htmlToPortableText(
 
 			case "ul":
 			case "ol": {
-				const listItem = tag === "ol" ? "number" : "bullet";
-				let liMatch;
-				while ((liMatch = LIST_ITEM_PATTERN.exec(content)) !== null) {
-					pushInline(liMatch[1] || "", { style: "normal", listItem, level: 1 });
+				// The list as a browser builds it: a list inside an item is the next level down,
+				// and the items after it stay in the list.
+				const list = parseFragment(fullMatch).childNodes.find(isHtmlElement);
+				if (list) pushList(list, 1);
+				break;
+			}
+
+			case "table": {
+				// A table of text is a table. One that lays out images or blocks (a table cell
+				// holds text alone) draws each cell's content in its order, as a phone shows it.
+				if (LAYOUT_TABLE_PATTERN.test(content)) {
+					pushPart(content.replace(TABLE_CELL_TAG_PATTERN, (_, close: string) => `<${close}div>`));
+					break;
 				}
+				// its caption, which the table block holds no place for, above it as WordPress draws it
+				const caption = TABLE_CAPTION_PATTERN.exec(content)?.[1];
+				if (caption) pushInline(caption, { style: "normal" });
+				blocks.push(
+					...tableTransformer(
+						htmlBlock("core/table", fullMatch),
+						options,
+						createTransformContext(options, generateKey),
+					),
+				);
+				break;
+			}
+
+			case "form": {
+				// A form that posts to a payment provider is the form it is (external-form.ts);
+				// any other keeps what it says, as it did before forms were read.
+				const form = externalFormBlock(fullMatch, generateKey);
+				if (form) blocks.push(form);
+				else pushPart(content);
+				break;
+			}
+
+			case "dl": {
+				// each term and description as a div: its text a paragraph, a list in it a list
+				pushPart(content.replace(DEFINITION_TAG_PATTERN, (_, close: string) => `<${close}div>`));
 				break;
 			}
 
@@ -561,6 +767,9 @@ export function htmlToPortableText(
 						...(link ? { link } : {}),
 						...extractDisplaySize(imgMatch[0]),
 					});
+				} else {
+					// A figure with no image (a table's, a quote's) holds blocks: they are its content
+					pushPart(content);
 				}
 				break;
 			}
@@ -571,6 +780,35 @@ export function htmlToPortableText(
 	pushText(lastIndex, html.length);
 
 	return blocks;
+}
+
+/**
+ * Where the element `tag` opening at `start` closes, the elements of its own
+ * name inside it counted; nothing when it is never closed.
+ */
+function closingTag(
+	html: string,
+	tag: string,
+	start: number,
+): { start: number; end: number } | undefined {
+	const pattern = new RegExp(String.raw`<(\/?)${tag}\b[^>]*>`, "giu");
+	pattern.lastIndex = start;
+	let depth = 0;
+	let m;
+	while ((m = pattern.exec(html)) !== null) {
+		depth += m[1] ? -1 : 1;
+		if (depth === 0) return { start: m.index, end: m.index + m[0].length };
+	}
+	return undefined;
+}
+
+/** Classic HTML as the block editor's block of that name holds it, for its transformer. */
+function htmlBlock(
+	blockName: string,
+	innerHTML: string,
+	attrs: Record<string, unknown> = {},
+): GutenbergBlock {
+	return { blockName, attrs, innerHTML, innerBlocks: [], innerContent: [innerHTML] };
 }
 
 /**
@@ -600,6 +838,16 @@ function transformBlock(
 	const transformer = getTransformer(block.blockName, options.customTransformers);
 	if (block.blockName !== null) {
 		return transformer(block, options, context);
+	}
+
+	// A payment form in freeform HTML is the form it is (external-form.ts); the HTML around it is read as before.
+	const parts = splitExternalForms(block.innerHTML, context.generateKey);
+	if (parts.length > 1 || "block" in parts[0]!) {
+		return parts.flatMap((part) =>
+			"block" in part
+				? [part.block]
+				: transformBlock({ ...block, innerHTML: part.html }, options, context),
+		);
 	}
 
 	// Freeform HTML between blocks is classic content, and WordPress autoembeds URLs in it too.

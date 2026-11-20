@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { inspectContentPolicyDecision } from "./content-policy.js";
 import { PluginContextFactory, type PluginContextFactoryOptions } from "./context.js";
+import { describeRedacted, messageAddresses } from "./redact-addresses.js";
 import type {
 	ResolvedPlugin,
 	ResolvedHook,
@@ -1130,10 +1131,11 @@ export class HookPipeline {
 					duration: Date.now() - start,
 				});
 			} catch (error) {
-				// Fire-and-forget: log but don't propagate
+				// Fire-and-forget: log but don't propagate. The error may repeat the
+				// message's addresses: it is logged redacted, causes included.
 				console.error(
 					`[email:afterSend] Plugin "${hook.pluginId}" error:`,
-					error instanceof Error ? error.message : error,
+					describeRedacted(error, messageAddresses(message)),
 				);
 				results.push({
 					success: false,

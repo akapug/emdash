@@ -151,6 +151,13 @@ function defineNativePlugin<TStorage extends PluginStorageConfig>(
 			`Invalid plugin id "${id}". Must be lowercase alphanumeric with dashes (e.g., "my-plugin" or "@scope/my-plugin").`,
 		);
 	}
+	// A plugin's email source is its id, and "system" is the source of EmDash's
+	// own auth mail, which no plugin hook sees: the id is reserved.
+	if (id === "system") {
+		throw new Error(
+			`Invalid plugin id "system": it is reserved (the email source of EmDash's own auth mail).`,
+		);
+	}
 
 	// Validate version format (basic semver)
 	if (!SEMVER_PATTERN.test(version)) {

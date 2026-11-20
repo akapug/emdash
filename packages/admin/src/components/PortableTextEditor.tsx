@@ -93,9 +93,19 @@ import Subscript from "@tiptap/extension-subscript";
 import Superscript from "@tiptap/extension-superscript";
 import TextAlign from "@tiptap/extension-text-align";
 import Typography from "@tiptap/extension-typography";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { AllSelection, NodeSelection, TextSelection } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode, Slice } from "@tiptap/pm/model";
+import {
+	AllSelection,
+	NodeSelection,
+	Plugin,
+	PluginKey,
+	Selection,
+	TextSelection,
+	type EditorState,
+	type Transaction,
+} from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
+import type { EditorView } from "@tiptap/pm/view";
 import { useEditor, EditorContent, useEditorState, type Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
@@ -746,27 +756,31 @@ function convertPMNode(
 			return convertList(node.content || [], "number", 1, node.attrs, path);
 
 		case "blockquote": {
-			const blocks: PortableTextTextBlock[] = [];
+			// A quote holds blocks: its paragraphs are blockquote-styled blocks, and a list
+			// in it is list items styled "blockquote", so the list stays in the quote on
+			// reload. Any other block in it (a heading, code, an image) is kept as itself:
+			// Portable Text has one style per block, so it cannot also be the quote's.
+			const blocks: PortableTextBlock[] = [];
 			const blockquoteContent = (node.content || []) as Array<{
 				type: string;
 				attrs?: Record<string, unknown>;
 				content?: unknown[];
 			}>;
-			for (const child of blockquoteContent) {
-				if (child.type === "paragraph") {
-					const { children, markDefs } = convertInlineContent(child.content || []);
-					if (children.length > 0) {
-						blocks.push({
-							_type: "block",
-							_key:
-								portableTextKeyFromAttrs(child.attrs) ??
-								portableTextKeyFromAttrs(node.attrs) ??
-								generateKey(),
-							style: "blockquote",
-							children,
-							markDefs: markDefs.length > 0 ? markDefs : undefined,
-						});
-					}
+			const quoteKey = portableTextKeyFromAttrs(node.attrs);
+			for (let childIndex = 0; childIndex < blockquoteContent.length; childIndex++) {
+				const child = blockquoteContent[childIndex]!;
+				// a one-paragraph quote carries its block's key on the quote node
+				const keyed =
+					child.type === "paragraph" && quoteKey && !portableTextKeyFromAttrs(child.attrs)
+						? { ...child, attrs: attrsWithPortableTextKey(child.attrs, quoteKey) }
+						: child;
+				const converted = convertPMNode(keyed, `${path}:${childIndex}`);
+				for (const block of converted ? (Array.isArray(converted) ? converted : [converted]) : []) {
+					blocks.push(
+						isTextBlock(block) && block.style === "normal"
+							? { ...block, style: "blockquote" }
+							: block,
+					);
 				}
 			}
 			if (blocks.length === 1) {
@@ -1149,7 +1163,21 @@ function portableTextToProsemirror(blocks: PortableTextBlock[]): {
 	while (i < blocks.length) {
 		const block = blocks[i]!;
 
-		if (isTextBlock(block) && block.listItem) {
+		if (isTextBlock(block) && block.style === "blockquote") {
+			// A run of blockquote-styled blocks is one quote (Portable Text is flat): its
+			// paragraphs, and its quote-styled list items as the lists they make.
+			const quoteBlocks: PortableTextTextBlock[] = [];
+			while (i < blocks.length) {
+				const current = blocks[i]!;
+				if (!isTextBlock(current) || current.style !== "blockquote") break;
+				quoteBlocks.push({ ...current, style: "normal" });
+				i++;
+			}
+			content.push({
+				type: "blockquote",
+				content: portableTextToProsemirror(quoteBlocks).content,
+			});
+		} else if (isTextBlock(block) && block.listItem) {
 			const listBlocks: PortableTextTextBlock[] = [];
 			const listType = block.listItem;
 			const runStart = i;
@@ -1160,7 +1188,7 @@ function portableTextToProsemirror(blocks: PortableTextBlock[]): {
 			// A level=1 block with a different listItem ends the run.
 			while (i < blocks.length) {
 				const current = blocks[i]!;
-				if (!isTextBlock(current) || !current.listItem) break;
+				if (!isTextBlock(current) || !current.listItem || current.style === "blockquote") break;
 				const level = current.level || 1;
 				const currentId =
 					current.listItem === "number" ? normalizeListId(current.listId) : undefined;
@@ -3126,6 +3154,7 @@ export function PortableTextEditor({
 			ImageExtension,
 			MarkdownLinkExtension,
 			PluginBlockExtension,
+			PluginBlockSelectionGuard,
 			Subscript,
 			Superscript,
 			EmDashTable.configure({
@@ -4384,6 +4413,179 @@ function setSelectionTextAlignment(editor: Editor, alignment: TextAlignment): bo
 	editor.view.dispatch(transaction);
 	return true;
 }
+
+/** Where words typed or pasted onto a selected plugin block go instead of its place: just after it; else null. */
+function afterSelectedPluginBlock(state: EditorState): number | null {
+	const { selection } = state;
+	return selection instanceof NodeSelection && selection.node.type.name === "pluginBlock"
+		? selection.to
+		: null;
+}
+
+/**
+ * When a plugin block is selected, opens a new paragraph just after it holding `text` and puts the
+ * cursor at its end; false (and nothing changed) when no plugin block is selected.
+ */
+function openParagraphAfterSelectedPluginBlock(view: EditorView, text: string): boolean {
+	const at = afterSelectedPluginBlock(view.state);
+	const paragraph = view.state.schema.nodes.paragraph;
+	if (at === null || !paragraph) return false;
+	const tr = view.state.tr.insert(
+		at,
+		paragraph.create(null, text ? view.state.schema.text(text) : null),
+	);
+	tr.setSelection(TextSelection.create(tr.doc, at + 1 + text.length));
+	view.dispatch(tr.scrollIntoView());
+	return true;
+}
+
+/**
+ * A page that opens on an atom block (a migrated page's layout carrier, an embed) would open with
+ * ProseMirror's default selection, `Selection.atStart`, which selects that block as a node, so the
+ * first key typed would replace the block and everything it holds. The editor opens with a text
+ * cursor in the page's first words instead (or keeps the default when it holds none). Words that
+ * land on a selected plugin block, at any time, go into a new paragraph just after the block, never
+ * in its place: a key press, words inserted without one (a phone keyboard, dictation, an emoji
+ * picker), a composition (the cursor moves past the block as it starts), and a paste (the pasted
+ * content then goes through the editor's own paste handling, at the new cursor). Backspace and
+ * Delete still remove a selected block, as PluginBlockNode's shortcuts mean them to.
+ */
+/**
+ * Whether these transactions put words or a paste where something stood, rather than deleting it on
+ * purpose: an input path no handler sees (`execCommand("insertText")`, a browser's own DOM edit)
+ * replaces the selection where it stands, and a paste replaces it even when it holds nothing. A
+ * deliberate delete (Backspace or Delete, a cut, a drag that moves a block, undo and redo) inserts
+ * no words; a whole document set at once (the editor's content replaced) is never a block's loss.
+ */
+function wordsOrPasteReplaced(transactions: readonly Transaction[]): boolean {
+	if (
+		transactions.some(
+			(tr) => tr.getMeta("history$") || ["cut", "drop"].includes(tr.getMeta("uiEvent")),
+		)
+	)
+		return false;
+	let replaced = false;
+	for (const tr of transactions) {
+		if (tr.getMeta("uiEvent") === "paste") replaced = true;
+		for (const [i, step] of tr.steps.entries()) {
+			// By shape, not `instanceof`: the editor's steps may come from another copy of the
+			// transform package than the one this module would import.
+			const { stepType } = step.toJSON() as { stepType?: string };
+			if (stepType !== "replace" && stepType !== "replaceAround") continue;
+			const { from, to, slice } = step as unknown as { from: number; to: number; slice: Slice };
+			const before = tr.docs[i];
+			// The whole document set at once (all of it selected, then typed or pasted over) is meant.
+			if (before && from === 0 && to === before.content.size) return false;
+			const words = slice.content;
+			if (words.textBetween(0, words.size, "\n", "\n") !== "") replaced = true;
+		}
+	}
+	return replaced;
+}
+
+/** A migrated page's own layout block (`layout-section`, `layout-element`): it holds the page's design. */
+function isLayoutBlock(node: ProseMirrorNode): boolean {
+	return (
+		node.type.name === "pluginBlock" && String(node.attrs.blockType ?? "").startsWith("layout-")
+	);
+}
+
+/** Whether `doc` still holds the plugin block `block`: its Portable Text key, or the node itself. */
+function holdsPluginBlock(doc: ProseMirrorNode, block: ProseMirrorNode): boolean {
+	const key = block.attrs[PORTABLE_TEXT_KEY_ATTR];
+	let found = false;
+	doc.descendants((node) => {
+		if (found) return false;
+		if (
+			node.type === block.type &&
+			(key ? node.attrs[PORTABLE_TEXT_KEY_ATTR] === key : node.eq(block))
+		)
+			found = true;
+		return !found;
+	});
+	return found;
+}
+
+const PluginBlockSelectionGuard = Extension.create({
+	name: "emdashPluginBlockSelectionGuard",
+	priority: 1_300,
+	onCreate() {
+		const { state, view } = this.editor;
+		if (!(state.selection instanceof NodeSelection)) return;
+		const text = Selection.findFrom(state.doc.resolve(0), 1, true);
+		if (text) view.dispatch(state.tr.setSelection(text).setMeta("addToHistory", false));
+	},
+	addProseMirrorPlugins() {
+		return [
+			new Plugin({
+				key: new PluginKey("emdashPluginBlockSelectionGuard"),
+				props: {
+					handleTextInput(view, _from, _to, text) {
+						return openParagraphAfterSelectedPluginBlock(view, text);
+					},
+					handleDOMEvents: {
+						// Words inserted without a key press reach ProseMirror as a DOM change over the
+						// selected block, which would replace it; they are put after it instead.
+						beforeinput(view, event) {
+							if (event.isComposing) return false;
+							if (event.inputType !== "insertText" && event.inputType !== "insertReplacementText")
+								return false;
+							const text = event.data ?? event.dataTransfer?.getData("text/plain") ?? "";
+							if (!text || afterSelectedPluginBlock(view.state) === null) return false;
+							event.preventDefault();
+							return openParagraphAfterSelectedPluginBlock(view, text);
+						},
+						// A composition writes into the DOM where the selection is, over the block: the
+						// cursor moves into a new paragraph after the block before it writes anything.
+						compositionstart(view) {
+							openParagraphAfterSelectedPluginBlock(view, "");
+							return false;
+						},
+					},
+					// Only moves the cursor past the block; the paste itself is left to the editor's
+					// own handlers (a numbered list's identities, a table's cells) at the new cursor.
+					handlePaste(view, _event, slice) {
+						if (slice.size === 0) return false;
+						openParagraphAfterSelectedPluginBlock(view, "");
+						return false;
+					},
+				},
+				// The last guard, for whatever path no handler above sees (`execCommand("insertText")`, a
+				// browser's own DOM edit, a paste no handler took): a selected layout block whose place
+				// words or a paste took is put back where it stood, before them, in the same undo step.
+				appendTransaction(transactions, oldState, newState) {
+					if (!transactions.some((tr) => tr.docChanged)) return null;
+					const { from, to } = oldState.selection;
+					const lost: Array<{ node: ProseMirrorNode; pos: number }> = [];
+					oldState.doc.forEach((node, pos) => {
+						if (pos < from || pos + node.nodeSize > to) return;
+						if (isLayoutBlock(node) && !holdsPluginBlock(newState.doc, node))
+							lost.push({ node, pos });
+					});
+					if (lost.length === 0 || !wordsOrPasteReplaced(transactions)) return null;
+					const tr = newState.tr;
+					for (const { node, pos } of lost) {
+						// Before the words that took its place (-1), but after a block this loop already put
+						// back at the same place (1), so several come back in the page's order.
+						const mapped = tr.mapping.map(
+							transactions.reduce((at, t) => t.mapping.map(at, -1), pos),
+							1,
+						);
+						const $pos = tr.doc.resolve(mapped);
+						const at =
+							$pos.depth === 0
+								? mapped
+								: $pos.parentOffset === $pos.parent.content.size && $pos.parentOffset > 0
+									? $pos.after(1)
+									: $pos.before(1);
+						tr.insert(at, node);
+					}
+					return tr;
+				},
+			}),
+		];
+	},
+});
 
 const TableSafetyShortcuts = Extension.create({
 	name: "tableSafetyShortcuts",

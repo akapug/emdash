@@ -12,11 +12,17 @@
  * URL, at the size WordPress drew it (the block's `displayWidth` and
  * `displayHeight`, the `width` and `height` of WordPress's own tag). Without
  * that size the file's own size is drawn, and the file an import holds for a
- * `-300x256` size is the upload it was cut from. Every other image is
- * EmDash's own.
+ * `-300x256` size is the upload it was cut from. A picture of a page's own
+ * layout that the page drew with a class (a portrait, a logo, an icon:
+ * `skeletonClass`, ../utils/wp-skeleton.ts) is drawn as the page drew it too,
+ * an `<img>` with that class, in its link when it has one. A picture whose
+ * link the page drew with a class (`skeletonLinkClasses`, by href: a badge in
+ * a paragraph, floated by the theme's rule for that class) or a title
+ * (`skeletonLinkTitles`, by href) is drawn in that link, with its class and
+ * title, as the page drew it. Every other image is EmDash's own.
  */
 import type { ComponentProps } from "astro/types";
-import { PTImage } from "emdash/ui";
+import { normalizeImageLink, PTImage } from "emdash/ui";
 
 type Props = ComponentProps<typeof PTImage>;
 
@@ -32,13 +38,69 @@ const src =
 	typeof url === "string" && ((url.startsWith("/") && !url.startsWith("//")) || HTTP_URL.test(url))
 		? url
 		: null;
-const wordpress = align !== null && src !== null && !node?.link && !node?.caption;
+// The link in either shape a block stores: the import's string, or the `{ href, blank? }` a save in the admin writes.
+const imageLink = normalizeImageLink(node?.link);
+const wordpress = align !== null && src !== null && !imageLink && !node?.caption;
 const width = pixels(node?.displayWidth);
 const height = pixels(node?.displayHeight);
+// Class characters only, as WpShellBlock draws them.
+const CLASS_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+const skeletonClass: unknown = (node as { skeletonClass?: unknown } | undefined)?.skeletonClass;
+const own =
+	src !== null && !node?.caption && typeof skeletonClass === "string"
+		? skeletonClass
+				.split(/\s+/)
+				.filter((c) => CLASS_NAME.test(c))
+				.join(" ")
+		: "";
+// A web or a site address only.
+const href = imageLink?.href;
+const link =
+	href !== undefined && (HTTP_URL.test(href) || (href.startsWith("/") && !href.startsWith("//"))) ? href : null;
+// "Open in a new tab", as EmDash's own image draws it.
+const blank = link !== null && imageLink?.blank === true;
+// The class the page drew on the picture's link, by its href (class characters only).
+const linkClasses: unknown = (node as { skeletonLinkClasses?: unknown } | undefined)?.skeletonLinkClasses;
+const linkClassOf: unknown =
+	link !== null && src !== null && !node?.caption && typeof linkClasses === "object" && linkClasses !== null && Object.hasOwn(linkClasses, link)
+		? (linkClasses as Record<string, unknown>)[link]
+		: undefined;
+const linkClass =
+	typeof linkClassOf === "string"
+		? linkClassOf
+				.split(/\s+/)
+				.filter((c) => CLASS_NAME.test(c))
+				.join(" ")
+		: "";
+// The hover text the page drew on the picture's link, by its href (drawn as an attribute's text).
+const linkTitles: unknown = (node as { skeletonLinkTitles?: unknown } | undefined)?.skeletonLinkTitles;
+const linkTitleOf: unknown =
+	link !== null && src !== null && !node?.caption && typeof linkTitles === "object" && linkTitles !== null && Object.hasOwn(linkTitles, link)
+		? (linkTitles as Record<string, unknown>)[link]
+		: undefined;
+const linkTitle = typeof linkTitleOf === "string" && linkTitleOf !== "" ? linkTitleOf : undefined;
 ---
 
 {
-	wordpress ? (
+	linkClass || linkTitle ? (
+		<a
+			href={link}
+			target={blank ? "_blank" : undefined}
+			rel={blank ? "noopener noreferrer" : undefined}
+			class={linkClass || undefined}
+			title={linkTitle}
+		>
+			<img class={own || undefined} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
+		</a>
+	) : own ? (
+		link ? (
+			<a href={link} target={blank ? "_blank" : undefined} rel={blank ? "noopener noreferrer" : undefined}>
+				<img class={own} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
+			</a>
+		) : (
+			<img class={own} src={src} alt={node.alt ?? ""} width={width} height={height} loading="lazy" decoding="async" />
+		)
+	) : wordpress ? (
 		<img
 			class={`align${align}`}
 			src={src}

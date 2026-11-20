@@ -1073,8 +1073,24 @@ export type CronHandler = (event: CronEvent, ctx: PluginContext) => Promise<void
  * - `email:intercept` — allows registering `email:beforeSend` / `email:afterSend` hooks
  */
 export interface EmailAccess {
-	send(message: EmailMessage): Promise<void>;
+	/**
+	 * Send through the email pipeline. Resolves to what the send came to:
+	 * `{ status: "sent" }`, or `{ status: "cancelled", by }` when an
+	 * email:beforeSend plugin stopped it (nothing went out). Rejects when the
+	 * provider fails.
+	 */
+	send(message: EmailMessage): Promise<EmailSendResult>;
 }
+
+/**
+ * What a send came to: handed to the provider, which delivered it without
+ * error ("sent"), or stopped by a plugin's email:beforeSend ("cancelled", with
+ * the plugin that did). A caller that reports a send as made checks it: a
+ * cancelled send returns normally, and nothing went out. The same answer
+ * reaches a native plugin (ctx.email.send), a sandboxed one (through its
+ * bridge) and EmDash's own routes (EmailPipeline.send).
+ */
+export type EmailSendResult = { status: "sent" } | { status: "cancelled"; by: string };
 
 /**
  * Email message shape

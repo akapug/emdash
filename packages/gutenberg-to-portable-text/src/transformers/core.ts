@@ -4,6 +4,7 @@
 
 import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
+import { splitExternalForms } from "../external-form.js";
 import {
 	decodeUrlEntities,
 	extractAlt,
@@ -39,11 +40,11 @@ const DATA_ID_PATTERN = /data-id=["'](\d+)["']/i;
 const CODE_TAG_PATTERN_SINGLE = /<code[^>]*>([\s\S]*?)<\/code>/i;
 const TABLE_TAG_PATTERN = /<table[^>]*>([\s\S]*?)<\/table>/i;
 const THEAD_TAG_PATTERN = /<thead[^>]*>([\s\S]*?)<\/thead>/i;
+const TFOOT_TAG_PATTERN = /<tfoot[^>]*>([\s\S]*?)<\/tfoot>/i;
 const IMG_TAG_GLOBAL = /<img[^>]+>/gi;
 const IMG_TAG_SINGLE = /<img[^>]+>/i;
 const TABLE_ROW_PATTERN = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
 const TABLE_CELL_PATTERN = /<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi;
-const TBODY_TAG_PATTERN = /<tbody[^>]*>([\s\S]*?)<\/tbody>/i;
 const CITE_TAG_PATTERN = /<cite[^>]*>([\s\S]*?)<\/cite>/i;
 const LT_ENTITY_PATTERN = /&lt;/g;
 const GT_ENTITY_PATTERN = /&gt;/g;
@@ -371,7 +372,7 @@ export const quote: BlockTransformer = (block, _options, context) => {
 		// other block), and its saved markup is the <blockquote> and <cite> alone
 		for (const inner of context.transformBlocks(block.innerBlocks)) {
 			blocks.push(
-				inner._type === "block" && inner.style === "normal" && !inner.listItem
+				inner._type === "block" && inner.style === "normal"
 					? { ...inner, style: "blockquote" }
 					: inner,
 			);
@@ -603,11 +604,18 @@ export const gallery: BlockTransformer = (block, options, context) => {
  * core/columns → columns block
  */
 export const columns: BlockTransformer = (block, _options, context) => {
-	const columnBlocks = block.innerBlocks.map((col) => ({
-		_type: "column" as const,
-		_key: context.generateKey(),
-		content: context.transformBlocks(col.innerBlocks),
-	}));
+	// A column's `width` ("80%", "250px", or an older bare number meaning
+	// percent) is what lays the row out; dropped, every column is equal.
+	const columnBlocks = block.innerBlocks.map((col) => {
+		const raw = col.attrs?.width;
+		const width = typeof raw === "number" && Number.isFinite(raw) ? `${raw}%` : typeof raw === "string" && /^\d+(?:\.\d+)?(?:%|px|em|rem|vw)$/u.test(raw.trim()) ? raw.trim() : undefined;
+		return {
+			_type: "column" as const,
+			_key: context.generateKey(),
+			...(width ? { width } : {}),
+			content: context.transformBlocks(col.innerBlocks),
+		};
+	});
 
 	return [
 		{
@@ -639,7 +647,6 @@ export const table: BlockTransformer = (block, _options, context) => {
 
 	// Check for thead
 	const theadMatch = tableContent.match(THEAD_TAG_PATTERN);
-	const tbodyMatch = tableContent.match(TBODY_TAG_PATTERN);
 
 	const rows: Array<{
 		_type: "tableRow";
@@ -659,15 +666,15 @@ export const table: BlockTransformer = (block, _options, context) => {
 		rows.push(...headerRows);
 	}
 
-	// Parse body rows
-	if (tbodyMatch?.[1]) {
-		const bodyRows = parseTableRows(tbodyMatch[1], context, false);
-		rows.push(...bodyRows);
-	} else if (!theadMatch) {
-		// No thead or tbody, parse rows directly
-		const directRows = parseTableRows(tableContent, context, false);
-		rows.push(...directRows);
-	}
+	// Parse body rows: every row outside the head, in a tbody or none, so a row after a
+	// bare head is not dropped; then the footer's (the block's footer section), last, as
+	// a browser draws it wherever it is written
+	const tfootMatch = tableContent.match(TFOOT_TAG_PATTERN);
+	let bodyContent = tableContent;
+	if (theadMatch) bodyContent = bodyContent.replace(theadMatch[0], "");
+	if (tfootMatch) bodyContent = bodyContent.replace(tfootMatch[0], "");
+	rows.push(...parseTableRows(bodyContent, context, false));
+	if (tfootMatch?.[1]) rows.push(...parseTableRows(tfootMatch[1], context, false));
 
 	if (rows.length === 0) {
 		return [];
@@ -898,6 +905,9 @@ export const cover: BlockTransformer = (block, _options, context) => {
 	const minHeight = attrNumber(block.attrs, "minHeight");
 	const minHeightUnit = attrString(block.attrs, "minHeightUnit");
 	const contentPosition = attrString(block.attrs, "contentPosition");
+	// WordPress saves a video background as the same `url` with
+	// `backgroundType: "video"`; drawn as an <img> it is a broken image.
+	const isVideo = attrString(block.attrs, "backgroundType") === "video";
 
 	// Transform inner blocks for content
 	const content = context.transformBlocks(block.innerBlocks);
@@ -918,7 +928,7 @@ export const cover: BlockTransformer = (block, _options, context) => {
 		{
 			_type: "cover",
 			_key: context.generateKey(),
-			backgroundImage: url,
+			...(isVideo ? { backgroundVideo: url } : { backgroundImage: url }),
 			overlayColor: customOverlayColor || overlayColor,
 			overlayOpacity: dimRatio !== undefined ? dimRatio / 100 : undefined,
 			content,
@@ -983,17 +993,25 @@ export const pullquote: BlockTransformer = (block, _options, context) => {
 };
 
 /**
- * core/html → htmlBlock (pass through)
+ * core/html → htmlBlock (pass through); a form in it that posts to a payment
+ * provider is the form it is (external-form.ts), the HTML around it htmlBlocks.
  */
 export const html: BlockTransformer = (block, _options, context) => {
-	return [
-		{
-			_type: "htmlBlock",
-			_key: context.generateKey(),
-			html: block.innerHTML.trim(),
-			originalBlockName: "core/html",
-		},
-	];
+	return splitExternalForms(block.innerHTML, context.generateKey).flatMap(
+		(part): PortableTextBlock[] =>
+			"block" in part
+				? [part.block]
+				: part.html.trim() || !block.innerHTML.trim()
+					? [
+							{
+								_type: "htmlBlock",
+								_key: context.generateKey(),
+								html: part.html.trim(),
+								originalBlockName: "core/html",
+							},
+						]
+					: [],
+	);
 };
 
 /**

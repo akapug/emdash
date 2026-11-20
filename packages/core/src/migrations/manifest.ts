@@ -4,7 +4,8 @@ import type { CoreMigrationIdentity } from "./identity.js";
 import { fingerprintMigrationSet } from "./identity.js";
 
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
-const MIGRATION_NAME_PATTERN = /^\d{3}_[a-z0-9_]+$/;
+// Upstream migrations are NNN_name; the fork's own are embark_NNN_name (database/migrations/runner.ts).
+const MIGRATION_NAME_PATTERN = /^(?:embark_)?\d{3}_[a-z0-9_]+$/;
 const EXECUTOR_ENTRYPOINT_PATTERN =
 	/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 const ENVIRONMENT_VARIABLE_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;

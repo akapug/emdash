@@ -113,7 +113,11 @@ export type WpShellPart =
 	/** The post author's bio: the post layout's `author`. */
 	| { slot: "authorBio" }
 	/** The links to the posts before and after: the post layout's `adjacent`. */
-	| { slot: "adjacent" };
+	| { slot: "adjacent" }
+	/** The theme's reading-time line: the post layout's `readingTime`. */
+	| { slot: "readingTime" }
+	/** The theme's related-posts strip: the post layout's `related`. */
+	| { slot: "related" };
 
 /**
  * A hole in a post layout's templates, filled here for each post. Text
@@ -149,7 +153,11 @@ export type WpShellPostHole =
 	| "prev"
 	| "next"
 	| "adjHref"
-	| "adjTitle";
+	| "adjTitle"
+	/** The reading time's quantity phrase: "less than 1" under a minute, "N" otherwise. */
+	| "readtime"
+	/** The related strip's cards: one drawn per related post, from the strip's card template. */
+	| "related";
 export type WpShellPostPart = string | { s: WpShellPostHole };
 
 /** A post's terms of one taxonomy: the markup around them (drawn when the post has one), one term, and what joins two. */
@@ -185,6 +193,17 @@ export interface WpShellPostLayout extends WpShellLayout {
 	author?: { item: WpShellPostPart[]; avatar?: WpShellPostPart[] };
 	/** The links to the posts before and after: each side drawn for a post that has one. */
 	adjacent?: { item: WpShellPostPart[]; prev: WpShellPostPart[]; next: WpShellPostPart[] };
+	/**
+	 * The theme's reading-time line, drawn for every post: its quantity phrase
+	 * (the whole of "less than 1" or "12") is the `readtime` hole.
+	 */
+	readingTime?: { item: WpShellPostPart[] };
+	/**
+	 * The theme's related-posts strip, drawn for a post that has related posts:
+	 * the strip's markup with one `related` hole, one card as the template the
+	 * hole is filled with, and how many cards the donor drew.
+	 */
+	related?: { item: WpShellPostPart[]; card: WpShellPostPart[]; count: number };
 	/** The theme's comment area, EmDash's comments and comment form drawn in it (renderWpShellComments). */
 	commentArea?: WpShellCommentArea;
 }
@@ -1038,7 +1057,9 @@ function checkPart(
 		case "featured":
 		case "trailTerm":
 		case "authorBio":
-		case "adjacent": {
+		case "adjacent":
+		case "readingTime":
+		case "related": {
 			const has =
 				p.slot === "featured"
 					? post?.featured
@@ -1046,7 +1067,11 @@ function checkPart(
 						? post?.trailTerm
 						: p.slot === "authorBio"
 							? post?.author
-							: post?.adjacent;
+							: p.slot === "adjacent"
+								? post?.adjacent
+								: p.slot === "readingTime"
+									? post?.readingTime
+									: post?.related;
 			return has ? null : `a ${String(p.slot)} slot outside a post layout that carries one`;
 		}
 		case "comments":
@@ -1695,6 +1720,8 @@ function checkPost(v: Record<string, unknown>): string | null {
 		share,
 		author,
 		adjacent,
+		readingTime,
+		related,
 		commentArea,
 	} = v;
 	if (date !== undefined && (typeof date !== "string" || !DATE_FORMAT.test(date)))
@@ -1752,6 +1779,18 @@ function checkPost(v: Record<string, unknown>): string | null {
 			!checkPostTemplate(adjacent.next, new Set(["adjHref", "adjTitle"])))
 	)
 		return "the post layout's adjacent posts are malformed";
+	if (readingTime !== undefined && (!isObject(readingTime) || !checkPostTemplate(readingTime.item, new Set(["readtime"]))))
+		return "the post layout's reading time is malformed";
+	if (
+		related !== undefined &&
+		(!isObject(related) ||
+			!checkPostTemplate(related.item, new Set(["related"])) ||
+			!checkPostTemplate(related.card, new Set(["adjHref", "adjTitle"])) ||
+			typeof related.count !== "number" ||
+			!Number.isInteger(related.count) ||
+			related.count < 0)
+	)
+		return "the post layout's related posts are malformed";
 	if (commentArea !== undefined) {
 		const why = checkCommentArea(commentArea);
 		if (why) return `the post layout's comment area: ${why}`;
@@ -3132,6 +3171,10 @@ export interface WpShellPostFill {
 	/** The posts published before and after it. */
 	prev?: { title: string; url: string } | null;
 	next?: { title: string; url: string } | null;
+	/** The reading time, already phrased ("less than 1" or "12"); none, and the line is not drawn. */
+	readingTime?: string | null;
+	/** The posts related to it, newest first, at most the count the record asks for; none, and the strip is not drawn. */
+	related?: readonly { title: string; url: string }[] | null;
 }
 
 /** The layout a kind of page is drawn with: a page of a slug cut on its own draws its own. */
@@ -3312,6 +3355,18 @@ function fillPost(
 			const adj = p[h];
 			const side = post.adjacent?.[h];
 			if (adj && side) out += fillPost(side, post, p, { href: "#", label: "", adj }) ?? "";
+		} else if (h === "readtime") {
+			// The whole quantity phrase, as the record's hole stands for it.
+			if (!p.readingTime) return null;
+			out += escapeHtml(p.readingTime);
+		} else if (h === "related") {
+			// One card per related post, in the strip's own card template.
+			const card = post.related?.card;
+			const posts = p.related ?? [];
+			if (!card || posts.length === 0) return null;
+			for (const r of posts.slice(0, post.related?.count ?? posts.length)) {
+				out += fillPost(card, post, p, { href: "#", label: "", adj: { title: r.title, url: r.url } }) ?? "";
+			}
 		} else if (h === "adjHref") out += escapeAttr(safeHref(term?.adj?.url ?? "#"));
 		else if (h === "adjTitle") out += escapeHtml(term?.adj?.title ?? "");
 		else if (isShareHole(h)) {
@@ -3336,6 +3391,10 @@ export function wpShellPostFill(
 		comments: number | null;
 		prev?: { title: string; url: string } | null;
 		next?: { title: string; url: string } | null;
+		/** The reading time, already phrased; omitted when the post has none to show. */
+		readingTime?: string | null;
+		/** The posts related to it, newest first, already capped to the record's count. */
+		related?: readonly { title: string; url: string }[] | null;
 	},
 ): WpShellPostFill {
 	const d = isObject(data) ? data : {};
@@ -3376,6 +3435,8 @@ export function wpShellPostFill(
 		bio: byline && isText(byline.bio) ? byline.bio : null,
 		avatar: avatar && ownFile(avatar) && MEDIA_SRC.test(avatar) ? avatar : null,
 		prev: o.prev ?? null,
+		readingTime: o.readingTime ?? null,
+		related: o.related ?? null,
 		next: o.next ?? null,
 	};
 }
@@ -3425,6 +3486,10 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		} else if (p.slot === "authorBio") push(postHtml(post?.author?.item));
 		else if (p.slot === "adjacent") {
 			if (fill.post?.prev || fill.post?.next) push(postHtml(post?.adjacent?.item));
+		} else if (p.slot === "readingTime") {
+			if (fill.post?.readingTime) push(postHtml(post?.readingTime?.item));
+		} else if (p.slot === "related") {
+			if (fill.post?.related?.length) push(postHtml(post?.related?.item));
 		} else if (p.slot === "siteTitle") push(escapeHtml(fill.siteTitle ?? p.fallback));
 		else if (p.slot === "tagline") push(escapeHtml(fill.tagline ?? p.fallback));
 		else if (p.slot === "logo") push(logoHtml(p, fill.logoUrl));

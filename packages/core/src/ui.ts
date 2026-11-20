@@ -90,6 +90,11 @@ export {
 	EmDashBodyEnd,
 } from "./components/index.js";
 
+// An image block's link in either stored shape (the import's string, the editor's `{ href, blank? }`),
+// for a component that draws images in place of `PTImage`.
+export { normalizeImageLink } from "./content/converters/image-link.js";
+export { sanitizeHref } from "./utils/url.js";
+
 export type {
 	BlockComponent,
 	BlockComponentProps,

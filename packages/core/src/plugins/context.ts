@@ -1342,7 +1342,10 @@ export function createBlockedHttpAccess(pluginId: string): HttpAccess {
  */
 export function createLogAccess(pluginId: string, redactor?: PluginSecretRedactor): LogAccess {
 	const prefix = `[plugin:${pluginId}]`;
-	const redact = <T>(value: T): T => redactor?.redact(value) ?? value;
+	// Every line and its data are sanitized: the plugin's secrets, and every
+	// email address, even for a plugin that has no secret redactor of its own.
+	const sanitizer = redactor ?? createPluginSecretRedactor();
+	const redact = <T>(value: T): T => sanitizer.redact(value);
 
 	return {
 		debug(message: string, data?: unknown): void {
@@ -1841,8 +1844,11 @@ export class PluginContextFactory {
 		if (capabilities.has("email:send") && this.emailPipeline?.isAvailable()) {
 			const pipeline = this.emailPipeline;
 			const pluginId = plugin.id;
+			// What the send came to ("sent", or "cancelled" by an email:beforeSend
+			// plugin) is the caller's to see: a cancelled send returns normally.
+			// A plugin's source is its id, never the reserved "system".
 			email = {
-				send: (message) => pipeline.send(message, pluginId),
+				send: (message) => pipeline.sendAsPlugin(message, pluginId),
 			};
 		}
 

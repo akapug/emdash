@@ -13,6 +13,50 @@ export interface RevisionTable {
 	created_at: Generated<string>;
 }
 
+export interface ImportBaselineTable {
+	source_site: string;
+	source_type: string;
+	source_id: string;
+	collection: string;
+	entry_id: string;
+	locale: string;
+	original_revision_id: string;
+	version: number;
+	live_revision_id: string;
+	customer_owned: Generated<number>;
+	last_sequence: number;
+	last_operation_id: string;
+}
+
+export interface ImportSyncGrantTable {
+	id: string;
+	source_site: string;
+	binding_id: string;
+	actor_id: string;
+	generation: Generated<number>;
+	revoked: Generated<number>;
+	created_at: Generated<string>;
+	updated_at: Generated<string>;
+}
+
+export interface ImportOperationTable {
+	operation_id: string;
+	grant_id: Generated<string | null>;
+	grant_generation: Generated<number | null>;
+	binding_id: Generated<string | null>;
+	source_site: string;
+	source_type: string;
+	source_id: string;
+	collection: string;
+	entry_id: string;
+	locale: string;
+	sequence: number;
+	request_hash: string;
+	revision_id: string;
+	version: number;
+	completed: Generated<number>;
+}
+
 export interface RevisionPruneQueueTable {
 	collection: string;
 	entry_id: string;
@@ -758,6 +802,9 @@ export interface TransferApprovalTable {
 // Note: ec_* content tables are dynamic and not part of this type
 export interface Database {
 	revisions: RevisionTable;
+	_emdash_import_baselines: ImportBaselineTable;
+	_emdash_import_operations: ImportOperationTable;
+	_emdash_import_grants: ImportSyncGrantTable;
 	_emdash_revision_prune_queue: RevisionPruneQueueTable;
 	taxonomies: TaxonomyTable;
 	content_taxonomies: ContentTaxonomyTable;

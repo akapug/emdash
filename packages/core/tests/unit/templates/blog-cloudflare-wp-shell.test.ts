@@ -1930,6 +1930,26 @@ const aPost = (o: Partial<WpShellPostFill> = {}): WpShellPostFill => ({
 	alt: "",
 	...o,
 });
+/** A post layout with the reading-time line and the related strip, as the capture cuts them. */
+const postWithFeatures = (): WpShellPostLayout => {
+	const base = postOf();
+	return {
+		...base,
+		parts: [
+			...base.parts.filter((p) => !("slot" in p && p.slot === "adjacent")),
+			{ slot: "readingTime" },
+			{ slot: "related" },
+			{ slot: "adjacent" },
+		],
+		readingTime: { item: ['<div class="page__meta-readtime"><i class="far fa-clock"></i> ', { s: "readtime" }, " minute read</div>"] },
+		related: {
+			item: ['<section class="post-related"><h2>You May Also Enjoy</h2><div class="post-related-grid">', { s: "related" }, "</div></section>"],
+			card: ['<article class="post-related-card"><h3><a href="', { s: "adjHref" }, '">', { s: "adjTitle" }, "</a></h3></article>"],
+			count: 2,
+		},
+	};
+};
+
 const drawPost = (fill: WpShellPostFill | null, shell: WpShell = withPost()) =>
 	composeWpShell(shell, {
 		menuItems: () => null,
@@ -2106,6 +2126,8 @@ describe("wp-shell: a single post in its own layout", () => {
 			avatar: null,
 			prev: null,
 			next: null,
+			readingTime: null,
+			related: null,
 		});
 		// the byline's bio and its avatar (a file of the site's), and the posts beside it as the route read them
 		const byline = wpShellPostFill(
@@ -3609,4 +3631,61 @@ describe("a slot map's site: its sign-up, its subtitle and its posts index", () 
 			expect(wpShellProblem(s)).not.toBeNull();
 		});
 	}
+});
+
+// task/12360 step 2, the reader's half. The capture records WHETHER the source
+// page showed a reading time and a related strip, and the shape it drew them
+// in; the reader draws the new site's own values in that shape. Every string
+// goes through the escaped hole fills, never raw markup.
+describe("a post's reading time and related posts, drawn from the record's slots", () => {
+	const html = (fill: Partial<WpShellPostFill>) =>
+		drawPost(aPost(fill), withPost(postWithFeatures()));
+
+	// The record validator must know every slot a real record can carry: a record
+	// with one it does not know is rejected WHOLE, so a post would lose its layout
+	// entirely. The unit tests never reached this check; the route arm did.
+	it("accepts a record whose post layout carries the reading-time and related slots", () => {
+		expect(wpShellProblem(withPost(postWithFeatures()))).toBeNull();
+	});
+
+	it("draws the reading time in the source's line, with the whole phrase the reader gives it", () => {
+		expect(html({ readingTime: "less than 1" })).toContain('<div class="page__meta-readtime"><i class="far fa-clock"></i> less than 1 minute read</div>');
+		expect(html({ readingTime: "12" })).toContain('<div class="page__meta-readtime"><i class="far fa-clock"></i> 12 minute read</div>');
+	});
+
+	it("draws no reading-time line when the post has no reading time", () => {
+		expect(html({ readingTime: null })).not.toContain("page__meta-readtime");
+	});
+
+	it("draws one card per related post in the source's card markup, linking to the new site's own posts", () => {
+		const out = html({
+			related: [
+				{ title: "A Related One", url: "/posts/related-one" },
+				{ title: "A Related Two", url: "/posts/related-two" },
+			],
+		});
+		expect(out).toContain('<a href="/posts/related-one">A Related One</a>');
+		expect(out).toContain('<a href="/posts/related-two">A Related Two</a>');
+		// The record's count caps the strip, and no donor address survives.
+		const three = html({
+			related: [
+				{ title: "One", url: "/posts/one" },
+				{ title: "Two", url: "/posts/two" },
+				{ title: "Three", url: "/posts/three" },
+			],
+		});
+		expect(three).not.toContain("/posts/three");
+		expect(three).not.toMatch(/example\.org\/20\d\d/);
+	});
+
+	it("draws no strip when the post has no related posts", () => {
+		expect(html({ related: [] })).not.toContain("post-related");
+		expect(html({ related: null })).not.toContain("post-related");
+	});
+
+	it("renders a hostile title as text, never as markup", () => {
+		const out = html({ related: [{ title: '<img src=x onerror="alert(1)">', url: "/posts/x" }] });
+		expect(out).not.toContain("<img src=x");
+		expect(out).toContain("&lt;img src=x");
+	});
 });

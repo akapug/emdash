@@ -57,6 +57,8 @@ const reads = vi.hoisted(() => ({
 	shell: null as unknown,
 	getEmDashCollection: vi.fn(),
 	getEmDashEntry: vi.fn(),
+	// No entry drawn here is in the visual editor's edit mode, unless a test says so.
+	getEditMeta: vi.fn((_value: unknown): unknown => undefined),
 	getCommentCount: vi.fn(),
 	getCollectionInfo: vi.fn(),
 	getComments: vi.fn(),
@@ -78,6 +80,7 @@ async function emdashReads() {
 		getContentSeo: seo.getContentSeo,
 		decodeSlug: slug.decodeSlug,
 		getEmDashCollection: reads.getEmDashCollection,
+		getEditMeta: reads.getEditMeta,
 		getTermsForEntries: async () => new Map(),
 		createNoop: () => ({}),
 		getEmDashEntry: reads.getEmDashEntry,
@@ -690,6 +693,48 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 		/<div class="comment-respond" id="respond">\s*<section class="ec-comments" data-for="posts\/01POST">EMDASH COMMENTS<\/section>\s*<form class="ec-comment-form" data-for="posts\/01POST"><\/form>\s*<\/div>/;
 	const OG_IMAGE = `<meta property="og:image" content="https://example.org/_emdash/api/media/file/${KEY}"`;
 
+	// task/12360 step 2: the related strip is derived from the NEW site's own posts,
+	// and the post being drawn must not appear in its own strip. The route compares
+	// the collection's `entry.id` (the public id) against each entry's `id`; doing
+	// that with `data.id` (the database id) never matched, so this arm pins which.
+	it("leaves the post itself out of its own related strip, matching ids in the collection's own space", async () => {
+		const related = { item: ["<div class=\"post-related\">", HOLE("related"), "</div>"], card: ["<a href=\"", HOLE("adjHref"), "\">", HOLE("adjTitle"), "</a>"], count: 3 };
+		reads.shell = { ...withPost(), post: { ...withPost().post, parts: [...withPost().post.parts.filter((p: any) => !("slot" in p && p.slot === "comments")), { slot: "related" }, { slot: "comments", tag: "div", class: "comment-respond", id: "respond" }], related } };
+		expect(wpShellProblem(reads.shell)).toBeNull();
+		reads.getCommentCount.mockResolvedValue(0);
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				// The public id is the slug; the database id is the ULID.
+				id: "the-pond",
+				data: {
+					id: "01POST",
+					title: "The Pond",
+					content: [{ _type: "block", _key: "b", style: "normal", children: [{ _type: "span", _key: "s", text: "a word ".repeat(200), marks: [] }], markDefs: [] }],
+					translationGroup: "01POST",
+					updatedAt: new Date("2026-02-01T00:00:00Z"),
+					publishedAt: new Date("2026-01-15T08:30:00Z"),
+					terms: { tag: [{ label: "debt", slug: "debt" }] },
+					bylines: [{ byline: { displayName: "Pat Author" }, sortOrder: 0 }],
+					featured_image: IMPORTED.resolved,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		reads.getEmDashCollection.mockResolvedValue({
+			entries: [
+				{ id: "the-pond", data: { title: "The Pond", terms: { tag: [{ label: "debt", slug: "debt" }] } } },
+				{ id: "the-other", data: { title: "Another", terms: { tag: [{ label: "debt", slug: "debt" }] } } },
+			],
+			cacheHint: {},
+		});
+		const c = await AstroContainer.create();
+		const html = await c.renderToString(WpShellRoute, { params: { path: "posts/the-pond" }, request: new Request("https://example.org/posts/the-pond") });
+		expect(html).toContain('href="/posts/the-other"');
+		// the post is not in its own strip
+		expect(html).not.toMatch(/post-related[\s\S]*href="\/posts\/the-pond"/u);
+	});
+
 	it("fills the layout from the post: its featured image at the file's own size, its meta and its comment count", async () => {
 		const html = await post(IMPORTED.resolved);
 		expect(reads.getEmDashEntry).toHaveBeenCalledWith("posts", "the-pond");
@@ -912,6 +957,85 @@ describe("WpShell: what the layout draws through its own components", () => {
 			/<p[^>]*>\s*<iframe class="wp-shell-embed" src="https:\/\/player\.vimeo\.com\/video\/100000001"/,
 		);
 		expect(html).not.toContain("emdash-embed");
+	});
+
+	it("draws a page a builder made in the builder's elements, inside the theme's content element", async () => {
+		const c = await AstroContainer.create();
+		const wrap = (tag: string, cls: string, attrs?: Record<string, string>) => ({
+			tag,
+			class: cls,
+			...(attrs ? { attrs } : {}),
+		});
+		const draw = (body: unknown[]) =>
+			c.renderToString(WpShell, {
+				props: {
+					shell: record(),
+					kind: "page",
+					path: "/pages/about",
+					slug: "about",
+					title: "About",
+					entry: { title: "About", body, edit: { title: {}, content: {} } },
+				},
+				locals: answering(definition()),
+			});
+		const built = [
+			{
+				_type: "elementor-section",
+				_key: "el-1000001",
+				skeleton: {
+					document: wrap("div", "elementor elementor-7", { "data-elementor-id": "7" }),
+					wraps: [
+						wrap("section", "elementor-section elementor-element-1000001", {
+							"data-id": "1000001",
+						}),
+						wrap("div", "elementor-container"),
+					],
+					widgets: {
+						"1000002": {
+							wraps: [
+								wrap("div", "elementor-widget elementor-widget-heading", { "data-id": "1000002" }),
+								wrap("div", "elementor-widget-container"),
+							],
+							blockClass: "elementor-heading-title elementor-size-default",
+						},
+					},
+				},
+			},
+			{
+				_type: "block",
+				_key: "el-1000002",
+				style: "h2",
+				markDefs: [],
+				children: [{ _type: "span", _key: "s", text: "Who we are", marks: [] }],
+			},
+		];
+		const html = await draw(built);
+		expect(html).toMatch(
+			/<div class="entry-content"[^>]*><div class="elementor elementor-7" data-elementor-id="7"><section class="elementor-section elementor-element-1000001" data-id="1000001"><div class="elementor-container"><div class="elementor-widget elementor-widget-heading" data-id="1000002"><div class="elementor-widget-container"><h2 class="elementor-heading-title elementor-size-default"[^>]*>Who we are<\/h2><\/div><\/div><\/div><\/section><\/div>/,
+		);
+		// a body with no skeleton is EmDash's own drawing, as before
+		const plain = await draw([
+			{
+				_type: "block",
+				_key: "p",
+				style: "normal",
+				markDefs: [],
+				children: [{ _type: "span", _key: "s", text: "Plain", marks: [] }],
+			},
+		]);
+		expect(plain).toMatch(/<div class="entry-content"[^>]*><p[^>]*>Plain<\/p>/);
+		expect(plain).not.toContain("elementor");
+		// while the owner edits the page in place, its body is the inline editor's, never the skeleton
+		reads.getEditMeta.mockImplementation((v) =>
+			Array.isArray(v) ? { collection: "pages", id: "1", field: "content" } : undefined,
+		);
+		try {
+			const editing = await draw(built);
+			expect(editing).toContain("Who we are");
+			expect(editing).not.toContain("elementor-7");
+		} finally {
+			reads.getEditMeta.mockImplementation(() => undefined);
+		}
 	});
 
 	it("puts each post of a listing's lanes by the shape EmDash stores for its image", async () => {

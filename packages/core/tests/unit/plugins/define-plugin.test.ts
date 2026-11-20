@@ -31,6 +31,15 @@ describe("definePlugin", () => {
 			expect(plugin.id).toBe("my-plugin");
 		});
 
+		it('refuses the reserved id "system", the email source of EmDash\'s own auth mail', () => {
+			expect(() => definePlugin({ id: "system", version: "1.0.0" })).toThrow(
+				/Invalid plugin id "system": it is reserved/,
+			);
+			// Only the exact id: a scoped or longer one is an ordinary plugin.
+			expect(definePlugin({ id: "@acme/system", version: "1.0.0" }).id).toBe("@acme/system");
+			expect(definePlugin({ id: "system-status", version: "1.0.0" }).id).toBe("system-status");
+		});
+
 		it("accepts valid simple ID with numbers", () => {
 			const plugin = definePlugin({
 				id: "plugin-v2",

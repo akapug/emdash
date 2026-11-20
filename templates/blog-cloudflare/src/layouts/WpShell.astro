@@ -28,6 +28,7 @@
  */
 import type { HTMLTag } from "astro/types";
 import {
+	getEditMeta,
 	getEmDashCollection,
 	getMenuWithCacheHint,
 	getPublishedDates,
@@ -39,7 +40,14 @@ import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import { EmDashHead, EmDashBodyStart, EmDashBodyEnd } from "emdash/ui";
 import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
-import PortableText from "../components/WpShellPortableText.astro";
+import { PortableText } from "emdash/ui";
+import WpShellBlock from "../components/WpShellBlock.astro";
+import WpShellImage from "../components/WpShellImage.astro";
+import WpShellLink from "../components/WpShellLink.astro";
+import WpShellNote from "../components/WpShellNote.astro";
+import WpShellEmbed from "../components/WpShellEmbed.astro";
+import WpShellForm from "../components/WpShellForm.astro";
+import WpShellSkeleton from "../components/WpShellSkeleton.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
 	bodyClassFor,
@@ -58,6 +66,7 @@ import {
 	wpShellDateSite,
 	wpShellDocumentTitle,
 } from "../utils/wp-shell";
+import { hasSkeleton, skeletonTree } from "../utils/wp-skeleton";
 
 interface Props {
 	shell: WpShell;
@@ -210,6 +219,24 @@ const pieces = composeWpShell(shell, {
 // one (a post), and after the content otherwise.
 const commentsInLayout = pieces.some((piece) => "comments" in piece);
 
+// WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
+// video embedded from a link in classic content, and a form imported from the site's form plugin,
+// in that plugin's markup (EmDash's form, its submit path). A link of a page's own layout wears the
+// class the page drew on it, and its hover texts are drawn as titles (../utils/wp-skeleton.ts).
+const components = {
+	block: WpShellBlock,
+	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
+	mark: { link: WpShellLink, wpShellNote: WpShellNote },
+};
+
+// A page a builder made (Elementor) is drawn in the builder's own elements, which the page's own
+// stylesheet and the site's rules select by (../utils/wp-skeleton.ts). While the owner edits the
+// page in place, the body is EmDash's inline editor, as any other.
+const skeleton =
+	contentHtml === undefined && !getEditMeta(entry.body) && hasSkeleton(entry.body)
+		? skeletonTree(entry.body as never)
+		: null;
+
 const pageCtx = createPublicPageContext({
 	url: new URL(path + Astro.url.search, Astro.url.origin),
 	locale: Astro.currentLocale,
@@ -280,8 +307,10 @@ const pageCtx = createPublicPageContext({
 								<slot name="content" />
 							) : contentHtml !== undefined ? (
 								<Fragment set:html={contentHtml} />
+							) : skeleton ? (
+								<WpShellSkeleton nodes={skeleton} components={components} />
 							) : (
-								<PortableText value={entry.body} />
+								<PortableText value={entry.body} components={components} />
 							)}
 							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>

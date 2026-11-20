@@ -225,19 +225,17 @@ function convertPMNode(node: PMNode, path: string): PTBlock | PTBlock[] | null {
 		case "orderedList":
 			return convertPMList(node.content || [], "number", 1, node.attrs, path);
 		case "blockquote": {
-			const blocks: PTTextBlock[] = [];
-			for (const child of node.content || []) {
-				if (child.type === "paragraph") {
-					const { children, markDefs } = convertInline(child.content || []);
-					if (children.length > 0) {
-						blocks.push({
-							_type: "block",
-							_key: k(),
-							style: "blockquote",
-							children,
-							markDefs: markDefs.length > 0 ? markDefs : undefined,
-						});
-					}
+			// The quote's paragraphs as blockquote-styled blocks, a list in it as list items
+			// styled "blockquote" (so it stays in the quote), any other block as itself.
+			const blocks: PTBlock[] = [];
+			for (const [childIndex, child] of (node.content || []).entries()) {
+				const converted = convertPMNode(child, `${path}:${childIndex}`);
+				for (const block of converted ? (Array.isArray(converted) ? converted : [converted]) : []) {
+					blocks.push(
+						isPTTextBlock(block) && block.style === "normal"
+							? { ...block, style: "blockquote" }
+							: block,
+					);
 				}
 			}
 			if (blocks.length === 1) {
@@ -446,14 +444,31 @@ function portableTextToPM(blocks: PTBlock[]): JSONContent {
 			i++;
 			continue;
 		}
-		if (isPTTextBlock(block) && block.listItem) {
+		if (isPTTextBlock(block) && block.style === "blockquote") {
+			// Group a run of blockquote-styled blocks into ONE blockquote node — PT is
+			// flat, so a multi-paragraph quote is stored as a run of blockquote-styled
+			// blocks, and a list in it as quote-styled list items. Mirrors the grouping
+			// in content/converters/portable-text-to-prosemirror.ts; without it merges
+			// revert on reload in the inline editor too.
+			const quoteBlocks: PTTextBlock[] = [];
+			while (i < blocks.length) {
+				const cur = blocks[i];
+				if (!cur || !isPTTextBlock(cur) || cur.style !== "blockquote") break;
+				quoteBlocks.push({ ...cur, style: "normal" });
+				i++;
+			}
+			content.push({
+				type: "blockquote",
+				content: (portableTextToPM(quoteBlocks).content ?? []) as PMNode[],
+			});
+		} else if (isPTTextBlock(block) && block.listItem) {
 			const listBlocks: PTTextBlock[] = [];
 			const listType = block.listItem;
 			const runStart = i;
 			const rootId = listType === "number" ? normalizeListId(block.listId) : undefined;
 			while (i < blocks.length) {
 				const cur = blocks[i];
-				if (!cur || !isPTTextBlock(cur) || !cur.listItem) break;
+				if (!cur || !isPTTextBlock(cur) || !cur.listItem || cur.style === "blockquote") break;
 				const level = cur.level || 1;
 				const currentId = cur.listItem === "number" ? normalizeListId(cur.listId) : undefined;
 				const sameIdentity =
@@ -466,40 +481,6 @@ function portableTextToPM(blocks: PTBlock[]): JSONContent {
 				} else break;
 			}
 			content.push(convertPTList(listBlocks, listType, `root:${runStart}`));
-		} else if (
-			isPTTextBlock(block) &&
-			block.style === "blockquote" &&
-			block.listItem === undefined
-		) {
-			// Group consecutive blockquote blocks into ONE blockquote node —
-			// PT is flat, so a multi-paragraph quote is stored as a run of
-			// blockquote-styled blocks. Mirrors the grouping in
-			// content/converters/portable-text-to-prosemirror.ts; without it
-			// merges revert on reload in the inline editor too.
-			const quoteBlocks: PTTextBlock[] = [];
-			while (i < blocks.length) {
-				const cur = blocks[i];
-				if (
-					!cur ||
-					!isPTTextBlock(cur) ||
-					cur.style !== "blockquote" ||
-					cur.listItem !== undefined
-				) {
-					break;
-				}
-				quoteBlocks.push(cur);
-				i++;
-			}
-			content.push({
-				type: "blockquote",
-				content: quoteBlocks.map((quoteBlock) => {
-					const pmContent = convertPTSpans(quoteBlock.children, quoteBlock.markDefs || []);
-					return {
-						type: "paragraph",
-						content: pmContent.length > 0 ? pmContent : undefined,
-					};
-				}),
-			});
 		} else {
 			const c = convertPTBlock(block);
 			if (c) content.push(c);

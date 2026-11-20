@@ -1139,8 +1139,31 @@ describe("Bridge Handler Conformance", () => {
 			expect(result.error).toContain("Missing capability: email:send");
 		});
 
+		it("hands the plugin what its send came to: sent, or cancelled and by whom", async () => {
+			let outcome: { status: "sent" } | { status: "cancelled"; by: string } = { status: "sent" };
+			const send = vi.fn(async () => outcome);
+			const handler = createBridgeHandler({
+				pluginId: "forms",
+				version: "1.0.0",
+				capabilities: ["email:send"],
+				allowedHosts: [],
+				storageCollections: [],
+				db,
+				emailSend: () => send,
+			});
+			const message = { to: "a@b.com", subject: "hi", text: "hello" };
+			expect(await call(handler, "email/send", { message })).toEqual({
+				result: { status: "sent" },
+			});
+			outcome = { status: "cancelled", by: "quiet-hours" };
+			expect(await call(handler, "email/send", { message })).toEqual({
+				result: { status: "cancelled", by: "quiet-hours" },
+			});
+			expect(send).toHaveBeenCalledTimes(2);
+		});
+
 		it("forwards cc and replyTo to the email pipeline", async () => {
-			const send = vi.fn(async () => {});
+			const send = vi.fn(async () => ({ status: "sent" as const }));
 			const handler = createBridgeHandler({
 				pluginId: "forms",
 				version: "1.0.0",
@@ -1482,6 +1505,19 @@ describe("Bridge Handler Conformance", () => {
 	// ── Logging ───────────────────────────────────────────────────────────
 
 	describe("logging", () => {
+		it("logs a sandboxed plugin's line and data with every address redacted", async () => {
+			const infoLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
+			const handler = makeHandler({});
+			await call(handler, "log", {
+				level: "info",
+				msg: "notified Owner@Example.org",
+				data: { to: "OWNER@example.org", cc: ["Team@Example.org"] },
+			});
+			const told = JSON.stringify(infoLog.mock.calls).toLowerCase();
+			expect(told).not.toMatch(/owner@|team@/);
+			expect(told).toContain("<an address at example.org>");
+		});
+
 		it("log call succeeds without capabilities", async () => {
 			const handler = makeHandler({});
 			const result = await call(handler, "log", {

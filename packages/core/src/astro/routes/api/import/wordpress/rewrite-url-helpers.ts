@@ -2,8 +2,26 @@ const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
 const WORDPRESS_IMAGE_SIZE_SUFFIX = /-\d+x\d+(?=\.[^./?#]+$)/;
 const BASE_URL_EXTENSION = /^(.+)(\.[^./?#]+)$/;
 const QUERY_BEFORE_FRAGMENT = /^[^#]*\?/;
-/** What may follow a URL in a string field: its end, a quote, a tag, or the punctuation of prose. */
-const URL_END = `(?=$|["'\\s<>)\\],;:!?]|\\.(?=$|["'\\s<>)\\]]))`;
+/** A quote written as an entity: `&quot;`, `&#34;`, `&#039;`, `&apos;`, `&#x22;`. */
+const ENTITY_QUOTE = `&(?:quot|apos|#0*3[49]|#[xX]0*2[27]);`;
+/**
+ * What may follow a URL in a string field: its end, a quote (bare, as an
+ * entity, or JSON-escaped: `\"`, `\u0022`), a tag, or the punctuation of prose.
+ */
+const URL_END = `(?=$|["'\\s<>)\\],;:!?\\\\]|${ENTITY_QUOTE}|\\.(?=$|["'\\s<>)\\]\\\\]))`;
+/**
+ * What may follow a file's URL (one without a query): what ends any URL, its
+ * query's `?`, a fragment's `#`, an entity's `&` (`&quot;`, `&#038;`), and the
+ * `[` `]` `|` that list or wrap it. `.webp`, `-1`, `_x` or `/x` after it make
+ * it another file's URL, which is left alone.
+ */
+const FILE_URL_END = `(?=$|["'\\s<>)\\[\\],;:!?#&|\\\\]|\\.(?=$|["'\\s<>)\\]\\\\]))`;
+/**
+ * A query, up to whatever ends it: never a quote, an escape's backslash, a tag,
+ * `url()`'s closing paren or a quote written as an entity (an `&` that joins
+ * parameters stays in it), so the rewrite never takes what follows the URL.
+ */
+const URL_QUERY = `\\?(?:[^"'\\s\\\\<>)&]|(?!${ENTITY_QUOTE})&)*`;
 
 /**
  * Strip query parameters from a URL for base matching
@@ -154,6 +172,47 @@ function rewriteMarkDefUrls(
 }
 
 /**
+ * Rewrite the keys of the link classes and link titles a page's own layout
+ * keeps in its skeleton (Embark's layout-pt.ts; the blog template's
+ * wp-skeleton.ts draws them): each widget's `linkClasses` and `linkTitles`
+ * name a link's class and title by the link's href, so a key moves with the
+ * href it names. A moved key that meets another key of a different value
+ * names neither, as the import names none for links of one href that
+ * disagree. Returns how many keys moved.
+ */
+function rewriteSkeletonLinkKeys(
+	skeleton: unknown,
+	exactMap: Record<string, string>,
+	baseMap: Map<string, string>,
+): number {
+	if (!isRecord(skeleton) || !isRecord(skeleton.widgets)) return 0;
+	let rewritten = 0;
+	for (const widget of Object.values(skeleton.widgets)) {
+		if (!isRecord(widget)) continue;
+		for (const field of ["linkClasses", "linkTitles"] as const) {
+			const byHref = widget[field];
+			if (!isRecord(byHref) || Array.isArray(byHref)) continue;
+			const moves = Object.keys(byHref).flatMap((href) => {
+				const to = findMatchingUrl(href, exactMap, baseMap);
+				return to && to !== href ? [{ href, to }] : [];
+			});
+			if (moves.length === 0) continue;
+			const out: Record<string, unknown> = { ...byHref };
+			for (const { href } of moves) delete out[href];
+			const disagree = new Set<string>();
+			for (const { href, to } of moves) {
+				if (Object.hasOwn(out, to) && out[to] !== byHref[href]) disagree.add(to);
+				else out[to] = byHref[href];
+			}
+			for (const to of disagree) delete out[to];
+			widget[field] = out;
+			rewritten += moves.length;
+		}
+	}
+	return rewritten;
+}
+
+/**
  * Rewrite URLs in a Portable Text array, returning whether any changes were made
  */
 export function rewritePortableTextUrls(
@@ -204,6 +263,9 @@ export function rewritePortableTextUrls(
 				}
 			}
 		}
+
+		// Handle the link classes and titles a page's own layout keeps by href in its skeleton
+		linksRewritten += rewriteSkeletonLinkKeys(block.skeleton, exactMap, baseMap);
 
 		// Handle a file download block, a button, and the buttons of a buttons block
 		if (
@@ -275,13 +337,18 @@ export function rewriteStringUrls(
 	let changed = false;
 	let urlsRewritten = 0;
 
-	// Try exact matches first. A key that carries a query is replaced only where
-	// the URL ends with it: `?attachment_id=7` is not the start of `?attachment_id=71`.
-	for (const [oldUrl, newUrl] of Object.entries(exactMap)) {
+	// Try exact matches first, longest first, so a key that begins another (`a.jpg`
+	// and `a.jpg?ver=2`) never takes the longer one's place. Each is replaced only
+	// where the URL ends with it: `?attachment_id=7` is not the start of
+	// `?attachment_id=71`, and `a.jpg` is not the start of `a.jpg.webp`.
+	const exact = Object.entries(exactMap).toSorted(([a], [b]) => b.length - a.length);
+	for (const [oldUrl, newUrl] of exact) {
 		if (!newValue.includes(oldUrl)) continue;
-		const replaced = carriesQuery(oldUrl)
-			? newValue.replace(new RegExp(`${escapeRegExp(oldUrl)}${URL_END}`, "g"), () => newUrl)
-			: newValue.split(oldUrl).join(newUrl);
+		const end = carriesQuery(oldUrl) ? URL_END : FILE_URL_END;
+		const replaced = newValue.replace(
+			new RegExp(`${escapeRegExp(oldUrl)}${end}`, "g"),
+			() => newUrl,
+		);
 		if (replaced === newValue) continue;
 		newValue = replaced;
 		changed = true;
@@ -298,7 +365,12 @@ export function rewriteStringUrls(
 			for (const match of matches) {
 				// Don't replace if we already have an exact match in the map
 				if (!exactMap[match]) {
-					newValue = newValue.split(match).join(newUrl);
+					// Where it ends, as the regex found it: not inside a longer file's URL.
+					const end = carriesQuery(match) ? URL_END : FILE_URL_END;
+					newValue = newValue.replace(
+						new RegExp(`${escapeRegExp(match)}${end}`, "g"),
+						() => newUrl,
+					);
 					changed = true;
 					urlsRewritten++;
 				}
@@ -326,5 +398,6 @@ function buildBaseUrlMatchRegex(baseUrl: string): RegExp {
 		? `${escapeRegExp(extensionMatch[1])}(?:-\\d+x\\d+)?${escapeRegExp(extensionMatch[2])}`
 		: escapeRegExp(baseUrl);
 
-	return new RegExp(`${basePattern}(\\?[^"'\\s]*)?${URL_END}`, "g");
+	// With a query, the URL ends after it; without one, the file's URL ends where any file's does.
+	return new RegExp(`${basePattern}(?:${URL_QUERY}${URL_END}|${FILE_URL_END})`, "g");
 }

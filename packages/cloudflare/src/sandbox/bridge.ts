@@ -18,6 +18,7 @@ import type {
 	ContentCreateOptions,
 	CronTaskInfo,
 	Database,
+	EmailSendResult,
 	I18nConfig,
 	PluginComment,
 	PluginCommentStatus,
@@ -1896,7 +1897,7 @@ export class PluginBridge extends WorkerEntrypoint<PluginBridgeEnv, PluginBridge
 		subject: string;
 		text: string;
 		html?: string;
-	}): Promise<void> {
+	}): Promise<EmailSendResult> {
 		const { capabilities, pluginId } = this.ctx.props;
 		if (!capabilities.includes("email:send")) {
 			throw new Error("Missing capability: email:send");
@@ -1904,7 +1905,8 @@ export class PluginBridge extends WorkerEntrypoint<PluginBridgeEnv, PluginBridge
 		if (!emailSendCallback) {
 			throw new Error("Email is not configured. No email provider is available.");
 		}
-		await emailSendCallback(message, pluginId);
+		// What the send came to reaches the plugin: a cancelled send returns normally.
+		return emailSendCallback(message, pluginId);
 	}
 
 	async cronSchedule(

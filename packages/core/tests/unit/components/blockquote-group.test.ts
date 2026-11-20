@@ -56,7 +56,9 @@ describe("groupBlockquoteRuns (#1884)", () => {
 		expect((result[2] as BlockquoteGroupNode)._type).toBe("blockquoteGroup");
 	});
 
-	it("excludes quote-styled list items and non-block types from runs", () => {
+	it("keeps a quote's list items in its run, and a non-block type ends the run", () => {
+		// A list in a quote is stored as list items styled "blockquote" (the importer and
+		// the editors write it so), so the list renders inside the quote, not after it.
 		const input = [
 			block("q1", "blockquote"),
 			block("li", "blockquote", { listItem: "bullet", level: 1 }),
@@ -66,6 +68,18 @@ describe("groupBlockquoteRuns (#1884)", () => {
 
 		const result = groupBlockquoteRuns(input);
 
-		expect(result).toEqual(input);
+		expect(result).toHaveLength(3);
+		expect((result[0] as BlockquoteGroupNode).blocks.map((b) => b._key)).toEqual(["q1", "li"]);
+		expect(result[1]).toBe(input[2]);
+		expect(result[2]).toBe(input[3]);
+	});
+
+	it("groups a quote that is only a list, so it still renders as a quote", () => {
+		const input = [block("li", "blockquote", { listItem: "bullet", level: 1 })];
+
+		const group = groupBlockquoteRuns(input)[0] as BlockquoteGroupNode;
+
+		expect(group._type).toBe("blockquoteGroup");
+		expect(group.blocks.map((b) => b._key)).toEqual(["li"]);
 	});
 });

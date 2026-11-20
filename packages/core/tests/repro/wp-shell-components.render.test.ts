@@ -75,6 +75,7 @@ describe("the WpShell layout's content components", () => {
 		for (const other of [
 			image("c", { alignment: "center" }),
 			image("k", { alignment: "left", link: "https://example.org/" }),
+			image("o", { alignment: "left", link: { href: "https://example.org/" } }),
 			image("p", { alignment: "left", caption: "Pictured" }),
 			image("j", { alignment: "left", asset: { _ref: "x", url: "javascript:alert(1)" } }),
 			image("s", { alignment: "left", asset: { _ref: "y", url: "//elsewhere.example/a.png" } }),
