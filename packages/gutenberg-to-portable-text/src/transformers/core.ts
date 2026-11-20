@@ -898,6 +898,9 @@ export const cover: BlockTransformer = (block, _options, context) => {
 	const minHeight = attrNumber(block.attrs, "minHeight");
 	const minHeightUnit = attrString(block.attrs, "minHeightUnit");
 	const contentPosition = attrString(block.attrs, "contentPosition");
+	// WordPress saves a video background as the same `url` with
+	// `backgroundType: "video"`; drawn as an <img> it is a broken image.
+	const isVideo = attrString(block.attrs, "backgroundType") === "video";
 
 	// Transform inner blocks for content
 	const content = context.transformBlocks(block.innerBlocks);
@@ -918,7 +921,7 @@ export const cover: BlockTransformer = (block, _options, context) => {
 		{
 			_type: "cover",
 			_key: context.generateKey(),
-			backgroundImage: url,
+			...(isVideo ? { backgroundVideo: url } : { backgroundImage: url }),
 			overlayColor: customOverlayColor || overlayColor,
 			overlayOpacity: dimRatio !== undefined ? dimRatio / 100 : undefined,
 			content,
