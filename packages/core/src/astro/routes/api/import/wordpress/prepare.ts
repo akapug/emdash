@@ -88,7 +88,16 @@ async function prepareImport(
 
 	for (const postType of request.postTypes) {
 		const collectionSlug = sanitizeSlug(postType.collection);
-		const isMecEvent = postType.name === "mec-events";
+		// AN EVENTS POST TYPE IS AN EVENTS POST TYPE, whatever plugin wrote it.
+		// This was `postType.name === "mec-events"`, so The Events Calendar's
+		// `tribe_events` collection got NO urlPattern — and the template's
+		// `loadEvent` (utils/event-data.ts, `getCollectionByUrlPattern`) never
+		// found it, so all 75 imported events 404'd. Measured on a real
+		// second-site rehearsal.
+		//
+		// The host mirrors this list (`packages/host/src/import/plan.ts`,
+		// `NATIVELY_CARRIED`); change both together.
+		const isMecEvent = EVENTS_POST_TYPES.has(postType.name);
 
 		try {
 			// Check if collection exists
@@ -221,4 +230,10 @@ async function prepareImport(
 
 	result.success = result.errors.length === 0;
 	return result;
-}
+}/**
+ * The post types whose collection is an EVENTS collection, served at
+ * `/events/{slug}`. The host's `NATIVELY_CARRIED` is the same list.
+ */
+const EVENTS_POST_TYPES: ReadonlySet<string> = new Set(["mec-events", "tribe_events"]);
+
+
