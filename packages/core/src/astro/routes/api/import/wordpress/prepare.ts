@@ -72,6 +72,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	}
 };
 
+/**
+ * The post types whose collection is an EVENTS collection, served at
+ * `/events/{slug}`. The host's `NATIVELY_CARRIED` is the same list.
+ */
+const EVENTS_POST_TYPES: ReadonlySet<string> = new Set(["mec-events", "tribe_events"]);
+
 async function prepareImport(
 	db: NonNullable<EmDashHandlers["db"]>,
 	request: PrepareRequest,
@@ -97,7 +103,7 @@ async function prepareImport(
 		//
 		// The host mirrors this list (`packages/host/src/import/plan.ts`,
 		// `NATIVELY_CARRIED`); change both together.
-		const isMecEvent = EVENTS_POST_TYPES.has(postType.name);
+		const isEventsType = EVENTS_POST_TYPES.has(postType.name);
 
 		try {
 			// Check if collection exists
@@ -116,7 +122,7 @@ async function prepareImport(
 				}
 
 				// Default URL patterns for known post types
-				const urlPattern = isMecEvent
+				const urlPattern = isEventsType
 					? "/events/{slug}"
 					: collectionSlug === "pages"
 						? "/{slug}"
@@ -136,7 +142,7 @@ async function prepareImport(
 				result.collectionsCreated.push(collectionSlug);
 			}
 
-			if (isMecEvent && collection.urlPattern !== "/events/{slug}") {
+			if (isEventsType && collection.urlPattern !== "/events/{slug}") {
 				if (collection.urlPattern) {
 					result.errors.push({
 						collection: collectionSlug,
@@ -153,7 +159,7 @@ async function prepareImport(
 			const existingFieldsBySlug = new Map(existingFields.map((field) => [field.slug, field]));
 
 			for (const field of postType.fields ?? []) {
-				const eventFieldType = isMecEvent ? mecEventFieldType(field.slug) : undefined;
+				const eventFieldType = isEventsType ? mecEventFieldType(field.slug) : undefined;
 				if (
 					eventFieldType &&
 					(field.type !== eventFieldType || field.required !== (field.slug === "start_date"))
@@ -167,7 +173,7 @@ async function prepareImport(
 				const existingField = existingFieldsBySlug.get(field.slug);
 				if (existingField) {
 					if (
-						isMecEvent &&
+						isEventsType &&
 						(existingField.type !== field.type || existingField.required !== field.required)
 					) {
 						result.errors.push({
@@ -230,10 +236,4 @@ async function prepareImport(
 
 	result.success = result.errors.length === 0;
 	return result;
-}/**
- * The post types whose collection is an EVENTS collection, served at
- * `/events/{slug}`. The host's `NATIVELY_CARRIED` is the same list.
- */
-const EVENTS_POST_TYPES: ReadonlySet<string> = new Set(["mec-events", "tribe_events"]);
-
-
+}
