@@ -376,8 +376,12 @@ export function rewriteHtmlOutsideScripts(
 		}
 		at = m.index + m[0].length;
 	}
-	const tail = rewriteStringUrls(html.slice(at), exactMap, baseMap);
-	out += tail.newValue;
+	// An UNCLOSED <script> or <style> takes the rest of the string, as a browser
+	// reads it: only the markup before its open tag is rewritten.
+	const rest = html.slice(at);
+	const open = /<(script|style)\b/i.exec(rest);
+	const tail = rewriteStringUrls(open ? rest.slice(0, open.index) : rest, exactMap, baseMap);
+	out += tail.newValue + (open ? rest.slice(open.index) : "");
 	if (tail.changed) {
 		changed = true;
 		urlsRewritten += tail.urlsRewritten;

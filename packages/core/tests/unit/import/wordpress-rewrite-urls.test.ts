@@ -600,6 +600,15 @@ describe("an htmlBlock's URLs are rewritten", () => {
 		expect(out).toContain(`src="${moved}"`);
 	});
 
+	it("an UNCLOSED <script> takes the rest of the string: only markup before it is rewritten", () => {
+		const html = `<img src="${sized}"><script>var later = "${sized}";`;
+		const blocks: PortableTextBlock[] = [{ _type: "htmlBlock", _key: "k5", html }];
+		rewritePortableTextUrls(blocks, exact, base);
+		const out = (blocks[0] as { html: string }).html;
+		expect(out, "the image before it IS rewritten").toContain(`<img src="${moved}">`);
+		expect(out, "the unclosed script's body is untouched").toContain(`var later = "${sized}";`);
+	});
+
 	it("NEGATIVE CONTROL: an htmlBlock with no mapped URL is unchanged", () => {
 		const html = `<p>Nothing to rewrite here.</p>`;
 		const blocks: PortableTextBlock[] = [{ _type: "htmlBlock", _key: "k4", html }];
