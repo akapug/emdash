@@ -551,3 +551,60 @@ describe("a layout's link titles follow the links the rewrite moves", () => {
 		expect(widgetOf(blocks[0]!).linkTitles).toEqual({});
 	});
 });
+
+// AN `htmlBlock` IS A BLOCK THE REWRITE MUST WALK INTO.
+//
+// The converter carries `core/html` as `{_type: "htmlBlock", html: …}`
+// (packages/gutenberg-to-portable-text/src/transformers/core.ts:991), and a
+// Gutenberg `wp-block-columns` figure lands there. `rewritePortableTextUrls`
+// handled image, link, file, button, cover, gallery and columns — and had NO
+// case for `htmlBlock`, so an aliased upload URL inside one was never rewritten.
+//
+// MEASURED 2026-11-20 on a real tenant: `/events/spring-work-day/`
+// still served `https://example.org/…/studio-work-day-768x1024.jpg` after
+// the import, inside a `wp-block-columns` figure, while the alias map held it.
+describe("an htmlBlock's URLs are rewritten", () => {
+	const old = "https://example.com/wp-content/uploads/2025/02/photo.jpg";
+	const sized = "https://example.com/wp-content/uploads/2025/02/photo-768x1024.jpg";
+	const moved = "/_emdash/api/media/file/01ABC.jpg";
+	const exact = { [sized]: moved };
+	const base = buildBaseUrlMap(exact);
+
+	it("rewrites an aliased -WxH upload URL inside an htmlBlock", () => {
+		const blocks: PortableTextBlock[] = [
+			{ _type: "htmlBlock", _key: "k1", html: `<figure><img src="${sized}" alt=""></figure>` },
+		];
+		const result = rewritePortableTextUrls(blocks, exact, base);
+		expect(result.changed).toBe(true);
+		expect(result.urlsRewritten).toBe(1);
+		expect((blocks[0] as { html: string }).html).toBe(`<figure><img src="${moved}" alt=""></figure>`);
+	});
+
+	it("leaves a URL inside a <script> body ALONE", () => {
+		// A script's string is code, not a link: rewriting it would change what the
+		// script does, and the host's own blanking work exists for the same reason.
+		const html = `<script>var src = "${sized}";</script><img src="${sized}">`;
+		const blocks: PortableTextBlock[] = [{ _type: "htmlBlock", _key: "k2", html }];
+		rewritePortableTextUrls(blocks, exact, base);
+		const out = (blocks[0] as { html: string }).html;
+		expect(out, "the script's string is untouched").toContain(`var src = "${sized}"`);
+		expect(out, "the image beside it IS rewritten").toContain(`src="${moved}"`);
+	});
+
+	it("leaves a URL inside a <style> body ALONE", () => {
+		const html = `<style>.a{background:url(${sized})}</style><img src="${sized}">`;
+		const blocks: PortableTextBlock[] = [{ _type: "htmlBlock", _key: "k3", html }];
+		rewritePortableTextUrls(blocks, exact, base);
+		const out = (blocks[0] as { html: string }).html;
+		expect(out).toContain(`background:url(${sized})`);
+		expect(out).toContain(`src="${moved}"`);
+	});
+
+	it("NEGATIVE CONTROL: an htmlBlock with no mapped URL is unchanged", () => {
+		const html = `<p>Nothing to rewrite here.</p>`;
+		const blocks: PortableTextBlock[] = [{ _type: "htmlBlock", _key: "k4", html }];
+		const result = rewritePortableTextUrls(blocks, exact, base);
+		expect(result.changed).toBe(false);
+		expect((blocks[0] as { html: string }).html).toBe(html);
+	});
+});
