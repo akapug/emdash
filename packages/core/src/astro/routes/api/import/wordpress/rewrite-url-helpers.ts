@@ -308,6 +308,26 @@ export function rewritePortableTextUrls(
 			}
 		}
 
+		// Handle an htmlBlock: the converter carries `core/html` as
+		// `{_type: "htmlBlock", html: …}` (gutenberg-to-portable-text's
+		// transformers/core.ts), and a Gutenberg `wp-block-columns` figure lands
+		// there. Without this case an aliased upload URL inside one was never
+		// rewritten — MEASURED 2026-11-20 on a real tenant, whose event page still
+		// served the old host's image after the import.
+		//
+		// A SCRIPT OR STYLE BODY IS NOT A LINK. Its string is code, and rewriting
+		// it would change what the script does; the same reason the host's own
+		// blanking work exists. So the html is split on those elements and only
+		// the segments between them are rewritten.
+		if (block._type === "htmlBlock" && typeof block.html === "string") {
+			const rewritten = rewriteHtmlOutsideScripts(block.html, exactMap, baseMap);
+			if (rewritten.changed) {
+				block.html = rewritten.html;
+				changed = true;
+				urlsRewritten += rewritten.urlsRewritten;
+			}
+		}
+
 		// Handle columns blocks with nested content
 		if (block._type === "columns" && Array.isArray(block.columns)) {
 			for (const column of block.columns) {
@@ -323,6 +343,46 @@ export function rewritePortableTextUrls(
 	}
 
 	return { changed, urlsRewritten };
+}
+
+/**
+ * Rewrite the URLs of an HTML string, EXCEPT inside a `<script>` or `<style>`.
+ *
+ * A script's or a style's body is code, not markup: a URL in it is a string the
+ * script uses or a rule the stylesheet applies, and rewriting it would change
+ * what the page does. So the string is split on those elements and only the
+ * segments BETWEEN them are rewritten.
+ *
+ * The split is on the element's own open and close tags, case-insensitively, and
+ * an unclosed one takes the rest of the string — the same reading a browser
+ * gives it.
+ */
+export function rewriteHtmlOutsideScripts(
+	html: string,
+	exactMap: Record<string, string>,
+	baseMap: Map<string, string>,
+): { html: string; changed: boolean; urlsRewritten: number } {
+	const OPAQUE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+	let out = "";
+	let at = 0;
+	let changed = false;
+	let urlsRewritten = 0;
+	for (let m = OPAQUE.exec(html); m !== null; m = OPAQUE.exec(html)) {
+		const segment = rewriteStringUrls(html.slice(at, m.index), exactMap, baseMap);
+		out += segment.newValue + m[0];
+		if (segment.changed) {
+			changed = true;
+			urlsRewritten += segment.urlsRewritten;
+		}
+		at = m.index + m[0].length;
+	}
+	const tail = rewriteStringUrls(html.slice(at), exactMap, baseMap);
+	out += tail.newValue;
+	if (tail.changed) {
+		changed = true;
+		urlsRewritten += tail.urlsRewritten;
+	}
+	return { html: out, changed, urlsRewritten };
 }
 
 /**
