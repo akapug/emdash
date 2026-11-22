@@ -1,0 +1,111 @@
+---
+/**
+ * A MONTH ARCHIVE — WordPress's `/2024/04/`.
+ *
+ * The source site served one for every year that held a published post, and the
+ * migration 301s each of those paths here. The listing is the same posts
+ * collection filtered to the year, so "2024" shows 2024's posts rather than the
+ * whole blog.
+ *
+ * AN EMPTY PERIOD IS NOT A 404. WordPress answers a year with no posts with its
+ * "nothing found" page, not a missing-page error, and a visitor who followed a
+ * link to it should see that rather than a 404 — so the route renders the empty
+ * listing.
+ */
+import { getEmDashCollection } from "emdash";
+import Base from "../../../layouts/Base.astro";
+import PostCard from "../../../components/PostCard.astro";
+import { getReadingTime } from "../../../utils/reading-time";
+
+const year = Number(Astro.params.year);
+const month = Number(Astro.params.month);
+if (!Number.isInteger(year) || year < 1 || year > 9999 || !Number.isInteger(month) || month < 1 || month > 12) {
+	return Astro.redirect("/404");
+}
+
+const from = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+// The first of the NEXT month, by the same arithmetic WordPress uses: month 12
+// rolls into January of the next year.
+const nextYear = month === 12 ? year + 1 : year;
+const nextMonth = month === 12 ? 1 : month + 1;
+const to = `${String(nextYear).padStart(4, "0")}-${String(nextMonth).padStart(2, "0")}-01`;
+const { entries: posts, cacheHint, nextCursor } = await getEmDashCollection("posts", {
+	where: { published_at: { gte: from, lt: to } },
+	orderBy: { published_at: "desc" },
+	limit: 20,
+});
+
+if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
+---
+
+<Base title={`Posts from ${year}-${String(month).padStart(2, "0")}`} description={`Every post published in ${year}-${String(month).padStart(2, "0")}`}>
+	<section class="archive-section">
+		<header class="archive-header">
+			<span class="archive-label">Month</span>
+			<h1 class="archive-title">{year}-{String(month).padStart(2, "0")}</h1>
+		</header>
+
+		{
+			posts.length === 0 ? (
+				<p class="no-posts">No posts in {year}-{String(month).padStart(2, "0")}.</p>
+			) : (
+				<div class="posts-grid">
+					{posts.map((post) => (
+						<PostCard
+							title={post.data.title}
+							excerpt={post.data.excerpt}
+							featuredImage={post.data.featured_image}
+							href={`/posts/${post.id}`}
+							date={post.data.publishedAt ?? undefined}
+							readingTime={getReadingTime(post.data.content)}
+							tags={[]}
+							edit={post.edit}
+						/>
+					))}
+				</div>
+			)
+		}
+		<nav class="pagination" aria-label="Pagination">
+			{nextCursor && <a href={`/date/${year}/${String(month).padStart(2, "0")}?cursor=${encodeURIComponent(nextCursor)}`}>Next page</a>}
+		</nav>
+	</section>
+</Base>
+
+<style>
+	.archive-section {
+		max-width: var(--wide-width);
+		margin: 0 auto;
+		padding: var(--spacing-12) var(--spacing-6);
+	}
+	.archive-header {
+		margin-bottom: var(--spacing-12);
+		padding-bottom: var(--spacing-8);
+		border-bottom: 1px solid var(--color-border-subtle);
+	}
+	.archive-label {
+		display: block;
+		font-size: var(--font-size-xs);
+		font-weight: 500;
+		color: var(--color-brand);
+		text-transform: uppercase;
+		letter-spacing: var(--tracking-wider);
+		margin-bottom: var(--spacing-2);
+	}
+	.archive-title {
+		font-size: var(--font-size-4xl);
+		font-weight: var(--font-weight-display);
+	}
+	.posts-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+		gap: var(--spacing-8);
+	}
+	.no-posts {
+		color: var(--color-text-muted);
+	}
+	.pagination {
+		display: flex;
+		gap: var(--spacing-4);
+		margin-top: var(--spacing-12);
+	}
+</style>
