@@ -254,9 +254,17 @@ function noTexturizeShortcodes(html: string): ReadonlySet<string> {
  * the end), or a shortcode's opening or closing tag: `[name …]`, `[/name]`,
  * with an escaped `[[name]]`. Every alternative starts on a different
  * character and repeats single characters, so a failed match never backtracks.
+ *
+ * A TAG'S `>` IS THE ONE THAT ENDS IT, not the first one inside it: a quoted
+ * attribute value may hold a raw `>` (valid HTML5, and WordPress saves it), so
+ * the tag alternative steps over a quoted run before it will accept a `>`. A
+ * reader that stopped at the first `>` left the rest of the tag looking like
+ * text, and texturizing it curled the attribute's closing quote into a right
+ * double quote — which unbalanced the attribute and, through parse5, lost the
+ * whole element.
  */
 const DELIMITER =
-	/<!--(?:[^-]|-(?!->))*(?:-->)?|<[^>]*>?|\[[/[]?[A-Za-z][\w-]*(?=[\s\]/])(?:[^[\]<>]|<[^[\]>]*>)*\]\]?/g;
+	/<!--(?:[^-]|-(?!->))*(?:-->)?|<(?:"[^"]*"|'[^']*'|[^>"'])*>?|\[[/[]?[A-Za-z][\w-]*(?=[\s\]/])(?:[^[\]<>]|<[^[\]>]*>)*\]\]?/g;
 
 const NAME = /^[A-Za-z][\w-]*/;
 

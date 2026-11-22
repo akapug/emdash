@@ -190,3 +190,28 @@ describe("texturizes: WordPress's English quote marks are a site in English's, o
 		);
 	});
 });
+
+describe("wptexturize: a tag is never texturized, even when an attribute holds '>'", () => {
+	it("leaves an attribute's quotes alone when its value contains a '>'", () => {
+		// A raw ">" inside a quoted attribute value is valid HTML5, and WordPress
+		// saves it. The tag reader must not stop at that ">": doing so made the
+		// rest of the tag look like text, and the closing quote was curled into a
+		// right double quote, which unbalanced the attribute.
+		const html = '<ul data-label="a > b"><li>one</li></ul>';
+		expect(wptexturize(html)).toBe(html);
+	});
+
+	it("still texturizes the text beside such a tag", () => {
+		const out = wptexturize('<p data-label="a > b">"quoted"</p>');
+		expect(out).toContain('data-label="a > b"');
+		expect(out).toContain("\u201cquoted\u201d");
+	});
+
+	it("keeps a list whose attribute holds '>' through the real converter", () => {
+		const content = `<!-- wp:list -->
+<ul data-label="a > b"><li>one</li><li>two</li></ul>
+<!-- /wp:list -->`;
+		const items = gutenbergToPortableText(content).filter((b) => "listItem" in b);
+		expect(items).toHaveLength(2);
+	});
+});
