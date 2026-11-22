@@ -558,6 +558,7 @@ export {
 	clearSources,
 	wxrSource,
 	parseWxrDate,
+	parseScheduledWxrDate,
 	wordpressRestSource,
 	importReusableBlocksAsSections,
 } from "./import/index.js";

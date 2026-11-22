@@ -20,7 +20,7 @@ import {
 	type WxrData,
 	type WxrPost,
 	parseWxrDate,
-	handleContentSchedule,
+	parseScheduledWxrDate,
 } from "emdash";
 
 import { requirePerm } from "#api/authorize.js";
@@ -448,11 +448,21 @@ export async function importContent(
 			}
 
 			const protection = await importProtection(post, config);
-			// THE MOMENT, parsed once: `mapStatus` needs it to tell a scheduled post
-			// from a missed schedule, and the create needs it for `createdAt`.
+			// Preserve original WordPress dates for createdAt/publishedAt, while
+			// scheduling a `future` post ONLY from an explicitly zoned moment.
 			const parsedDate = parseWxrDate(post.postDateGmt, post.pubDate, post.postDate);
+			const scheduledMoment =
+				post.status === "future"
+					? parseScheduledWxrDate(post.postDateGmt, post.pubDate, post.postDate)
+					: { date: null, unzonedLocalOnly: false };
 			const status =
-				protection.protected && !protection.protection ? "draft" : mapStatus(post.status, parsedDate);
+				protection.protected && !protection.protection
+					? "draft"
+					: mapStatus(post.status, scheduledMoment.date);
+			// Always create a scheduled item as `draft` first so there is never a
+			// public window and a failed `handleContentSchedule` leaves the row as a
+			// real `draft` rather than `status = 'scheduled'` with `scheduled_at = NULL`.
+			const createStatus = status === "scheduled" ? "draft" : status;
 
 			// Build data object with required fields. The title and excerpt as
 			// WordPress printed them (the_title and the_excerpt run wptexturize),
@@ -498,14 +508,14 @@ export async function importContent(
 			// Preserve original WordPress dates using the shared WXR date parser.
 			// Fallback chain: postDateGmt (UTC) → pubDate (RFC 2822) → postDate (site-local).
 			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
-			const publishedAt = status === "published" && createdAt ? createdAt : undefined;
+			const publishedAt = createStatus === "published" && createdAt ? createdAt : undefined;
 
 			// Create the content item
 			const createResult = await emdash.handleContentCreate(collection, {
 				data,
 				protection: protection.protection,
 				slug,
-				status,
+				status: createStatus,
 				authorId,
 				bylines: bylineId ? [{ bylineId }] : undefined,
 				locale: postLocale,
@@ -542,22 +552,25 @@ export async function importContent(
 
 				if (createdItem) stored(post, collection, createdItem.id);
 
-				// A SCHEDULED POST CARRIES ITS MOMENT. `handleContentCreate` takes a
-				// status but no `scheduledAt`, so the schedule is set on the row it
-				// just made — the same call the admin's own schedule action makes.
-				if (createdItem && status === "scheduled" && parsedDate) {
-					const scheduled = await handleContentSchedule(
-						db,
+				// A SCHEDULED POST CARRIES ITS MOMENT. The row was created as `draft`,
+				// and `handleContentSchedule` transitions `draft -> scheduled` with
+				// `scheduled_at` atomically. If scheduling fails (or the WXR only had
+				// an unzoned local `post_date`), the row stays a real `draft` and is named.
+				if (createdItem && post.status === "future" && scheduledMoment.unzonedLocalOnly && !(protection.protected && !protection.protection)) {
+					result.errors.push({
+						title: post.title || "Untitled",
+						error: "scheduled time has no timezone (only site-local post_date); kept as draft",
+					});
+				} else if (createdItem && status === "scheduled" && scheduledMoment.date) {
+					const scheduled = await emdash.handleContentSchedule(
 						collection,
 						createdItem.id,
-						parsedDate.toISOString(),
+						scheduledMoment.date.toISOString(),
 					);
 					if (!scheduled.success) {
-						// THE ROW IS STILL THERE, as a draft: a schedule that could not be
-						// set is named, never silently a published post.
 						result.errors.push({
 							title: post.title || "Untitled",
-							error: `scheduled for ${parsedDate.toISOString()} but the schedule could not be set (${scheduled.error?.message ?? "unknown"}); it is a draft`,
+							error: `scheduled for ${scheduledMoment.date.toISOString()} but the schedule could not be set (${scheduled.error?.message ?? "unknown"}); it is a draft`,
 						});
 					}
 				}
@@ -710,7 +723,7 @@ export function mapStatus(wpStatus: string | undefined, scheduledAt?: Date | nul
 			return "published";
 		case "future":
 			// A MISSED SCHEDULE IS PUBLISHED: WordPress's cron would have published it.
-			if (!scheduledAt) return "draft";
+			if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) return "draft";
 			return scheduledAt.getTime() > now.getTime() ? "scheduled" : "published";
 		case "draft":
 			return "draft";

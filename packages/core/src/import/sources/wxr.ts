@@ -380,32 +380,79 @@ export const WXR_ZERO_DATE = "0000-00-00 00:00:00";
  * Returns undefined when none of the inputs yield a valid date.
  * Callers that need a guaranteed Date should use `?? new Date()`.
  */
+const ZONED_OFFSET_PATTERN = /(?:[+-]\d{2}:?\d{2}|\b(?:GMT|UTC)\b|Z)\s*$/i;
+
+function isZeroWxrDate(raw: string): boolean {
+	return raw.startsWith("0000-00-00");
+}
+
 export function parseWxrDate(
 	gmtDate: string | undefined,
 	pubDate: string | undefined,
 	localDate: string | undefined,
 ): Date | undefined {
-	if (gmtDate && gmtDate !== WXR_ZERO_DATE) {
+	const gmt = typeof gmtDate === "string" ? gmtDate.trim() : "";
+	if (gmt && gmt !== WXR_ZERO_DATE && !isZeroWxrDate(gmt)) {
 		// GMT dates from WordPress are "YYYY-MM-DD HH:MM:SS" in UTC.
 		// Append "Z" so the JS Date constructor treats them as UTC.
-		return new Date(gmtDate.replace(" ", "T") + "Z");
+		const d = new Date(gmt.includes("T") ? gmt : `${gmt.replace(" ", "T")}Z`);
+		if (!Number.isNaN(d.getTime())) return d;
 	}
 
-	if (pubDate) {
+	const pub = typeof pubDate === "string" ? pubDate.trim() : "";
+	if (pub && !isZeroWxrDate(pub)) {
 		// RFC 2822 format includes timezone offset, JS Date parses it correctly
-		const d = new Date(pubDate);
-		if (!isNaN(d.getTime())) return d;
+		const d = new Date(pub);
+		if (!Number.isNaN(d.getTime())) return d;
 	}
 
-	if (localDate) {
+	const local = typeof localDate === "string" ? localDate.trim() : "";
+	if (local && local !== WXR_ZERO_DATE && !isZeroWxrDate(local)) {
 		// Site-local time without timezone. Normalize to ISO-like form so
 		// runtimes that reject "YYYY-MM-DD HH:MM:SS" can still parse it as
 		// local time. If parsing still fails, return undefined.
-		const d = new Date(localDate.replace(" ", "T"));
-		if (!isNaN(d.getTime())) return d;
+		const d = new Date(local.replace(" ", "T"));
+		if (!Number.isNaN(d.getTime())) return d;
 	}
 
 	return undefined;
+}
+
+/**
+ * Parse a scheduling moment for a WordPress `future` post.
+ *
+ * ONLY a zoned moment may schedule a post:
+ * 1. `postDateGmt` (UTC, non-zero, valid)
+ * 2. `pubDate` carrying an explicit timezone offset or GMT/UTC/Z
+ *
+ * A site-local `postDate` without a timezone is NEVER silently treated as UTC:
+ * it returns `{ date: null, unzonedLocalOnly: true }` so the caller keeps the
+ * post as a draft and names it.
+ */
+export function parseScheduledWxrDate(
+	gmtDate: string | undefined,
+	pubDate: string | undefined,
+	localDate: string | undefined,
+): { date: Date | null; unzonedLocalOnly: boolean } {
+	const gmt = typeof gmtDate === "string" ? gmtDate.trim() : "";
+	if (gmt && gmt !== WXR_ZERO_DATE && !isZeroWxrDate(gmt)) {
+		const d = new Date(gmt.includes("T") ? gmt : `${gmt.replace(" ", "T")}Z`);
+		if (!Number.isNaN(d.getTime())) return { date: d, unzonedLocalOnly: false };
+	}
+
+	const pub = typeof pubDate === "string" ? pubDate.trim() : "";
+	if (pub && !isZeroWxrDate(pub) && ZONED_OFFSET_PATTERN.test(pub)) {
+		const d = new Date(pub);
+		if (!Number.isNaN(d.getTime())) return { date: d, unzonedLocalOnly: false };
+	}
+
+	const local = typeof localDate === "string" ? localDate.trim() : "";
+	if (local && local !== WXR_ZERO_DATE && !isZeroWxrDate(local)) {
+		const d = new Date(local.replace(" ", "T"));
+		if (!Number.isNaN(d.getTime())) return { date: null, unzonedLocalOnly: true };
+	}
+
+	return { date: null, unzonedLocalOnly: false };
 }
 
 // Export for use in other sources

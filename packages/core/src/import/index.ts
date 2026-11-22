@@ -75,7 +75,7 @@ export {
 export { validateExternalUrl, ssrfSafeFetch, SsrfError } from "./ssrf.js";
 
 // Sources
-export { wxrSource, parseWxrDate } from "./sources/wxr.js";
+export { wxrSource, parseWxrDate, parseScheduledWxrDate } from "./sources/wxr.js";
 export { wordpressRestSource } from "./sources/wordpress-rest.js";
 export {
 	wordpressPluginSource,
