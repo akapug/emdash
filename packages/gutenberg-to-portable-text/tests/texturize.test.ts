@@ -214,4 +214,19 @@ describe("wptexturize: a tag is never texturized, even when an attribute holds '
 		const items = gutenbergToPortableText(content).filter((b) => "listItem" in b);
 		expect(items).toHaveLength(2);
 	});
+
+	it("does not let a stray '<' in prose swallow quotes across paragraphs", () => {
+		const out = wptexturize('<p>If x < 5 and it\'s "quoted"</p><p>Don\'t "skip" me</p>');
+		expect(out).toBe("<p>If x < 5 and it\u2019s \u201cquoted\u201d</p><p>Don\u2019t \u201cskip\u201d me</p>");
+	});
+
+	it("does not swallow closing </code> when code contains '<'", () => {
+		const out = wptexturize('<code>if (a < b && c<d) {}</code><p>"after"</p>');
+		expect(out).toBe('<code>if (a < b && c<d) {}</code><p>\u201cafter\u201d</p>');
+	});
+
+	it("keeps <code data-lang='a > b'> disabled and leaves attribute bytes untouched", () => {
+		const out = wptexturize('<code data-lang="a > b">"literal"</code><p>"curled"</p>');
+		expect(out).toBe('<code data-lang="a > b">"literal"</code><p>\u201ccurled\u201d</p>');
+	});
 });

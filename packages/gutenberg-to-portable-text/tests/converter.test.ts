@@ -344,15 +344,14 @@ describe("gutenbergToPortableText", () => {
 				{ level: 2, listItem: "bullet", text: "sub" },
 			]);
 
-			// Unescaped '>' inside an attribute value is tested with texturize: false
-			// because WordPress's wptexturize splits tags at the first '>' before block parsing.
+			// Quoted attributes containing list tags or '>' survive default wptexturize too.
 			const withAttrTags = `<!-- wp:list -->
 <ul>
   <li><span data-tip="<ul><li>fake</li></ul>">real</span></li>
   <li>one<!-- <ul> -->two<ul data-label="a > b"><li>sub</li></ul></li>
 </ul>
 <!-- /wp:list -->`;
-			const attrItems = gutenbergToPortableText(withAttrTags, { texturize: false }).filter(
+			const attrItems = gutenbergToPortableText(withAttrTags).filter(
 				(b) => "listItem" in b,
 			) as PortableTextTextBlock[];
 			expect(
