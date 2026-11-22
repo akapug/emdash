@@ -21,6 +21,7 @@ import type {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { handleContentCreate } from "../../../src/api/handlers/content.js";
+import { createPasswordVerifier } from "../../../src/content/protection.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import { RelationRepository } from "../../../src/database/repositories/relation.js";
 import type { Database } from "../../../src/database/types.js";
@@ -166,6 +167,30 @@ describeEachDialect("public reference queries", (dialect) => {
 			}),
 		);
 	}
+
+	it("resolves protected targets without hydrating their private fields or verifier", async () => {
+		await new SchemaRegistry(db).createField("pages", {
+			slug: "excerpt",
+			label: "Excerpt",
+			type: "text",
+		});
+		const verifier = await createPasswordVerifier("synthetic-password");
+		const page = await new ContentRepository(db).create({
+			type: "pages",
+			slug: "protected",
+			status: "published",
+			data: { title: "Protected title", excerpt: "SYNTHETIC_REFERENCE_PRIVATE_314a" },
+			protection: { version: 1, mode: "password", verifier },
+		});
+		const post = await createPost("Public reference owner", [page.id]);
+		const pages = await resolvePublic("posts", await groupOf("posts", post.id), {
+			related_pages: true,
+		});
+		expect(pages.related_pages?.entries).toHaveLength(1);
+		expect(JSON.stringify(pages)).toContain("Protected title");
+		for (const secret of ["SYNTHETIC_REFERENCE_PRIVATE_314a", "synthetic-password", verifier.hash])
+			expect(JSON.stringify(pages)).not.toContain(secret);
+	});
 
 	it("resolves a parent-side field in link order", async () => {
 		const first = await createPage("Page One");

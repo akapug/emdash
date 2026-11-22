@@ -19,6 +19,7 @@ import {
 	getContentSeo,
 	getEmDashCollection,
 	getEmDashEntry,
+	resolveProtectedEntry,
 	getHomepage,
 	getSeoMeta,
 	getSiteSettings,
@@ -66,9 +67,12 @@ async function load(r: Exclude<NonNullable<typeof route>, { kind: "archive" }>) 
 	const result = await getEmDashEntry(collection, slug);
 	return { entry: result.entry, collection, cacheHint: result.cacheHint };
 }
-const { entry, collection, cacheHint } = await load(route);
-if (!entry) return Astro.rewrite(origin);
-if (Astro.cache?.enabled && cacheHint) Astro.cache.set(cacheHint);
+const { entry: publicEntry, collection, cacheHint } = await load(route);
+if (!publicEntry) return Astro.rewrite(origin);
+const access = await resolveProtectedEntry(Astro, collection, publicEntry);
+if ("response" in access) return access.response;
+const entry = access.entry;
+if (Astro.cache?.enabled && cacheHint && !access.protected) Astro.cache.set(cacheHint);
 
 const isPost = route.kind === "post";
 const path = route.kind === "home" ? "/" : origin.replace(/\/$/, "");
@@ -95,7 +99,7 @@ async function adjacent(published: Date | null | undefined) {
 		getEmDashCollection("posts", { where: { published_at: { lt: at } }, orderBy: { published_at: "desc" }, limit: 1 }),
 		getEmDashCollection("posts", { where: { published_at: { gt: at } }, orderBy: { published_at: "asc" }, limit: 1 }),
 	]);
-	if (Astro.cache?.enabled) for (const r of [before, after]) Astro.cache.set(r.cacheHint);
+	if (Astro.cache?.enabled && !access.protected) for (const r of [before, after]) Astro.cache.set(r.cacheHint);
 	const [prev, next] = [before, after].map((r) => {
 		const e = r.entries[0];
 		return e ? { title: e.data.title, url: `/posts/${e.id}` } : null;
@@ -123,7 +127,7 @@ function readingQuantity(content: unknown): string {
 async function relatedPosts(tags: readonly { slug: string }[], count: number, self: string) {
 	if (count <= 0) return [];
 	const newest = await getEmDashCollection("posts", { orderBy: { published_at: "desc" }, limit: 50 });
-	if (Astro.cache?.enabled) Astro.cache.set(newest.cacheHint);
+	if (Astro.cache?.enabled && !access.protected) Astro.cache.set(newest.cacheHint);
 	const mine = new Set(tags.map((t) => t.slug));
 	return newest.entries
 		.filter((e) => e.id !== self)

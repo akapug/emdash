@@ -1,4 +1,5 @@
 import type { ContentFieldFilters } from "../../content-list-query.js";
+import type { ContentProtection } from "../../content/protection.js";
 import type { CustomFieldValue } from "../../schema/types.js";
 import { encodeBase64, decodeBase64 } from "../../utils/base64.js";
 
@@ -15,6 +16,7 @@ const MAX_CURSOR_LENGTH = 4096;
 export interface CreateContentInput {
 	/** Explicit content ID for stable seed imports. Omit to generate a ULID. */
 	id?: string;
+	protection?: ContentProtection;
 	type: string;
 	slug?: string | null;
 	data: Record<string, unknown>;

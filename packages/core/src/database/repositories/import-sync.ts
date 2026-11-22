@@ -10,6 +10,7 @@ import {
 } from "../import-baseline-triggers.js";
 import type { Database } from "../types.js";
 import { validateIdentifier } from "../validate.js";
+import { ProtectedContentRepository } from "./protected-content.js";
 import { createRevisionId } from "./revision.js";
 
 export interface ImportSyncSource {
@@ -299,6 +300,12 @@ export class ImportSyncRepository {
 		const prior = await this.operation(input.operationId);
 		if (prior) return this.replay(prior, input);
 
+		if (
+			input.entryId &&
+			(await new ProtectedContentRepository(this.db).find(input.collection, input.entryId))
+		) {
+			return { state: "conflict", reason: "protected_content_requires_private_mutation" };
+		}
 		const table = `ec_${input.collection}`;
 		const entryId = input.entryId ?? ulid();
 		const revisionId = createRevisionId();

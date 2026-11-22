@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 
 import { after } from "../../after.js";
 import { ContentRepository } from "../../database/repositories/content.js";
+import { ProtectedContentRepository } from "../../database/repositories/protected-content.js";
 import { RevisionRepository, type Revision } from "../../database/repositories/revision.js";
 import { ContentMutationConflictError } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
@@ -137,7 +138,11 @@ export async function handleRevisionRestore(
 		const { item, revisionId: queuedRevisionId } = await new ContentRepository(db).restoreRevision(
 			revision.collection,
 			revision.entryId,
-			revision.data,
+			(await new ProtectedContentRepository(db).readRevision(
+				revision.id,
+				revision.collection,
+				revision.entryId,
+			)) ?? revision.data,
 			callerUserId,
 		);
 

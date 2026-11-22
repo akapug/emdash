@@ -921,7 +921,8 @@ export async function importContent(
 			}
 
 			// Map WordPress status to EmDash status
-			const status = mapStatus(item.status);
+			// This importer has no protected-runtime opt-in; never discard a verifier and publish its body.
+			const status = item.protection ? "draft" : mapStatus(item.status);
 
 			// Build data object - add all applicable fields
 			const data: Record<string, unknown> = {};

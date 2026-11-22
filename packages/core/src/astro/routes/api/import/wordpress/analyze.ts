@@ -16,6 +16,8 @@ import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { RESERVED_COLLECTION_SLUGS } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
+import { PROTECTED_CONTENT_CAPABILITY } from "../../../../../content/protection.js";
+
 export const prerender = false;
 
 const NUMERIC_PATTERN = /^-?\d+(\.\d+)?$/;
@@ -89,6 +91,8 @@ export interface WpAuthorInfo {
 }
 
 export interface WxrAnalysis {
+	/** Live-server opt-in contract, not a client assertion or version inference. */
+	protectedContentCapability: typeof PROTECTED_CONTENT_CAPABILITY;
 	site: {
 		title: string;
 		url: string;
@@ -301,6 +305,7 @@ function analyzeWxr(
 	});
 
 	return {
+		protectedContentCapability: PROTECTED_CONTENT_CAPABILITY,
 		site: {
 			title: wxr.site.title || "WordPress Site",
 			url: wxr.site.link || "",

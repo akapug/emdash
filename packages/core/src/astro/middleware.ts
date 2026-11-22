@@ -1121,7 +1121,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	};
 
 	try {
-		return await runWithContext({ editMode: false, queryRecorder, metrics }, run);
+		const response = await runWithContext({ editMode: false, queryRecorder, metrics }, run);
+		// Preserve request-private render decisions even if a nested layout adds cache hints.
+		if (response.headers.get("Cache-Control") === "private, no-store") {
+			if (context.cache?.enabled) context.cache.set(false);
+			response.headers.set("Cache-Control", "private, no-store");
+			response.headers.delete("ETag");
+			response.headers.delete("Last-Modified");
+			response.headers.delete("CDN-Cache-Control");
+			response.headers.delete("Cache-Tag");
+		}
+		return response;
 	} finally {
 		// Streamed responses defer the flush to stream end (see
 		// wrapBodyForStreamMetrics) so the log captures queries issued while

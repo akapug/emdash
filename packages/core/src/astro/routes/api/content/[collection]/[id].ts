@@ -15,6 +15,9 @@ import { claimEntryLockForWrite } from "#api/handlers/entry-lock.js";
 import { parseBody, isParseError } from "#api/parse.js";
 import { contentUpdateBody } from "#api/schemas.js";
 
+import { hydrateProtectedContentForEditor } from "../../../../../content/protected-render.js";
+import type { ContentItem } from "../../../../../database/repositories/types.js";
+
 export const prerender = false;
 
 export const GET: APIRoute = async ({ params, url, locals }) => {
@@ -63,7 +66,19 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
 		}
 	}
 
-	return unwrapResult(result);
+	if (result.success && result.data && typeof result.data === "object" && "item" in result.data) {
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- the core handler returns ContentResponse
+		const data = result.data as { item: ContentItem };
+		data.item = await hydrateProtectedContentForEditor(
+			emdash.db,
+			data.item,
+			user,
+			locals.tokenScopes,
+		);
+	}
+	const response = unwrapResult(result);
+	response.headers.set("Cache-Control", "private, no-store");
+	return response;
 };
 
 export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
@@ -143,11 +158,24 @@ export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
 
 	if (!result.success) return unwrapResult(result);
 
+	if (result.data && typeof result.data === "object" && "item" in result.data) {
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- the core handler returns ContentResponse
+		const data = result.data as { item: ContentItem };
+		data.item = await hydrateProtectedContentForEditor(
+			emdash.db,
+			data.item,
+			user,
+			locals.tokenScopes,
+		);
+	}
+
 	if (cache?.enabled && result.liveContentChanged !== false) {
 		await cache.invalidate({ tags: [collection, resolvedId] });
 	}
 
-	return unwrapResult(result);
+	const response = unwrapResult(result);
+	response.headers.set("Cache-Control", "private, no-store");
+	return response;
 };
 
 export const DELETE: APIRoute = async ({ params, locals, url, cache }) => {

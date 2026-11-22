@@ -800,7 +800,25 @@ export interface TransferApprovalTable {
 
 // Database schema
 // Note: ec_* content tables are dynamic and not part of this type
+export interface ProtectedContentTable {
+	collection: string;
+	content_id: string;
+	credential_version: number;
+	verifier: string;
+	data: string;
+	seo: string | null;
+}
+
+export interface ProtectedRevisionTable {
+	revision_id: string;
+	collection: string;
+	content_id: string;
+	data: string;
+}
+
 export interface Database {
+	_emdash_protected_content: ProtectedContentTable;
+	_emdash_protected_revisions: ProtectedRevisionTable;
 	revisions: RevisionTable;
 	_emdash_import_baselines: ImportBaselineTable;
 	_emdash_import_operations: ImportOperationTable;

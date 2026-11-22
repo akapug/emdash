@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { RESERVED_FIELD_SLUGS } from "#schema/types.js";
 
+import {
+	contentProtectionSchema,
+	PROTECTED_CONTENT_CAPABILITY,
+} from "../../../../../content/protection.js";
 import { mappedEmbedsSchema } from "./mapped-embeds.js";
 
 const reservedFields = new Set([
@@ -38,6 +42,17 @@ export const mappedFieldsSchema = z
 	.optional();
 
 export const wpExecuteConfig = z.object({
+	protectedContent: z.literal(PROTECTED_CONTENT_CAPABILITY).optional(),
+	passwordSource: z.enum(["raw-wxr", "redacted"]).optional(),
+	protections: z
+		.record(
+			z.string().regex(/^[1-9]\d*$/),
+			z.union([
+				contentProtectionSchema,
+				z.object({ version: z.literal(1), mode: z.literal("redacted") }).strict(),
+			]),
+		)
+		.optional(),
 	postTypeMappings: z.record(
 		z.string(),
 		z.object({

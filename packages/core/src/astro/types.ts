@@ -9,6 +9,7 @@ import type { Element } from "@emdash-cms/blocks";
 import type { Kysely } from "kysely";
 
 import type { ContentFieldFilters } from "../content-list-query.js";
+import type { ContentProtection } from "../content/protection.js";
 import type {
 	PluginEditorExtensionDispatch,
 	ResolvedPluginEditorExtension,
@@ -353,6 +354,7 @@ export interface EmDashHandlers {
 		collection: string,
 		body: {
 			data: Record<string, unknown>;
+			protection?: ContentProtection;
 			slug?: string | null;
 			status?: string;
 			authorId?: string;

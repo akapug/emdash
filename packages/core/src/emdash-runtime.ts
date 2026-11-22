@@ -48,6 +48,7 @@ import { getTrustedProxyHeaders } from "./auth/trusted-proxy.js";
 import { lookupContentAuthor, sendCommentNotification } from "./comments/notifications.js";
 import type { ContentFieldFilters } from "./content-list-query.js";
 import { keepKnownFields, staleStoredKeys } from "./content/known-fields.js";
+import type { ContentProtection } from "./content/protection.js";
 import { isSqlite } from "./database/dialect-helpers.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import {
@@ -72,6 +73,7 @@ import {
 	supportsAtomicImportSync,
 	type ImportSyncResult,
 } from "./database/repositories/import-sync.js";
+import { ProtectedContentRepository } from "./database/repositories/protected-content.js";
 import { RevisionRepository } from "./database/repositories/revision.js";
 import { selectTaxonomyDefs } from "./database/repositories/taxonomy-def.js";
 import { ContentMutationConflictError } from "./database/repositories/types.js";
@@ -3600,6 +3602,7 @@ export class EmDashRuntime {
 		collection: string,
 		body: {
 			data: Record<string, unknown>;
+			protection?: ContentProtection;
 			seo?: ContentWriteInput["seo"];
 			slug?: string | null;
 			status?: string;
@@ -3689,7 +3692,7 @@ export class EmDashRuntime {
 			}
 		}
 
-		if (translationSource) {
+		if (translationSource && !body.protection) {
 			processedData = { ...processedData };
 			for (const slug of sharedFieldSlugs) {
 				if (Object.hasOwn(translationSource.data, slug)) {
@@ -3820,6 +3823,13 @@ export class EmDashRuntime {
 		// Resolve slug → ID if needed (before any lookups)
 		const repo = new ContentRepository(this.db);
 		const resolvedItem = await repo.findByIdOrSlug(collection, id, body.locale);
+		if (resolvedItem) {
+			const privateData = await new ProtectedContentRepository(this.db).readData(
+				resolvedItem,
+				true,
+			);
+			if (privateData) resolvedItem.data = privateData;
+		}
 		const resolvedId = resolvedItem?.id ?? id;
 
 		// Validate _rev early — before draft revision writes which modify updated_at.
@@ -3997,7 +4007,13 @@ export class EmDashRuntime {
 
 				for (let attempt = 0; existing && attempt < MAX_DRAFT_STAGE_ATTEMPTS; attempt++) {
 					let baseData: Record<string, unknown>;
-					if (existing.draftRevisionId) {
+					const privateData = await new ProtectedContentRepository(this.db).readData(
+						existing,
+						true,
+					);
+					if (privateData) {
+						baseData = privateData;
+					} else if (existing.draftRevisionId) {
 						const draftRevision = await revisionRepo.findById(existing.draftRevisionId);
 						baseData = draftRevision?.data ?? existing.data;
 					} else {
@@ -5266,7 +5282,11 @@ export class EmDashRuntime {
 			const newDraftId = await contentRepo.restoreDraftRevision(
 				revision.collection,
 				revision.entryId,
-				revision.data,
+				(await new ProtectedContentRepository(this.db).readRevision(
+					revision.id,
+					revision.collection,
+					revision.entryId,
+				)) ?? revision.data,
 				callerUserId,
 			);
 			if (!newDraftId) {

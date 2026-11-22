@@ -943,7 +943,7 @@ function convertPostWithConfig(
 	const data: Record<string, unknown> = {
 		title: post.title === undefined ? post.title : typed(post.title),
 		content,
-		// EmDash has no password gate: an item WordPress kept behind a password is never published.
+		// File-only output has no private payload store or verified renderer: keep the draft fallback.
 		status: isPasswordProtected(post) ? "draft" : mapStatus(post.status),
 		publishedAt: post.pubDate ? new Date(post.pubDate).toISOString() : null,
 		createdAt: post.postDate ? new Date(post.postDate).toISOString() : null,

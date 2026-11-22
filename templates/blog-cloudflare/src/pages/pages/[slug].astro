@@ -1,6 +1,7 @@
 ---
 import {
 	getEmDashEntry,
+	resolveProtectedEntry,
 	getSeoMeta,
 	decodeSlug,
 	getSiteSettings,
@@ -16,13 +17,11 @@ if (!slug) {
 	return Astro.redirect("/404");
 }
 
-const { entry: page, cacheHint } = await getEmDashEntry("pages", slug);
+const { entry: publicPage, cacheHint } = await getEmDashEntry("pages", slug);
 
-if (!page) {
+if (!publicPage) {
 	return Astro.redirect("/404");
 }
-
-if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
 
 // A site migrated from WordPress keeps its own design (layouts/WpShell.astro).
 if ((await loadWpShell()).shell) {
@@ -30,6 +29,10 @@ if ((await loadWpShell()).shell) {
 	return Astro.rewrite(`/wp-shell/pages/${encodeURIComponent(slug)}${Astro.url.search}`);
 }
 
+const access = await resolveProtectedEntry(Astro, "pages", publicPage);
+if ("response" in access) return access.response;
+const page = access.entry;
+if (Astro.cache?.enabled && !access.protected) Astro.cache.set(cacheHint);
 const settings = await getSiteSettings();
 const { siteTitle } = resolveBlogSiteIdentity(settings);
 // The homepage renders this page at "/" too, so that copy is the canonical one.

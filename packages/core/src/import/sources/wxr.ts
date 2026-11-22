@@ -13,6 +13,7 @@ import {
 } from "@emdash-cms/gutenberg-to-portable-text";
 
 import { parseWxrString, type WxrData, type WxrPost } from "../../cli/wxr/parser.js";
+import { importProtection } from "../protection.js";
 import type {
 	ImportSource,
 	ImportAnalysis,
@@ -98,14 +99,19 @@ export const wxrSource: ImportSource = {
 				continue;
 			}
 
-			// Convert to normalized item
-			yield wxrPostToNormalizedItem(
+			const access = await importProtection(post, options);
+			const normalized = wxrPostToNormalizedItem(
 				post,
 				attachmentMap,
 				wxr.site.link || "",
 				wxr.site.language,
 				wxr.site.generator,
 			);
+			if (access.protected) {
+				normalized.status = access.protection ? mapWpStatus(post.status) : "draft";
+				if (access.protection) normalized.protection = access.protection;
+			}
+			yield normalized;
 
 			count++;
 			if (options.limit && count >= options.limit) {
@@ -332,7 +338,7 @@ function wxrPostToNormalizedItem(
 	return {
 		sourceId: post.id || 0,
 		postType: post.postType || "post",
-		// WordPress kept a password-protected item from its readers; EmDash has no password gate.
+		// Unverified consumers retain the draft fallback; fetchContent can opt into private storage.
 		status: isPasswordProtected(post) ? "draft" : mapWpStatus(post.status),
 		slug: post.postName || slugify(post.title || `post-${post.id || Date.now()}`),
 		// As WordPress printed them, like the content (wptexturize); the slug is the stored title's.

@@ -1,3 +1,13 @@
+export {
+	PROTECTED_CONTENT_CAPABILITY,
+	createPasswordVerifier,
+	verifyContentPassword,
+	passwordVerifierSchema,
+	contentProtectionSchema,
+} from "./content/protection.js";
+export type { PasswordVerifier, ContentProtection } from "./content/protection.js";
+export { resolveProtectedEntry } from "./content/protected-render.js";
+
 // Database (only types and utilities - internal functions not exported)
 export {
 	EmDashDatabaseError,

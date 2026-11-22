@@ -4,6 +4,7 @@ import { monotonicFactory } from "ulidx";
 import { ContentDatetimeNormalizer, type DatetimeContextCache } from "../content-datetime.js";
 import type { Database, RevisionTable } from "../types.js";
 import { validateIdentifier } from "../validate.js";
+import { ProtectedContentRepository } from "./protected-content.js";
 
 const monotonic = monotonicFactory();
 
@@ -54,7 +55,13 @@ export class RevisionRepository {
 	 */
 	async create(input: CreateRevisionInput): Promise<Revision> {
 		const id = createRevisionId();
-		const data = await this.datetimes.normalizeData(input.collection, input.data);
+		const normalized = await this.datetimes.normalizeData(input.collection, input.data);
+		const data = await new ProtectedContentRepository(this.db).stage(
+			input.collection,
+			input.entryId,
+			id,
+			normalized,
+		);
 
 		const row: Omit<RevisionTable, "created_at"> = {
 			id,
@@ -114,11 +121,26 @@ export class RevisionRepository {
 	async mergeData(id: string, patch: Record<string, unknown>): Promise<void> {
 		const row = await this.db
 			.selectFrom("revisions")
-			.select("data")
+			.selectAll()
 			.where("id", "=", id)
 			.executeTakeFirst();
 		if (!row) return;
-		const data: Record<string, unknown> = { ...JSON.parse(row.data), ...patch };
+		let data: Record<string, unknown> = { ...JSON.parse(row.data), ...patch };
+		const privateRevision = await this.db
+			.selectFrom("_emdash_protected_revisions")
+			.select("data")
+			.where("revision_id", "=", id)
+			.where("collection", "=", row.collection)
+			.where("content_id", "=", row.entry_id)
+			.executeTakeFirst();
+		if (privateRevision) {
+			await this.db
+				.updateTable("_emdash_protected_revisions")
+				.set({ data: JSON.stringify({ ...JSON.parse(privateRevision.data), ...patch }) })
+				.where("revision_id", "=", id)
+				.execute();
+			data = await new ProtectedContentRepository(this.db).project(row.collection, data);
+		}
 		await this.db
 			.updateTable("revisions")
 			.set({ data: JSON.stringify(data) })
@@ -279,6 +301,7 @@ export class RevisionRepository {
 			);
 		}
 
+		await new ProtectedContentRepository(this.db).pruneRevisions(collection, entryId);
 		return Number(result.numDeletedRows ?? 0);
 	}
 
@@ -346,6 +369,7 @@ export class RevisionRepository {
 			)
 		`.execute(this.db);
 
+		await new ProtectedContentRepository(this.db).pruneRevisions(collection, entryId);
 		return Number(result.numAffectedRows ?? 0);
 	}
 
@@ -387,6 +411,7 @@ export class RevisionRepository {
 				OR content.draft_revision_id = revisions.id
 			)
 		`.execute(this.db);
+		await new ProtectedContentRepository(this.db).pruneRevisions(collection, entryId);
 		return (result.numAffectedRows ?? 0n) > 0n;
 	}
 

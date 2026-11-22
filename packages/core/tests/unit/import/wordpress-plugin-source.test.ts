@@ -7,7 +7,10 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { wordpressPluginSource } from "../../../src/import/sources/wordpress-plugin.js";
+import {
+	wordpressPluginSource,
+	fetchPluginContentPage,
+} from "../../../src/import/sources/wordpress-plugin.js";
 import { setDefaultDnsResolver } from "../../../src/import/ssrf.js";
 
 // ─── Mock fetch ──────────────────────────────────────────────────────────────
@@ -98,6 +101,33 @@ function mediaPage(page: number, pages: number, ids: number[]) {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("WordPress Plugin Source — fetch behaviour", () => {
+	it("keeps explicit protection and legacy connector markers draft-only in both fetch paths", async () => {
+		const posts = [
+			makePost({ protection: { version: 1, mode: "redacted" } }),
+			makePost({ id: 2, post_password: "yes" }),
+			makePost({ id: 3 }),
+		];
+		mockFetch.mockResolvedValueOnce(contentResponse(posts));
+		const items = [];
+		for await (const item of wordpressPluginSource.fetchContent(
+			{ type: "url", url: "https://example.com", token: "synthetic-token" },
+			{ postTypes: ["post"] },
+		))
+			items.push(item);
+		expect(items.map((item) => item.status)).toEqual(["draft", "draft", "publish"]);
+		mockFetch.mockResolvedValueOnce(contentResponse(posts));
+		const page = await fetchPluginContentPage({
+			siteUrl: "https://example.com",
+			token: "synthetic-token",
+			postType: "post",
+			page: 1,
+			perPage: 100,
+			includeDrafts: true,
+		});
+		expect(page.items.map((item) => item.status)).toEqual(["draft", "draft", "publish"]);
+		expect(JSON.stringify([...items, ...page.items])).not.toContain("post_password");
+	});
+
 	it("stores the title and excerpt as WordPress printed them, like the content, and a post in another language as written", async () => {
 		const typed = {
 			title: `Tom's "Big" Day -- Live...`,

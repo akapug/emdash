@@ -8,6 +8,7 @@ import { sql, type Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
 import { validateIdentifier } from "../../database/validate.js";
+import { isMissingTableError } from "../../utils/db-errors.js";
 import type { ApiResult } from "../types.js";
 
 /** Raw content data for sitemap generation — the route builds the actual URLs */
@@ -136,13 +137,14 @@ export async function handleSitemapData(
 
 			const tableName = `ec_${col.slug}`;
 
-			// Query published, non-deleted content.
-			// LEFT JOIN _emdash_seo to check noindex flag.
+			// Query published, non-deleted, non-protected content.
+			// LEFT JOIN _emdash_seo to check noindex flag and _emdash_protected_content
+			// to keep password-protected pages out of public sitemaps.
 			// Content without an SEO row is assumed indexable (default).
 			// Wrapped in try/catch so a missing/broken table doesn't fail the
 			// entire sitemap — we skip that collection and continue.
 			try {
-				const rows = await sql<{
+				type SitemapRow = {
 					slug: string | null;
 					id: string;
 					updated_at: string;
@@ -150,20 +152,44 @@ export async function handleSitemapData(
 					locale: string;
 					translation_group: string | null;
 					seo_image: string | null;
-				}>`
-					SELECT c.slug, c.id, c.updated_at, c.published_at, c.locale, c.translation_group, s.seo_image
-					FROM ${sql.ref(tableName)} c
-					LEFT JOIN _emdash_seo s
-						ON s.collection = ${col.slug}
-						AND s.content_id = c.id
-					WHERE c.status = 'published'
-					AND c.deleted_at IS NULL
-					AND c.slug IS NOT NULL
-					AND TRIM(c.slug) <> ''
-					AND (s.seo_no_index IS NULL OR s.seo_no_index = 0)
-					ORDER BY c.updated_at DESC
-					LIMIT ${SITEMAP_MAX_ENTRIES}
-				`.execute(db);
+				};
+				let rows: { rows: SitemapRow[] };
+				try {
+					rows = await sql<SitemapRow>`
+						SELECT c.slug, c.id, c.updated_at, c.published_at, c.locale, c.translation_group, s.seo_image
+						FROM ${sql.ref(tableName)} c
+						LEFT JOIN _emdash_seo s
+							ON s.collection = ${col.slug}
+							AND s.content_id = c.id
+						LEFT JOIN _emdash_protected_content p
+							ON p.collection = ${col.slug}
+							AND p.content_id = c.id
+						WHERE c.status = 'published'
+						AND c.deleted_at IS NULL
+						AND c.slug IS NOT NULL
+						AND TRIM(c.slug) <> ''
+						AND (s.seo_no_index IS NULL OR s.seo_no_index = 0)
+						AND p.content_id IS NULL
+						ORDER BY c.updated_at DESC
+						LIMIT ${SITEMAP_MAX_ENTRIES}
+					`.execute(db);
+				} catch (joinErr) {
+					if (!isMissingTableError(joinErr)) throw joinErr;
+					rows = await sql<SitemapRow>`
+						SELECT c.slug, c.id, c.updated_at, c.published_at, c.locale, c.translation_group, s.seo_image
+						FROM ${sql.ref(tableName)} c
+						LEFT JOIN _emdash_seo s
+							ON s.collection = ${col.slug}
+							AND s.content_id = c.id
+						WHERE c.status = 'published'
+						AND c.deleted_at IS NULL
+						AND c.slug IS NOT NULL
+						AND TRIM(c.slug) <> ''
+						AND (s.seo_no_index IS NULL OR s.seo_no_index = 0)
+						ORDER BY c.updated_at DESC
+						LIMIT ${SITEMAP_MAX_ENTRIES}
+					`.execute(db);
+				}
 
 				if (rows.rows.length === 0) continue;
 

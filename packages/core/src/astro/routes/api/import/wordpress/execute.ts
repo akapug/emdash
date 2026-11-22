@@ -28,7 +28,8 @@ import { isParseError, parseBody } from "#api/parse.js";
 import { BylineRepository } from "#db/repositories/byline.js";
 import { SeoRepository } from "#db/repositories/seo.js";
 import { importWxrComments } from "#import/comments.js";
-import { isPasswordProtected, resolveImportByline } from "#import/utils.js";
+import { importProtection, type ProtectedImportOptions } from "#import/protection.js";
+import { resolveImportByline } from "#import/utils.js";
 import {
 	emptyWxrSeoTally,
 	extractWxrSeo,
@@ -62,7 +63,7 @@ import { mappedFieldsSchema, validateMappedFields, wpExecuteConfig } from "./map
 
 export const prerender = false;
 
-export interface ImportConfig {
+export interface ImportConfig extends ProtectedImportOptions {
 	/** Map WordPress post types to EmDash collections */
 	postTypeMappings: Record<
 		string,
@@ -131,11 +132,10 @@ export interface ImportResult {
 	 */
 	comments?: { imported: number; skipped: number; notCarried: Record<string, number> };
 	/**
-	 * Each item stored as a draft whatever its WordPress status, and why:
-	 * `password-protected` for one WordPress kept behind a post password, which
-	 * EmDash cannot gate (the password is not stored). Absent when there is none.
+	 * Password-bearing items kept as drafts without a verified runtime opt-in,
+	 * including explicitly redacted credentials that cannot be recovered.
 	 */
-	drafted?: Array<{ title: string; reason: "password-protected" }>;
+	drafted?: Array<{ title: string; reason: "password-protected" | "password-unrecoverable" }>;
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -446,10 +446,9 @@ export async function importContent(
 				translationOf = translationGroupMap.get(post.translationGroup);
 			}
 
-			// Map WordPress status to EmDash status. EmDash has no password gate, so
-			// an item WordPress kept behind a password is never published here.
-			const passwordProtected = isPasswordProtected(post);
-			const status = passwordProtected ? "draft" : mapStatus(post.status);
+			const protection = await importProtection(post, config);
+			const status =
+				protection.protected && !protection.protection ? "draft" : mapStatus(post.status);
 
 			// Build data object with required fields. The title and excerpt as
 			// WordPress printed them (the_title and the_excerpt run wptexturize),
@@ -501,6 +500,7 @@ export async function importContent(
 			// Create the content item
 			const createResult = await emdash.handleContentCreate(collection, {
 				data,
+				protection: protection.protection,
 				slug,
 				status,
 				authorId,
@@ -517,10 +517,10 @@ export async function importContent(
 				for (const warning of converted.warnings) {
 					result.errors.push({ title: post.title || "Untitled", error: warning });
 				}
-				if (passwordProtected) {
+				if (protection.protected && !protection.protection) {
 					(result.drafted ??= []).push({
 						title: post.title || "Untitled",
-						reason: "password-protected",
+						reason: protection.unrecoverable ? "password-unrecoverable" : "password-protected",
 					});
 				}
 				if (seoTally && seo) {
@@ -612,7 +612,9 @@ export async function importContent(
 
 	if (config.importComments !== false) {
 		const comments = await importWxrComments(
-			posts,
+			posts.map((post) =>
+				config.protections?.[String(post.id)] ? { ...post, postPassword: "redacted" } : post,
+			),
 			emdash.db,
 			contentIdByWpId,
 			collectionByWpId,

@@ -2,6 +2,7 @@
 import {
 	getEmDashCollection,
 	getHomepage,
+	resolveProtectedEntry,
 	getSeoMeta,
 	getTermsForEntries,
 	getSiteSettings,
@@ -23,7 +24,14 @@ const [homepage, settings] = await Promise.all([
 	getSiteSettings(),
 ]);
 const { siteTitle, siteTagline } = resolveBlogSiteIdentity(settings);
-const page = homepage.entry;
+let page = homepage.entry;
+let privateContent = false;
+if (page && homepage.collection) {
+	const access = await resolveProtectedEntry(Astro, homepage.collection, page);
+	if ("response" in access) return access.response;
+	page = access.entry;
+	privateContent = access.protected;
+}
 
 const postsResult = page
 	? null
@@ -33,7 +41,7 @@ const postsResult = page
 		});
 const posts = postsResult?.entries ?? [];
 
-if (Astro.cache?.enabled) {
+if (Astro.cache?.enabled && !privateContent) {
 	Astro.cache.set(homepage.cacheHint);
 	if (postsResult) Astro.cache.set(postsResult.cacheHint);
 }

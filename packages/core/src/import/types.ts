@@ -7,6 +7,8 @@
 
 import type { PortableTextBlock } from "@emdash-cms/gutenberg-to-portable-text";
 
+import type { ProtectedImportOptions } from "./protection.js";
+
 // =============================================================================
 // Author Types
 // =============================================================================
@@ -281,6 +283,7 @@ export interface ImportAnalysis {
 
 /** Normalized content item - produced by all sources */
 export interface NormalizedItem {
+	protection?: import("../content/protection.js").ContentProtection;
 	/** Original ID from source */
 	sourceId: string | number;
 	/** WordPress post type */
@@ -344,7 +347,7 @@ export interface ImportConfig {
 }
 
 /** Options for fetching content */
-export interface FetchOptions {
+export interface FetchOptions extends ProtectedImportOptions {
 	/** Post types to fetch */
 	postTypes: string[];
 	/** Whether to include drafts */

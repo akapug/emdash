@@ -15,6 +15,7 @@ import { executeAtomicBatchIfSupported, localeChainOrder } from "../dialect-help
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { validateIdentifier } from "../validate.js";
+import { ProtectedContentRepository } from "./protected-content.js";
 import { createRevisionId, RevisionRepository } from "./revision.js";
 import type {
 	CreateContentInput,
@@ -350,7 +351,15 @@ export class ContentRepository {
 			publishedAt,
 			createdAt,
 		} = input;
-		const data = await this.datetimes.normalizeData(type, inputData);
+		let data = await this.datetimes.normalizeData(type, inputData);
+		let privateCreateQuery: ReturnType<typeof sql> | undefined;
+		if (input.protection) {
+			// Build the private insert so it runs atomically with the public placeholder insert.
+			data = writableContentData(data);
+			const protectedRepo = new ProtectedContentRepository(this.db);
+			privateCreateQuery = protectedRepo.prepareCreate(type, id, input.protection, data);
+			data = await protectedRepo.project(type, data);
+		}
 		const normalizedCreatedAt = createdAt
 			? await this.datetimes.normalizeValue(type, createdAt)
 			: now;
@@ -392,7 +401,7 @@ export class ContentRepository {
 			locale || "en",
 			id,
 		];
-		const inherited = new Set(inheritFields);
+		const inherited = new Set(input.protection ? [] : inheritFields);
 		for (const field of inherited) {
 			validateIdentifier(field, "inherited content field name");
 			if (!SYSTEM_COLUMNS.has(field) && !Object.hasOwn(data, field)) {
@@ -425,19 +434,31 @@ export class ContentRepository {
 			return value === null ? sql`NULL` : sql`${value}`;
 		});
 
-		if (translationOf) {
-			await sql`
+		const publicInsertQuery = translationOf
+			? sql`
 				INSERT INTO ${sql.ref(tableName)} (${sql.join(columnRefs, sql`, `)})
 				SELECT ${sql.join(valuePlaceholders, sql`, `)}
 				FROM ${sql.ref(tableName)} AS translation_source
 				WHERE translation_source.id = ${translationOf}
 					AND translation_source.deleted_at IS NULL
-			`.execute(this.db);
-		} else {
-			await sql`
+			`
+			: sql`
 				INSERT INTO ${sql.ref(tableName)} (${sql.join(columnRefs, sql`, `)})
 				VALUES (${sql.join(valuePlaceholders, sql`, `)})
-			`.execute(this.db);
+			`;
+
+		if (privateCreateQuery) {
+			const queries = [privateCreateQuery, publicInsertQuery];
+			const batched = await executeAtomicBatchIfSupported(this.db, queries);
+			if (!batched) {
+				await withTransaction(this.db, async (trx) => {
+					for (const query of queries) {
+						await query.execute(trx);
+					}
+				});
+			}
+		} else {
+			await publicInsertQuery.execute(this.db);
 		}
 
 		invalidateCollectionCache(type);
@@ -445,6 +466,9 @@ export class ContentRepository {
 		// Fetch and return the created item
 		const item = await this.findById(type, id);
 		if (!item) {
+			if (privateCreateQuery) {
+				await new ProtectedContentRepository(this.db).delete(type, id);
+			}
 			if (translationOf) {
 				throw new EmDashValidationError("Translation source content not found");
 			}
@@ -526,7 +550,9 @@ export class ContentRepository {
 		}
 
 		// Prepare the new data
-		const newData = { ...original.data };
+		const protectedRepo = new ProtectedContentRepository(this.db);
+		const protectedRow = await protectedRepo.find(type, id);
+		const newData = { ...((await protectedRepo.readData(original)) ?? original.data) };
 
 		// Append "(Copy)" to title if present
 		if (typeof newData.title === "string") {
@@ -552,6 +578,15 @@ export class ContentRepository {
 			type,
 			slug,
 			data: newData,
+			...(protectedRow
+				? {
+						protection: {
+							version: 1 as const,
+							mode: "password" as const,
+							verifier: JSON.parse(protectedRow.verifier),
+						},
+					}
+				: {}),
 			status: "draft",
 			authorId: authorId || original.authorId || undefined,
 			locale: original.locale ?? undefined,
@@ -987,9 +1022,25 @@ export class ContentRepository {
 			updates.primary_byline_id = input.primaryBylineId;
 		}
 
+		let privateWrite: { version: number; queries: ReturnType<typeof sql>[] } | undefined;
 		// Update data fields (skip system columns to prevent injection via data)
 		if (input.data !== undefined && typeof input.data === "object") {
-			const data = await this.datetimes.normalizeData(type, writableContentData(input.data));
+			let data = await this.datetimes.normalizeData(type, writableContentData(input.data));
+			const existing = await this.findById(type, id);
+			if (existing) {
+				// Fence against the pre-update version and run before the public UPDATE in the same
+				// atomic batch/transaction so a concurrent version bump causes all statements to match 0 rows.
+				const expected = sql<boolean>`EXISTS (SELECT 1 FROM ${sql.ref(tableName)} WHERE id = ${id} AND version = ${existing.version} AND deleted_at IS NULL)`;
+				const queries = await new ProtectedContentRepository(this.db).prepareWrite(
+					existing,
+					data,
+					expected,
+				);
+				if (queries) {
+					privateWrite = { version: existing.version, queries };
+					data = await new ProtectedContentRepository(this.db).project(type, data);
+				}
+			}
 			for (const [key, value] of Object.entries(data)) {
 				updates[key] = serializeValue(value);
 			}
@@ -1001,12 +1052,36 @@ export class ContentRepository {
 		}
 		updates.version = sql`version + 1`;
 
-		await this.db
-			.updateTable(tableName as keyof Database)
-			.set(updates)
-			.where("id", "=", id)
-			.where("deleted_at" as never, "is", null)
-			.execute();
+		if (privateWrite) {
+			const queries = [
+				...privateWrite.queries,
+				sql`UPDATE ${sql.ref(tableName)} SET ${sql.join(
+					Object.entries(updates).map(([key, value]) => sql`${sql.ref(key)} = ${value}`),
+					sql`, `,
+				)}
+				WHERE id = ${id} AND deleted_at IS NULL AND version = ${privateWrite.version} RETURNING id`,
+			];
+			const batched = await executeAtomicBatchIfSupported(this.db, queries);
+			if (batched) {
+				if (batched[0]?.rows.length !== 1 || batched.at(-1)?.rows.length !== 1)
+					throw new ContentMutationConflictError();
+			} else {
+				await withTransaction(this.db, async (trx) => {
+					for (const [index, query] of queries.entries()) {
+						const result = await query.execute(trx);
+						if ((index === 0 || index === queries.length - 1) && result.rows.length !== 1)
+							throw new ContentMutationConflictError();
+					}
+				});
+			}
+		} else {
+			await this.db
+				.updateTable(tableName as keyof Database)
+				.set(updates)
+				.where("id", "=", id)
+				.where("deleted_at" as never, "is", null)
+				.execute();
+		}
 
 		if (hasColumnWrites) invalidateCollectionCache(type);
 
@@ -1028,7 +1103,19 @@ export class ContentRepository {
 		const existing = await this.findById(type, id);
 		if (!existing) throw new EmDashValidationError("Content item not found");
 
-		const normalizedSnapshot = await this.datetimes.normalizeData(type, revisionData);
+		const revisionId = createRevisionId();
+		const normalized = await this.datetimes.normalizeData(type, revisionData);
+		const privateQueries = await new ProtectedContentRepository(this.db).prepareWrite(
+			existing,
+			normalized,
+			sql<boolean>`EXISTS (SELECT 1 FROM ${sql.ref(tableName)} WHERE id = ${id} AND draft_revision_id = ${revisionId} AND version = ${existing.version + 1} AND deleted_at IS NULL)`,
+		);
+		const normalizedSnapshot = await new ProtectedContentRepository(this.db).stage(
+			type,
+			id,
+			revisionId,
+			normalized,
+		);
 		const { _slug } = normalizedSnapshot;
 		// Leading-underscore keys are staged metadata (`_slug`, `_references`), not columns.
 		const snapshotFields: Record<string, unknown> = {};
@@ -1036,7 +1123,6 @@ export class ContentRepository {
 			if (!key.startsWith("_")) snapshotFields[key] = value;
 		}
 		const fieldData = writableContentData(snapshotFields);
-		const revisionId = createRevisionId();
 		const now = new Date().toISOString();
 		const assignments: ReturnType<typeof sql>[] = [];
 
@@ -1093,24 +1179,35 @@ export class ContentRepository {
 			return [audit, update, removeUnappliedAudit, releaseMarker] as const;
 		};
 
-		const batched = await executeAtomicBatchIfSupported(this.db, buildQueries());
+		const [audit, update, removeUnappliedAudit, releaseMarker] = buildQueries();
+		const batched = await executeAtomicBatchIfSupported(this.db, [
+			audit,
+			update,
+			removeUnappliedAudit,
+			...(privateQueries ?? []),
+			releaseMarker,
+		]);
 		if (batched) {
 			if (
 				batched[0]?.rows.length !== 1 ||
 				batched[1]?.rows.length !== 1 ||
-				batched[3]?.rows.length !== 1
+				(privateQueries && batched[3]?.rows.length !== 1) ||
+				batched.at(-1)?.rows.length !== 1
 			) {
 				throw new ContentMutationConflictError();
 			}
 		} else {
 			await withTransaction(this.db, async (trx) => {
-				const [audit, update, removeUnappliedAudit, releaseMarker] = buildQueries();
 				const auditResult = await audit.execute(trx);
 				if (auditResult.rows.length !== 1) {
 					throw new ContentMutationConflictError();
 				}
 				const updateResult = await update.execute(trx);
 				await removeUnappliedAudit.execute(trx);
+				for (const [index, query] of (privateQueries ?? []).entries()) {
+					const result = await query.execute(trx);
+					if (index === 0 && result.rows.length !== 1) throw new ContentMutationConflictError();
+				}
 				const releaseResult = await releaseMarker.execute(trx);
 				if (updateResult.rows.length !== 1 || releaseResult.rows.length !== 1) {
 					throw new ContentMutationConflictError();
@@ -1136,8 +1233,14 @@ export class ContentRepository {
 		const existing = await this.findById(type, id);
 		if (!existing) return null;
 
-		const normalizedSnapshot = await this.datetimes.normalizeData(type, revisionData);
 		const revisionId = createRevisionId();
+		const normalized = await this.datetimes.normalizeData(type, revisionData);
+		const normalizedSnapshot = await new ProtectedContentRepository(this.db).stage(
+			type,
+			id,
+			revisionId,
+			normalized,
+		);
 		const buildQueries = () => {
 			const audit = sql`
 				INSERT INTO revisions (id, collection, entry_id, data, author_id)
@@ -1258,8 +1361,12 @@ export class ContentRepository {
 		}
 
 		for (let attempt = 0; existing && attempt < MAX_DRAFT_STAGE_ATTEMPTS; attempt++) {
-			let baseData = existing.data;
-			if (existing.draftRevisionId) {
+			let baseData =
+				(await new ProtectedContentRepository(this.db).readData(existing, true)) ?? existing.data;
+			if (
+				existing.draftRevisionId &&
+				!(await new ProtectedContentRepository(this.db).find(type, id))
+			) {
 				const draft = await revisionRepo.findById(existing.draftRevisionId);
 				if (draft) baseData = draft.data;
 			}
@@ -1401,6 +1508,7 @@ export class ContentRepository {
 		data: Record<string, unknown>,
 		options: { previous?: Record<string, unknown> } = {},
 	): Promise<void> {
+		if (await new ProtectedContentRepository(this.db).find(type, sourceId)) return;
 		const tableName = getTableName(type);
 		const collectionRows = await this.db
 			.selectFrom("_emdash_collections as collection")
@@ -1453,6 +1561,10 @@ export class ContentRepository {
 		values: Record<string, unknown>,
 		usesRevisions: boolean,
 	): Promise<boolean> {
+		if (await new ProtectedContentRepository(this.db).find(type, initial.id)) {
+			await this.update(type, initial.id, { data: values });
+			return true;
+		}
 		const tableName = getTableName(type);
 		const revisionRepo = new RevisionRepository(this.db, this.datetimeContexts);
 		let sibling: ContentItem | null = initial;
@@ -1622,7 +1734,10 @@ export class ContentRepository {
 		`.execute(this.db);
 
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
-		if (changed) invalidateCollectionCache(type);
+		if (changed) {
+			await new ProtectedContentRepository(this.db).delete(type, id);
+			invalidateCollectionCache(type);
+		}
 		return changed;
 	}
 
@@ -2436,7 +2551,8 @@ export class ContentRepository {
 					const revision = await revisionRepo.create({
 						collection: type,
 						entryId: id,
-						data: existing.data,
+						data:
+							(await new ProtectedContentRepository(this.db).readData(existing)) ?? existing.data,
 					});
 					liveRevisionId = revision.id;
 					provisionalRevisionId = revision.id;
@@ -2530,7 +2646,7 @@ export class ContentRepository {
 				const revision = await revisionRepo.create({
 					collection: type,
 					entryId: id,
-					data: existing.data,
+					data: (await new ProtectedContentRepository(this.db).readData(existing)) ?? existing.data,
 				});
 				revisionToPublish = revision.id;
 				provisionalRevisionId = revision.id;

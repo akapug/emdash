@@ -154,6 +154,9 @@ interface PluginContentResponse {
 
 /** Single post from plugin API */
 interface PluginPost {
+	/** Connector credentials are not raw WXR passwords; this consumer retains the draft fallback. */
+	protection?: unknown;
+	post_password?: string;
 	id: number;
 	post_type: string;
 	status: string;
@@ -725,7 +728,8 @@ function pluginPostToNormalizedItem(post: PluginPost, siteUrl: string): Normaliz
 	return {
 		sourceId: post.id,
 		postType: post.post_type,
-		status: mapWpStatus(post.status),
+		status:
+			post.protection !== undefined || post.post_password ? "draft" : mapWpStatus(post.status),
 		slug: post.slug,
 		title: typed(post.title),
 		content,

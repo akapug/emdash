@@ -465,7 +465,7 @@ function isCompleteWxrTerm(term: Partial<WxrTerm>): term is WxrTerm {
  */
 export function parseWxr(stream: Readable): Promise<WxrData> {
 	return new Promise((resolve, reject) => {
-		const parser = sax.createStream(true, { trim: true });
+		const parser = sax.createStream(true, { trim: false, normalize: false });
 
 		const data: WxrData = {
 			site: {},
@@ -662,7 +662,7 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 						currentItem.menuOrder = parseInt(text, 10);
 						break;
 					case "wp:post_password":
-						currentItem.postPassword = text || undefined;
+						currentItem.postPassword = currentText || undefined;
 						break;
 					case "wp:is_sticky":
 						currentItem.isSticky = text === "1";
@@ -1068,7 +1068,7 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 						}
 						break;
 					case "wp:post_password":
-						currentItem.postPassword = text || undefined;
+						currentItem.postPassword = currentText || undefined;
 						break;
 					case "wp:is_sticky":
 						currentItem.isSticky = text === "1";

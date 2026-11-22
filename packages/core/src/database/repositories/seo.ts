@@ -3,6 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import type { Database } from "../types.js";
+import { ProtectedContentRepository } from "./protected-content.js";
 import type { ContentSeo, ContentSeoInput } from "./types.js";
 
 /** Default SEO values for content without an explicit SEO row */
@@ -126,6 +127,12 @@ export class SeoRepository {
 			return this.get(collection, contentId);
 		}
 
+		if (
+			(await new ProtectedContentRepository(this.db).writeSeo(collection, contentId, input)) !==
+			null
+		) {
+			return { ...SEO_DEFAULTS, noIndex: true };
+		}
 		const now = new Date().toISOString();
 
 		// Use INSERT ON CONFLICT for atomic upsert — avoids TOCTOU race
@@ -168,6 +175,13 @@ export class SeoRepository {
 		input: ContentSeoInput,
 	): Promise<boolean> {
 		if (!hasAnyField(input)) return false;
+		const protectedWrite = await new ProtectedContentRepository(this.db).writeSeo(
+			collection,
+			contentId,
+			input,
+			true,
+		);
+		if (protectedWrite !== null) return protectedWrite;
 		const result = await this.db
 			.insertInto("_emdash_seo")
 			.values({
@@ -190,6 +204,14 @@ export class SeoRepository {
 	 * Delete SEO data for a content item.
 	 */
 	async delete(collection: string, contentId: string): Promise<void> {
+		if (await new ProtectedContentRepository(this.db).find(collection, contentId)) {
+			await this.db
+				.updateTable("_emdash_protected_content")
+				.set({ seo: null })
+				.where("collection", "=", collection)
+				.where("content_id", "=", contentId)
+				.execute();
+		}
 		await this.db
 			.deleteFrom("_emdash_seo")
 			.where("collection", "=", collection)
@@ -203,7 +225,12 @@ export class SeoRepository {
 	 * Used by duplicate. Clears canonical (it pointed to the original).
 	 */
 	async copyForDuplicate(collection: string, sourceId: string, targetId: string): Promise<void> {
-		const source = await this.get(collection, sourceId);
+		const privateRepo = new ProtectedContentRepository(this.db);
+		const privateSource = await privateRepo.find(collection, sourceId);
+		if (privateSource && !(await privateRepo.find(collection, targetId))) return;
+		const source: ContentSeo = privateSource
+			? { ...SEO_DEFAULTS, ...(privateSource.seo ? JSON.parse(privateSource.seo) : {}) }
+			: await this.get(collection, sourceId);
 
 		// Only write if there's actual SEO data worth copying
 		if (

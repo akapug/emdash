@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 
 import type { ContentFieldFilters } from "../../content-list-query.js";
+import type { ContentProtection } from "../../content/protection.js";
 import { isSqlite } from "../../database/dialect-helpers.js";
 import { BylineRepository } from "../../database/repositories/byline.js";
 import type { ContentBylineInput } from "../../database/repositories/byline.js";
@@ -1161,6 +1162,7 @@ export async function handleContentCreate(
 	collection: string,
 	body: {
 		data: Record<string, unknown>;
+		protection?: ContentProtection;
 		slug?: string | null;
 		status?: string;
 		authorId?: string;
@@ -1274,6 +1276,7 @@ export async function handleContentCreate(
 				type: collection,
 				slug,
 				data: body.data,
+				protection: body.protection,
 				status: body.status || "draft",
 				authorId: body.authorId,
 				locale: effectiveLocale,
