@@ -24,6 +24,14 @@ if (!Number.isInteger(year) || year < 1 || year > 9999 || !Number.isInteger(mont
 	return Astro.redirect("/404");
 }
 
+// A DATE THAT DOES NOT EXIST IS A 404, as WordPress answers it. Without this,
+// `/date/2024/04/31/` rolls into 1 May and shows May's posts under April's
+// address — a page the source site never served.
+const exists = new Date(Date.UTC(year, month - 1, day));
+if (exists.getUTCFullYear() !== year || exists.getUTCMonth() !== month - 1 || exists.getUTCDate() !== day) {
+	return Astro.redirect("/404");
+}
+
 const from = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 // The NEXT day, by the same arithmetic WordPress uses: the last day of a month
 // rolls into the first of the next, and 31 December into the next year.
