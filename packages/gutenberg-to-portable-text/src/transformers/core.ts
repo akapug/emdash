@@ -2,7 +2,7 @@
  * Transformers for WordPress core/* blocks
  */
 
-import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
+import { parseFragment, serialize, type DefaultTreeAdapterMap } from "parse5";
 
 import { textAlignOfAttrs, textAlignOfTag } from "../align.js";
 import { autoembedBlock, findSoleAutoembed } from "../autoembed.js";
@@ -27,11 +27,7 @@ import { attrString, attrNumber, attrBoolean, attrObject } from "../types.js";
 import { sanitizeHref } from "../url.js";
 
 // Regex patterns for core block transformers
-const UOL_TAG_PATTERN = /<[uo]l[^>]*>([\s\S]*)<\/[uo]l>/i;
 const LI_TAG_PATTERN = /<li[^>]*>([\s\S]*?)<\/li>/i;
-const UL_TAG_PATTERN = /<ul[^>]*>([\s\S]*)<\/ul>/i;
-const OL_TAG_PATTERN = /<ol[^>]*>([\s\S]*)<\/ol>/i;
-const NESTED_LIST_PATTERN = /<[uo]l[^>]*>[\s\S]*<\/[uo]l>/gi;
 const P_TAG_PATTERN = /<p[^>]*>([\s\S]*?)<\/p>/gi;
 const P_TAG_SINGLE_PATTERN = /<p[^>]*>([\s\S]*?)<\/p>/i;
 const HREF_PATTERN = /href="([^"]*)"/i;
@@ -165,11 +161,10 @@ export const list: BlockTransformer = (block, _options, context) => {
 		return parseListItemBlocks(block.innerBlocks, listItem, 1, context);
 	}
 
-	// Old format: HTML content in innerHTML
-	const listMatch = block.innerHTML.match(UOL_TAG_PATTERN);
-	const listContent = listMatch?.[1] || block.innerHTML;
-
-	return parseListItems(listContent, listItem, 1, context);
+	// Old format: HTML content in innerHTML, parsed with parse5 so nested lists,
+	// omitted </li> closing tags, comments, and attributes containing '<ul' or '>'
+	// follow the HTML5 spec in linear time.
+	return parseListHtml(block.innerHTML, listItem, 1, context);
 };
 
 /**
@@ -211,98 +206,101 @@ function parseListItemBlocks(
 	return blocks;
 }
 
+type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
+type HtmlElementNode = DefaultTreeAdapterMap["element"];
+
+function isHtmlElement(node: HtmlChildNode): node is HtmlElementNode {
+	return "tagName" in node;
+}
+
+function isHtmlListElement(node: HtmlChildNode): node is HtmlElementNode {
+	return isHtmlElement(node) && (node.tagName === "ul" || node.tagName === "ol");
+}
+
+function serializeHtmlNodes(nodes: HtmlChildNode[]): string {
+	if (nodes.length === 0) return "";
+	return serialize({
+		nodeName: "#document-fragment",
+		childNodes: nodes,
+	} as DefaultTreeAdapterMap["documentFragment"]);
+}
+
 /**
- * Parse list items from HTML
+ * Parse older-format HTML lists using parse5 so nested lists, text between
+ * nested lists, omitted </li> closing tags, comments, and attributes containing
+ * '<ul' or '>' are handled per the HTML5 spec in linear time.
  */
-function parseListItems(
+function parseListHtml(
 	html: string,
+	defaultListItem: "bullet" | "number",
+	level: number,
+	context: TransformContext,
+): PortableTextBlock[] {
+	const fragment = parseFragment(html);
+	const rootLists = fragment.childNodes.filter(isHtmlListElement);
+	if (rootLists.length > 0) {
+		const blocks: PortableTextBlock[] = [];
+		for (const rootList of rootLists) {
+			blocks.push(...walkListChildren(rootList.childNodes, defaultListItem, level, context));
+		}
+		return blocks;
+	}
+	return walkListChildren(fragment.childNodes, defaultListItem, level, context);
+}
+
+function walkListChildren(
+	nodes: HtmlChildNode[],
 	listItem: "bullet" | "number",
 	level: number,
 	context: TransformContext,
 ): PortableTextBlock[] {
 	const blocks: PortableTextBlock[] = [];
-
-	// Match <li> elements - need to handle nested lists carefully
-	// Find each top-level <li> by tracking tag depth
-	const liItems = extractTopLevelListItems(html);
-
-	for (const liContent of liItems) {
-		// AN ITEM IS WALKED IN ORDER, not searched for "the" nested list. An item
-		// can hold a list, then more of its own words, then another list, and a
-		// nested list can itself hold a nested list. Taking the first <ul> and the
-		// first <ol> by regex lost the words between them and re-parsed a
-		// grandchild at the wrong level, drawing it twice.
-		blocks.push(...parseItemInOrder(liContent, listItem, level, context));
+	for (const node of nodes) {
+		if (!isHtmlElement(node)) continue;
+		if (node.tagName === "li") {
+			blocks.push(...walkListItemNodes(node.childNodes, listItem, level, context));
+		} else if (node.tagName === "ul" || node.tagName === "ol") {
+			const nestedKind = node.tagName === "ol" ? "number" : "bullet";
+			blocks.push(...walkListChildren(node.childNodes, nestedKind, level + 1, context));
+		}
 	}
-
 	return blocks;
 }
 
 /**
- * One list item's content, walked left to right: its own text becomes list-item
- * blocks at `level`, and each nested list becomes items at `level + 1` in the
- * order it appears. Text after a nested list is the item's own text again, so it
- * is drawn as another item at the same level — a list-item block holds no list.
+ * Walk one <li>'s child nodes left to right: its own nodes become list-item
+ * blocks at `level`, and each nested <ul>/<ol> becomes items at `level + 1` in
+ * document order.
  */
-function parseItemInOrder(
-	html: string,
+function walkListItemNodes(
+	nodes: HtmlChildNode[],
 	listItem: "bullet" | "number",
 	level: number,
 	context: TransformContext,
 ): PortableTextBlock[] {
 	const blocks: PortableTextBlock[] = [];
-	let run = "";
+	let pending: HtmlChildNode[] = [];
 	const flush = () => {
-		const text = run.trim();
-		run = "";
-		if (text) blocks.push(...listItemBlocks(text, listItem, level, context));
+		if (pending.length === 0) return;
+		const html = serializeHtmlNodes(pending).trim();
+		pending = [];
+		if (html) {
+			blocks.push(...listItemBlocks(html, listItem, level, context));
+		}
 	};
 
-	let i = 0;
-	while (i < html.length) {
-		const open = /^<([uo])l\b[^>]*>/iu.exec(html.slice(i));
-		if (open) {
+	for (const node of nodes) {
+		if (node.nodeName === "#comment") continue;
+		if (isHtmlListElement(node)) {
 			flush();
-			const close = findMatchingListClose(html, i);
-			if (close === -1) {
-				// An unclosed list: keep the rest as this item's text rather than
-				// dropping it, so nothing silently disappears.
-				run += html.slice(i);
-				break;
-			}
-			const inner = html.slice(i + open[0].length, close.start);
-			blocks.push(...parseListItems(inner, open[1]!.toLowerCase() === "o" ? "number" : "bullet", level + 1, context));
-			i = close.end;
+			const nestedKind = node.tagName === "ol" ? "number" : "bullet";
+			blocks.push(...walkListChildren(node.childNodes, nestedKind, level + 1, context));
 			continue;
 		}
-		run += html[i];
-		i += 1;
+		pending.push(node);
 	}
 	flush();
 	return blocks;
-}
-
-/**
- * The matching close of the list tag that opens at `start`, by depth, so a list
- * inside a list does not end the outer one at the inner close.
- */
-function findMatchingListClose(html: string, start: number): { start: number; end: number } | -1 {
-	const open = /^<([uo])l\b[^>]*>/iu.exec(html.slice(start));
-	if (!open) return -1;
-	const kind = open[1]!.toLowerCase();
-	let depth = 1;
-	let i = start + open[0].length;
-	const tag = new RegExp(`<(/?)${kind}l\\b[^>]*>`, "giu");
-	tag.lastIndex = i;
-	for (let m = tag.exec(html); m; m = tag.exec(html)) {
-		if (m[1] === "/") {
-			depth -= 1;
-			if (depth === 0) return { start: m.index, end: m.index + m[0].length };
-		} else {
-			depth += 1;
-		}
-	}
-	return -1;
 }
 
 /**
@@ -331,92 +329,6 @@ function listItemBlocks(
 
 		return block;
 	});
-}
-
-/**
- * Extract top-level <li> items from HTML, handling nested lists correctly
- */
-function extractTopLevelListItems(html: string): string[] {
-	const items: string[] = [];
-	let depth = 0;
-	let currentItem = "";
-	let inLi = false;
-	let i = 0;
-
-	while (i < html.length) {
-		// Check for opening tags
-		if (html.substring(i, i + 3).toLowerCase() === "<li") {
-			// Find end of tag
-			const tagEnd = html.indexOf(">", i);
-			if (tagEnd === -1) break;
-
-			if (!inLi) {
-				inLi = true;
-				i = tagEnd + 1;
-				continue;
-			} else {
-				// Nested li
-				currentItem += html.substring(i, tagEnd + 1);
-				depth++;
-				i = tagEnd + 1;
-				continue;
-			}
-		}
-
-		// Check for closing </li>
-		if (html.substring(i, i + 5).toLowerCase() === "</li>") {
-			if (depth === 0) {
-				// End of current top-level item
-				items.push(currentItem);
-				currentItem = "";
-				inLi = false;
-				i += 5;
-				continue;
-			} else {
-				// End of nested item
-				currentItem += "</li>";
-				depth--;
-				i += 5;
-				continue;
-			}
-		}
-
-		// Check for nested list tags to track depth
-		if (
-			html.substring(i, i + 3).toLowerCase() === "<ul" ||
-			html.substring(i, i + 3).toLowerCase() === "<ol"
-		) {
-			const tagEnd = html.indexOf(">", i);
-			if (tagEnd !== -1) {
-				currentItem += html.substring(i, tagEnd + 1);
-				i = tagEnd + 1;
-				continue;
-			}
-		}
-
-		if (
-			html.substring(i, i + 5).toLowerCase() === "</ul>" ||
-			html.substring(i, i + 5).toLowerCase() === "</ol>"
-		) {
-			currentItem += html.substring(i, i + 5);
-			i += 5;
-			continue;
-		}
-
-		// Regular character
-		if (inLi) {
-			currentItem += html[i];
-		}
-		i++;
-	}
-
-	// Handle case where closing </li> is missing
-	if (currentItem.trim()) {
-		items.push(currentItem);
-	}
-
-	// Filter out empty items that may result from whitespace between tags
-	return items.filter((item) => item.trim().length > 0);
 }
 
 /**

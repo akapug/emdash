@@ -285,14 +285,20 @@ describe("gutenbergToPortableText", () => {
 			const result = gutenbergToPortableText(content);
 			const items = result.filter((b) => "listItem" in b) as PortableTextTextBlock[];
 
-			expect(items.map((b) => ({ level: b.level, text: b.children.map((c) => c.text).join("") }))).toEqual([
-				{ level: 1, text: "one" },
-				{ level: 2, text: "a" },
-				{ level: 3, text: "b" },
+			expect(
+				items.map((b) => ({
+					level: b.level,
+					listItem: b.listItem,
+					text: b.children.map((c) => c.text).join(""),
+				})),
+			).toEqual([
+				{ level: 1, listItem: "bullet", text: "one" },
+				{ level: 2, listItem: "bullet", text: "a" },
+				{ level: 3, listItem: "number", text: "b" },
 			]);
 		});
 
-		it("keeps an item's own text that sits between two nested lists", () => {
+		it("keeps an item's own text that sits between two nested lists in exact order and level", () => {
 			// An item can hold a list, then more of its own words, then another
 			// list. The words between them are the item's text and must not be
 			// swallowed by the nested-list strip.
@@ -302,11 +308,104 @@ describe("gutenbergToPortableText", () => {
 
 			const result = gutenbergToPortableText(content);
 			const items = result.filter((b) => "listItem" in b) as PortableTextTextBlock[];
-			const texts = items.map((b) => b.children.map((c) => c.text).join(""));
 
-			expect(texts).toContain("one");
-			expect(texts.join(" ")).toContain("middle");
-			expect(texts.join(" ")).toContain("end");
+			expect(
+				items.map((b) => ({
+					level: b.level,
+					listItem: b.listItem,
+					text: b.children.map((c) => c.text).join(""),
+				})),
+			).toEqual([
+				{ level: 1, listItem: "bullet", text: "one" },
+				{ level: 2, listItem: "bullet", text: "a" },
+				{ level: 1, listItem: "bullet", text: "middle" },
+				{ level: 2, listItem: "number", text: "b" },
+				{ level: 1, listItem: "bullet", text: "end" },
+			]);
+		});
+
+		it("does not misparse list tags inside HTML attributes, HTML comments, or attributes containing '>'", () => {
+			const withComment = `<!-- wp:list -->
+<ul>
+  <li>one<!-- <ul> -->two<ul><li>sub</li></ul></li>
+</ul>
+<!-- /wp:list -->`;
+			const commentItems = gutenbergToPortableText(withComment).filter(
+				(b) => "listItem" in b,
+			) as PortableTextTextBlock[];
+			expect(
+				commentItems.map((b) => ({
+					level: b.level,
+					listItem: b.listItem,
+					text: b.children.map((c) => c.text).join(""),
+				})),
+			).toEqual([
+				{ level: 1, listItem: "bullet", text: "onetwo" },
+				{ level: 2, listItem: "bullet", text: "sub" },
+			]);
+
+			// Unescaped '>' inside an attribute value is tested with texturize: false
+			// because WordPress's wptexturize splits tags at the first '>' before block parsing.
+			const withAttrTags = `<!-- wp:list -->
+<ul>
+  <li><span data-tip="<ul><li>fake</li></ul>">real</span></li>
+  <li>one<!-- <ul> -->two<ul data-label="a > b"><li>sub</li></ul></li>
+</ul>
+<!-- /wp:list -->`;
+			const attrItems = gutenbergToPortableText(withAttrTags, { texturize: false }).filter(
+				(b) => "listItem" in b,
+			) as PortableTextTextBlock[];
+			expect(
+				attrItems.map((b) => ({
+					level: b.level,
+					listItem: b.listItem,
+					text: b.children.map((c) => c.text).join(""),
+				})),
+			).toEqual([
+				{ level: 1, listItem: "bullet", text: "real" },
+				{ level: 1, listItem: "bullet", text: "onetwo" },
+				{ level: 2, listItem: "bullet", text: "sub" },
+			]);
+		});
+
+		it("parses HTML5 lists with omitted </li> closing tags and direct-child nested lists", () => {
+			const content = `<!-- wp:list -->
+<ul><li>one<li>two<ul><li>sub</ul><li>three</ul>
+<!-- /wp:list -->`;
+
+			const result = gutenbergToPortableText(content);
+			const items = result.filter((b) => "listItem" in b) as PortableTextTextBlock[];
+
+			expect(
+				items.map((b) => ({
+					level: b.level,
+					listItem: b.listItem,
+					text: b.children.map((c) => c.text).join(""),
+				})),
+			).toEqual([
+				{ level: 1, listItem: "bullet", text: "one" },
+				{ level: 1, listItem: "bullet", text: "two" },
+				{ level: 2, listItem: "bullet", text: "sub" },
+				{ level: 1, listItem: "bullet", text: "three" },
+			]);
+
+			const siblingNested = `<!-- wp:list -->
+<ul><li>one</li><ul><li>sub</li></ul><li>two</li></ul>
+<!-- /wp:list -->`;
+			const siblingResult = gutenbergToPortableText(siblingNested);
+			const siblingItems = siblingResult.filter((b) => "listItem" in b) as PortableTextTextBlock[];
+
+			expect(
+				siblingItems.map((b) => ({
+					level: b.level,
+					listItem: b.listItem,
+					text: b.children.map((c) => c.text).join(""),
+				})),
+			).toEqual([
+				{ level: 1, listItem: "bullet", text: "one" },
+				{ level: 2, listItem: "bullet", text: "sub" },
+				{ level: 1, listItem: "bullet", text: "two" },
+			]);
 		});
 
 		it("preserves formatting in list items", () => {
