@@ -20,6 +20,7 @@ import {
 	type WxrData,
 	type WxrPost,
 	parseWxrDate,
+	handleContentSchedule,
 } from "emdash";
 
 import { requirePerm } from "#api/authorize.js";
@@ -447,8 +448,11 @@ export async function importContent(
 			}
 
 			const protection = await importProtection(post, config);
+			// THE MOMENT, parsed once: `mapStatus` needs it to tell a scheduled post
+			// from a missed schedule, and the create needs it for `createdAt`.
+			const parsedDate = parseWxrDate(post.postDateGmt, post.pubDate, post.postDate);
 			const status =
-				protection.protected && !protection.protection ? "draft" : mapStatus(post.status);
+				protection.protected && !protection.protection ? "draft" : mapStatus(post.status, parsedDate);
 
 			// Build data object with required fields. The title and excerpt as
 			// WordPress printed them (the_title and the_excerpt run wptexturize),
@@ -493,7 +497,6 @@ export async function importContent(
 
 			// Preserve original WordPress dates using the shared WXR date parser.
 			// Fallback chain: postDateGmt (UTC) → pubDate (RFC 2822) → postDate (site-local).
-			const parsedDate = parseWxrDate(post.postDateGmt, post.pubDate, post.postDate);
 			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
 			const publishedAt = status === "published" && createdAt ? createdAt : undefined;
 
@@ -538,6 +541,26 @@ export async function importContent(
 				const createdItem = (createResult.data as { item: { id: string } } | undefined)?.item;
 
 				if (createdItem) stored(post, collection, createdItem.id);
+
+				// A SCHEDULED POST CARRIES ITS MOMENT. `handleContentCreate` takes a
+				// status but no `scheduledAt`, so the schedule is set on the row it
+				// just made — the same call the admin's own schedule action makes.
+				if (createdItem && status === "scheduled" && parsedDate) {
+					const scheduled = await handleContentSchedule(
+						db,
+						collection,
+						createdItem.id,
+						parsedDate.toISOString(),
+					);
+					if (!scheduled.success) {
+						// THE ROW IS STILL THERE, as a draft: a schedule that could not be
+						// set is named, never silently a published post.
+						result.errors.push({
+							title: post.title || "Untitled",
+							error: `scheduled for ${parsedDate.toISOString()} but the schedule could not be set (${scheduled.error?.message ?? "unknown"}); it is a draft`,
+						});
+					}
+				}
 
 				// Track translation group: the first imported post in a group
 				// becomes the anchor that later translations link to.
@@ -667,10 +690,28 @@ export function wxrSeoContext(
 	return { ...site, entryPaths: paths };
 }
 
-function mapStatus(wpStatus: string | undefined): string {
+/**
+ * WordPress's status, as EmDash's.
+ *
+ * `future` IS A SCHEDULED POST, and it used to fall to `default: "draft"` — so a
+ * site's whole scheduled calendar arrived as drafts with no date, and the
+ * operator had to find and re-schedule each one by hand.
+ *
+ * A `future` post whose moment is still ahead becomes `scheduled` with that
+ * moment. A `future` post whose moment has PASSED is a missed schedule:
+ * WordPress publishes it on its next cron run, so it is `published` here.
+ *
+ * `pending` and `private` stay `draft`: neither is public, and a private post is
+ * admins-only, which a draft is the honest EmDash shape of.
+ */
+export function mapStatus(wpStatus: string | undefined, scheduledAt?: Date | null, now: Date = new Date()): string {
 	switch (wpStatus) {
 		case "publish":
 			return "published";
+		case "future":
+			// A MISSED SCHEDULE IS PUBLISHED: WordPress's cron would have published it.
+			if (!scheduledAt) return "draft";
+			return scheduledAt.getTime() > now.getTime() ? "scheduled" : "published";
 		case "draft":
 			return "draft";
 		case "pending":
