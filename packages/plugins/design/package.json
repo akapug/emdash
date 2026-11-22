@@ -1,0 +1,36 @@
+{
+	"name": "@emdash-cms/plugin-design",
+	"version": "0.1.0",
+	"description": "No-code visual design tweaks plugin for EmDash CMS (emb/27)",
+	"type": "module",
+	"main": "src/index.ts",
+	"exports": {
+		".": "./src/index.ts",
+		"./admin": "./src/admin.tsx",
+		"./css": "./src/css.ts",
+		"./picker": "./src/picker.ts"
+	},
+	"files": [
+		"src"
+	],
+	"keywords": [
+		"emdash",
+		"cms",
+		"plugin",
+		"design",
+		"visual-editor"
+	],
+	"license": "MIT",
+	"peerDependencies": {
+		"emdash": "workspace:>=0.11.0",
+		"react": "^18.0.0 || ^19.0.0"
+	},
+	"devDependencies": {
+		"@types/react": "catalog:",
+		"vitest": "catalog:"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"typecheck": "tsgo --noEmit"
+	}
+}
