@@ -227,27 +227,82 @@ function parseListItems(
 	const liItems = extractTopLevelListItems(html);
 
 	for (const liContent of liItems) {
-		// Check for nested lists
-		const nestedUl = liContent.match(UL_TAG_PATTERN);
-		const nestedOl = liContent.match(OL_TAG_PATTERN);
-
-		// Get text content (excluding nested lists)
-		let textContent = liContent.replace(NESTED_LIST_PATTERN, "").trim();
-
-		if (textContent) {
-			blocks.push(...listItemBlocks(textContent, listItem, level, context));
-		}
-
-		// Process nested lists
-		if (nestedUl?.[1]) {
-			blocks.push(...parseListItems(nestedUl[1], "bullet", level + 1, context));
-		}
-		if (nestedOl?.[1]) {
-			blocks.push(...parseListItems(nestedOl[1], "number", level + 1, context));
-		}
+		// AN ITEM IS WALKED IN ORDER, not searched for "the" nested list. An item
+		// can hold a list, then more of its own words, then another list, and a
+		// nested list can itself hold a nested list. Taking the first <ul> and the
+		// first <ol> by regex lost the words between them and re-parsed a
+		// grandchild at the wrong level, drawing it twice.
+		blocks.push(...parseItemInOrder(liContent, listItem, level, context));
 	}
 
 	return blocks;
+}
+
+/**
+ * One list item's content, walked left to right: its own text becomes list-item
+ * blocks at `level`, and each nested list becomes items at `level + 1` in the
+ * order it appears. Text after a nested list is the item's own text again, so it
+ * is drawn as another item at the same level — a list-item block holds no list.
+ */
+function parseItemInOrder(
+	html: string,
+	listItem: "bullet" | "number",
+	level: number,
+	context: TransformContext,
+): PortableTextBlock[] {
+	const blocks: PortableTextBlock[] = [];
+	let run = "";
+	const flush = () => {
+		const text = run.trim();
+		run = "";
+		if (text) blocks.push(...listItemBlocks(text, listItem, level, context));
+	};
+
+	let i = 0;
+	while (i < html.length) {
+		const open = /^<([uo])l\b[^>]*>/iu.exec(html.slice(i));
+		if (open) {
+			flush();
+			const close = findMatchingListClose(html, i);
+			if (close === -1) {
+				// An unclosed list: keep the rest as this item's text rather than
+				// dropping it, so nothing silently disappears.
+				run += html.slice(i);
+				break;
+			}
+			const inner = html.slice(i + open[0].length, close.start);
+			blocks.push(...parseListItems(inner, open[1]!.toLowerCase() === "o" ? "number" : "bullet", level + 1, context));
+			i = close.end;
+			continue;
+		}
+		run += html[i];
+		i += 1;
+	}
+	flush();
+	return blocks;
+}
+
+/**
+ * The matching close of the list tag that opens at `start`, by depth, so a list
+ * inside a list does not end the outer one at the inner close.
+ */
+function findMatchingListClose(html: string, start: number): { start: number; end: number } | -1 {
+	const open = /^<([uo])l\b[^>]*>/iu.exec(html.slice(start));
+	if (!open) return -1;
+	const kind = open[1]!.toLowerCase();
+	let depth = 1;
+	let i = start + open[0].length;
+	const tag = new RegExp(`<(/?)${kind}l\\b[^>]*>`, "giu");
+	tag.lastIndex = i;
+	for (let m = tag.exec(html); m; m = tag.exec(html)) {
+		if (m[1] === "/") {
+			depth -= 1;
+			if (depth === 0) return { start: m.index, end: m.index + m[0].length };
+		} else {
+			depth += 1;
+		}
+	}
+	return -1;
 }
 
 /**

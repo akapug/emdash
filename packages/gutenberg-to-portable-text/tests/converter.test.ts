@@ -274,6 +274,41 @@ describe("gutenbergToPortableText", () => {
 			});
 		});
 
+		it("does not duplicate a nested list that sits inside another nested list", () => {
+			// The older block-editor format keeps the whole list as HTML. An item
+			// whose nested list itself holds a nested list must draw each item
+			// ONCE: the outer item, its child, and the grandchild.
+			const content = `<!-- wp:list -->
+<ul><li>one<ul><li>a<ol><li>b</li></ol></li></ul></li></ul>
+<!-- /wp:list -->`;
+
+			const result = gutenbergToPortableText(content);
+			const items = result.filter((b) => "listItem" in b) as PortableTextTextBlock[];
+
+			expect(items.map((b) => ({ level: b.level, text: b.children.map((c) => c.text).join("") }))).toEqual([
+				{ level: 1, text: "one" },
+				{ level: 2, text: "a" },
+				{ level: 3, text: "b" },
+			]);
+		});
+
+		it("keeps an item's own text that sits between two nested lists", () => {
+			// An item can hold a list, then more of its own words, then another
+			// list. The words between them are the item's text and must not be
+			// swallowed by the nested-list strip.
+			const content = `<!-- wp:list -->
+<ul><li>one<ul><li>a</li></ul>middle<ol><li>b</li></ol>end</li></ul>
+<!-- /wp:list -->`;
+
+			const result = gutenbergToPortableText(content);
+			const items = result.filter((b) => "listItem" in b) as PortableTextTextBlock[];
+			const texts = items.map((b) => b.children.map((c) => c.text).join(""));
+
+			expect(texts).toContain("one");
+			expect(texts.join(" ")).toContain("middle");
+			expect(texts.join(" ")).toContain("end");
+		});
+
 		it("preserves formatting in list items", () => {
 			const content = `<!-- wp:list -->
 <ul>
