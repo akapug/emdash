@@ -61,6 +61,9 @@ export async function deleteBackupArchive(name: string): Promise<void> {
 /** URL for the one-click full backup download (plain GET, session cookie auth). */
 export const BACKUP_EXPORT_URL = `${API_BASE}/settings/backups/export`;
 
+/** URL for the self-serve full site export ZIP (WXR + JSON + settings + redirects + media + README). */
+export const BACKUP_EXPORT_ZIP_URL = `${API_BASE}/settings/backups/export?format=zip`;
+
 /** URL for downloading a stored archive. */
 export function backupArchiveUrl(name: string): string {
 	return `${API_BASE}/settings/backups/archives/${encodeURIComponent(name)}`;

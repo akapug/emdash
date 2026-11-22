@@ -294,6 +294,7 @@
     "citty": "^0.2.2",
     "consola": "^3.4.2",
     "croner": "^10.0.1",
+    "fflate": "^0.8.2",
     "highlight.js": "catalog:",
     "lowlight": "catalog:",
     "jose": "^6.1.3",

@@ -2170,6 +2170,9 @@ importers:
       croner:
         specifier: ^10.0.1
         version: 10.0.1
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
       highlight.js:
         specifier: 'catalog:'
         version: 11.11.2

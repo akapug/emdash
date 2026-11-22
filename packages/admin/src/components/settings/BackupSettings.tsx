@@ -24,6 +24,7 @@ import * as React from "react";
 import {
 	backupArchiveUrl,
 	BACKUP_EXPORT_URL,
+	BACKUP_EXPORT_ZIP_URL,
 	createBackupArchive,
 	deleteBackupArchive,
 	fetchBackupOverview,
@@ -191,7 +192,10 @@ export function BackupSettings() {
 							<p className="text-sm leading-5 text-pretty text-kumo-subtle">
 								{t`Download a complete backup of your site: all content (including drafts and trash), collections, taxonomies, menus, widgets, media metadata, and site settings. User accounts and secrets are never included.`}
 							</p>
-							<div className="flex justify-end">
+							<div className="flex flex-wrap justify-end gap-2">
+								<LinkButton href={BACKUP_EXPORT_ZIP_URL} variant="outline" icon={<DownloadSimple />}>
+									{t`Download full export (.zip)`}
+								</LinkButton>
 								<LinkButton href={BACKUP_EXPORT_URL} variant="outline" icon={<DownloadSimple />}>
 									{t`Download backup`}
 								</LinkButton>

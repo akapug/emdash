@@ -42,6 +42,7 @@ describe("backup route registration", () => {
 		const patterns = injectRoute.mock.calls.map((call) => (call[0] as { pattern: string }).pattern);
 		expect(patterns).toContain("/_emdash/api/settings/backups");
 		expect(patterns).toContain("/_emdash/api/settings/backups/export");
+		expect(patterns).toContain("/_emdash/api/settings/backups/media/[...key]");
 		expect(patterns).toContain("/_emdash/api/settings/backups/archives");
 		expect(patterns).toContain("/_emdash/api/settings/backups/archives/[name]");
 	});

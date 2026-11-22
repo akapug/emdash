@@ -502,6 +502,11 @@ export function injectCoreRoutes(
 	});
 
 	injectRoute({
+		pattern: "/_emdash/api/settings/backups/media/[...key]",
+		entrypoint: resolveRoute("api/settings/backups/media/[...key].ts"),
+	});
+
+	injectRoute({
 		pattern: "/_emdash/api/settings/backups/archives",
 		entrypoint: resolveRoute("api/settings/backups/archives/index.ts"),
 	});
