@@ -28,8 +28,8 @@ import { sanitizeHref } from "../url.js";
 
 // Regex patterns for core block transformers
 const LI_TAG_PATTERN = /<li[^>]*>([\s\S]*?)<\/li>/i;
-const P_TAG_PATTERN = /<p\b[^>]*>([\s\S]*?)<\/p>/gi;
-const P_TAG_SINGLE_PATTERN = /<p\b[^>]*>([\s\S]*?)<\/p>/i;
+const P_TAG_PATTERN = /<p(?=[\s/>])[^>]*>([\s\S]*?)<\/p>/gi;
+const P_TAG_SINGLE_PATTERN = /<p(?=[\s/>])[^>]*>([\s\S]*?)<\/p>/i;
 const HREF_PATTERN = /href="([^"]*)"/i;
 /** The link an image block's image stands in: the attributes of the `<a>` that opens on the `<img>`. */
 const IMAGE_LINK_PATTERN = /<a\s([^>]*)>\s*<img\b/i;

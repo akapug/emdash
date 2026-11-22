@@ -307,42 +307,36 @@ A <a href=" https://example.org/t/">text link</a>.`;
 });
 
 describe("classic content: a <pre> is code, not a paragraph", () => {
-	it("keeps a preformatted block's code when a paragraph follows it", () => {
+	it("keeps a preformatted block's code separate from a following paragraph", () => {
 		// `<p[^>]*>` matches `<pre>`: the "re" is swallowed by the attribute part.
-		// A lone <pre> survives, but one followed by a <p> is consumed as a
-		// paragraph and its code is drawn as the paragraph's own words.
+		// A lone <pre> survives, but one followed by a <p> was consumed as a single
+		// paragraph ("line1\nline2\nwords") and the code block vanished.
 		const out = htmlToPortableText("<pre>line1\nline2</pre><p>words</p>");
 		const code = out.filter((b) => b._type === "code") as { code?: string }[];
+		const paragraphs = out.filter((b) => b._type === "block") as {
+			children: { text: string }[];
+		}[];
 
 		expect(code).toHaveLength(1);
-		expect(code[0]?.code).toContain("line1");
+		expect(code[0]?.code).toBe("line1\nline2");
+		expect(paragraphs.map((b) => b.children.map((c) => c.text).join(""))).toEqual(["words"]);
 	});
 
-	it("does not merge a pre's code into the paragraph beside it", () => {
-		const out = htmlToPortableText("<pre>code</pre><p>words</p>");
-		const texts = out.map((b) => ("children" in b ? b.children.map((c) => c.text).join("") : ""));
-
-		expect(texts).not.toContain("codewords");
-		expect(texts.join(" ")).toContain("words");
-	});
-});
-
-describe("classic content: a <pre> is code, not a paragraph", () => {
-	it("keeps a pre's code out of the paragraph beside it", () => {
-		// `<p[^>]*>` matches `<pre>`: the "re" is swallowed by the attribute part,
-		// so a pre followed by a p was read as one paragraph of run-together text.
-		const out = htmlToPortableText("<pre>code</pre><p>words</p>");
-		const texts = out.map((b) => ("children" in b ? b.children.map((c) => c.text).join("") : ""));
-
-		expect(texts).not.toContain("code\nwords");
-		expect(texts.join(" ")).toContain("words");
-	});
-
-	it("keeps a pre's code as a code block when a paragraph follows", () => {
-		const out = htmlToPortableText("<pre>code</pre><p>words</p>");
+	it("keeps <pre class=...> separate from a following paragraph and does not match hyphenated <p-card>", () => {
+		const out = htmlToPortableText('<pre class="lang-js">code</pre><p>words</p>');
 		const code = out.filter((b) => b._type === "code") as { code?: string }[];
+		const paragraphs = out.filter((b) => b._type === "block") as {
+			children: { text: string }[];
+		}[];
 
 		expect(code).toHaveLength(1);
-		expect(code[0]?.code).toContain("code");
+		expect(code[0]?.code).toBe("code");
+		expect(paragraphs.map((b) => b.children.map((c) => c.text).join(""))).toEqual(["words"]);
+
+		const custom = htmlToPortableText("<p-card>card</p-card><p>words</p>");
+		const customTexts = custom
+			.filter((b) => "children" in b)
+			.map((b) => (b as { children: { text: string }[] }).children.map((c) => c.text).join(""));
+		expect(customTexts).toEqual(["card", "words"]);
 	});
 });

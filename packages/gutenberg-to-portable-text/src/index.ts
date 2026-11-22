@@ -45,7 +45,7 @@ import { sanitizeHref } from "./url.js";
 const LINKED_IMAGE = String.raw`<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:\s|<br\s*\/?>)*<img\s+([^>]+)\/?>(?:\s|<br\s*\/?>)*<\/a>`;
 /** A block element, a rule or line break, or an image outside any (the link around it too: groups 4 and 5). */
 const BLOCK_ELEMENT_PATTERN = new RegExp(
-	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr|form)\b[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
+	String.raw`<(p|h[1-6]|blockquote|pre|ul|ol|figure|div|table|dl|hr|form)(?=[\s/>])[^>]*>([\s\S]*?)<\/\1>|<(hr|br)\s*\/?>|${LINKED_IMAGE}|<img\s+[^>]+\/?>`,
 	"gu",
 );
 /**
