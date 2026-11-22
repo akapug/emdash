@@ -407,6 +407,21 @@ describe("gutenbergToPortableText", () => {
 			]);
 		});
 
+		it("does not read a <pre> as a <p> inside a quote", () => {
+			// `<p[^>]*>` matches `<pre>`: the "re" is swallowed by the attribute
+			// part. A quote holding a preformatted block must not draw its code as
+			// the quote's own words.
+			const content = `<!-- wp:quote -->
+<blockquote class="wp-block-quote"><pre>code</pre><p>words</p></blockquote>
+<!-- /wp:quote -->`;
+
+			const result = gutenbergToPortableText(content);
+			const texts = result.map((b) => ("children" in b ? b.children.map((c) => c.text).join("") : ""));
+
+			expect(texts).not.toContain("codewords");
+			expect(texts.join(" ")).toContain("words");
+		});
+
 		it("preserves formatting in list items", () => {
 			const content = `<!-- wp:list -->
 <ul>

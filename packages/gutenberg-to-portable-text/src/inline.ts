@@ -21,7 +21,7 @@ const WHITESPACE_PATTERN = /\S/;
 
 // Pre-compiled block tag patterns
 const BLOCK_TAG_PATTERNS: Record<string, { open: RegExp; close: RegExp }> = {
-	p: { open: /^<p[^>]*>/i, close: /<\/p>$/i },
+	p: { open: /^<p\b[^>]*>/i, close: /<\/p>$/i },
 	h1: { open: /^<h1[^>]*>/i, close: /<\/h1>$/i },
 	h2: { open: /^<h2[^>]*>/i, close: /<\/h2>$/i },
 	h3: { open: /^<h3[^>]*>/i, close: /<\/h3>$/i },
