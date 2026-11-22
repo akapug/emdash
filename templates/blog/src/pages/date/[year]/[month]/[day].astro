@@ -2,12 +2,12 @@
 /**
  * A DAY ARCHIVE — WordPress's `/2024/04/12/`.
  *
- * The source site served one for every year that held a published post, and the
+ * The source site served one for every day that held a published post, and the
  * migration 301s each of those paths here. The listing is the same posts
- * collection filtered to the year, so "2024" shows 2024's posts rather than the
+ * collection filtered to the day, so it shows that day's posts rather than the
  * whole blog.
  *
- * AN EMPTY PERIOD IS NOT A 404. WordPress answers a year with no posts with its
+ * AN EMPTY PERIOD IS NOT A 404. WordPress answers a day with no posts with its
  * "nothing found" page, not a missing-page error, and a visitor who followed a
  * link to it should see that rather than a 404 — so the route renders the empty
  * listing.
@@ -29,10 +29,12 @@ const from = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}
 // rolls into the first of the next, and 31 December into the next year.
 const at = new Date(Date.UTC(year, month - 1, day + 1));
 const to = at.toISOString().slice(0, 10);
+const cursor = Astro.url.searchParams.get("cursor") || undefined;
 const { entries: posts, cacheHint, nextCursor } = await getEmDashCollection("posts", {
 	where: { published_at: { gte: from, lt: to } },
 	orderBy: { published_at: "desc" },
 	limit: 20,
+	cursor,
 });
 
 if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
@@ -66,6 +68,7 @@ if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
 			)
 		}
 		<nav class="pagination" aria-label="Pagination">
+			{cursor && <a href={`/date/${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}`}>First page</a>}
 			{nextCursor && <a href={`/date/${year}/${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}?cursor=${encodeURIComponent(nextCursor)}`}>Next page</a>}
 		</nav>
 	</section>

@@ -24,10 +24,12 @@ if (!Number.isInteger(year) || year < 1 || year > 9999) {
 
 const from = `${String(year).padStart(4, "0")}-01-01`;
 const to = `${String(year + 1).padStart(4, "0")}-01-01`;
+const cursor = Astro.url.searchParams.get("cursor") || undefined;
 const { entries: posts, cacheHint, nextCursor } = await getEmDashCollection("posts", {
 	where: { published_at: { gte: from, lt: to } },
 	orderBy: { published_at: "desc" },
 	limit: 20,
+	cursor,
 });
 
 if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
@@ -61,6 +63,7 @@ if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
 			)
 		}
 		<nav class="pagination" aria-label="Pagination">
+			{cursor && <a href={`/date/${year}`}>First page</a>}
 			{nextCursor && <a href={`/date/${year}?cursor=${encodeURIComponent(nextCursor)}`}>Next page</a>}
 		</nav>
 	</section>
