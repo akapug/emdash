@@ -126,7 +126,7 @@ async function seedTenant(
 	await opts.set("emdash:ip_salt", `ip-salt-${tag}`);
 	await opts.set("emdash:passkey_pending:req1", `pending-passkey-${tag}`);
 	await opts.set("plugin:embark-helper:linkKey", `helper-link-${tag}`);
-	await opts.set("plugin:stripe:apiKey", `sk_live_${tag}`);
+	await opts.set("plugin:stripe:apiKey", `sk_test_fixture_${tag}`);
 
 	const now = new Date().toISOString();
 	await sql`
@@ -265,11 +265,152 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 			"ip-salt-alpha",
 			"pending-passkey-alpha",
 			"helper-link-alpha",
-			"sk_live_alpha",
+			"sk_test_fixture_alpha",
 			"private-backup-alpha",
 		]) {
 			expect(allText).not.toContain(secret);
 		}
+	});
+
+	it("includes protected page bodies in emdash-backup.json and as draft in WXR while scrubbing password verifiers", async () => {
+		await seedTenant(db, storage, "alpha");
+		const now = new Date().toISOString();
+		// Blanked public projection in ec_post + real body and verifier in _emdash_protected_content
+		await sql`
+			INSERT INTO ec_post (id, slug, status, title, content, created_at, updated_at, published_at, version)
+			VALUES ('prot-1', 'board-notes', 'published', 'Board Notes', '[]', ${now}, ${now}, ${now}, 1)
+		`.execute(db);
+		const verifierJson = JSON.stringify({
+			algorithm: "pbkdf2-sha256",
+			iterations: 100000,
+			salt: "super-secret-salt-value-999",
+			hash: "super-secret-hash-digest-999",
+		});
+		const privateData = JSON.stringify({
+			title: "Board Notes",
+			content: [
+				{
+					_type: "block",
+					style: "normal",
+					children: [{ _type: "span", text: "Confidential Q4 board budget figures." }],
+				},
+			],
+		});
+		await sql`
+			INSERT INTO _emdash_protected_content (collection, content_id, credential_version, verifier, data, seo)
+			VALUES ('post', 'prot-1', 1, ${verifierJson}, ${privateData}, NULL)
+		`.execute(db);
+
+		const stream = await streamSiteExportZip({
+			db,
+			storage,
+			siteUrl: "https://alpha.example.org",
+			now: new Date("2026-10-01T12:00:00Z"),
+		});
+		const files = unzipSync(await readStreamToBytes(stream));
+
+		// emdash-backup.json includes private body under protectedContent, never the verifier
+		const backup = JSON.parse(dec(files["emdash-backup.json"]));
+		expect(backup.protectedContent).toHaveLength(1);
+		expect(backup.protectedContent[0]).toMatchObject({
+			collection: "post",
+			contentId: "prot-1",
+		});
+		expect(JSON.stringify(backup.protectedContent[0].data)).toContain("Confidential Q4 board budget figures.");
+
+		// WXR includes the private body AND writes it as draft (password not exported)
+		const wxr = dec(files["wordpress.xml"]);
+		expect(wxr).toContain("Confidential Q4 board budget figures.");
+		expect(wxr).toMatch(/<wp:post_name><!\[CDATA\[board-notes\]\]><\/wp:post_name>\s*<wp:status><!\[CDATA\[draft\]\]><\/wp:status>/);
+
+		// export.json and README list protected entries and WXR block caveats
+		const summary = JSON.parse(dec(files["export.json"]));
+		expect(summary.protectedEntries).toEqual([
+			{ collection: "post", contentId: "prot-1", slug: "board-notes" },
+		]);
+		const readme = dec(files["README.md"]);
+		expect(readme).toContain("board-notes");
+		expect(readme).toMatch(/draft revisions/i);
+
+		// Verifier hash & salt must NEVER appear anywhere in the archive
+		const allText = Object.values(files)
+			.map((b) => dec(b))
+			.join("\n");
+		expect(allText).not.toContain("super-secret-salt-value-999");
+		expect(allText).not.toContain("super-secret-hash-digest-999");
+	});
+
+	it("reports missing media keys and no-storage-configured in export.json, and aborts the stream on mid-stream read errors", async () => {
+		await seedTenant(db, storage, "alpha");
+
+		// 1. No storage configured: recorded explicitly in export.json
+		const noStorageStream = await streamSiteExportZip({
+			db,
+			siteUrl: "https://alpha.example.org",
+		});
+		const noStorageFiles = unzipSync(await readStreamToBytes(noStorageStream));
+		const noStorageSummary = JSON.parse(dec(noStorageFiles["export.json"]));
+		expect(noStorageSummary.media.storageConfigured).toBe(false);
+		expect(noStorageSummary.media.note).toMatch(/no storage configured/i);
+		expect(noStorageSummary.media.missing).toEqual(["alpha/hero.png", "alpha/large.bin"]);
+
+		// 2. Failed download() key is listed in export.json media.missing
+		await storage.delete("alpha/hero.png");
+		const missingKeyStream = await streamSiteExportZip({
+			db,
+			storage,
+			siteUrl: "https://alpha.example.org",
+		});
+		const missingKeyFiles = unzipSync(await readStreamToBytes(missingKeyStream));
+		const missingSummary = JSON.parse(dec(missingKeyFiles["export.json"]));
+		expect(missingSummary.media.missing).toEqual(["alpha/hero.png"]);
+
+		// 3. Mid-stream error aborts the ZIP stream (truncated, no EOCD central directory, rejects reader)
+		const brokenStorage: Storage = {
+			...storage,
+			async download(key) {
+				if (key === "alpha/large.bin") {
+					let sent = false;
+					return {
+						contentType: "application/octet-stream",
+						size: 64,
+						body: new ReadableStream<Uint8Array>({
+							pull(controller) {
+								if (!sent) {
+									sent = true;
+									controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+									return;
+								}
+								controller.error(new Error("simulated mid-stream R2 failure"));
+							},
+						}),
+					};
+				}
+				return storage.download(key);
+			},
+		};
+		const brokenStream = await streamSiteExportZip({
+			db,
+			storage: brokenStorage,
+			siteUrl: "https://alpha.example.org",
+		});
+		const collected: Uint8Array[] = [];
+		const reader = brokenStream.getReader();
+		let caught: unknown = null;
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				collected.push(value);
+			}
+		} catch (e) {
+			caught = e;
+		}
+		expect(caught).toBeInstanceOf(Error);
+		expect((caught as Error).message).toMatch(/simulated mid-stream R2 failure/);
+		// Truncated archive must not contain ZIP End-of-Central-Directory signature (PK\x05\x06)
+		const partial = Buffer.concat(collected);
+		expect(partial.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06]))).toBe(false);
 	});
 
 	it("spills media past the Worker byte limit into media-manifest.json with signed time-limited URLs that serve the bytes", async () => {
