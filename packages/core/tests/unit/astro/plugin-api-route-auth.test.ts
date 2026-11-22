@@ -140,4 +140,37 @@ describe("plugin API catch-all caller forwarding", () => {
 			undefined,
 		);
 	});
+
+	it("rejects a signed-out visitor sending x-embark-admin: 1 to a private route with 401", async () => {
+		const { locals, handlePluginApiRoute } = createLocals(null, false);
+		const request = new Request("https://example.com/_emdash/api/plugins/demo/adminAction", {
+			method: "POST",
+			headers: { "X-EmDash-Request": "1", "x-embark-admin": "1" },
+		});
+		const res = await POST({
+			params: { pluginId: "demo", path: "adminAction" },
+			request,
+			locals,
+		} as never);
+		expect(res.status).toBe(401);
+		expect(handlePluginApiRoute).not.toHaveBeenCalled();
+	});
+
+	it("strips client-supplied x-embark-admin before dispatching a public plugin route", async () => {
+		const { locals, handlePluginApiRoute } = createLocals(null, true);
+		const request = new Request("https://example.com/_emdash/api/plugins/demo/publicEndpoint", {
+			method: "GET",
+			headers: { "x-embark-admin": "1", "x-custom": "keep" },
+		});
+		const res = await GET({
+			params: { pluginId: "demo", path: "publicEndpoint" },
+			request,
+			locals,
+		} as never);
+		expect(res.status).toBe(200);
+		expect(handlePluginApiRoute).toHaveBeenCalledOnce();
+		const forwarded = handlePluginApiRoute.mock.calls[0]![3] as Request;
+		expect(forwarded.headers.get("x-embark-admin")).toBeNull();
+		expect(forwarded.headers.get("x-custom")).toBe("keep");
+	});
 });

@@ -89,6 +89,13 @@ export interface PluginApiRequestContext {
 	editorDispatch?: PluginEditorExtensionDispatch;
 }
 
+function stripUntrustedInternalHeaders(request: Request): Request {
+	if (!request.headers.has("x-embark-admin")) return request;
+	const headers = new Headers(request.headers);
+	headers.delete("x-embark-admin");
+	return new Request(request, { headers });
+}
+
 /** Dispatch a request through the production plugin-route policy boundary. */
 export async function dispatchPluginApiRequest({
 	runtime,
@@ -115,11 +122,12 @@ export async function dispatchPluginApiRequest({
 	}
 
 	const caller = routeMeta.public ? undefined : (user ?? undefined);
+	const sanitizedRequest = stripUntrustedInternalHeaders(request);
 	const result = await runtime.handlePluginApiRoute(
 		pluginId,
 		method,
 		path,
-		request,
+		sanitizedRequest,
 		caller,
 		invalidateContentCache,
 		editorDispatch,
