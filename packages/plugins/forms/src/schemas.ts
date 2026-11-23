@@ -4,6 +4,8 @@
 
 import { z } from "astro/zod";
 
+import { MAX_NOTIFY_EMAILS } from "./notify-emails.js";
+
 /** Matches http(s) scheme at start of URL */
 const HTTP_SCHEME_RE = /^https?:\/\//i;
 
@@ -86,7 +88,8 @@ const formPageSchema = z.object({
  * admin, or a migration from another site's export), so the list is bounded
  * where it is stored.
  */
-export const MAX_NOTIFY_EMAILS = 10;
+// One cap, defined beside the admin parser so the browser bundle never pulls in zod (emb/141).
+export { MAX_NOTIFY_EMAILS };
 
 const autoresponderSchema = z
 	.object({
