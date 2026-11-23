@@ -213,7 +213,7 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 		const zipBytes = await readStreamToBytes(stream);
 		const files = unzipSync(zipBytes);
 
-		expect(Object.keys(files).sort()).toEqual([
+		expect(Object.keys(files).toSorted()).toEqual([
 			"README.md",
 			"emdash-backup.json",
 			"export.json",
@@ -245,7 +245,11 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 		// Redirects
 		const redirects = JSON.parse(dec(files["redirects.json"]));
 		expect(redirects).toHaveLength(1);
-		expect(redirects[0]).toMatchObject({ source: "/old-alpha", destination: "/hello-alpha", type: 301 });
+		expect(redirects[0]).toMatchObject({
+			source: "/old-alpha",
+			destination: "/hello-alpha",
+			type: 301,
+		});
 
 		// Media bytes match
 		expect(dec(files["uploads/alpha/hero.png"])).toBe("PNG-alpha");
@@ -317,12 +321,16 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 			collection: "post",
 			contentId: "prot-1",
 		});
-		expect(JSON.stringify(backup.protectedContent[0].data)).toContain("Confidential Q4 board budget figures.");
+		expect(JSON.stringify(backup.protectedContent[0].data)).toContain(
+			"Confidential Q4 board budget figures.",
+		);
 
 		// WXR includes the private body AND writes it as draft (password not exported)
 		const wxr = dec(files["wordpress.xml"]);
 		expect(wxr).toContain("Confidential Q4 board budget figures.");
-		expect(wxr).toMatch(/<wp:post_name><!\[CDATA\[board-notes\]\]><\/wp:post_name>\s*<wp:status><!\[CDATA\[draft\]\]><\/wp:status>/);
+		expect(wxr).toMatch(
+			/<wp:post_name><!\[CDATA\[board-notes\]\]><\/wp:post_name>\s*<wp:status><!\[CDATA\[draft\]\]><\/wp:status>/,
+		);
 
 		// export.json and README list protected entries and WXR block caveats
 		const summary = JSON.parse(dec(files["export.json"]));
@@ -435,7 +443,9 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 		};
 		expect(manifest.items).toHaveLength(1);
 		expect(manifest.items[0]?.storageKey).toBe("alpha/large.bin");
-		expect(manifest.items[0]?.url).toContain("/_emdash/api/settings/backups/media/alpha/large.bin?exp=");
+		expect(manifest.items[0]?.url).toContain(
+			"/_emdash/api/settings/backups/media/alpha/large.bin?exp=",
+		);
 
 		const readme = dec(files["README.md"]);
 		expect(readme).toContain("media-manifest.json");
@@ -538,19 +548,25 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 		await seedTenant(db, storage, "alpha");
 
 		const anon = await exportGet({
-			request: new Request("https://alpha.example.org/_emdash/api/settings/backups/export?format=zip"),
+			request: new Request(
+				"https://alpha.example.org/_emdash/api/settings/backups/export?format=zip",
+			),
 			locals: { emdash: { db, storage }, user: null },
 		} as never);
 		expect(anon.status).toBe(401);
 
 		const editor = await exportGet({
-			request: new Request("https://alpha.example.org/_emdash/api/settings/backups/export?format=zip"),
+			request: new Request(
+				"https://alpha.example.org/_emdash/api/settings/backups/export?format=zip",
+			),
 			locals: { emdash: { db, storage }, user: { id: "u1", role: 40 } },
 		} as never);
 		expect(editor.status).toBe(403);
 
 		const zipRes = await exportGet({
-			request: new Request("https://alpha.example.org/_emdash/api/settings/backups/export?format=zip"),
+			request: new Request(
+				"https://alpha.example.org/_emdash/api/settings/backups/export?format=zip",
+			),
 			locals: { emdash: { db, storage }, user: { id: "u1", role: 50 } },
 		} as never);
 		expect(zipRes.status).toBe(200);
