@@ -366,6 +366,7 @@ const HAS_ENCODED_BRACKET_PATTERN = /&(?:#0*91|#x0*5b|lbrack|#0*93|#x0*5d|rbrack
 const ENCODED_BRACKET_PATTERN = /&(?:#0*91|#x0*5b|lbrack|#0*93|#x0*5d|rbrack);/gi;
 const ENCODED_LBRACKET_PATTERN = /^&(?:#0*91|#x0*5b|lbrack);$/i;
 const IFRAME_TAG_PATTERN = /<iframe\b/i;
+const SELF_CLOSING_TAG_END_PATTERN = /\s*\/>$/;
 
 /**
  * Close page-builder self-closing or unclosed `<iframe>` tags before running
@@ -383,7 +384,7 @@ function closeOpenIframes(html: string): string {
 				const open = !loc.endTag || html[loc.startTag.endOffset - 2] === "/";
 				if (open) {
 					const rawTag = html.slice(loc.startTag.startOffset, loc.startTag.endOffset);
-					const closedTag = rawTag.replace(/\s*\/>$/, ">") + "</iframe>";
+					const closedTag = rawTag.replace(SELF_CLOSING_TAG_END_PATTERN, ">") + "</iframe>";
 					split = { start: loc.startTag.startOffset, end: loc.startTag.endOffset, tag: closedTag };
 					return true;
 				}
