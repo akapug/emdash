@@ -17,17 +17,21 @@ const MARKER = '<div data-embark-subscribe="1"></div>';
 /** Render the template's htmlBlock override with the plugin answering or not. */
 async function render(html: string, answers: boolean) {
 	vi.resetModules();
-	vi.doMock("emdash/astro", () => ({
+	vi.doMock("emdash/plugin-utils", () => ({
 		getPublicPluginApiRouteHandler: () =>
 			answers
 				? async () => ({ success: true, data: { confirmed: 3 } })
 				: null,
 	}));
-	// The real HtmlBlock sanitizes and draws; this arm is about the marker, so
-	// the block is a passthrough that emits the HTML it was given.
+	// HtmlBlock is mocked because the real one pulls in PortableText, which
+	// needs the `virtual:emdash/block-components` module this package's test
+	// config does not provide. The mock emits the HTML as MARKUP, which is what
+	// the real block does (set:html) — a mock returning a raw string is escaped
+	// by Astro, and that is not what a page serves.
 	const { createComponent } = await import("astro/runtime/server/index.js");
+	const { unescapeHTML } = await import("astro/runtime/server/escape.js");
 	vi.doMock("emdash/ui", () => ({
-		HtmlBlock: createComponent((_result: unknown, props: { node: { html: string } }) => props.node.html),
+		HtmlBlock: createComponent((_result: unknown, props: { node: { html: string } }) => unescapeHTML(props.node.html)),
 	}));
 	const { default: WpShellHtmlBlock } = await import(
 		"../../../../templates/blog-cloudflare/src/components/WpShellHtmlBlock.astro"
