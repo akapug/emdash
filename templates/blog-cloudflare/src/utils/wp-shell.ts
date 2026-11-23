@@ -1906,9 +1906,11 @@ const POPUP_SELECTOR = /^[#.\w\s,\-[\]='"*:>~+]+$/;
 function checkPopup(value: unknown): string | null {
 	if (!isObject(value)) return "a popup is not an object";
 	if (typeof value.id !== "string" || !POPUP_ID.test(value.id)) return "a popup has no id";
-	if (typeof value.html !== "string" || value.html.trim().length === 0) return "a popup has no html";
+	if (typeof value.html !== "string" || value.html.trim().length === 0)
+		return "a popup has no html";
 	if (value.slug !== undefined && typeof value.slug !== "string") return "a popup slug is not text";
-	if (value.title !== undefined && typeof value.title !== "string") return "a popup title is not text";
+	if (value.title !== undefined && typeof value.title !== "string")
+		return "a popup title is not text";
 	if (value.closeLabel !== undefined && typeof value.closeLabel !== "string")
 		return "a popup closeLabel is not text";
 	if (value.closeOnOverlay !== undefined && typeof value.closeOnOverlay !== "boolean")
@@ -1923,7 +1925,10 @@ function checkPopup(value: unknown): string | null {
 		if (!isObject(t)) return "a popup trigger is not an object";
 		if (t.type !== "auto_open" && t.type !== "click_open" && t.type !== "exit_intent")
 			return "a popup trigger type is unknown";
-		if (t.delayMs !== undefined && (typeof t.delayMs !== "number" || !Number.isFinite(t.delayMs) || t.delayMs < 0))
+		if (
+			t.delayMs !== undefined &&
+			(typeof t.delayMs !== "number" || !Number.isFinite(t.delayMs) || t.delayMs < 0)
+		)
 			return "a popup trigger delayMs is invalid";
 		if (t.cookieName !== undefined && typeof t.cookieName !== "string")
 			return "a popup trigger cookieName is not text";
