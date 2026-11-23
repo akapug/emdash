@@ -330,4 +330,25 @@ describe("a newsletter form is carried WORKING", () => {
 		expect(out, "no form survives").not.toContain("<form");
 		expect(out, "no input survives").not.toContain("<input");
 	});
+
+	// Allowing the control tags must not carry a control that sits in NO form,
+	// or after an approved form has closed: those get what they got before.
+	it("A CONTROL OUTSIDE ANY FORM GETS WHAT IT GOT BEFORE", () => {
+		const out = sanitizeContent(
+			'<p>Name <input name="loose"> <button>Go now</button> <label>A label</label> <textarea>typed secret</textarea> <select><option>An option</option></select></p>',
+		);
+		for (const tag of ["<input", "<button", "<label", "<textarea", "<select", "<option", "embark-unwrapped-control", "data-embark-drop"]) {
+			expect(out, `${tag} does not survive outside a form`).not.toContain(tag);
+		}
+		expect(out, "a button's text unwraps, as before").toContain("Go now");
+		expect(out, "a label's text unwraps, as before").toContain("A label");
+		expect(out, "a textarea goes whole, as before").not.toContain("typed secret");
+		expect(out, "an option goes whole, as before").not.toContain("An option");
+	});
+
+	it("A CONTROL AFTER AN APPROVED FORM CLOSES IS NOT CARRIED", () => {
+		const out = sanitizeContent(`${MAILCHIMP}<p><input name="after-the-form"></p>`);
+		expect(out, "the approved form's field is still there").toContain('name="EMAIL"');
+		expect(out, "the control after it is not").not.toContain("after-the-form");
+	});
 });

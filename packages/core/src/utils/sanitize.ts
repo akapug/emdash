@@ -214,7 +214,29 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	const added = new Set([...addedHostnames(), ...perCall].filter((h) => !DEFAULT_HOSTS.has(h)));
 	const allowed = [...DEFAULT_HOSTS, ...added];
 	const newsletterHosts = options.newsletterFormHosts ?? DEFAULT_NEWSLETTER_FORM_HOSTS;
+	// One entry per open <form>: whether its action is an allowlisted newsletter
+	// host. onOpenTag/onCloseTag run before the transforms and see the raw
+	// attributes, so a control's transform reads the form it actually sits in.
+	const forms: boolean[] = [];
+	const insideNewsletterForm = () => forms.length > 0 && forms[forms.length - 1] === true;
+	// A CONTROL OUTSIDE AN APPROVED FORM gets exactly what it got before forms
+	// were carried: a textarea or an option goes whole with its text (they were
+	// nonTextTags), and an input, button, label or select is unwrapped to its
+	// text, because a name sanitize-html does not allow is discarded that way.
+	const DROP_WHOLE = new Set(["textarea", "option"]);
+	const control = (tagName: string, attribs: sanitizeHtml.Attributes): sanitizeHtml.Tag => {
+		if (insideNewsletterForm()) return { tagName, attribs };
+		if (DROP_WHOLE.has(tagName)) return { tagName, attribs: { "data-embark-drop": "1" } };
+		return { tagName: "embark-unwrapped-control", attribs: {} };
+	};
+	const controlTransforms = Object.fromEntries([...CONTROL_TAGS].map((t) => [t, control]));
 	return sanitizeHtml(html, {
+		onOpenTag: (name, attribs) => {
+			if (name === "form") forms.push(newsletterActionOf(attribs, newsletterHosts) !== null);
+		},
+		onCloseTag: (name) => {
+			if (name === "form") forms.pop();
+		},
 		// A NEWSLETTER FORM'S CONTROLS ARE ALLOWED HERE, and gated below: the
 		// exclusiveFilter drops every one of them unless it sits inside a form
 		// whose action is an allowlisted newsletter host. Allowing the tag and
@@ -237,6 +259,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		},
 		allowedIframeHostnames: allowed,
 		transformTags: {
+			...controlTransforms,
 			// A NEWSLETTER FORM IS CARRIED WORKING. The action is approved here,
 			// and the marker is what the exclusiveFilter reads to keep the form
 			// and its controls; every other form is dropped whole.
@@ -286,6 +309,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			// whole — with their controls, which is what every other form got
 			// before this change.
 			if (frame.tag === "form") return frame.attribs["data-embark-newsletter"] !== "1";
+			if (frame.attribs["data-embark-drop"] === "1") return true;
 			return false;
 		},
 	});
