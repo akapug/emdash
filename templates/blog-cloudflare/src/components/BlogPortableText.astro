@@ -2,6 +2,7 @@
 import { PortableText } from "emdash/ui";
 import type { ComponentProps } from "astro/types";
 import BlogEmbed from "./BlogEmbed.astro";
+import PostsGrid from "./PostsGrid.astro";
 type Props = ComponentProps<typeof PortableText>;
 const { components, ...props } = Astro.props;
 ---
@@ -10,6 +11,6 @@ const { components, ...props } = Astro.props;
 	{...props}
 	components={{
 		...components,
-		type: { embed: BlogEmbed, ...components?.type },
+		type: { embed: BlogEmbed, "posts-grid": PostsGrid, ...components?.type },
 	}}
 />

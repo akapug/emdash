@@ -52,6 +52,7 @@ import WpShellLink from "../components/WpShellLink.astro";
 import WpShellNote from "../components/WpShellNote.astro";
 import WpShellEmbed from "../components/WpShellEmbed.astro";
 import WpShellForm from "../components/WpShellForm.astro";
+import PostsGrid from "../components/PostsGrid.astro";
 import WpShellSkeleton from "../components/WpShellSkeleton.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
 import {
@@ -268,7 +269,13 @@ const components = {
 	block: WpShellBlock,
 	// htmlBlock is overridden so a sign-up marker inside imported HTML becomes
 	// the subscriptions plugin's own form (../components/WpShellHtmlBlock.astro).
-	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm, htmlBlock: WpShellHtmlBlock },
+	type: {
+		image: WpShellImage,
+		embed: WpShellEmbed,
+		"emdash-form": WpShellForm,
+		"posts-grid": PostsGrid,
+		htmlBlock: WpShellHtmlBlock,
+	},
 	mark: { link: WpShellLink, wpShellNote: WpShellNote },
 };
 const widgetComponents = {
