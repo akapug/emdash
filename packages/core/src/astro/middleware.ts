@@ -914,10 +914,19 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
 				// Attach to locals for route handlers
 				locals.emdash = {
-					getImportSyncCapability: runtime.getImportSyncCapability.bind(runtime),
-					handleImportSync: runtime.handleImportSync.bind(runtime),
-					handleImportSyncGrantCreate: runtime.handleImportSyncGrantCreate.bind(runtime),
-					handleImportSyncGrantRevoke: runtime.handleImportSyncGrantRevoke.bind(runtime),
+					// Import sync: optional like the routes that read it, which answer 501 when absent.
+					...(runtime.getImportSyncCapability
+						? { getImportSyncCapability: runtime.getImportSyncCapability.bind(runtime) }
+						: {}),
+					...(runtime.handleImportSync
+						? { handleImportSync: runtime.handleImportSync.bind(runtime) }
+						: {}),
+					...(runtime.handleImportSyncGrantCreate
+						? { handleImportSyncGrantCreate: runtime.handleImportSyncGrantCreate.bind(runtime) }
+						: {}),
+					...(runtime.handleImportSyncGrantRevoke
+						? { handleImportSyncGrantRevoke: runtime.handleImportSyncGrantRevoke.bind(runtime) }
+						: {}),
 					// Content handlers
 					handleContentList: runtime.handleContentList.bind(runtime),
 					handleContentGet: runtime.handleContentGet.bind(runtime),

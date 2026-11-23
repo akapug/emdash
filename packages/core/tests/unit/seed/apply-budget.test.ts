@@ -9,6 +9,7 @@ import type {
 } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { IMPORT_BASELINE_FRESH_INSTALL_QUERIES } from "../../../src/database/import-baseline-triggers.js";
 import { BylineRepository } from "../../../src/database/repositories/byline.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import { TaxonomyRepository } from "../../../src/database/repositories/taxonomy.js";
@@ -183,12 +184,19 @@ describe("applySeed with a budget", () => {
 
 	it("keeps every call near its budget, however many entries earlier calls wrote", async () => {
 		const budget = 150;
-		const seed = plainSeed(["pages", "posts", "events", "places"], 60);
+		const collections = ["pages", "posts", "events", "places"];
+		const seed = plainSeed(collections, 60);
 
 		const { queries } = await applyInCalls(db, seed, { queries: budget });
 
 		expect(queries.length).toBeGreaterThan(1);
-		expect(Math.max(...queries)).toBeLessThanOrEqual(budget + 25);
+		const [first, ...later] = queries;
+		// Fork: the call that creates the schema also installs each new collection's
+		// import-baseline triggers, a fixed cost per collection that no budget check splits.
+		expect(first).toBeLessThanOrEqual(
+			budget + 25 + collections.length * IMPORT_BASELINE_FRESH_INSTALL_QUERIES,
+		);
+		expect(Math.max(...later)).toBeLessThanOrEqual(budget + 25);
 		const rows = await db
 			.selectFrom("ec_places" as never)
 			.select((eb) => eb.fn.countAll<number>().as("count"))

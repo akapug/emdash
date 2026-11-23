@@ -28,6 +28,63 @@ describe("import baseline invalidation and retention on SQLite", () => {
 		await teardownTestDatabase(db);
 	});
 	importBaselineCases(() => db);
+
+	async function ownedCount(): Promise<number> {
+		const row = await db
+			.selectFrom("_emdash_import_baselines")
+			.select((eb) => eb.fn.countAll<number>().as("count"))
+			.where("customer_owned", "=", 1)
+			.executeTakeFirstOrThrow();
+		return Number(row.count);
+	}
+
+	it("still reads as installed after every table its triggers name is renamed and restored", async () => {
+		for (const table of [
+			"revisions",
+			"_emdash_import_baselines",
+			"_emdash_content_bylines",
+			"content_taxonomies",
+			"_emdash_bylines",
+		]) {
+			// SQLite rewrites each reference to a renamed table as a quoted identifier.
+			// oxlint-disable-next-line no-await-in-loop -- one rename round trip per table
+			await sql`ALTER TABLE ${sql.table(table)} RENAME TO ${sql.table(`${table}_staged`)}`.execute(
+				db,
+			);
+			// oxlint-disable-next-line no-await-in-loop -- one rename round trip per table
+			await sql`ALTER TABLE ${sql.table(`${table}_staged`)} RENAME TO ${sql.table(table)}`.execute(
+				db,
+			);
+		}
+
+		expect(await hasImportBaselineTriggers(db, "post")).toBe(true);
+		await up(db);
+		expect(await ownedCount()).toBe(0);
+	});
+
+	it("accepts the bare table names an earlier install wrote", async () => {
+		const { rows } = await sql<{ name: string; sql: string }>`SELECT name, sql FROM sqlite_master
+			WHERE type = 'trigger' AND name LIKE 'emdash_import_%'`.execute(db);
+		expect(rows.length).toBeGreaterThan(20);
+		for (const row of rows) {
+			// Earlier installs quoted only a collection trigger's ON target.
+			const bare = row.sql
+				.replaceAll('"revisions"', "revisions")
+				.replaceAll(
+					/(?<!ON )"(_emdash_import_baselines|_emdash_content_bylines|content_taxonomies|_emdash_bylines)"/g,
+					"$1",
+				);
+			expect(bare).not.toBe(row.sql);
+			// oxlint-disable-next-line no-await-in-loop -- replace each trigger with its earlier text
+			await sql`DROP TRIGGER ${sql.ref(row.name)}`.execute(db);
+			// oxlint-disable-next-line no-await-in-loop -- replace each trigger with its earlier text
+			await sql.raw(bare).execute(db);
+		}
+
+		expect(await hasImportBaselineTriggers(db, "post")).toBe(true);
+		await up(db);
+		expect(await ownedCount()).toBe(0);
+	});
 });
 
 describe("import baseline schema expansion", () => {
