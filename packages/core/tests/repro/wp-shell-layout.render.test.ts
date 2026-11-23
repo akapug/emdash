@@ -330,6 +330,8 @@ beforeEach(() => {
 	reads.getComments.mockResolvedValue({ items: [], total: 0 });
 	reads.getHomepage.mockReset();
 	reads.getHomepage.mockResolvedValue({ entry: null, collection: "pages", cacheHint: {} });
+	// Back to "not protected", with no call or queued answer carried over from another test.
+	reads.resolveProtectedEntry.mockReset();
 });
 
 describe("WpShellForm: a form in its plugin's markup", () => {
@@ -537,15 +539,24 @@ describe("the /wp-shell/ route: a password-protected entry", () => {
 			},
 			cacheHint: {},
 		});
+		const draw = async () => {
+			const c = await AstroContainer.create();
+			const res = await c.renderToResponse(WpShellRoute, {
+				params: { path: "pages/members" },
+				request: new Request("https://example.org/pages/members"),
+			});
+			return res.text();
+		};
+		// The control: unprotected, the page is drawn and its title is in it, so its absence below means something.
+		const open = await draw();
+		expect(open).toContain("Members only");
+		expect(open).not.toContain("PASSWORD-CHALLENGE-MARKER");
+		reads.resolveProtectedEntry.mockClear();
 		reads.resolveProtectedEntry.mockResolvedValueOnce({
 			response: new Response("<p>PASSWORD-CHALLENGE-MARKER</p>", { status: 200 }),
 		});
-		const c = await AstroContainer.create();
-		const res = await c.renderToResponse(WpShellRoute, {
-			params: { path: "pages/members" },
-			request: new Request("https://example.org/pages/members"),
-		});
-		const body = await res.text();
+		const body = await draw();
+		expect(reads.resolveProtectedEntry).toHaveBeenCalledTimes(1);
 		expect(reads.resolveProtectedEntry).toHaveBeenCalledWith(
 			expect.anything(),
 			"pages",
