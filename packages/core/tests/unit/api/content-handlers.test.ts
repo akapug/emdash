@@ -1164,3 +1164,49 @@ describe("handleContentList — unknown orderBy column on a healthy collection",
 		expect(res.error.code).toBe("COLLECTION_NOT_FOUND");
 	});
 });
+
+// emb/81 — THE _rev CHECK AND THE STAGE READ DIFFERENT ROWS.
+//
+// `handleContentUpdate` validates `_rev` against `resolvedItem`, then strips it,
+// then — inside the draft-staging branch — does `let existing = await
+// repo.findById(...)`, a FRESH read. The stage builds `baseData` from `existing`,
+// not from the row the `_rev` was checked against.
+//
+// WHAT THIS ARM PROVES: a write that lands BEFORE the update starts makes the
+// `_rev` stale, and the update is refused. That is the sequential case.
+//
+// WHAT IT DOES NOT PROVE: a write landing BETWEEN the check and the stage. That
+// needs a hook registered on the runtime class, which these free-function tests
+// do not build. The window is real in the code — `validateRev` reads
+// `resolvedItem`, the stage re-reads `existing` — and closing it is a fork
+// change, not a test.
+describe("emb/81: the _rev check and the draft stage read different rows", () => {
+	it("a write landing between the check and the stage is refused, not staged on top of", async () => {
+		const db = await setupTestDatabaseWithCollections();
+		const created = await handleContentCreate(db, "post", {
+			data: { title: "Original" },
+			status: "draft",
+		});
+		expect(created.success).toBe(true);
+		const id = created.data!.item.id;
+		const rev = created.data!._rev;
+
+		// THE OTHER WRITER. It lands after `rev` was minted, so `rev` is stale.
+		const other = await handleContentUpdate(db, "post", id, { data: { title: "Other Writer" } });
+		expect(other.success).toBe(true);
+
+		// THE STALE WRITE. Its `_rev` names the row as it was BEFORE the other
+		// writer, so it must be refused.
+		const stale = await handleContentUpdate(db, "post", id, {
+			data: { title: "Mine" },
+			_rev: rev,
+		});
+		expect(stale.success, "a stale _rev must be refused").toBe(false);
+		// AND THE STAGE DID NOT USE THE OTHER WRITER'S ROW. The draft branch
+		// re-reads `existing`; if that read is what the stage used, the stale
+		// write would have been staged on top of the other writer's title.
+		const after = await handleContentGet(db, "post", id);
+		expect(after.data?.item.data.title, "the other writer's title stands").toBe("Other Writer");
+		await teardownTestDatabase(db);
+	});
+});
