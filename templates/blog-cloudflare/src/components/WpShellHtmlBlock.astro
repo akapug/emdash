@@ -19,7 +19,7 @@
  */
 import { HtmlBlock } from "emdash/ui";
 import { SubscribeEmbed, hasSubscribeMarker, splitAtSubscribeMarkers } from "@emdash-cms/plugin-subscriptions/astro";
-import { getPublicPluginApiRouteHandler } from "emdash/astro";
+import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 
 interface Props {
 	node: { _type: "htmlBlock"; _key: string; html: string };

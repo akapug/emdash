@@ -443,7 +443,7 @@ export async function unsubscribe(
 	for (;;) {
 		const { items } = await env.outbox.query({ where: { subscriber: id }, limit: 100 });
 		if (items.length === 0) break;
-		await env.outbox.deleteMany(items.map((i) => i.id));
+		await env.outbox.deleteMany(items.map((i: OutboxMessage) => i.id));
 	}
 	return outcome("unsubscribed", sub);
 }
