@@ -65,6 +65,13 @@ const reads = vi.hoisted(() => ({
 	getHomepage: vi.fn(
 		async (): Promise<unknown> => ({ entry: null, collection: "pages", cacheHint: {} }),
 	),
+	// No entry drawn here is password-protected, unless a test says so: the route asks for every entry it draws.
+	resolveProtectedEntry: vi.fn(
+		async (_context: unknown, _collection: string, entry: unknown): Promise<unknown> => ({
+			entry,
+			protected: false,
+		}),
+	),
 }));
 
 /** EmDash's reads, as the template imports them from "emdash"; its SEO helpers are its own, and so are a plugin's helpers. */
@@ -88,6 +95,7 @@ async function emdashReads() {
 		getCollectionInfo: reads.getCollectionInfo,
 		getComments: reads.getComments,
 		getHomepage: reads.getHomepage,
+		resolveProtectedEntry: reads.resolveProtectedEntry,
 		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
 		getSiteSettings: async () => ({ title: "Example" }),
 		getSiteSettingsWithCacheHint: async () => ({
@@ -509,6 +517,42 @@ describe("the /wp-shell/ route: the document title", () => {
 	it("is EmDash's title and the site's name for an entry with none", async () => {
 		expect(await page(seo(null))).toContain("<title>Contact | Example</title>");
 		expect(await page(undefined)).toContain("<title>Contact | Example</title>");
+	});
+});
+
+describe("the /wp-shell/ route: a password-protected entry", () => {
+	it("asks for the entry it draws, and serves the password challenge INSTEAD of the page when one is due", async () => {
+		reads.getEmDashEntry.mockResolvedValue({
+			entry: {
+				id: "members",
+				data: {
+					id: "01LOCKED",
+					title: "Members only",
+					content: [],
+					translationGroup: "01LOCKED",
+					updatedAt: new Date("2026-09-01T00:00:00Z"),
+					publishedAt: null,
+				},
+				edit: { title: {}, content: {} },
+			},
+			cacheHint: {},
+		});
+		reads.resolveProtectedEntry.mockResolvedValueOnce({
+			response: new Response("<p>PASSWORD-CHALLENGE-MARKER</p>", { status: 200 }),
+		});
+		const c = await AstroContainer.create();
+		const res = await c.renderToResponse(WpShellRoute, {
+			params: { path: "pages/members" },
+			request: new Request("https://example.org/pages/members"),
+		});
+		const body = await res.text();
+		expect(reads.resolveProtectedEntry).toHaveBeenCalledWith(
+			expect.anything(),
+			"pages",
+			expect.objectContaining({ data: expect.objectContaining({ id: "01LOCKED" }) }),
+		);
+		expect(body).toContain("PASSWORD-CHALLENGE-MARKER");
+		expect(body).not.toContain("Members only");
 	});
 });
 
@@ -1742,7 +1786,8 @@ describe("a slot map's site: the subtitle and the posts index, drawn as a page i
 			expect(html).not.toContain("wp-shell");
 			expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
 				orderBy: { published_at: "desc" },
-				limit: 20,
+				// The site's Posts Per Page setting; none is set here, so the default of 10 (WordPress's own default).
+				limit: 10,
 				cursor: undefined,
 			});
 		}
