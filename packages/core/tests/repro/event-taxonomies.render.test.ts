@@ -41,12 +41,30 @@ describe("MEC event taxonomies rendering and filtering (emb/106)", () => {
 						{ id: "c2", name: "mec_category", slug: "retreats", label: "Retreats", children: [] },
 					],
 					mec_organizer: [
-						{ id: "o1", name: "mec_organizer", slug: "community-studio", label: "Community Studio", children: [] },
-						{ id: "o2", name: "mec_organizer", slug: "alice-rivera", label: "Alice Rivera", children: [] },
+						{
+							id: "o1",
+							name: "mec_organizer",
+							slug: "community-studio",
+							label: "Community Studio",
+							children: [],
+						},
+						{
+							id: "o2",
+							name: "mec_organizer",
+							slug: "alice-rivera",
+							label: "Alice Rivera",
+							children: [],
+						},
 					],
 					mec_location: [
 						{ id: "l1", name: "mec_location", slug: "main-hall", label: "Main Hall", children: [] },
-						{ id: "l2", name: "mec_location", slug: "barn-stage", label: "Barn Stage", children: [] },
+						{
+							id: "l2",
+							name: "mec_location",
+							slug: "barn-stage",
+							label: "Barn Stage",
+							children: [],
+						},
 					],
 				},
 			},

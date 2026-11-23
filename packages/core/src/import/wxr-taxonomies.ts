@@ -322,7 +322,11 @@ export async function preImportWxrTaxonomies(
 	//   - `wp_theme`: WordPress FSE/block-theme internal metadata tagging
 	//     `wp_template`/`wp_global_styles` with the active theme slug, not site content.
 	for (const term of terms) {
-		if (term.taxonomy === "nav_menu" || term.taxonomy === "language" || term.taxonomy === "wp_theme")
+		if (
+			term.taxonomy === "nav_menu" ||
+			term.taxonomy === "language" ||
+			term.taxonomy === "wp_theme"
+		)
 			continue;
 		// Normalize WordPress' `post_tag` synonym -> EmDash `tag`. WordPress
 		// emits `<wp:tag>` for some exports and `<wp:term wp:term_taxonomy="post_tag">`
