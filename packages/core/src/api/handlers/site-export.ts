@@ -192,45 +192,143 @@ function safeHref(raw: unknown): string | null {
 	return null;
 }
 
+const HEADING_STYLE_PATTERN = /^h[1-6]$/;
+
+function renderBlockInner(b: Record<string, unknown>): string {
+	const markDefs = new Map<string, Record<string, unknown>>();
+	if (Array.isArray(b.markDefs)) {
+		for (const def of b.markDefs) {
+			if (
+				def &&
+				typeof def === "object" &&
+				typeof (def as Record<string, unknown>)._key === "string"
+			) {
+				markDefs.set(
+					(def as Record<string, unknown>)._key as string,
+					def as Record<string, unknown>,
+				);
+			}
+		}
+	}
+	const children = Array.isArray(b.children) ? b.children : [];
+	return children
+		.map((child) => {
+			if (!child || typeof child !== "object") return "";
+			const c = child as Record<string, unknown>;
+			let text = xmlEscape(typeof c.text === "string" ? c.text : "");
+			const marks = Array.isArray(c.marks) ? c.marks : [];
+			for (const mark of marks) {
+				if (mark === "strong") text = `<strong>${text}</strong>`;
+				else if (mark === "em") text = `<em>${text}</em>`;
+				else if (mark === "code") text = `<code>${text}</code>`;
+				else if (typeof mark === "string" && markDefs.has(mark)) {
+					const def = markDefs.get(mark)!;
+					const href = safeHref(def.href);
+					if (href) text = `<a href="${xmlEscape(href)}">${text}</a>`;
+				}
+			}
+			return text;
+		})
+		.join("");
+}
+
+function renderListRun(
+	items: Array<{ listItem: "bullet" | "number"; level: number; inner: string }>,
+): string {
+	let idx = 0;
+	function build(listType: "bullet" | "number", level: number): string {
+		const tag = listType === "number" ? "ol" : "ul";
+		const parts: string[] = [];
+		while (idx < items.length) {
+			const item = items[idx]!;
+			if (item.level < level) break;
+			if (item.level === level && item.listItem !== listType) break;
+			if (item.level > level) {
+				const nested = build(item.listItem, item.level);
+				if (parts.length > 0) {
+					parts[parts.length - 1] = `${parts[parts.length - 1]!.slice(0, -5)}${nested}</li>`;
+				} else {
+					parts.push(`<li>${nested}</li>`);
+				}
+				continue;
+			}
+			idx++;
+			let liContent = item.inner;
+			while (idx < items.length && items[idx]!.level > level) {
+				liContent += build(items[idx]!.listItem, items[idx]!.level);
+			}
+			parts.push(`<li>${liContent}</li>`);
+		}
+		return `<${tag}>${parts.join("")}</${tag}>`;
+	}
+	const html: string[] = [];
+	while (idx < items.length) {
+		html.push(build(items[idx]!.listItem, items[idx]!.level));
+	}
+	return html.join("\n");
+}
+
 function renderPortableText(blocks: unknown, siteUrl: string): string {
 	if (typeof blocks === "string") return blocks;
 	if (!Array.isArray(blocks)) return "";
 	const out: string[] = [];
-	for (const block of blocks) {
-		if (!block || typeof block !== "object") continue;
+	let i = 0;
+	while (i < blocks.length) {
+		const block = blocks[i];
+		if (!block || typeof block !== "object") {
+			i++;
+			continue;
+		}
 		const b = block as Record<string, unknown>;
 		if (b._type === "block") {
-			const markDefs = new Map<string, Record<string, unknown>>();
-			if (Array.isArray(b.markDefs)) {
-				for (const def of b.markDefs) {
-					if (def && typeof def === "object" && typeof (def as Record<string, unknown>)._key === "string") {
-						markDefs.set((def as Record<string, unknown>)._key as string, def as Record<string, unknown>);
-					}
-				}
-			}
-			const children = Array.isArray(b.children) ? b.children : [];
-			const inner = children
-				.map((child) => {
-					if (!child || typeof child !== "object") return "";
-					const c = child as Record<string, unknown>;
-					let text = xmlEscape(typeof c.text === "string" ? c.text : "");
-					const marks = Array.isArray(c.marks) ? c.marks : [];
-					for (const mark of marks) {
-						if (mark === "strong") text = `<strong>${text}</strong>`;
-						else if (mark === "em") text = `<em>${text}</em>`;
-						else if (mark === "code") text = `<code>${text}</code>`;
-						else if (typeof mark === "string" && markDefs.has(mark)) {
-							const def = markDefs.get(mark)!;
-							const href = safeHref(def.href);
-							if (href) text = `<a href="${xmlEscape(href)}">${text}</a>`;
-						}
-					}
-					return text;
-				})
-				.join("");
 			const style = typeof b.style === "string" ? b.style : "normal";
-			if (/^h[1-6]$/.test(style)) out.push(`<${style}>${inner}</${style}>`);
-			else if (style === "blockquote") out.push(`<blockquote><p>${inner}</p></blockquote>`);
+			if (style === "blockquote") {
+				// Group consecutive blockquote-styled blocks (paragraphs + list items)
+				// into ONE <blockquote> so multi-paragraph quotes and quoted lists
+				// export and re-import intact.
+				const run: Array<Record<string, unknown>> = [];
+				while (i < blocks.length) {
+					const cur = blocks[i];
+					if (
+						!cur ||
+						typeof cur !== "object" ||
+						(cur as Record<string, unknown>)._type !== "block" ||
+						(cur as Record<string, unknown>).style !== "blockquote"
+					) {
+						break;
+					}
+					run.push({ ...(cur as Record<string, unknown>), style: "normal" });
+					i++;
+				}
+				out.push(`<blockquote>${renderPortableText(run, siteUrl)}</blockquote>`);
+				continue;
+			}
+			if (b.listItem === "bullet" || b.listItem === "number") {
+				const items: Array<{ listItem: "bullet" | "number"; level: number; inner: string }> = [];
+				while (i < blocks.length) {
+					const cur = blocks[i];
+					if (!cur || typeof cur !== "object") break;
+					const cb = cur as Record<string, unknown>;
+					if (
+						cb._type !== "block" ||
+						cb.style === "blockquote" ||
+						(cb.listItem !== "bullet" && cb.listItem !== "number")
+					) {
+						break;
+					}
+					const rawLevel = typeof cb.level === "number" && cb.level >= 1 ? Math.floor(cb.level) : 1;
+					items.push({
+						listItem: cb.listItem,
+						level: rawLevel,
+						inner: renderBlockInner(cb),
+					});
+					i++;
+				}
+				out.push(renderListRun(items));
+				continue;
+			}
+			const inner = renderBlockInner(b);
+			if (HEADING_STYLE_PATTERN.test(style)) out.push(`<${style}>${inner}</${style}>`);
 			else out.push(`<p>${inner}</p>`);
 		} else if (b._type === "image") {
 			const rawSrc = typeof b.src === "string" ? b.src : typeof b.url === "string" ? b.url : "";
@@ -238,6 +336,7 @@ function renderPortableText(blocks: unknown, siteUrl: string): string {
 			const alt = typeof b.alt === "string" ? b.alt : "";
 			if (src) out.push(`<figure><img src="${xmlEscape(src)}" alt="${xmlEscape(alt)}" /></figure>`);
 		}
+		i++;
 	}
 	return out.join("\n");
 }

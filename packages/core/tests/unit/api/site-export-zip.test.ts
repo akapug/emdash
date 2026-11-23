@@ -13,6 +13,7 @@
  * - Admin-only auth on export?format=zip and backwards-compatible JSON default
  */
 
+import { gutenbergToPortableText } from "@emdash-cms/gutenberg-to-portable-text";
 import { unzipSync } from "fflate";
 import { sql } from "kysely";
 import type { Kysely } from "kysely";
@@ -564,5 +565,56 @@ describe("self-serve streaming site export zip (emb/67)", () => {
 		} as never);
 		expect(jsonRes.status).toBe(200);
 		expect(jsonRes.headers.get("Content-Type")).toBe("application/json");
+	});
+
+	it("exports a quote containing a list as one <blockquote> and round-trips through gutenbergToPortableText", async () => {
+		const imported = gutenbergToPortableText(
+			"<blockquote><p>Before the list</p><ul><li>One<ul><li>Nested</li></ul></li><li>Two</li></ul><p>After the list</p></blockquote>",
+		);
+		const now = new Date().toISOString();
+		await sql`
+			INSERT INTO ec_post (id, slug, status, title, content, created_at, updated_at, published_at, version)
+			VALUES (
+				'post-quote-list',
+				'quote-list',
+				'published',
+				'Quote List',
+				${JSON.stringify(imported)},
+				${now},
+				${now},
+				${now},
+				1
+			)
+		`.execute(db);
+
+		const stream = await streamSiteExportZip({
+			db,
+			storage,
+			siteUrl: "https://alpha.example.org",
+		});
+		const files = unzipSync(await readStreamToBytes(stream));
+		const wxr = dec(files["wordpress.xml"]);
+		const match = /<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/.exec(wxr);
+		expect(match).not.toBeNull();
+		const exportedHtml = match![1]!;
+
+		// Must be ONE blockquote holding the list, not split per block.
+		expect(exportedHtml.match(/<blockquote\b/g)).toHaveLength(1);
+		expect(exportedHtml).toContain("<ul>");
+		expect(exportedHtml).toContain("<li>");
+
+		const reimported = gutenbergToPortableText(exportedHtml);
+		const shape = (blocks: ReturnType<typeof gutenbergToPortableText>) =>
+			blocks.map((b) =>
+				b._type === "block"
+					? {
+							style: b.style,
+							listItem: b.listItem,
+							level: b.level,
+							text: b.children.map((c) => c.text).join(""),
+						}
+					: { _type: b._type },
+			);
+		expect(shape(reimported)).toEqual(shape(imported));
 	});
 });

@@ -202,6 +202,79 @@ describe("Standard blocks", () => {
 		expect(blocks[1]).toMatchObject({ style: "blockquote" });
 	});
 
+	it("blockquote with paragraph, list (including nested), and paragraph → list items keep style blockquote", () => {
+		const doc = makeDoc({
+			nodeType: "blockquote",
+			data: {},
+			content: [
+				paragraph(text("Before the list")),
+				{
+					nodeType: "unordered-list",
+					data: {},
+					content: [
+						{
+							nodeType: "list-item",
+							data: {},
+							content: [
+								paragraph(text("One")),
+								{
+									nodeType: "unordered-list",
+									data: {},
+									content: [
+										{
+											nodeType: "list-item",
+											data: {},
+											content: [paragraph(text("Nested"))],
+										},
+									],
+								},
+							],
+						},
+						{
+							nodeType: "list-item",
+							data: {},
+							content: [paragraph(text("Two"))],
+						},
+					],
+				},
+				paragraph(text("After the list")),
+			],
+		});
+		const blocks = convert(doc);
+		expect(blocks).toHaveLength(5);
+		expect(blocks[0]).toMatchObject({
+			_type: "block",
+			style: "blockquote",
+			children: [{ text: "Before the list" }],
+		});
+		expect(blocks[1]).toMatchObject({
+			_type: "block",
+			style: "blockquote",
+			listItem: "bullet",
+			level: 1,
+			children: [{ text: "One" }],
+		});
+		expect(blocks[2]).toMatchObject({
+			_type: "block",
+			style: "blockquote",
+			listItem: "bullet",
+			level: 2,
+			children: [{ text: "Nested" }],
+		});
+		expect(blocks[3]).toMatchObject({
+			_type: "block",
+			style: "blockquote",
+			listItem: "bullet",
+			level: 1,
+			children: [{ text: "Two" }],
+		});
+		expect(blocks[4]).toMatchObject({
+			_type: "block",
+			style: "blockquote",
+			children: [{ text: "After the list" }],
+		});
+	});
+
 	it("hr → break with style lineBreak", () => {
 		const doc = makeDoc({ nodeType: "hr", data: {} });
 		const blocks = convert(doc);

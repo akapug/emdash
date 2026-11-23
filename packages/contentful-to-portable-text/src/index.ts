@@ -225,10 +225,19 @@ function convertBlockquote(
 			if (block) blocks.push(block);
 		} else {
 			// Blockquotes can contain lists, embedded entries, etc.
+			// Style normal-styled children (such as list items) as "blockquote"
+			// so the quote keeps its lists in editors and renderers, matching
+			// gutenberg-to-portable-text.
 			const converted = convertNode(child, includes, options, generateKey);
 			if (converted) {
-				if (Array.isArray(converted)) blocks.push(...converted);
-				else blocks.push(converted);
+				const items = Array.isArray(converted) ? converted : [converted];
+				for (const item of items) {
+					if (item._type === "block" && item.style === "normal") {
+						blocks.push({ ...item, style: "blockquote" });
+					} else {
+						blocks.push(item);
+					}
+				}
 			}
 		}
 	}
