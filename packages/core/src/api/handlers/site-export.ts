@@ -103,6 +103,14 @@ export function exportZipFilename(date: Date): string {
 
 // ── Signed time-limited media URLs ──────────────────────────────
 
+const TRAILING_SLASHES_PATTERN = /\/+$/;
+const DIGITS_ONLY_PATTERN = /^\d+$/;
+const HEX_64_PATTERN = /^[0-9a-f]{64}$/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 async function hmacHex(secret: string, message: string): Promise<string> {
 	const encoder = new TextEncoder();
 	const key = await crypto.subtle.importKey(
@@ -113,7 +121,7 @@ async function hmacHex(secret: string, message: string): Promise<string> {
 		["sign"],
 	);
 	const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
-	return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+	return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Mint a signed, time-limited download URL for a single media storage key. */
@@ -129,7 +137,7 @@ export async function signExportMediaUrl(opts: {
 		.split("/")
 		.map((seg) => encodeURIComponent(seg))
 		.join("/");
-	const base = opts.origin.replace(/\/+$/, "");
+	const base = opts.origin.replace(TRAILING_SLASHES_PATTERN, "");
 	return `${base}${EXPORT_MEDIA_ROUTE_PREFIX}${encodedKey}?exp=${encodeURIComponent(exp)}&sig=${encodeURIComponent(sig)}`;
 }
 
@@ -141,7 +149,7 @@ export async function verifyExportMediaSignature(opts: {
 	secret: string;
 	nowSec?: number;
 }): Promise<boolean> {
-	if (!/^\d+$/.test(opts.exp) || !/^[0-9a-f]{64}$/i.test(opts.sig)) return false;
+	if (!DIGITS_ONLY_PATTERN.test(opts.exp) || !HEX_64_PATTERN.test(opts.sig)) return false;
 	const expNum = Number.parseInt(opts.exp, 10);
 	const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
 	if (!Number.isFinite(expNum) || expNum < nowSec) return false;
@@ -192,52 +200,144 @@ function safeHref(raw: unknown): string | null {
 	return null;
 }
 
+const HEADING_STYLE_PATTERN = /^h[1-6]$/;
+
+function renderBlockInner(b: Record<string, unknown>): string {
+	const markDefs = new Map<string, Record<string, unknown>>();
+	if (Array.isArray(b.markDefs)) {
+		for (const def of b.markDefs) {
+			if (isRecord(def) && typeof def._key === "string") {
+				markDefs.set(def._key, def);
+			}
+		}
+	}
+	const children = Array.isArray(b.children) ? b.children : [];
+	return children
+		.map((child) => {
+			if (!isRecord(child)) return "";
+			let text = xmlEscape(typeof child.text === "string" ? child.text : "");
+			const marks = Array.isArray(child.marks) ? child.marks : [];
+			for (const mark of marks) {
+				if (mark === "strong") text = `<strong>${text}</strong>`;
+				else if (mark === "em") text = `<em>${text}</em>`;
+				else if (mark === "code") text = `<code>${text}</code>`;
+				else if (typeof mark === "string" && markDefs.has(mark)) {
+					const def = markDefs.get(mark);
+					const href = def ? safeHref(def.href) : null;
+					if (href) text = `<a href="${xmlEscape(href)}">${text}</a>`;
+				}
+			}
+			return text;
+		})
+		.join("");
+}
+
+function renderListRun(
+	items: Array<{ listItem: "bullet" | "number"; level: number; inner: string }>,
+): string {
+	let idx = 0;
+	function build(listType: "bullet" | "number", level: number): string {
+		const tag = listType === "number" ? "ol" : "ul";
+		const parts: string[] = [];
+		while (idx < items.length) {
+			const item = items[idx];
+			if (!item) break;
+			if (item.level < level) break;
+			if (item.level === level && item.listItem !== listType) break;
+			if (item.level > level) {
+				const nested = build(item.listItem, item.level);
+				const prev = parts.at(-1);
+				if (prev !== undefined) {
+					parts[parts.length - 1] = `${prev.slice(0, -5)}${nested}</li>`;
+				} else {
+					parts.push(`<li>${nested}</li>`);
+				}
+				continue;
+			}
+			idx++;
+			let liContent = item.inner;
+			while (idx < items.length) {
+				const next = items[idx];
+				if (!next || next.level <= level) break;
+				liContent += build(next.listItem, next.level);
+			}
+			parts.push(`<li>${liContent}</li>`);
+		}
+		return `<${tag}>${parts.join("")}</${tag}>`;
+	}
+	const html: string[] = [];
+	while (idx < items.length) {
+		const head = items[idx];
+		if (!head) break;
+		html.push(build(head.listItem, head.level));
+	}
+	return html.join("\n");
+}
+
 function renderPortableText(blocks: unknown, siteUrl: string): string {
 	if (typeof blocks === "string") return blocks;
 	if (!Array.isArray(blocks)) return "";
 	const out: string[] = [];
-	for (const block of blocks) {
-		if (!block || typeof block !== "object") continue;
-		const b = block as Record<string, unknown>;
-		if (b._type === "block") {
-			const markDefs = new Map<string, Record<string, unknown>>();
-			if (Array.isArray(b.markDefs)) {
-				for (const def of b.markDefs) {
-					if (def && typeof def === "object" && typeof (def as Record<string, unknown>)._key === "string") {
-						markDefs.set((def as Record<string, unknown>)._key as string, def as Record<string, unknown>);
+	let i = 0;
+	while (i < blocks.length) {
+		const block: unknown = blocks[i];
+		if (!isRecord(block)) {
+			i++;
+			continue;
+		}
+		if (block._type === "block") {
+			const style = typeof block.style === "string" ? block.style : "normal";
+			if (style === "blockquote") {
+				// Group consecutive blockquote-styled blocks (paragraphs + list items)
+				// into ONE <blockquote> so multi-paragraph quotes and quoted lists
+				// export and re-import intact.
+				const run: Array<Record<string, unknown>> = [];
+				while (i < blocks.length) {
+					const cur: unknown = blocks[i];
+					if (!isRecord(cur) || cur._type !== "block" || cur.style !== "blockquote") {
+						break;
 					}
+					run.push({ ...cur, style: "normal" });
+					i++;
 				}
+				out.push(`<blockquote>${renderPortableText(run, siteUrl)}</blockquote>`);
+				continue;
 			}
-			const children = Array.isArray(b.children) ? b.children : [];
-			const inner = children
-				.map((child) => {
-					if (!child || typeof child !== "object") return "";
-					const c = child as Record<string, unknown>;
-					let text = xmlEscape(typeof c.text === "string" ? c.text : "");
-					const marks = Array.isArray(c.marks) ? c.marks : [];
-					for (const mark of marks) {
-						if (mark === "strong") text = `<strong>${text}</strong>`;
-						else if (mark === "em") text = `<em>${text}</em>`;
-						else if (mark === "code") text = `<code>${text}</code>`;
-						else if (typeof mark === "string" && markDefs.has(mark)) {
-							const def = markDefs.get(mark)!;
-							const href = safeHref(def.href);
-							if (href) text = `<a href="${xmlEscape(href)}">${text}</a>`;
-						}
+			if (block.listItem === "bullet" || block.listItem === "number") {
+				const items: Array<{ listItem: "bullet" | "number"; level: number; inner: string }> = [];
+				while (i < blocks.length) {
+					const cur: unknown = blocks[i];
+					if (
+						!isRecord(cur) ||
+						cur._type !== "block" ||
+						cur.style === "blockquote" ||
+						(cur.listItem !== "bullet" && cur.listItem !== "number")
+					) {
+						break;
 					}
-					return text;
-				})
-				.join("");
-			const style = typeof b.style === "string" ? b.style : "normal";
-			if (/^h[1-6]$/.test(style)) out.push(`<${style}>${inner}</${style}>`);
-			else if (style === "blockquote") out.push(`<blockquote><p>${inner}</p></blockquote>`);
+					const rawLevel =
+						typeof cur.level === "number" && cur.level >= 1 ? Math.floor(cur.level) : 1;
+					items.push({
+						listItem: cur.listItem,
+						level: rawLevel,
+						inner: renderBlockInner(cur),
+					});
+					i++;
+				}
+				out.push(renderListRun(items));
+				continue;
+			}
+			const inner = renderBlockInner(block);
+			if (HEADING_STYLE_PATTERN.test(style)) out.push(`<${style}>${inner}</${style}>`);
 			else out.push(`<p>${inner}</p>`);
-		} else if (b._type === "image") {
-			const rawSrc = typeof b.src === "string" ? b.src : typeof b.url === "string" ? b.url : "";
+		} else if (block._type === "image") {
+			const rawSrc =
+				typeof block.src === "string" ? block.src : typeof block.url === "string" ? block.url : "";
 			const src = rawSrc.startsWith("/") ? `${siteUrl}${rawSrc}` : rawSrc;
-			const alt = typeof b.alt === "string" ? b.alt : "";
+			const alt = typeof block.alt === "string" ? block.alt : "";
 			if (src) out.push(`<figure><img src="${xmlEscape(src)}" alt="${xmlEscape(alt)}" /></figure>`);
 		}
+		i++;
 	}
 	return out.join("\n");
 }
@@ -281,15 +381,13 @@ interface ProtectedEntrySummary {
 }
 
 function parseJsonRecord(raw: unknown): Record<string, unknown> | null {
-	if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-		return raw as Record<string, unknown>;
+	if (isRecord(raw)) {
+		return raw;
 	}
 	if (typeof raw !== "string" || raw.trim() === "") return null;
 	try {
-		const parsed = JSON.parse(raw);
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: null;
+		const parsed: unknown = JSON.parse(raw);
+		return isRecord(parsed) ? parsed : null;
 	} catch {
 		return null;
 	}
@@ -350,7 +448,7 @@ function buildWxrFromSnapshot(opts: {
 	siteUrl: string;
 	now: Date;
 }): { xml: string; itemCount: number; protectedEntries: ProtectedEntrySummary[] } {
-	const base = opts.siteUrl.replace(/\/+$/, "");
+	const base = opts.siteUrl.replace(TRAILING_SLASHES_PATTERN, "");
 	const lines: string[] = [
 		'<?xml version="1.0" encoding="UTF-8" ?>',
 		'<rss version="2.0"',
@@ -378,10 +476,17 @@ function buildWxrFromSnapshot(opts: {
 	for (const [tableName, rows] of Object.entries(opts.snapshot.tables)) {
 		if (!tableName.startsWith("ec_")) continue;
 		const collection = tableName.slice(3);
-		const postType = collection === "posts" || collection === "post" ? "post" : collection === "pages" || collection === "page" ? "page" : collection;
+		const postType =
+			collection === "posts" || collection === "post"
+				? "post"
+				: collection === "pages" || collection === "page"
+					? "page"
+					: collection;
 		for (const row of rows) {
 			const entryId = typeof row.id === "string" ? row.id : "";
-			const protectedData = entryId ? opts.protectedByKey.get(`${collection}:${entryId}`) : undefined;
+			const protectedData = entryId
+				? opts.protectedByKey.get(`${collection}:${entryId}`)
+				: undefined;
 			const data = protectedData ?? parseJsonRecord(row.data) ?? {};
 			const slug = typeof row.slug === "string" ? row.slug : "";
 			const title =
@@ -594,7 +699,7 @@ export async function streamSiteExportZip(
 	const maxInlineBytes = opts.maxInlineMediaBytes ?? DEFAULT_MAX_INLINE_MEDIA_BYTES;
 	const maxInlineFiles = opts.maxInlineMediaFiles ?? DEFAULT_MAX_INLINE_MEDIA_FILES;
 	const ttlSec = opts.signedUrlTtlSeconds ?? DEFAULT_SIGNED_MEDIA_TTL_SECONDS;
-	const origin = opts.siteUrl.replace(/\/+$/, "");
+	const origin = opts.siteUrl.replace(TRAILING_SLASHES_PATTERN, "");
 
 	const snapshot = await generateSnapshot(opts.db, {
 		includeDrafts: true,
@@ -604,7 +709,7 @@ export async function streamSiteExportZip(
 	});
 	const redirects = await readRedirects(opts.db);
 	if (redirects.length > 0) {
-		snapshot.tables._emdash_redirects = redirects as unknown as Record<string, unknown>[];
+		snapshot.tables._emdash_redirects = redirects.map((r) => ({ ...r }));
 	}
 	const protectedContent = await readProtectedContent(opts.db);
 	const protectedRevisions = await readProtectedRevisions(opts.db);
@@ -619,8 +724,10 @@ export async function streamSiteExportZip(
 			optionsMap[row.name] = parseOptionValue(row.value);
 		}
 	}
-	const siteTitle = typeof optionsMap["emdash:site_title"] === "string" ? optionsMap["emdash:site_title"] : origin;
-	const siteTagline = typeof optionsMap["emdash:site_tagline"] === "string" ? optionsMap["emdash:site_tagline"] : "";
+	const siteTitle =
+		typeof optionsMap["emdash:site_title"] === "string" ? optionsMap["emdash:site_title"] : origin;
+	const siteTagline =
+		typeof optionsMap["emdash:site_tagline"] === "string" ? optionsMap["emdash:site_tagline"] : "";
 
 	const backupJson = JSON.stringify(
 		{
@@ -647,14 +754,22 @@ export async function streamSiteExportZip(
 		2,
 	);
 	const redirectsJson = JSON.stringify(redirects, null, 2);
-	const wxr = buildWxrFromSnapshot({ snapshot, protectedByKey, siteTitle, siteTagline, siteUrl: origin, now });
+	const wxr = buildWxrFromSnapshot({
+		snapshot,
+		protectedByKey,
+		siteTitle,
+		siteTagline,
+		siteUrl: origin,
+		now,
+	});
 
 	const mediaRows = (snapshot.tables.media ?? []).filter(
 		(row) => typeof row.storage_key === "string" && isSafeExportMediaKey(row.storage_key),
 	);
 
 	// Resolve signing secret once only if we might overflow media to signed URLs.
-	const secrets = mediaRows.length > 0 && opts.storage ? await resolveSecrets({ db: opts.db }) : null;
+	const secrets =
+		mediaRows.length > 0 && opts.storage ? await resolveSecrets({ db: opts.db }) : null;
 	const expiresAtSec = Math.floor(now.getTime() / 1000) + ttlSec;
 	const expiresAtIso = new Date(expiresAtSec * 1000).toISOString();
 	const encoder = new TextEncoder();
@@ -663,7 +778,9 @@ export async function streamSiteExportZip(
 	let driver: AsyncGenerator<void, void, void> | null = null;
 	let enqueuedCount = 0;
 
-	async function* driveExport(controller: ReadableStreamDefaultController<Uint8Array>): AsyncGenerator<void, void, void> {
+	async function* driveExport(
+		controller: ReadableStreamDefaultController<Uint8Array>,
+	): AsyncGenerator<void, void, void> {
 		const z = new Zip((err, data, final) => {
 			if (err) {
 				controller.error(err);
@@ -703,9 +820,10 @@ export async function streamSiteExportZip(
 		const missing: string[] = [];
 
 		for (const row of mediaRows) {
-			const storageKey = row.storage_key as string;
+			const storageKey = typeof row.storage_key === "string" ? row.storage_key : "";
 			const filename = typeof row.filename === "string" ? row.filename : storageKey;
-			const mimeType = typeof row.mime_type === "string" ? row.mime_type : "application/octet-stream";
+			const mimeType =
+				typeof row.mime_type === "string" ? row.mime_type : "application/octet-stream";
 			const expectedSize = typeof row.size === "number" && Number.isFinite(row.size) ? row.size : 0;
 
 			if (!opts.storage) {
@@ -714,8 +832,7 @@ export async function streamSiteExportZip(
 			}
 
 			const fitsBudget =
-				inlineCount < maxInlineFiles &&
-				inlineBytes + expectedSize <= maxInlineBytes;
+				inlineCount < maxInlineFiles && inlineBytes + expectedSize <= maxInlineBytes;
 
 			if (fitsBudget) {
 				let downloaded: Awaited<ReturnType<Storage["download"]>> | null = null;
@@ -847,10 +964,15 @@ export async function streamSiteExportZip(
 			driver ??= driveExport(controller);
 			const before = enqueuedCount;
 			try {
-				while (enqueuedCount === before || (controller.desiredSize !== null && controller.desiredSize > 0)) {
+				for (;;) {
 					const step = await driver.next();
 					if (step.done) break;
-					if (controller.desiredSize !== null && controller.desiredSize <= 0) break;
+					if (
+						enqueuedCount !== before &&
+						(controller.desiredSize === null || controller.desiredSize <= 0)
+					) {
+						break;
+					}
 				}
 			} catch (err) {
 				if (activeReader) {
