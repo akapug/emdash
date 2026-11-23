@@ -416,7 +416,9 @@ describe("gutenbergToPortableText", () => {
 <!-- /wp:quote -->`;
 
 			const result = gutenbergToPortableText(content);
-			const texts = result.map((b) => ("children" in b ? b.children.map((c) => c.text).join("") : ""));
+			const texts = result.map((b) =>
+				"children" in b ? b.children.map((c) => c.text).join("") : "",
+			);
 
 			expect(texts).not.toContain("codewords");
 			expect(texts.join(" ")).toContain("words");
@@ -1141,7 +1143,9 @@ https://${domain}/123456
 <!-- /wp:column --></div>
 <!-- /wp:columns -->`;
 
-			const [row] = gutenbergToPortableText(content) as Array<{ columns: Array<{ width?: string }> }>;
+			const [row] = gutenbergToPortableText(content) as Array<{
+				columns: Array<{ width?: string }>;
+			}>;
 
 			expect(row!.columns.map((c) => c.width)).toEqual(["10%", "80%", "33.33%", undefined]);
 		});
@@ -1179,7 +1183,11 @@ https://${domain}/123456
 
 			const cover = gutenbergToPortableText(content)[0] as PortableTextCoverBlock;
 
-			expect(cover).toMatchObject({ _type: "cover", backgroundVideo: "https://example.com/hero.mov", minHeight: "600px" });
+			expect(cover).toMatchObject({
+				_type: "cover",
+				backgroundVideo: "https://example.com/hero.mov",
+				minHeight: "600px",
+			});
 			expect(cover.backgroundImage).toBeUndefined();
 		});
 
@@ -1775,6 +1783,17 @@ ${html}
 		const result = gutenbergToPortableText(`${url}\n`);
 
 		expect(result).toEqual([expect.objectContaining({ _type: "embed", url, provider })]);
+	});
+
+	it("splits adjacent self-hosted media URLs glued on one line into separate video embeds", () => {
+		const a = "https://example.com/wp-content/uploads/2020/07/promo-1.mp4";
+		const b = "https://example.com/wp-content/uploads/2020/07/promo-2.mp4";
+		const result = gutenbergToPortableText(`<h2>MEDIA</h2>\n\t\t${a}${b}\t\t\n<h2>FAQ</h2>`);
+
+		expect(result.filter((block) => block._type === "embed")).toEqual([
+			expect.objectContaining({ _type: "embed", url: a, provider: "video" }),
+			expect.objectContaining({ _type: "embed", url: b, provider: "video" }),
+		]);
 	});
 
 	it("does not embed a URL on its own line inside preformatted text", () => {

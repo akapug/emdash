@@ -577,7 +577,9 @@ describe("an htmlBlock's URLs are rewritten", () => {
 		const result = rewritePortableTextUrls(blocks, exact, base);
 		expect(result.changed).toBe(true);
 		expect(result.urlsRewritten).toBe(1);
-		expect((blocks[0] as { html: string }).html).toBe(`<figure><img src="${moved}" alt=""></figure>`);
+		expect((blocks[0] as { html: string }).html).toBe(
+			`<figure><img src="${moved}" alt=""></figure>`,
+		);
 	});
 
 	it("leaves a URL inside a <script> body ALONE", () => {
@@ -615,5 +617,31 @@ describe("an htmlBlock's URLs are rewritten", () => {
 		const result = rewritePortableTextUrls(blocks, exact, base);
 		expect(result.changed).toBe(false);
 		expect((blocks[0] as { html: string }).html).toBe(html);
+	});
+});
+
+describe("an embed block's URL is rewritten", () => {
+	const mp4 = "https://example.com/wp-content/uploads/2020/07/promo.mp4";
+	const moved = "/_emdash/api/media/file/01VID.mp4";
+	const exact = { [mp4]: moved };
+	const base = buildBaseUrlMap(exact);
+
+	it("rewrites a self-hosted video embed block URL", () => {
+		const blocks: PortableTextBlock[] = [
+			{ _type: "embed", _key: "e1", url: mp4, provider: "video" },
+		];
+		const result = rewritePortableTextUrls(blocks, exact, base);
+		expect(result).toEqual({ changed: true, urlsRewritten: 1 });
+		expect((blocks[0] as { url: string }).url).toBe(moved);
+	});
+
+	it("leaves an external embed URL untouched", () => {
+		const yt = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+		const blocks: PortableTextBlock[] = [
+			{ _type: "embed", _key: "e2", url: yt, provider: "youtube" },
+		];
+		const result = rewritePortableTextUrls(blocks, exact, base);
+		expect(result).toEqual({ changed: false, urlsRewritten: 0 });
+		expect((blocks[0] as { url: string }).url).toBe(yt);
 	});
 });

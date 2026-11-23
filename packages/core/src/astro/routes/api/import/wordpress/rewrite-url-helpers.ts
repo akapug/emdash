@@ -267,9 +267,10 @@ export function rewritePortableTextUrls(
 		// Handle the link classes and titles a page's own layout keeps by href in its skeleton
 		linksRewritten += rewriteSkeletonLinkKeys(block.skeleton, exactMap, baseMap);
 
-		// Handle a file download block, a button, and the buttons of a buttons block
+		// Handle a file download block, a button, an embed (e.g. self-hosted video/audio),
+		// and the buttons of a buttons block
 		if (
-			(block._type === "file" || block._type === "button") &&
+			(block._type === "file" || block._type === "button" || block._type === "embed") &&
 			rewriteUrlField(block, "url", exactMap, baseMap)
 		) {
 			linksRewritten++;
