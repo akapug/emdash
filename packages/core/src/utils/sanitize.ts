@@ -221,7 +221,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	// host. onOpenTag/onCloseTag run before the transforms and see the raw
 	// attributes, so a control's transform reads the form it actually sits in.
 	const forms: boolean[] = [];
-	const insideNewsletterForm = () => forms.length > 0 && forms[forms.length - 1] === true;
+	const insideNewsletterForm = () => forms.at(-1) === true;
 	// A CONTROL OUTSIDE AN APPROVED FORM gets exactly what it got before forms
 	// were carried: a textarea or an option goes whole with its text (they were
 	// nonTextTags), and an input, button, label or select is unwrapped to its
