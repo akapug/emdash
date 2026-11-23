@@ -262,20 +262,33 @@ export function parseEventView(value: unknown): EventView | null {
 	return isEventView(value) ? value : null;
 }
 
-function names(entry: EventEntry, field: string): string[] {
+export type EventTermField = "category" | "location" | "organizer";
+
+export function eventTermLabels(entry: EventEntry, field: EventTermField): string[] {
 	const values: string[] = [];
-	const direct = eventString(entry.data[field]);
-	if (direct) values.push(direct);
+	const push = (value: string | undefined) => {
+		if (value && !values.includes(value)) values.push(value);
+	};
+	push(eventString(entry.data[field]));
 	const terms = entry.data.terms;
-	if (object(terms) && Array.isArray(terms[field])) {
-		for (const term of terms[field]) {
-			if (object(term)) {
-				const label = eventString(term.label) ?? eventString(term.name);
-				if (label) values.push(label);
+	if (object(terms)) {
+		for (const key of [field, `mec_${field}`]) {
+			const list = terms[key];
+			if (!Array.isArray(list)) continue;
+			for (const term of list) {
+				if (object(term)) push(eventString(term.label) ?? eventString(term.name));
 			}
 		}
 	}
 	return values;
+}
+
+function names(entry: EventEntry, field: string): string[] {
+	if (field === "category" || field === "location" || field === "organizer") {
+		return eventTermLabels(entry, field);
+	}
+	const direct = eventString(entry.data[field]);
+	return direct ? [direct] : [];
 }
 export interface EventMonthNavigation {
 	month: string;

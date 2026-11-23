@@ -319,8 +319,11 @@ export async function preImportWxrTaxonomies(
 	//   - `nav_menu`: menus are handled by `importMenusFromWxr`.
 	//   - `language`: Polylang's locale signal; promoted to `WxrPost.locale`
 	//     by the parser and not a content taxonomy in EmDash.
+	//   - `wp_theme`: WordPress FSE/block-theme internal metadata tagging
+	//     `wp_template`/`wp_global_styles` with the active theme slug, not site content.
 	for (const term of terms) {
-		if (term.taxonomy === "nav_menu" || term.taxonomy === "language") continue;
+		if (term.taxonomy === "nav_menu" || term.taxonomy === "language" || term.taxonomy === "wp_theme")
+			continue;
 		// Normalize WordPress' `post_tag` synonym -> EmDash `tag`. WordPress
 		// emits `<wp:tag>` for some exports and `<wp:term wp:term_taxonomy="post_tag">`
 		// for others; both must land in the same EmDash taxonomy.
@@ -380,8 +383,8 @@ export async function preImportWxrTaxonomies(
 			for (const [rawName, slugs] of post.customTaxonomies) {
 				// `nav_menu` is handled by the menu importer; `language` is
 				// Polylang's per-post locale signal, already promoted by the
-				// parser.
-				if (rawName === "nav_menu" || rawName === "language") continue;
+				// parser; `wp_theme` is WordPress FSE internal theme metadata.
+				if (rawName === "nav_menu" || rawName === "language" || rawName === "wp_theme") continue;
 				const taxonomyName = rawName === "post_tag" ? "tag" : rawName;
 				const def = await lookupDef(taxonomyName);
 				if (!def) {

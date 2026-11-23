@@ -1,6 +1,7 @@
 ---
 import {
 	eventString,
+	eventTermLabels,
 	formatEventDate,
 	formatEventTimes,
 	type EventSummary,
@@ -15,6 +16,9 @@ const data = event.entry.data;
 // where Astro's routing locale is absent. Neither path needs a settings read.
 const locale = Astro.currentLocale ?? eventString(data.locale);
 const times = formatEventTimes(event, locale);
+const locations = eventTermLabels(event.entry, "location");
+const organizers = eventTermLabels(event.entry, "organizer");
+const categories = eventTermLabels(event.entry, "category");
 ---
 
 <div class="event-facts">
@@ -41,15 +45,15 @@ const times = formatEventTimes(event, locale);
 		}
 	</p>
 	{eventString(data.time_note) && <p>{eventString(data.time_note)}</p>}
-	{eventString(data.location) && <p>Location: {eventString(data.location)}</p>}
+	{locations.length > 0 && <p>Location: {locations.join(", ")}</p>}
 	{
-		!compact && eventString(data.organizer) && (
-			<p>Organizer: {eventString(data.organizer)}</p>
+		!compact && organizers.length > 0 && (
+			<p>Organizer: {organizers.join(", ")}</p>
 		)
 	}
 	{
-		!compact && eventString(data.category) && (
-			<p>Category: {eventString(data.category)}</p>
+		!compact && categories.length > 0 && (
+			<p>Category: {categories.join(", ")}</p>
 		)
 	}
 	{!compact && eventString(data.cost) && <p>Cost: {eventString(data.cost)}</p>}

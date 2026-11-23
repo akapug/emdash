@@ -450,4 +450,23 @@ describe("attachPostTaxonomies", () => {
 			.execute();
 		expect(rows).toHaveLength(1);
 	});
+
+	it("skips WordPress internal wp_theme without listing it as missing (emb/106)", async () => {
+		const terms: WxrTerm[] = [
+			{ id: 1, taxonomy: "wp_theme", slug: "kleo", name: "kleo" },
+			{ id: 2, taxonomy: "post_format", slug: "post-format-gallery", name: "Gallery" },
+		];
+		const posts: WxrPost[] = [
+			makePost({
+				id: 10,
+				postType: "wp_global_styles",
+				postName: "wp-global-styles-kleo",
+				customTaxonomies: new Map([["wp_theme", ["kleo"]]]),
+			}),
+		];
+
+		const plan = await preImportWxrTaxonomies(db, posts, [], [], terms, undefined);
+		expect(plan.missingTaxonomies).not.toContain("wp_theme");
+		expect(plan.missingTaxonomies).toContain("post_format");
+	});
 });
