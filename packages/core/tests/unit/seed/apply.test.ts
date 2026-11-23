@@ -11,6 +11,7 @@ import type {
 import { SqliteQueryCompiler, sql } from "kysely";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
+import { IMPORT_BASELINE_FRESH_INSTALL_QUERIES } from "../../../src/database/import-baseline-triggers.js";
 import { BylineRepository } from "../../../src/database/repositories/byline.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import { OptionsRepository } from "../../../src/database/repositories/options.js";
@@ -195,7 +196,9 @@ describe("applySeed", () => {
 
 			expect(result.collections.created).toBe(1);
 			expect(result.fields.created).toBe(74);
-			expect(counter.count).toBeLessThan(50);
+			// Fork: a new collection also installs its import-baseline triggers, a
+			// fixed cost per collection however many fields it has.
+			expect(counter.count).toBeLessThan(50 + IMPORT_BASELINE_FRESH_INSTALL_QUERIES);
 
 			const collection = await new SchemaRegistry(db).getCollection("site_info");
 			expect(collection).not.toBeNull();
@@ -252,7 +255,9 @@ describe("applySeed", () => {
 			const result = await applySeed(db.withPlugin(counter), seed);
 
 			expect(result.fields.created).toBe(20);
-			expect(counter.count).toBeLessThan(50);
+			// Fork: a new collection also installs its import-baseline triggers, a
+			// fixed cost per collection however many fields it has.
+			expect(counter.count).toBeLessThan(50 + IMPORT_BASELINE_FRESH_INSTALL_QUERIES);
 			const relations = await new RelationRepository(db).list();
 			expect(relations).toHaveLength(20);
 		});
