@@ -275,3 +275,59 @@ describe("sanitizeContent: WordPress.com platform chrome", () => {
 		);
 	});
 });
+
+// A NEWSLETTER FORM IS CARRIED WORKING (owner's ruling, 2026-11-23).
+//
+// A Mailchimp embed is a plain HTML form POST to
+// https://<dc>.list-manage.com/subscribe/post?u=…&id=… — no script, so it works
+// from any origin. The owner's standing rule is that every source control gets
+// a working equivalent, and a customer's sign-up list is the customer's:
+// routing it into EmDash's own subscriptions would take their sign-ups off the
+// audience they already mail from.
+//
+// MEASURED on calulti.org/subscribe/: 39 inputs, a country select of 234
+// options, checkbox groups. The served page showed the labels and ZERO
+// controls — "Email Address *" with no box to type in.
+const MAILCHIMP = `<div id="mc_embed_signup"><form action="https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank" novalidate>
+<div class="mc-field-group"><label for="mce-EMAIL">Email Address </label><input type="email" value="" name="EMAIL" class="required email" id="mce-EMAIL"></div>
+<div class="mc-field-group"><label for="mce-FNAME">First Name </label><input type="text" value="" name="FNAME" id="mce-FNAME"></div>
+<div class="mc-field-group"><label for="mce-COUNTRY">Country </label><select name="COUNTRY" id="mce-COUNTRY"><option value="">Select</option><option value="US">United States</option><option value="CA">Canada</option></select></div>
+<input type="hidden" name="b_84962611ecc6d269483b6cd73_2bde2" value="">
+<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+</form></div>`;
+
+describe("a newsletter form is carried WORKING", () => {
+	it("THE FORM, ITS FIELDS AND ITS OPTIONS SURVIVE", () => {
+		const out = sanitizeContent(MAILCHIMP);
+		expect(out, "the form is there").toContain("<form");
+		expect(out, "the action is the customer's own list").toContain("list-manage.com/subscribe/post");
+		expect(out, "the email field is there").toContain('name="EMAIL"');
+		expect(out, "the first name is there").toContain('name="FNAME"');
+		expect(out, "the country select is there").toContain("<select");
+		expect(out, "its options travel with it").toContain("United States");
+		expect(out, "the honeypot is kept").toContain("b_84962611ecc6d269483b6cd73_2bde2");
+		expect(out, "the submit is there").toContain('value="Subscribe"');
+	});
+
+	it("A NON-ALLOWLISTED ACTION GETS NO CONTROLS", () => {
+		const other = MAILCHIMP.replace("https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2", "https://evil.example.com/collect");
+		const out = sanitizeContent(other);
+		expect(out, "no form survives").not.toContain("<form");
+		expect(out, "no input survives").not.toContain("<input");
+		expect(out, "no select survives").not.toContain("<select");
+	});
+
+	it("A javascript: ACTION IS REFUSED", () => {
+		const js = MAILCHIMP.replace("https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2", "javascript:alert(1)");
+		const out = sanitizeContent(js);
+		expect(out, "no form survives").not.toContain("<form");
+		expect(out, "no input survives").not.toContain("<input");
+	});
+
+	it("A SCRIPT HANDLER ON THE FORM IS REFUSED", () => {
+		const handler = MAILCHIMP.replace("novalidate>", 'novalidate onsubmit="steal()">');
+		const out = sanitizeContent(handler);
+		expect(out, "no form survives").not.toContain("<form");
+		expect(out, "no input survives").not.toContain("<input");
+	});
+});

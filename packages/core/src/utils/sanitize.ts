@@ -133,6 +133,58 @@ export interface SanitizeOptions {
 	 * name exactly one host are ignored.
 	 */
 	allowedIframeHostnames?: readonly string[];
+	/**
+	 * The newsletter providers whose forms are carried WORKING, such as the
+	 * site's `newsletterFormHosts` setting. Omitted: the default list.
+	 *
+	 * A Mailchimp embed is a plain HTML form POST to
+	 * `https://<dc>.list-manage.com/subscribe/post?u=…&id=…` — no script, so it
+	 * works from any origin. The owner's standing rule is that every source
+	 * control gets a working equivalent, and a customer's sign-up list is the
+	 * customer's: routing it into EmDash's own subscriptions would take their
+	 * sign-ups off the audience they already mail from.
+	 */
+	newsletterFormHosts?: readonly string[];
+}
+
+/** The tags that are a form control, and so are gated on their form's action. */
+const CONTROL_TAGS = new Set(["input", "select", "option", "textarea", "button", "label"]);
+
+/** The newsletter providers whose forms are carried working, out of the box. */
+export const DEFAULT_NEWSLETTER_FORM_HOSTS: readonly string[] = ["list-manage.com"];
+
+/** Whether `host` is one of `allowed`, or a subdomain of one. */
+function newsletterHostAllowed(host: string, allowed: readonly string[]): boolean {
+	const h = host.toLowerCase();
+	return allowed.some((a) => {
+		const want = a.toLowerCase().replace(/^\*?\./, "");
+		return h === want || h.endsWith(`.${want}`);
+	});
+}
+
+/**
+ * The form's action, when it is an https POST to an allowlisted newsletter
+ * host; null otherwise.
+ *
+ * FAIL CLOSED on everything else: a `javascript:` action, a non-https scheme,
+ * a host not on the list, or a script handler on the form. The controls are
+ * only ever carried inside a form whose action this function approved.
+ */
+function newsletterActionOf(attribs: Record<string, string>, allowed: readonly string[]): string | null {
+	const action = (attribs.action ?? "").trim();
+	if (action.length === 0) return null;
+	let url: URL;
+	try {
+		url = new URL(action);
+	} catch {
+		return null;
+	}
+	if (url.protocol !== "https:") return null;
+	if (!newsletterHostAllowed(url.hostname, allowed)) return null;
+	for (const attr of ["onsubmit", "onload", "onerror", "onclick"]) {
+		if (attribs[attr] !== undefined) return null;
+	}
+	return url.href;
 }
 
 /**
@@ -161,17 +213,48 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	const perCall = canonicalIframeHosts(options.allowedIframeHostnames);
 	const added = new Set([...addedHostnames(), ...perCall].filter((h) => !DEFAULT_HOSTS.has(h)));
 	const allowed = [...DEFAULT_HOSTS, ...added];
+	const newsletterHosts = options.newsletterFormHosts ?? DEFAULT_NEWSLETTER_FORM_HOSTS;
 	return sanitizeHtml(html, {
-		allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "span", "iframe"],
-		nonTextTags: ["script", "style", "textarea", "option", "noscript"],
+		// A NEWSLETTER FORM'S CONTROLS ARE ALLOWED HERE, and gated below: the
+		// exclusiveFilter drops every one of them unless it sits inside a form
+		// whose action is an allowlisted newsletter host. Allowing the tag and
+		// gating the instance is what lets the same sanitizer carry a working
+		// Mailchimp form and still refuse every other form's controls.
+		allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "span", "iframe", "form", "input", "select", "option", "textarea", "button", "label"],
+		nonTextTags: ["script", "style", "noscript"],
 		allowedAttributes: {
 			...sanitizeHtml.defaults.allowedAttributes,
 			"*": ["class", "id", "data-*"],
 			iframe: ["src", "width", "height", "frameborder", "allow", "allowfullscreen", "title"],
 			img: ["src", "srcset", "alt", "title", "width", "height", "loading"],
+			form: ["action", "method", "target", "rel", "class", "id", "name", "novalidate"],
+			input: ["type", "name", "value", "id", "class", "placeholder", "required", "checked", "maxlength", "size", "autocomplete", "aria-label", "aria-required"],
+			select: ["name", "id", "class", "required", "aria-label", "aria-required"],
+			option: ["value", "selected", "label"],
+			textarea: ["name", "id", "class", "rows", "cols", "placeholder", "required", "aria-label"],
+			button: ["type", "name", "value", "id", "class", "aria-label"],
+			label: ["for", "class", "id"],
 		},
 		allowedIframeHostnames: allowed,
 		transformTags: {
+			// A NEWSLETTER FORM IS CARRIED WORKING. The action is approved here,
+			// and the marker is what the exclusiveFilter reads to keep the form
+			// and its controls; every other form is dropped whole.
+			form: (tagName, attribs): sanitizeHtml.Tag => {
+				const action = newsletterActionOf(attribs, newsletterHosts);
+				if (!action) return { tagName, attribs: {} };
+				return {
+					tagName,
+					attribs: {
+						action,
+						method: "post",
+						target: "_blank",
+						rel: "noopener",
+						...(attribs.class ? { class: attribs.class } : {}),
+						"data-embark-newsletter": "1",
+					},
+				};
+			},
 			iframe: (tagName, attribs): sanitizeHtml.Tag => {
 				const verdict = iframeVerdict(attribs.src ?? "", added);
 				if (!verdict) return { tagName, attribs: {} };
@@ -190,9 +273,20 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		// The second gate: an iframe still standing is re-read from the src it
 		// drew, with the same reading, and goes whole (never an empty box) unless
 		// that src is kept. sanitize-html's own host check stays as a third.
-		exclusiveFilter: (frame) =>
-			frame.tag === "iframe" &&
-			frame.attribs.href === undefined &&
-			iframeVerdict(frame.attribs.src ?? "", added)?.keep !== true,
+		exclusiveFilter: (frame) => {
+			if (
+				frame.tag === "iframe" &&
+				frame.attribs.href === undefined &&
+				iframeVerdict(frame.attribs.src ?? "", added)?.keep !== true
+			) {
+				return true;
+			}
+			// A FORM ITSELF SURVIVES ONLY WHEN ITS ACTION IS ALLOWLISTED. The
+			// transform below marks the ones that are, and this drops the rest
+			// whole — with their controls, which is what every other form got
+			// before this change.
+			if (frame.tag === "form") return frame.attribs["data-embark-newsletter"] !== "1";
+			return false;
+		},
 	});
 }
