@@ -55,7 +55,9 @@ if (result && Astro.cache?.enabled) {
 }
 
 const entries = (result?.entries ?? [])
-	.filter((entry) => !excludeId || entry.id !== excludeId)
+	// excludeEntry.id is the containing entry's DATABASE id (the importer writes the row id), so it is
+	// matched against data.id, not the public id in entry.id (the same mix-up the related strip had).
+	.filter((entry) => !excludeId || entry.data.id !== excludeId)
 	.slice(0, count);
 
 const hrefFor = (id: string) => (collection === "pages" ? `/pages/${id}` : `/posts/${id}`);

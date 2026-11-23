@@ -39,10 +39,13 @@ vi.mock("../../../../templates/blog-cloudflare/src/components/PostCard.astro", a
 	default: (await import("./StubPostCard.astro")).default,
 }));
 
+// The REAL shape: an entry's `id` is its public id (the slug the link uses) and `data.id` its database row id.
+// The importer writes excludeEntry.id as the DATABASE id (packages/host/src/import/shortcode-resolvers.ts, f.row().id),
+// so a fixture whose two ids are equal could not tell which one the renderer compares.
 const samplePosts = [
-	{ id: "p1", data: { title: "First Post", excerpt: "One", publishedAt: new Date("2026-11-01") }, edit: {} },
-	{ id: "p2", data: { title: "Second Post", excerpt: "Two", publishedAt: new Date("2026-11-02") }, edit: {} },
-	{ id: "p3", data: { title: "Third Post", excerpt: "Three", publishedAt: new Date("2026-11-03") }, edit: {} },
+	{ id: "first-post", data: { id: "01P1", title: "First Post", excerpt: "One", publishedAt: new Date("2026-11-01") }, edit: {} },
+	{ id: "second-post", data: { id: "01P2", title: "Second Post", excerpt: "Two", publishedAt: new Date("2026-11-02") }, edit: {} },
+	{ id: "third-post", data: { id: "01P3", title: "Third Post", excerpt: "Three", publishedAt: new Date("2026-11-03") }, edit: {} },
 ];
 
 const gridBlock = (overrides: Record<string, unknown> = {}) => ({
@@ -53,7 +56,7 @@ const gridBlock = (overrides: Record<string, unknown> = {}) => ({
 	count: 2,
 	orderBy: "date",
 	order: "desc",
-	excludeEntry: { collection: "posts", id: "p1" },
+	excludeEntry: { collection: "posts", id: "01P1" },
 	...overrides,
 });
 
