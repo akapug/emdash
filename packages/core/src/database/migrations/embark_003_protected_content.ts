@@ -1,6 +1,6 @@
 import { sql, type Kysely } from "kysely";
 
-import { isMissingTableError } from "../../utils/db-errors.js";
+import { tableExists } from "../dialect-helpers.js";
 
 export async function up(db: Kysely<unknown>): Promise<void> {
 	await db.schema
@@ -32,15 +32,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
 export async function down(db: Kysely<unknown>): Promise<void> {
 	for (const table of ["_emdash_protected_content", "_emdash_protected_revisions"]) {
-		try {
-			const used = (await sql`SELECT 1 FROM ${sql.ref(table)} LIMIT 1`.execute(db)).rows.length > 0;
-			if (used)
-				throw new Error(
-					"Protected content exists; retain the capable runtime and private payload tables",
-				);
-		} catch (error) {
-			if (!isMissingTableError(error)) throw error;
-		}
+		if (!(await tableExists(db, table))) continue;
+		const used = (await sql`SELECT 1 FROM ${sql.ref(table)} LIMIT 1`.execute(db)).rows.length > 0;
+		if (used)
+			throw new Error(
+				"Protected content exists; retain the capable runtime and private payload tables",
+			);
 	}
 	await db.schema.dropTable("_emdash_protected_revisions").ifExists().execute();
 	await db.schema.dropTable("_emdash_protected_content").ifExists().execute();
