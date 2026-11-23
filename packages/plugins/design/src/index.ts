@@ -109,7 +109,7 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 	return definePlugin({
 		id: "design",
 		version,
-		capabilities: [],
+		capabilities: ["hooks.page-fragments:register"],
 
 		admin: {
 			entry: "@emdash-cms/plugin-design/admin",
