@@ -168,7 +168,12 @@ describe("WpShell widgetArea slots (emb/143)", () => {
 										style: "normal",
 										textAlign: "center",
 										children: [
-											{ _type: "span", _key: "s3", text: "456 Oak Ave, Othertown, NC 28001", marks: [] },
+											{
+												_type: "span",
+												_key: "s3",
+												text: "456 Oak Ave, Othertown, NC 28001",
+												marks: [],
+											},
 										],
 										markDefs: [],
 									},
