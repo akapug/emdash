@@ -379,6 +379,25 @@ export interface WpShellLayout {
 	parts: WpShellPart[];
 }
 
+export interface WpShellPopupTrigger {
+	type: "auto_open" | "click_open" | "exit_intent";
+	delayMs?: number;
+	selectors?: string[];
+	cookieName?: string;
+}
+
+export interface WpShellPopup {
+	id: string;
+	slug?: string;
+	title?: string;
+	html: string;
+	closeLabel?: string;
+	closeOnOverlay?: boolean;
+	closeOnEsc?: boolean;
+	triggers: WpShellPopupTrigger[];
+	scope?: "home" | "all";
+}
+
 export interface WpShell extends WpShellLayout {
 	version: typeof WP_SHELL_VERSION;
 	/** Content hash of the record, stamped on `<html data-wp-shell>` so a writer can see it served. */
@@ -426,6 +445,8 @@ export interface WpShell extends WpShellLayout {
 	 * keeps this template's own design.
 	 */
 	index?: WpShellIndex;
+	/** Active Popup Maker popups carried as accessible dialogs with their triggers. */
+	popups?: WpShellPopup[];
 }
 
 /** The posts index's layout: a layout like any other, and the listing its posts are drawn in, when it has one. */
@@ -826,6 +847,7 @@ function drawnMarkup(s: WpShell): string[] {
 	}
 	// A form's holes as elements that fit between tags: renderWpShellForm writes the form's own.
 	for (const f of s.forms ?? []) out.push(f.parts.map(formFillForCheck).join(""));
+	for (const p of s.popups ?? []) out.push(p.html);
 	// A sign-up drawn whole: its fields and its count line in their holes (renderWpShellSubscribe).
 	for (const x of s.subscribe ?? []) {
 		const fill = (t: readonly WpShellSubscribePart[], holes: Record<string, string> = {}) =>
@@ -1295,6 +1317,7 @@ function markupOf(s: WpShell): string[] {
 	for (const l of s.listings ?? [])
 		for (const x of [...l.item, ...(l.thumb ?? [])]) if (typeof x === "string") out.push(x);
 	for (const f of s.forms ?? []) for (const x of f.parts) if (typeof x === "string") out.push(x);
+	for (const p of s.popups ?? []) out.push(p.html);
 	for (const x of s.subscribe ?? []) {
 		for (const t of [x.parts, x.fields, ...(x.count ? [x.count.item] : [])])
 			for (const y of t) if (typeof y === "string") out.push(y);
@@ -1877,6 +1900,49 @@ function checkPost(v: Record<string, unknown>): string | null {
 	return null;
 }
 
+const POPUP_ID = /^\d+$/;
+const POPUP_SELECTOR = /^[#.\w\s,\-[\]='"*:>~+]+$/;
+
+function checkPopup(value: unknown): string | null {
+	if (!isObject(value)) return "a popup is not an object";
+	if (typeof value.id !== "string" || !POPUP_ID.test(value.id)) return "a popup has no id";
+	if (typeof value.html !== "string" || value.html.trim().length === 0) return "a popup has no html";
+	if (value.slug !== undefined && typeof value.slug !== "string") return "a popup slug is not text";
+	if (value.title !== undefined && typeof value.title !== "string") return "a popup title is not text";
+	if (value.closeLabel !== undefined && typeof value.closeLabel !== "string")
+		return "a popup closeLabel is not text";
+	if (value.closeOnOverlay !== undefined && typeof value.closeOnOverlay !== "boolean")
+		return "a popup closeOnOverlay is not boolean";
+	if (value.closeOnEsc !== undefined && typeof value.closeOnEsc !== "boolean")
+		return "a popup closeOnEsc is not boolean";
+	if (value.scope !== undefined && value.scope !== "home" && value.scope !== "all")
+		return "a popup scope is invalid";
+	if (!Array.isArray(value.triggers) || value.triggers.length === 0)
+		return "a popup has no triggers";
+	for (const t of value.triggers) {
+		if (!isObject(t)) return "a popup trigger is not an object";
+		if (t.type !== "auto_open" && t.type !== "click_open" && t.type !== "exit_intent")
+			return "a popup trigger type is unknown";
+		if (t.delayMs !== undefined && (typeof t.delayMs !== "number" || !Number.isFinite(t.delayMs) || t.delayMs < 0))
+			return "a popup trigger delayMs is invalid";
+		if (t.cookieName !== undefined && typeof t.cookieName !== "string")
+			return "a popup trigger cookieName is not text";
+		if (t.selectors !== undefined) {
+			if (!Array.isArray(t.selectors)) return "a popup trigger selectors is not a list";
+			for (const s of t.selectors) {
+				if (typeof s !== "string" || !POPUP_SELECTOR.test(s))
+					return "a popup trigger selector is unsafe";
+			}
+		}
+	}
+	return null;
+}
+
+/** Active popups to render on a page of `kind`. */
+export function popupsFor(shell: WpShell, kind: WpShellKind): WpShellPopup[] {
+	return (shell.popups ?? []).filter((p) => (p.scope === "home" ? kind === "home" : true));
+}
+
 /** Why `value` is not a shell record this layout can draw, or null when it is one. */
 export function wpShellProblem(value: unknown): string | null {
 	if (!isObject(value)) return "not an object";
@@ -1966,6 +2032,12 @@ export function wpShellProblem(value: unknown): string | null {
 	if (!Array.isArray(forms)) return "the forms are not a list";
 	for (const f of forms) {
 		const why = checkForm(f);
+		if (why) return why;
+	}
+	const { popups = [] } = value;
+	if (!Array.isArray(popups)) return "the popups are not a list";
+	for (const p of popups) {
+		const why = checkPopup(p);
 		if (why) return why;
 	}
 	if (value.post !== undefined) {

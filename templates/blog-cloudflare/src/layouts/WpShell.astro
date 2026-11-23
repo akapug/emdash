@@ -62,6 +62,7 @@ import {
 	imageRatio,
 	ownImagePath,
 	plainText,
+	popupsFor,
 	stylesFor,
 	type WpShell,
 	type WpShellKind,
@@ -144,6 +145,7 @@ const menus = new Map<string, readonly WpShellMenuItem[] | null>(
 const siteTitle = settings.title ?? shell.parts.flatMap((p) => ("slot" in p && p.slot === "siteTitle" ? [p.fallback] : []))[0] ?? "";
 const fullTitle = wpShellDocumentTitle(title, siteTitle, seoTitle);
 
+const activePopups = popupsFor(shell, kind);
 const layout = layoutFor(shell, kind, slug);
 
 // The site's latest posts, where the layout lists them (the front page's highlights).
@@ -408,6 +410,87 @@ const pageCtx = createPublicPageContext({
 					</Fragment>
 				);
 			})
+		}
+		{
+			activePopups.map((popup) => (
+				<dialog
+					id={`wp-shell-popup-${popup.id}`}
+					class="wp-shell-popup"
+					aria-label={popup.title || "Announcement"}
+					data-wp-shell-popup={popup.id}
+					data-wp-shell-triggers={JSON.stringify(popup.triggers)}
+					data-wp-shell-close-overlay={popup.closeOnOverlay ? "1" : "0"}
+					data-wp-shell-close-esc={popup.closeOnEsc === false ? "0" : "1"}
+				>
+					<div class="wp-shell-popup-inner">
+						<button
+							type="button"
+							class="wp-shell-popup-close"
+							data-wp-shell-popup-close
+							aria-label={popup.closeLabel || "Close"}
+						>
+							{popup.closeLabel || "Close"}
+						</button>
+						<div class="wp-shell-popup-content" set:html={popup.html} />
+					</div>
+				</dialog>
+			))
+		}
+		{
+			activePopups.length > 0 && (
+				<script is:inline>
+					{`(() => {
+  const dialogs = document.querySelectorAll("dialog[data-wp-shell-popup]");
+  for (const dialog of dialogs) {
+    if (!(dialog instanceof HTMLDialogElement)) continue;
+    const id = dialog.getAttribute("data-wp-shell-popup") || "";
+    let triggers = [];
+    try { triggers = JSON.parse(dialog.getAttribute("data-wp-shell-triggers") || "[]"); } catch { continue; }
+    const storageKey = "wp-shell-popup-dismissed:" + (triggers.find((t) => t && t.cookieName)?.cookieName || id);
+    const isDismissed = () => { try { return sessionStorage.getItem(storageKey) === "1"; } catch { return false; } };
+    const dismiss = () => {
+      try { sessionStorage.setItem(storageKey, "1"); } catch {}
+      if (dialog.open) dialog.close();
+    };
+    const open = () => { if (!dialog.open) dialog.showModal(); };
+    dialog.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target instanceof Element && target.closest("[data-wp-shell-popup-close], .pum-close, .popmake-close")) {
+        e.preventDefault();
+        dismiss();
+        return;
+      }
+      if (target === dialog && dialog.getAttribute("data-wp-shell-close-overlay") === "1") dismiss();
+    });
+    dialog.addEventListener("cancel", (e) => {
+      if (dialog.getAttribute("data-wp-shell-close-esc") === "0") { e.preventDefault(); return; }
+      try { sessionStorage.setItem(storageKey, "1"); } catch {}
+    });
+    for (const t of triggers) {
+      if (!t || typeof t !== "object") continue;
+      if (t.type === "auto_open") {
+        const delay = typeof t.delayMs === "number" && t.delayMs >= 0 ? t.delayMs : 0;
+        window.setTimeout(() => { if (!isDismissed()) open(); }, delay);
+      } else if (t.type === "click_open") {
+        const sels = Array.isArray(t.selectors) && t.selectors.length > 0 ? t.selectors : [".popmake-" + id, 'a[href="#popmake-' + id + '"]'];
+        const joined = sels.join(", ");
+        document.addEventListener("click", (e) => {
+          const target = e.target;
+          if (target instanceof Element && !dialog.contains(target) && target.closest(joined)) {
+            e.preventDefault();
+            open();
+          }
+        });
+      } else if (t.type === "exit_intent") {
+        document.addEventListener("mouseleave", (e) => {
+          if (e.clientY <= 0 && !isDismissed()) open();
+        }, { once: true });
+      }
+    }
+  }
+})();`}
+				</script>
+			)
 		}
 		<EmDashBodyEnd page={pageCtx} />
 	</body>

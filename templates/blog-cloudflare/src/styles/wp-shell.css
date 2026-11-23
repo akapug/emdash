@@ -35,3 +35,47 @@ iframe.wp-shell-embed {
 	aspect-ratio: 16 / 9;
 	border: 0;
 }
+
+/* Accessible dialog wrapper for migrated Popup Maker popups (WpShell.astro). */
+dialog.wp-shell-popup {
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	max-width: min(640px, 92vw);
+	max-height: 90vh;
+	width: 100%;
+	overflow: auto;
+	background: #fff;
+	color: inherit;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+dialog.wp-shell-popup::backdrop {
+	background: rgba(0, 0, 0, 0.55);
+}
+
+.wp-shell-popup-inner {
+	position: relative;
+	padding: 1.5rem;
+}
+
+.wp-shell-popup-close {
+	position: absolute;
+	top: 0.65rem;
+	right: 0.65rem;
+	z-index: 2;
+	padding: 0.3rem 0.65rem;
+	border: 1px solid rgba(0, 0, 0, 0.25);
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.92);
+	color: #111;
+	font-size: 0.85rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.wp-shell-popup [data-wp-shell-popup-close],
+.wp-shell-popup .pum-close,
+.wp-shell-popup .popmake-close {
+	cursor: pointer;
+}

@@ -37,6 +37,7 @@
 	"record.pages[].slug",
 	"record.pages[].styles",
 	"record.parts",
+	"record.popups",
 	"record.post",
 	"record.post.adjacent",
 	"record.post.author",
