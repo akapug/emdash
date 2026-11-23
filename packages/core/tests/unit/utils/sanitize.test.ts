@@ -300,7 +300,9 @@ describe("a newsletter form is carried WORKING", () => {
 	it("THE FORM, ITS FIELDS AND ITS OPTIONS SURVIVE", () => {
 		const out = sanitizeContent(MAILCHIMP);
 		expect(out, "the form is there").toContain("<form");
-		expect(out, "the action is the customer's own list").toContain("list-manage.com/subscribe/post");
+		expect(out, "the action is the customer's own list").toContain(
+			"list-manage.com/subscribe/post",
+		);
 		expect(out, "the email field is there").toContain('name="EMAIL"');
 		expect(out, "the first name is there").toContain('name="FNAME"');
 		expect(out, "the country select is there").toContain("<select");
@@ -310,7 +312,10 @@ describe("a newsletter form is carried WORKING", () => {
 	});
 
 	it("A NON-ALLOWLISTED ACTION GETS NO CONTROLS", () => {
-		const other = MAILCHIMP.replace("https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2", "https://evil.example.com/collect");
+		const other = MAILCHIMP.replace(
+			"https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2",
+			"https://evil.example.com/collect",
+		);
 		const out = sanitizeContent(other);
 		expect(out, "no form survives").not.toContain("<form");
 		expect(out, "no input survives").not.toContain("<input");
@@ -318,7 +323,10 @@ describe("a newsletter form is carried WORKING", () => {
 	});
 
 	it("A javascript: ACTION IS REFUSED", () => {
-		const js = MAILCHIMP.replace("https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2", "javascript:alert(1)");
+		const js = MAILCHIMP.replace(
+			"https://calulti.us20.list-manage.com/subscribe/post?u=84962611ecc6d269483b6cd73&amp;id=2bde2",
+			"javascript:alert(1)",
+		);
 		const out = sanitizeContent(js);
 		expect(out, "no form survives").not.toContain("<form");
 		expect(out, "no input survives").not.toContain("<input");
@@ -337,7 +345,16 @@ describe("a newsletter form is carried WORKING", () => {
 		const out = sanitizeContent(
 			'<p>Name <input name="loose"> <button>Go now</button> <label>A label</label> <textarea>typed secret</textarea> <select><option>An option</option></select></p>',
 		);
-		for (const tag of ["<input", "<button", "<label", "<textarea", "<select", "<option", "embark-unwrapped-control", "data-embark-drop"]) {
+		for (const tag of [
+			"<input",
+			"<button",
+			"<label",
+			"<textarea",
+			"<select",
+			"<option",
+			"embark-unwrapped-control",
+			"data-embark-drop",
+		]) {
 			expect(out, `${tag} does not survive outside a form`).not.toContain(tag);
 		}
 		expect(out, "a button's text unwraps, as before").toContain("Go now");

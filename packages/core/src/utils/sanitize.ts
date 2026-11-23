@@ -170,7 +170,10 @@ function newsletterHostAllowed(host: string, allowed: readonly string[]): boolea
  * a host not on the list, or a script handler on the form. The controls are
  * only ever carried inside a form whose action this function approved.
  */
-function newsletterActionOf(attribs: Record<string, string>, allowed: readonly string[]): string | null {
+function newsletterActionOf(
+	attribs: Record<string, string>,
+	allowed: readonly string[],
+): string | null {
 	const action = (attribs.action ?? "").trim();
 	if (action.length === 0) return null;
 	let url: URL;
@@ -242,7 +245,19 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		// whose action is an allowlisted newsletter host. Allowing the tag and
 		// gating the instance is what lets the same sanitizer carry a working
 		// Mailchimp form and still refuse every other form's controls.
-		allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "span", "iframe", "form", "input", "select", "option", "textarea", "button", "label"],
+		allowedTags: [
+			...sanitizeHtml.defaults.allowedTags,
+			"img",
+			"span",
+			"iframe",
+			"form",
+			"input",
+			"select",
+			"option",
+			"textarea",
+			"button",
+			"label",
+		],
 		nonTextTags: ["script", "style", "noscript"],
 		allowedAttributes: {
 			...sanitizeHtml.defaults.allowedAttributes,
@@ -250,7 +265,21 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			iframe: ["src", "width", "height", "frameborder", "allow", "allowfullscreen", "title"],
 			img: ["src", "srcset", "alt", "title", "width", "height", "loading"],
 			form: ["action", "method", "target", "rel", "class", "id", "name", "novalidate"],
-			input: ["type", "name", "value", "id", "class", "placeholder", "required", "checked", "maxlength", "size", "autocomplete", "aria-label", "aria-required"],
+			input: [
+				"type",
+				"name",
+				"value",
+				"id",
+				"class",
+				"placeholder",
+				"required",
+				"checked",
+				"maxlength",
+				"size",
+				"autocomplete",
+				"aria-label",
+				"aria-required",
+			],
 			select: ["name", "id", "class", "required", "aria-label", "aria-required"],
 			option: ["value", "selected", "label"],
 			textarea: ["name", "id", "class", "rows", "cols", "placeholder", "required", "aria-label"],
