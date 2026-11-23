@@ -229,7 +229,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		if (DROP_WHOLE.has(tagName)) return { tagName, attribs: { "data-embark-drop": "1" } };
 		return { tagName: "embark-unwrapped-control", attribs: {} };
 	};
-	const controlTransforms = Object.fromEntries([...CONTROL_TAGS].map((t) => [t, control]));
+	const controlTransforms = Object.fromEntries(Array.from(CONTROL_TAGS, (t) => [t, control]));
 	return sanitizeHtml(html, {
 		onOpenTag: (name, attribs) => {
 			if (name === "form") forms.push(newsletterActionOf(attribs, newsletterHosts) !== null);
