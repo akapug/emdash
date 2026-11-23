@@ -101,6 +101,8 @@ export type WpShellPart =
 	| { slot: "archives"; archives: number }
 	/** A sign-up for new posts by email, posting to EmDash: the record's `subscribe[subscribe]`. */
 	| { slot: "subscribe"; subscribe: number }
+	/** A captured widget area (footer sidebar or copyright socket), editable via EmDash Widgets. */
+	| { slot: "widgetArea"; area: string; label?: string; fallback: string }
 	// Only in the record's post layout (WpShellPostLayout); anywhere else the record is refused.
 	/** The post's meta: the post layout's `meta[meta]`. */
 	| { slot: "postMeta"; meta: number }
@@ -1027,6 +1029,8 @@ const isIndex = (v: unknown, below: number): boolean =>
 	typeof v === "number" && Number.isInteger(v) && v >= 0 && v < below;
 
 /** How many of each list the record's slots may name. */
+const WIDGET_AREA_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
 interface SlotCounts {
 	listings: number;
 	archives: number;
@@ -1072,6 +1076,13 @@ function checkPart(
 			return isIndex(p.archives, counts.archives) ? null : "an archives slot names no archives";
 		case "subscribe":
 			return isIndex(p.subscribe, counts.subscribe) ? null : "a subscribe slot names no sign-up";
+		case "widgetArea":
+			return typeof p.area === "string" &&
+				WIDGET_AREA_NAME.test(p.area) &&
+				(p.label === undefined || typeof p.label === "string") &&
+				typeof p.fallback === "string"
+				? null
+				: "a widgetArea slot has an invalid area name or no fallback";
 		// A post's slots are drawn only in the post layout, from its own templates.
 		case "postMeta":
 			return post && isIndex(p.meta, post.meta.length)
@@ -3178,7 +3189,8 @@ export type WpShellPiece =
 	/** The element that holds the entry's subtitle (its excerpt): drawn only for an entry that has one. */
 	| { subtitle: WpShellElement }
 	| { content: WpShellElement; end?: string }
-	| { comments: WpShellElement };
+	| { comments: WpShellElement }
+	| { widgetArea: { area: string; fallback: string } };
 
 /** What EmDash knows that the record left a slot for. */
 export interface WpShellFill {
@@ -3575,6 +3587,8 @@ export function composeWpShell(shell: WpShell, fill: WpShellFill): WpShellPiece[
 		} else if (p.slot === "subscribe") {
 			const sub = shell.subscribe?.[p.subscribe];
 			if (sub && fill.subscribe) push(renderWpShellSubscribe(sub, fill.subscribe));
+		} else if (p.slot === "widgetArea") {
+			out.push({ widgetArea: { area: p.area, fallback: p.fallback } });
 		} else {
 			const menu = shell.menus[p.menu];
 			push(renderMenu(menu, fill.menuItems(menu.location), fill.currentPath));
