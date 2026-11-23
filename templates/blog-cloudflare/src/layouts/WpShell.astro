@@ -42,6 +42,7 @@ import { createPublicPageContext } from "emdash/page";
 import "../styles/wp-shell.css";
 import { PortableText } from "emdash/ui";
 import WpShellBlock from "../components/WpShellBlock.astro";
+import WpShellHtmlBlock from "../components/WpShellHtmlBlock.astro";
 import WpShellImage from "../components/WpShellImage.astro";
 import WpShellLink from "../components/WpShellLink.astro";
 import WpShellNote from "../components/WpShellNote.astro";
@@ -225,7 +226,9 @@ const commentsInLayout = pieces.some((piece) => "comments" in piece);
 // class the page drew on it, and its hover texts are drawn as titles (../utils/wp-skeleton.ts).
 const components = {
 	block: WpShellBlock,
-	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm },
+	// htmlBlock is overridden so a sign-up marker inside imported HTML becomes
+	// the subscriptions plugin's own form (../components/WpShellHtmlBlock.astro).
+	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm, htmlBlock: WpShellHtmlBlock },
 	mark: { link: WpShellLink, wpShellNote: WpShellNote },
 };
 

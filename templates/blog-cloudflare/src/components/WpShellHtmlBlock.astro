@@ -1,0 +1,62 @@
+---
+/**
+ * An HTML block of a migrated page, with the sign-up marker drawn as the
+ * subscriptions plugin's own form.
+ *
+ * THE MARKER. The importer writes `<div data-embark-subscribe="1"></div>`
+ * where a `[newsletter]`-family shortcode stood (mc4wp, MailPoet, the
+ * Newsletter plugin). The WXR carries only the shortcode text, so there is no
+ * form in the HTML to find — the marker is the record that a sign-up box was
+ * there, and this is where it becomes a form a visitor can fill.
+ *
+ * THE FORM IS THE PLUGIN'S, not a second one: `SubscribeEmbed` draws the same
+ * `emdash-subscribe` block the shell's subscribe slot draws, posting to the
+ * same endpoint. One form, one place it posts.
+ *
+ * A SITE WHOSE PLUGIN DOES NOT ANSWER DRAWS NO FORM, and says so — the same
+ * rule the shell's slot follows (layouts/WpShell.astro, subscribeFill). A form
+ * that posts nowhere is worse than a named absence.
+ */
+import { HtmlBlock } from "emdash/ui";
+import { SubscribeEmbed, hasSubscribeMarker, splitAtSubscribeMarkers } from "@emdash-cms/plugin-subscriptions/astro";
+import { getPublicPluginApiRouteHandler } from "emdash/astro";
+
+interface Props {
+	node: { _type: "htmlBlock"; _key: string; html: string };
+}
+
+const { node } = Astro.props;
+
+// The plugin answers only when it is installed and enabled on this site.
+const SUBSCRIPTIONS = "emdash-subscriptions";
+async function pluginAnswers(): Promise<boolean> {
+	const handle = getPublicPluginApiRouteHandler(Astro.locals);
+	if (!handle) return false;
+	try {
+		const status = await handle(
+			SUBSCRIPTIONS,
+			"GET",
+			"status",
+			new Request(new URL(`/_emdash/api/plugins/${SUBSCRIPTIONS}/status`, Astro.url)),
+		);
+		return status.success === true;
+	} catch {
+		return false;
+	}
+}
+
+const html = node?.html ?? "";
+const draws = hasSubscribeMarker(html) && (await pluginAnswers());
+// Split on the marker so the text either side keeps its place: WordPress drew
+// the box mid-article, and source behaviour is the spec.
+const pieces = draws ? splitAtSubscribeMarkers(html) : [html];
+---
+
+{
+	pieces.map((piece, i) => (
+		<>
+			{piece.length > 0 && <HtmlBlock node={{ ...node, html: piece }} />}
+			{i < pieces.length - 1 && <SubscribeEmbed node={{ _type: "emdash-subscribe", _key: `${node._key}-${i}` }} />}
+		</>
+	))
+}
