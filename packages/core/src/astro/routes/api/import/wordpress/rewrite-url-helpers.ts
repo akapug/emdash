@@ -358,6 +358,8 @@ export function rewritePortableTextUrls(
  * an unclosed one takes the rest of the string — the same reading a browser
  * gives it.
  */
+const RAW_TEXT_TAG_OPEN = /<(script|style)\b/i;
+
 export function rewriteHtmlOutsideScripts(
 	html: string,
 	exactMap: Record<string, string>,
@@ -380,7 +382,7 @@ export function rewriteHtmlOutsideScripts(
 	// An UNCLOSED <script> or <style> takes the rest of the string, as a browser
 	// reads it: only the markup before its open tag is rewritten.
 	const rest = html.slice(at);
-	const open = /<(script|style)\b/i.exec(rest);
+	const open = RAW_TEXT_TAG_OPEN.exec(rest);
 	const tail = rewriteStringUrls(open ? rest.slice(0, open.index) : rest, exactMap, baseMap);
 	out += tail.newValue + (open ? rest.slice(open.index) : "");
 	if (tail.changed) {

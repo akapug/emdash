@@ -564,7 +564,6 @@ describe("a layout's link titles follow the links the rewrite moves", () => {
 // still served `https://example.org/…/studio-work-day-768x1024.jpg` after
 // the import, inside a `wp-block-columns` figure, while the alias map held it.
 describe("an htmlBlock's URLs are rewritten", () => {
-	const old = "https://example.com/wp-content/uploads/2025/02/photo.jpg";
 	const sized = "https://example.com/wp-content/uploads/2025/02/photo-768x1024.jpg";
 	const moved = "/_emdash/api/media/file/01ABC.jpg";
 	const exact = { [sized]: moved };
