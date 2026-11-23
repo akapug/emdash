@@ -43,9 +43,26 @@ vi.mock("../../../../templates/blog-cloudflare/src/components/PostCard.astro", a
 // The importer writes excludeEntry.id as the DATABASE id (packages/host/src/import/shortcode-resolvers.ts, f.row().id),
 // so a fixture whose two ids are equal could not tell which one the renderer compares.
 const samplePosts = [
-	{ id: "first-post", data: { id: "01P1", title: "First Post", excerpt: "One", publishedAt: new Date("2026-11-01") }, edit: {} },
-	{ id: "second-post", data: { id: "01P2", title: "Second Post", excerpt: "Two", publishedAt: new Date("2026-11-02") }, edit: {} },
-	{ id: "third-post", data: { id: "01P3", title: "Third Post", excerpt: "Three", publishedAt: new Date("2026-11-03") }, edit: {} },
+	{
+		id: "first-post",
+		data: { id: "01P1", title: "First Post", excerpt: "One", publishedAt: new Date("2026-11-01") },
+		edit: {},
+	},
+	{
+		id: "second-post",
+		data: { id: "01P2", title: "Second Post", excerpt: "Two", publishedAt: new Date("2026-11-02") },
+		edit: {},
+	},
+	{
+		id: "third-post",
+		data: {
+			id: "01P3",
+			title: "Third Post",
+			excerpt: "Three",
+			publishedAt: new Date("2026-11-03"),
+		},
+		edit: {},
+	},
 ];
 
 const gridBlock = (overrides: Record<string, unknown> = {}) => ({
