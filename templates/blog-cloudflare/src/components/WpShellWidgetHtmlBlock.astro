@@ -1,0 +1,18 @@
+---
+/**
+ * An HTML block inside a migrated widget area (footer sidebar or copyright
+ * socket). Sanitizes and draws the markup inline without the `.emdash-html-block`
+ * wrapper div or margin so captured footer widgets have zero visual drift on
+ * first draw.
+ */
+import { sanitizeContent } from "emdash";
+
+interface Props {
+	node: { _type: "htmlBlock"; _key: string; html: string };
+}
+
+const { node } = Astro.props;
+const html = node?.html ? sanitizeContent(node.html) : "";
+---
+
+{html.length > 0 && <Fragment set:html={html} />}

@@ -33,8 +33,11 @@ import {
 	getMenuWithCacheHint,
 	getPublishedDates,
 	getSiteSettingsWithCacheHint,
+	getWidgetAreaWithCacheHint,
+	sanitizeHref,
 	type EditProxy,
 	type PortableTextBlock,
+	type WidgetArea,
 } from "emdash";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import { EmDashHead, EmDashBodyStart, EmDashBodyEnd } from "emdash/ui";
@@ -43,6 +46,7 @@ import "../styles/wp-shell.css";
 import { PortableText } from "emdash/ui";
 import WpShellBlock from "../components/WpShellBlock.astro";
 import WpShellHtmlBlock from "../components/WpShellHtmlBlock.astro";
+import WpShellWidgetHtmlBlock from "../components/WpShellWidgetHtmlBlock.astro";
 import WpShellImage from "../components/WpShellImage.astro";
 import WpShellLink from "../components/WpShellLink.astro";
 import WpShellNote from "../components/WpShellNote.astro";
@@ -190,6 +194,42 @@ async function subscribeFill(): Promise<WpShellSubscribeFill | null> {
 }
 const subscribe = hasSlot("subscribe") ? await subscribeFill() : null;
 
+// Captured footer widget areas and copyright socket: once seeded in EmDash, the widget area
+// is the truth (an emptied area draws nothing); before any seed (null), the captured fallback draws.
+const widgetAreaNames = [
+	...new Set(
+		layout.parts.flatMap((p) => ("slot" in p && p.slot === "widgetArea" ? [p.area] : [])),
+	),
+];
+const widgetAreaResults =
+	widgetAreaNames.length > 0
+		? await Promise.all(widgetAreaNames.map((name) => getWidgetAreaWithCacheHint(name)))
+		: [];
+if (Astro.cache?.enabled) {
+	for (const r of widgetAreaResults) Astro.cache.set(r.cacheHint);
+}
+const widgetAreas = new Map<string, WidgetArea | null>(
+	widgetAreaNames.map((name, i) => [name, widgetAreaResults[i]?.data ?? null]),
+);
+// Any menu widgets placed inside a footer widget area by the owner in Admin.
+const widgetMenuNames = [
+	...new Set(
+		[...widgetAreas.values()].flatMap((area) =>
+			(area?.widgets ?? []).flatMap((w) =>
+				w.type === "menu" && w.menuName && !menus.has(w.menuName) ? [w.menuName] : [],
+			),
+		),
+	),
+];
+if (widgetMenuNames.length > 0) {
+	const extraMenus = await Promise.all(widgetMenuNames.map((name) => getMenuWithCacheHint(name)));
+	for (let i = 0; i < widgetMenuNames.length; i++) {
+		const m = extraMenus[i];
+		if (m && Astro.cache?.enabled) Astro.cache.set(m.cacheHint);
+		menus.set(widgetMenuNames[i]!, m?.data?.items ?? null);
+	}
+}
+
 const posts: WpShellPost[] = (postsResult?.entries ?? []).map((e) => ({
 	title: e.data.title,
 	url: `/posts/${e.id}`,
@@ -230,6 +270,10 @@ const components = {
 	// the subscriptions plugin's own form (../components/WpShellHtmlBlock.astro).
 	type: { image: WpShellImage, embed: WpShellEmbed, "emdash-form": WpShellForm, htmlBlock: WpShellHtmlBlock },
 	mark: { link: WpShellLink, wpShellNote: WpShellNote },
+};
+const widgetComponents = {
+	...components,
+	type: { ...components.type, htmlBlock: WpShellWidgetHtmlBlock },
 };
 
 // A page a builder made (Elementor) is drawn in the builder's own elements, which the page's own
@@ -277,6 +321,42 @@ const pageCtx = createPublicPageContext({
 		{
 			pieces.map((piece) => {
 				if ("html" in piece) return <Fragment set:html={piece.html} />;
+				if ("widgetArea" in piece) {
+					const area = widgetAreas.get(piece.widgetArea.area) ?? null;
+					if (area === null) return <Fragment set:html={piece.widgetArea.fallback} />;
+					if (area.widgets.length === 0) return null;
+					return (
+						<Fragment>
+							{area.widgets.map((widget) => {
+								if (widget.type === "content" && widget.content) {
+									return (
+										<Fragment>
+											{widget.title && <h4 class="widget-title">{widget.title}</h4>}
+											<PortableText value={widget.content} components={widgetComponents} />
+										</Fragment>
+									);
+								}
+								if (widget.type === "menu" && widget.menuName) {
+									const items = menus.get(widget.menuName) ?? [];
+									if (items.length === 0) return null;
+									return (
+										<Fragment>
+											{widget.title && <h4 class="widget-title">{widget.title}</h4>}
+											<ul class="menu">
+												{items.map((item) => (
+													<li>
+														<a href={sanitizeHref(item.url)}>{item.label}</a>
+													</li>
+												))}
+											</ul>
+										</Fragment>
+									);
+								}
+								return null;
+							})}
+						</Fragment>
+					);
+				}
 				if ("comments" in piece) {
 					if (!comments) return null;
 					const Comments = piece.comments.tag as HTMLTag;
