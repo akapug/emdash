@@ -267,9 +267,10 @@ export function rewritePortableTextUrls(
 		// Handle the link classes and titles a page's own layout keeps by href in its skeleton
 		linksRewritten += rewriteSkeletonLinkKeys(block.skeleton, exactMap, baseMap);
 
-		// Handle a file download block, a button, and the buttons of a buttons block
+		// Handle a file download block, a button, an embed (e.g. self-hosted video/audio),
+		// and the buttons of a buttons block
 		if (
-			(block._type === "file" || block._type === "button") &&
+			(block._type === "file" || block._type === "button" || block._type === "embed") &&
 			rewriteUrlField(block, "url", exactMap, baseMap)
 		) {
 			linksRewritten++;
@@ -357,6 +358,8 @@ export function rewritePortableTextUrls(
  * an unclosed one takes the rest of the string — the same reading a browser
  * gives it.
  */
+const RAW_TEXT_TAG_OPEN = /<(script|style)\b/i;
+
 export function rewriteHtmlOutsideScripts(
 	html: string,
 	exactMap: Record<string, string>,
@@ -379,7 +382,7 @@ export function rewriteHtmlOutsideScripts(
 	// An UNCLOSED <script> or <style> takes the rest of the string, as a browser
 	// reads it: only the markup before its open tag is rewritten.
 	const rest = html.slice(at);
-	const open = /<(script|style)\b/i.exec(rest);
+	const open = RAW_TEXT_TAG_OPEN.exec(rest);
 	const tail = rewriteStringUrls(open ? rest.slice(0, open.index) : rest, exactMap, baseMap);
 	out += tail.newValue + (open ? rest.slice(open.index) : "");
 	if (tail.changed) {

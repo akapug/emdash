@@ -30,6 +30,12 @@ const HTML_TAG_PATTERN = /<!(?=--)(?:-(?!->)[^-]*)*(?:-->)?|<[^>]*>?/g;
 const YOUTUBE_EMBED_URL_PATTERN = /^https?:\/\/(www\.)?youtube\.com\/(?:v|embed)\/([^/]+)/i;
 const AUDIO_FILE_PATTERN = /^https?:\/\/.+?\.(mp3|ogg|flac|m4a|wav)$/i;
 const VIDEO_FILE_PATTERN = /^https?:\/\/.+?\.(mp4|m4v|webm|ogv|flv)$/i;
+// Adjacent self-hosted media URLs glued together on one line with no whitespace
+// (e.g. Elementor flattening two Video widgets): split right after the media
+// extension when immediately followed by another http(s) URL.
+const HAS_ADJACENT_MEDIA_URL = /\.(?:mp3|ogg|flac|m4a|wav|mp4|m4v|webm|ogv|flv)https?:\/\//i;
+const ADJACENT_MEDIA_URL_SPLIT =
+	/(?<=\.(?:mp3|ogg|flac|m4a|wav|mp4|m4v|webm|ogv|flv))(?=https?:\/\/)/gi;
 
 // The oEmbed providers, from WP_oEmbed::__construct() in wp-includes/class-wp-oembed.php
 const OEMBED_PROVIDER_PATTERNS = [
@@ -116,7 +122,15 @@ export function findAutoembeds(html: string): Autoembed[] {
 	for (const match of text.matchAll(URL_LINE_PATTERN)) {
 		const [, indent = "", url = ""] = match;
 		const start = match.index + indent.length;
-		pushAutoembed(found, url, start, start + url.length);
+		if (HAS_ADJACENT_MEDIA_URL.test(url)) {
+			let offset = start;
+			for (const part of url.split(ADJACENT_MEDIA_URL_SPLIT)) {
+				pushAutoembed(found, part, offset, offset + part.length);
+				offset += part.length;
+			}
+		} else {
+			pushAutoembed(found, url, start, start + url.length);
+		}
 	}
 	for (const match of html.matchAll(URL_PARAGRAPH_PATTERN)) {
 		pushAutoembed(found, match[1] ?? "", match.index, match.index + match[0].length);
