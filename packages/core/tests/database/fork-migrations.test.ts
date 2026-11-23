@@ -67,7 +67,11 @@ describe("fork migrations", () => {
 		const upstream = MIGRATION_NAMES.filter((name) => UPSTREAM_NAME.test(name));
 		const fork = MIGRATION_NAMES.filter((name) => FORK_NAME.test(name));
 		expect(upstream.length + fork.length).toBe(MIGRATION_NAMES.length);
-		expect(fork).toEqual(["embark_001_import_baselines", "embark_002_import_sync_grants"]);
+		expect(fork).toEqual([
+			"embark_001_import_baselines",
+			"embark_002_import_sync_grants",
+			"embark_003_protected_content",
+		]);
 		const sorted = [...MIGRATION_NAMES].toSorted((a, b) => a.localeCompare(b));
 		expect(sorted.slice(-fork.length)).toEqual(fork);
 	});
