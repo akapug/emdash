@@ -23,6 +23,7 @@ import {
 import type { PluginAdminExports } from "emdash";
 import { apiFetch as baseFetch, getErrorMessage, parseApiResponse } from "emdash/plugin-utils";
 import * as React from "react";
+import { formatNotifyEmails, parseNotifyEmails } from "./notify-emails.js";
 
 // =============================================================================
 // Constants
@@ -406,6 +407,9 @@ function FormEditor({
 	const [slug, setSlug] = React.useState(form?.slug ?? "");
 	const [fields, setFields] = React.useState<FormField[]>(form?.pages[0]?.fields ?? []);
 	const [settings, setSettings] = React.useState<Partial<FormSettings>>(form?.settings ?? {});
+	const [notifyEmailsText, setNotifyEmailsText] = React.useState(
+		formatNotifyEmails(form?.settings?.notifyEmails),
+	);
 	const [saving, setSaving] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
 	const [turnstileStatus, setTurnstileStatus] = React.useState<{
@@ -486,16 +490,23 @@ function FormEditor({
 			}
 		}
 
+		const parsedNotify = parseNotifyEmails(notifyEmailsText);
+		if (parsedNotify.error) {
+			setError(parsedNotify.error);
+			return;
+		}
+
 		setSaving(true);
 		setError(null);
 
+		const nextSettings = { ...settings, notifyEmails: parsedNotify.emails };
 		const payload = form
 			? {
 					id: form.id,
 					name,
 					slug,
 					pages: [{ fields }],
-					settings,
+					settings: nextSettings,
 				}
 			: {
 					name,
@@ -509,7 +520,7 @@ function FormEditor({
 						retentionDays: 0,
 						spamProtection: "honeypot",
 						submitLabel: "Submit",
-						...settings,
+						...nextSettings,
 					},
 				};
 
@@ -649,6 +660,17 @@ function FormEditor({
 							}))
 						}
 					/>
+					<div className="col-span-2">
+						<Input
+							label="Notification Emails"
+							value={notifyEmailsText}
+							onChange={(e) => setNotifyEmailsText(e.target.value)}
+							placeholder="owner@example.com, team@example.com"
+						/>
+						<p className="mt-1 text-xs text-muted-foreground">
+							Comma- or newline-separated addresses (up to 10) emailed when this form is submitted.
+						</p>
+					</div>
 					<div className="col-span-2">
 						<Input
 							label="Redirect URL (optional)"
