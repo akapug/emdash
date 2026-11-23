@@ -753,8 +753,23 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 	// the collection's `entry.id` (the public id) against each entry's `id`; doing
 	// that with `data.id` (the database id) never matched, so this arm pins which.
 	it("leaves the post itself out of its own related strip, matching ids in the collection's own space", async () => {
-		const related = { item: ["<div class=\"post-related\">", HOLE("related"), "</div>"], card: ["<a href=\"", HOLE("adjHref"), "\">", HOLE("adjTitle"), "</a>"], count: 3 };
-		reads.shell = { ...withPost(), post: { ...withPost().post, parts: [...withPost().post.parts.filter((p: any) => !("slot" in p && p.slot === "comments")), { slot: "related" }, { slot: "comments", tag: "div", class: "comment-respond", id: "respond" }], related } };
+		const related = {
+			item: ['<div class="post-related">', HOLE("related"), "</div>"],
+			card: ['<a href="', HOLE("adjHref"), '">', HOLE("adjTitle"), "</a>"],
+			count: 3,
+		};
+		reads.shell = {
+			...withPost(),
+			post: {
+				...withPost().post,
+				parts: [
+					...withPost().post.parts.filter((p: any) => !("slot" in p && p.slot === "comments")),
+					{ slot: "related" },
+					{ slot: "comments", tag: "div", class: "comment-respond", id: "respond" },
+				],
+				related,
+			},
+		};
 		expect(wpShellProblem(reads.shell)).toBeNull();
 		reads.getCommentCount.mockResolvedValue(0);
 		reads.getEmDashEntry.mockResolvedValue({
@@ -764,7 +779,15 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 				data: {
 					id: "01POST",
 					title: "The Pond",
-					content: [{ _type: "block", _key: "b", style: "normal", children: [{ _type: "span", _key: "s", text: "a word ".repeat(200), marks: [] }], markDefs: [] }],
+					content: [
+						{
+							_type: "block",
+							_key: "b",
+							style: "normal",
+							children: [{ _type: "span", _key: "s", text: "a word ".repeat(200), marks: [] }],
+							markDefs: [],
+						},
+					],
 					translationGroup: "01POST",
 					updatedAt: new Date("2026-02-01T00:00:00Z"),
 					publishedAt: new Date("2026-01-15T08:30:00Z"),
@@ -778,13 +801,22 @@ describe("the /wp-shell/ route: a single post in the record's post layout", () =
 		});
 		reads.getEmDashCollection.mockResolvedValue({
 			entries: [
-				{ id: "the-pond", data: { title: "The Pond", terms: { tag: [{ label: "debt", slug: "debt" }] } } },
-				{ id: "the-other", data: { title: "Another", terms: { tag: [{ label: "debt", slug: "debt" }] } } },
+				{
+					id: "the-pond",
+					data: { title: "The Pond", terms: { tag: [{ label: "debt", slug: "debt" }] } },
+				},
+				{
+					id: "the-other",
+					data: { title: "Another", terms: { tag: [{ label: "debt", slug: "debt" }] } },
+				},
 			],
 			cacheHint: {},
 		});
 		const c = await AstroContainer.create();
-		const html = await c.renderToString(WpShellRoute, { params: { path: "posts/the-pond" }, request: new Request("https://example.org/posts/the-pond") });
+		const html = await c.renderToString(WpShellRoute, {
+			params: { path: "posts/the-pond" },
+			request: new Request("https://example.org/posts/the-pond"),
+		});
 		expect(html).toContain('href="/posts/the-other"');
 		// the post is not in its own strip
 		expect(html).not.toMatch(/post-related[\s\S]*href="\/posts\/the-pond"/u);
