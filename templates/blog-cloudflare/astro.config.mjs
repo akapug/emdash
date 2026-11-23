@@ -2,6 +2,7 @@ import cloudflare from "@astrojs/cloudflare";
 import react from "@astrojs/react";
 import { d1, r2 } from "@emdash-cms/cloudflare";
 import { cloudflareEmail } from "@emdash-cms/cloudflare/plugins";
+import { designPlugin } from "@emdash-cms/plugin-design";
 import { embarkHelperPlugin } from "@emdash-cms/plugin-embark-helper";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { subscriptionsPlugin } from "@emdash-cms/plugin-subscriptions";
@@ -40,6 +41,7 @@ export default defineConfig({
 				formsPlugin(),
 				subscriptionsPlugin({ postPath: "/posts/{slug}" }),
 				embarkHelperPlugin(),
+				designPlugin(),
 				...(emailFrom ? [cloudflareEmail({ from: emailFrom, broker: {} })] : []),
 			],
 			...(emailFrom
