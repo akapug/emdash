@@ -416,8 +416,22 @@ function FormEditor({
 		hasSiteKey: boolean;
 		hasSecretKey: boolean;
 	} | null>(null);
+	const [emailStatus, setEmailStatus] = React.useState<{ available: boolean } | null>(null);
 
 	const spamProtection = settings.spamProtection ?? "honeypot";
+
+	React.useEffect(() => {
+		void (async () => {
+			try {
+				const res = await apiFetch("settings/email-status");
+				if (res.ok) {
+					setEmailStatus(await parseApiResponse(res));
+				}
+			} catch {
+				// ignore — notice just won't show
+			}
+		})();
+	}, []);
 
 	React.useEffect(() => {
 		if (spamProtection !== "turnstile") return;
@@ -606,6 +620,12 @@ function FormEditor({
 			{/* Settings */}
 			<div>
 				<h2 className="text-lg font-semibold mb-3">Settings</h2>
+				{emailStatus && !emailStatus.available && (
+					<div className="mb-4 rounded-lg border border-yellow-500/50 bg-yellow-500/5 p-3 text-sm text-yellow-200">
+						Email sending is not active on this site. Submissions are stored here, but notification
+						emails and autoresponders will not be sent until an email provider is active.
+					</div>
+				)}
 				<div className="grid grid-cols-2 gap-4">
 					<Input
 						label="Confirmation Message"

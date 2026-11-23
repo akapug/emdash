@@ -202,6 +202,11 @@ export function createPlugin(options: FormsPluginOptions = {}): ResolvedPlugin {
 					};
 				},
 			},
+			"settings/email-status": {
+				handler: async (ctx) => ({
+					available: Boolean(ctx.email),
+				}),
+			},
 		},
 
 		admin: {

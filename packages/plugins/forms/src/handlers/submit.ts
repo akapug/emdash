@@ -275,7 +275,15 @@ export async function submitHandler(
 	// Reply-To is the visitor when the form asked for their address, so the owner answers them
 	// with one click; the email provider checks it is one plain address before it becomes a header.
 	const notifies = settings.notifyEmails.length > 0 && !settings.digestEnabled;
-	const mails = Boolean(ctx.email) && (notifies || Boolean(settings.autoresponder));
+	const wantsMail = notifies || Boolean(settings.autoresponder);
+	if (wantsMail && !ctx.email) {
+		ctx.log.warn("Submission stored; no email provider is configured or active", {
+			formId,
+			notifyCount: notifies ? settings.notifyEmails.length : 0,
+			autoresponder: Boolean(settings.autoresponder),
+		});
+	}
+	const mails = Boolean(ctx.email) && wantsMail;
 	const refused = mails ? await mailRefusal(ctx, formId, limits, new Date()) : null;
 	if (refused) {
 		ctx.log.warn("Submission stored; no email sent for it", { formId, why: refused });

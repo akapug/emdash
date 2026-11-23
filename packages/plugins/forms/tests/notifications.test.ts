@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { handleDigest } from "../src/handlers/cron.js";
 import { submitHandler } from "../src/handlers/submit.js";
+import { createPlugin } from "../src/index.js";
 import type { FormDefinition } from "../src/types.js";
 
 type Field = { name: string; label: string; type: string; required: boolean };
@@ -170,7 +171,7 @@ describe("a form's mail limits", () => {
 	});
 
 	it("asks nothing when the submission would mail nobody", async () => {
-		const { ctx, count } = context(form([EMAIL], { notifyEmails: [] }), {
+		const { ctx, count, log } = context(form([EMAIL], { notifyEmails: [] }), {
 			email: "visitor@example.net",
 		});
 
@@ -179,6 +180,34 @@ describe("a form's mail limits", () => {
 		expect(
 			count.mock.calls.filter(([w]) => (w as { createdAt?: unknown } | undefined)?.createdAt),
 		).toHaveLength(0);
+		expect(log.warn).not.toHaveBeenCalled();
+	});
+
+	it("warns loudly instead of silently dropping when notifyEmails is set but no email provider is active (emb/26)", async () => {
+		const { ctx, put, log } = context(form([EMAIL]), { email: "visitor@example.net" });
+		const noEmailCtx = { ...ctx, email: undefined };
+
+		const result = await submitHandler(noEmailCtx as never);
+
+		expect(result).toMatchObject({ success: true });
+		expect(put).toHaveBeenCalledOnce();
+		expect(log.warn).toHaveBeenCalledWith(
+			"Submission stored; no email provider is configured or active",
+			{ formId: "contact", notifyCount: 1, autoresponder: false },
+		);
+		expect(JSON.stringify(log.warn.mock.calls)).not.toContain("office@");
+	});
+
+	it("reports email availability through settings/email-status for the admin notice (emb/26)", async () => {
+		const plugin = createPlugin();
+		const route = plugin.routes?.["settings/email-status"];
+		expect(route).toBeDefined();
+		await expect(route!.handler({ email: undefined } as never)).resolves.toEqual({
+			available: false,
+		});
+		await expect(route!.handler({ email: { send: vi.fn() } } as never)).resolves.toEqual({
+			available: true,
+		});
 	});
 });
 
