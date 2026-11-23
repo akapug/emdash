@@ -2,7 +2,9 @@
 interface Props {
 	title: string;
 	href: string;
+	excerpt?: string;
 }
 const { title, href } = Astro.props;
 ---
-<article class="stub-post-card"><a href={href}>{title}</a></article>
+
+<article class="post-card"><a href={href}>{title}</a></article>

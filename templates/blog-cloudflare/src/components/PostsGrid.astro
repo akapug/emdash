@@ -1,0 +1,90 @@
+---
+/**
+ * Native v1 renderer for migrated WPBakery `[vc_posts_grid]` blocks (`_type: "posts-grid"`).
+ *
+ * Queries published entries from EmDash at render time, excludes the containing
+ * entry when `excludeEntry` names it, and draws a responsive grid of cards.
+ * The `emdash-posts-grid-v1` marker is checked by Embark's `postsGridDraws`
+ * gate before `--posts-grid` is enabled on import.
+ */
+import { getEmDashCollection } from "emdash";
+import PostCard from "./PostCard.astro";
+
+interface PostsGridNode {
+	_type: "posts-grid";
+	_key?: string;
+	version?: number;
+	collection?: string;
+	count?: number;
+	orderBy?: string;
+	order?: string;
+	excludeEntry?: { collection?: string; id?: string };
+}
+
+interface Props {
+	node: PostsGridNode;
+}
+
+const { node } = Astro.props;
+const SUPPORTED_COLLECTIONS = new Set(["posts", "pages"]);
+const valid =
+	node?.version === 1 &&
+	typeof node.collection === "string" &&
+	SUPPORTED_COLLECTIONS.has(node.collection) &&
+	typeof node.count === "number" &&
+	Number.isInteger(node.count) &&
+	node.count >= 1;
+
+const collection = valid ? (node.collection as "posts" | "pages") : null;
+const count = valid ? Math.min(50, Math.max(1, node.count!)) : 0;
+const order = node?.order === "asc" ? "asc" : "desc";
+const excludeId =
+	collection && node?.excludeEntry?.collection === collection && typeof node.excludeEntry.id === "string"
+		? node.excludeEntry.id
+		: null;
+
+const result = collection
+	? await getEmDashCollection(collection, {
+			orderBy: { published_at: order },
+			limit: excludeId ? count + 1 : count,
+		})
+	: null;
+
+if (result && Astro.cache?.enabled) {
+	Astro.cache.set(result.cacheHint);
+}
+
+const entries = (result?.entries ?? [])
+	// excludeEntry.id is the containing entry's DATABASE id (the importer writes the row id), so it is
+	// matched against data.id, not the public id in entry.id (the same mix-up the related strip had).
+	.filter((entry) => !excludeId || entry.data.id !== excludeId)
+	.slice(0, count);
+
+const hrefFor = (id: string) => (collection === "pages" ? `/pages/${id}` : `/posts/${id}`);
+---
+
+{
+	valid && entries.length > 0 && (
+		<div class="emdash-posts-grid emdash-posts-grid-v1 posts-grid" data-posts-grid="emdash-posts-grid-v1">
+			{entries.map((entry) => (
+				<PostCard
+					title={entry.data.title}
+					excerpt={"excerpt" in entry.data ? entry.data.excerpt : undefined}
+					featuredImage={"featured_image" in entry.data ? entry.data.featured_image : undefined}
+					href={hrefFor(entry.id)}
+					date={entry.data.publishedAt ?? undefined}
+					edit={entry.edit}
+				/>
+			))}
+		</div>
+	)
+}
+
+<style>
+	.emdash-posts-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+		gap: 1.5rem;
+		margin: 1.5rem 0;
+	}
+</style>
