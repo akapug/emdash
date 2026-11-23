@@ -1,5 +1,5 @@
 ---
-import { getEmDashCollection, getTermsForEntries } from "emdash";
+import { getEmDashCollection, getSiteSettingsWithCacheHint, getTermsForEntries } from "emdash";
 import Base from "../../layouts/Base.astro";
 import { getReadingTime } from "../../utils/reading-time";
 import { wpShellIndexRoute } from "../../utils/wp-shell";
@@ -7,8 +7,14 @@ import { loadWpShell } from "../../utils/wp-shell-loader";
 
 // A site whose record carries a posts index (cut from its own listing page) keeps its own design here: the
 // query goes along (`?cursor=`, `?subscribe=`). Any other site, a WordPress one too, draws this template's.
-const shellIndex = wpShellIndexRoute((await loadWpShell()).shell, Astro.url.search);
+const [{ shell }, settingsResult] = await Promise.all([
+	loadWpShell(),
+	getSiteSettingsWithCacheHint(),
+]);
+const shellIndex = wpShellIndexRoute(shell, Astro.url.search);
 if (shellIndex) return Astro.rewrite(shellIndex);
+
+const perPage = Math.min(100, Math.max(1, settingsResult.data.postsPerPage || 10));
 
 // Sort in the database rather than in JS — lets the DB use its index on
 // published_at and avoids a full-table scan on the client.
@@ -19,11 +25,14 @@ const {
 	nextCursor,
 } = await getEmDashCollection("posts", {
 	orderBy: { published_at: "desc" },
-	limit: 20,
+	limit: perPage,
 	cursor,
 });
 
-if (Astro.cache?.enabled) Astro.cache.set(cacheHint);
+if (Astro.cache?.enabled) {
+	Astro.cache.set(settingsResult.cacheHint);
+	Astro.cache.set(cacheHint);
+}
 
 // Single batched query for tags across all posts, instead of one
 // getEntryTerms() call per post (which would be N round-trips).

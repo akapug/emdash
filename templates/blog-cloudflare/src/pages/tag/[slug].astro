@@ -2,6 +2,7 @@
 import {
 	getTaxonomyTermsWithCacheHint,
 	getEmDashCollection,
+	getSiteSettingsWithCacheHint,
 	getTermsForEntries,
 	decodeSlug,
 } from "emdash";
@@ -10,15 +11,17 @@ import PostCard from "../../components/PostCard.astro";
 import { getReadingTime } from "../../utils/reading-time";
 
 const slug = decodeSlug(Astro.params.slug);
-const termsResult = await getTaxonomyTermsWithCacheHint("tag", {
-	includeCounts: false,
-});
+const [termsResult, settingsResult] = await Promise.all([
+	getTaxonomyTermsWithCacheHint("tag", { includeCounts: false }),
+	getSiteSettingsWithCacheHint(),
+]);
 const term = slug ? termsResult.data.find((item) => item.slug === slug) : null;
 
 if (!term) {
 	return Astro.redirect("/404");
 }
 
+const perPage = Math.min(100, Math.max(1, settingsResult.data.postsPerPage || 10));
 const cursor = Astro.url.searchParams.get("cursor") || undefined;
 const {
 	entries: posts,
@@ -27,12 +30,13 @@ const {
 } = await getEmDashCollection("posts", {
 	where: { tag: term.slug },
 	orderBy: { published_at: "desc" },
-	limit: 20,
+	limit: perPage,
 	cursor,
 });
 
 if (Astro.cache?.enabled) {
 	Astro.cache.set(termsResult.cacheHint);
+	Astro.cache.set(settingsResult.cacheHint);
 	Astro.cache.set(cacheHint);
 }
 
