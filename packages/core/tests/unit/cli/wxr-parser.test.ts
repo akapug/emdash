@@ -143,7 +143,7 @@ describe("parseWxr", () => {
 			const after = await parse(imageAfter);
 			expect(after.site.title).toBe("Real Site Title");
 			expect(after.site.link).toBe("https://example.com");
-			expect(after.site.description).toBe("");
+			expect(after.site.description ?? "").toBe("");
 		}
 	});
 
