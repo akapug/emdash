@@ -340,3 +340,43 @@ describe("classic content: a <pre> is code, not a paragraph", () => {
 		expect(customTexts).toEqual(["card", "words"]);
 	});
 });
+
+describe("classic content: inline marks spanning paragraphs", () => {
+	it("reopens italics across classic paragraphs as a browser does", () => {
+		for (const input of ["<p><em>a</p><p>b</em></p>", "<em>a\n\nb</em>"]) {
+			const blocks = gutenbergToPortableText(input);
+			expect(blocks).toHaveLength(2);
+			expect(blocks[0]).toMatchObject({
+				_type: "block",
+				style: "normal",
+				children: [{ _type: "span", text: "a", marks: ["em"] }],
+			});
+			expect(blocks[1]).toMatchObject({
+				_type: "block",
+				style: "normal",
+				children: [{ _type: "span", text: "b", marks: ["em"] }],
+			});
+		}
+	});
+
+	it("reopens bold and links across classic paragraphs", () => {
+		const blocks = gutenbergToPortableText(
+			'<p><strong><a href="https://example.org/x">first</p><p>second</a></strong></p>',
+		);
+		expect(blocks).toHaveLength(2);
+		for (const [i, word] of ["first", "second"].entries()) {
+			const block = blocks[i];
+			expect(block).toMatchObject({
+				_type: "block",
+				style: "normal",
+				markDefs: [{ _type: "link", href: "https://example.org/x" }],
+			});
+			if (block?._type === "block") {
+				const linkKey = block.markDefs?.[0]?._key;
+				expect(block.children).toHaveLength(1);
+				expect(block.children[0]?.text).toBe(word);
+				expect(new Set(block.children[0]?.marks)).toEqual(new Set(["strong", linkKey]));
+			}
+		}
+	});
+});

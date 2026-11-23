@@ -362,6 +362,100 @@ function aligned(html: string): { textAlign?: "left" | "center" | "right" | "jus
 	return textAlign ? { textAlign } : {};
 }
 
+const HAS_ENCODED_BRACKET_PATTERN = /&(?:#0*91|#x0*5b|lbrack|#0*93|#x0*5d|rbrack);/i;
+const ENCODED_BRACKET_PATTERN = /&(?:#0*91|#x0*5b|lbrack|#0*93|#x0*5d|rbrack);/gi;
+const ENCODED_LBRACKET_PATTERN = /^&(?:#0*91|#x0*5b|lbrack);$/i;
+const IFRAME_TAG_PATTERN = /<iframe\b/i;
+const SELF_CLOSING_TAG_END_PATTERN = /\s*\/>$/;
+
+/**
+ * Close page-builder self-closing or unclosed `<iframe>` tags before running
+ * the HTML5 tree builder so everything after `<iframe ... />` is not swallowed
+ * as rawtext fallback content (matching `findIframes` in `iframe.ts`).
+ */
+function closeOpenIframes(html: string): string {
+	if (!IFRAME_TAG_PATTERN.test(html)) return html;
+	let split: { start: number; end: number; tag: string } | undefined;
+	const walk = (nodes: HtmlNode[]): boolean => {
+		for (const node of nodes) {
+			if (!isHtmlElement(node)) continue;
+			const loc = node.sourceCodeLocation;
+			if (node.tagName === "iframe" && loc?.startTag) {
+				const open = !loc.endTag || html[loc.startTag.endOffset - 2] === "/";
+				if (open) {
+					const rawTag = html.slice(loc.startTag.startOffset, loc.startTag.endOffset);
+					const closedTag = rawTag.replace(SELF_CLOSING_TAG_END_PATTERN, ">") + "</iframe>";
+					split = { start: loc.startTag.startOffset, end: loc.startTag.endOffset, tag: closedTag };
+					return true;
+				}
+				continue;
+			}
+			if (walk(node.childNodes)) return true;
+		}
+		return false;
+	};
+	walk(parseFragment(html, { sourceCodeLocationInfo: true }).childNodes);
+	if (!split) return html;
+	return html.slice(0, split.start) + split.tag + closeOpenIframes(html.slice(split.end));
+}
+
+/**
+ * Normalise classic HTML through parse5 (the browser's own tree builder) before
+ * block splitting so inline marks spanning classic paragraphs (e.g.
+ * `<p><em>a</p><p>b</em></p>`) reopen in the following paragraph as a browser
+ * draws them. Preserves encoded bracket entities (`&#91;`, `&lbrack;`, etc.) in
+ * text nodes so downstream shortcode detection never confuses escaped literal
+ * brackets with live shortcodes.
+ */
+function normalizeClassicHtml(source: string): string {
+	const prepared = closeOpenIframes(withoutUndrawn(source));
+	if (!HAS_ENCODED_BRACKET_PATTERN.test(prepared)) {
+		return serialize(parseFragment(prepared));
+	}
+	// Choose sentinels absent from the input so encoded brackets survive parse5's
+	// entity decoding and are restored as entities afterwards.
+	let nonce = 0;
+	let lToken = `__G2PT_LB_${nonce}__`;
+	let rToken = `__G2PT_RB_${nonce}__`;
+	while (prepared.includes(lToken) || prepared.includes(rToken)) {
+		nonce++;
+		lToken = `__G2PT_LB_${nonce}__`;
+		rToken = `__G2PT_RB_${nonce}__`;
+	}
+	const edits: Array<{ start: number; end: number; text: string }> = [];
+	const collectTextEdits = (nodes: HtmlNode[]) => {
+		for (const node of nodes) {
+			if (node.nodeName === "#text") {
+				const loc = "sourceCodeLocation" in node ? node.sourceCodeLocation : undefined;
+				if (!loc) continue;
+				const raw = prepared.slice(loc.startOffset, loc.endOffset);
+				if (HAS_ENCODED_BRACKET_PATTERN.test(raw)) {
+					const replaced = raw.replace(ENCODED_BRACKET_PATTERN, (m) =>
+						ENCODED_LBRACKET_PATTERN.test(m) ? lToken : rToken,
+					);
+					edits.push({ start: loc.startOffset, end: loc.endOffset, text: replaced });
+				}
+			} else if ("childNodes" in node && node.childNodes.length > 0) {
+				collectTextEdits(node.childNodes);
+			}
+		}
+	};
+	collectTextEdits(parseFragment(prepared, { sourceCodeLocationInfo: true }).childNodes);
+	if (edits.length === 0) {
+		return serialize(parseFragment(prepared));
+	}
+	edits.sort((a, b) => a.start - b.start);
+	let guarded = "";
+	let cursor = 0;
+	for (const edit of edits) {
+		if (edit.start < cursor) continue;
+		guarded += prepared.slice(cursor, edit.start) + edit.text;
+		cursor = edit.end;
+	}
+	guarded += prepared.slice(cursor);
+	return serialize(parseFragment(guarded)).replaceAll(lToken, "&#91;").replaceAll(rToken, "&#93;");
+}
+
 /**
  * Convert plain HTML (classic editor) to Portable Text
  */
@@ -369,8 +463,13 @@ export function htmlToPortableText(
 	source: string,
 	options: ConvertOptions = {},
 ): PortableTextBlock[] {
-	// What the reader sees: no stylesheet, script or scripts-off fallback, read as text or split into blocks.
-	const html = withoutUndrawn(source);
+	return convertHtmlToPortableText(normalizeClassicHtml(source), options);
+}
+
+function convertHtmlToPortableText(
+	html: string,
+	options: ConvertOptions = {},
+): PortableTextBlock[] {
 	// Each invocation owns its cursor, including recursion and throwing callbacks.
 	const blockElements = new RegExp(BLOCK_ELEMENT_PATTERN);
 	const generateKey = options.keyGenerator || createKeyGenerator();
@@ -445,7 +544,7 @@ export function htmlToPortableText(
 
 	// A part of this HTML converted on its own, with its own block cursor.
 	const pushPart = (part: string) => {
-		blocks.push(...htmlToPortableText(part, { ...options, keyGenerator: generateKey }));
+		blocks.push(...convertHtmlToPortableText(part, { ...options, keyGenerator: generateKey }));
 	};
 
 	/**
@@ -565,7 +664,7 @@ export function htmlToPortableText(
 		// A <div> that holds paragraphs (a classic post wrapped whole in one `<div>`):
 		// WordPress draws each of its paragraphs apart, so each is a block, not one run of text.
 		if (tag === "div" && BLOCK_INSIDE_PATTERN.test(content)) {
-			blocks.push(...htmlToPortableText(content, { ...options, keyGenerator: generateKey }));
+			blocks.push(...convertHtmlToPortableText(content, { ...options, keyGenerator: generateKey }));
 			continue;
 		}
 
