@@ -32,8 +32,9 @@ function addOneHour(isoDate: string, clock: string): { date: string; hms: string
 function validIanaZone(zone?: string): string | undefined {
 	if (!zone || !IANA_ZONE_PATTERN.test(zone)) return undefined;
 	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: zone });
-		return zone;
+		return new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone
+			? zone
+			: undefined;
 	} catch {
 		return undefined;
 	}
