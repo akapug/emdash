@@ -25,24 +25,34 @@ import { SchemaRegistry } from "../schema/registry.js";
 import { getSiteSettingWithDb } from "../settings/index.js";
 import { isMissingTableError } from "../utils/db-errors.js";
 
+export type PublicRouteOwner =
+	| { kind: "homepage" }
+	| { kind: "collection"; collection: string }
+	| { kind: "uniqueUrlPattern"; pattern: string };
+
+export interface PublicRouteBinding {
+	pattern: string;
+	owner: PublicRouteOwner;
+}
+
 const UNRESOLVED_TOKEN_RE = /\{[^}]+\}/;
 const TRAILING_SLASH_RE = /\/$/;
 const PUBLIC_ROUTES_KEY = Symbol.for("emdash:public-routes");
 
-function routeStore(): Record<symbol, readonly string[] | null | undefined> {
+function routeStore(): Record<symbol, readonly PublicRouteBinding[] | null | undefined> {
 	return globalThis;
 }
 
 /**
- * Configure the active template's public route contract (e.g. from integration
- * startup or tests). Pass `null` to clear.
+ * Configure the active template's collection-aware public route contract
+ * (e.g. from integration startup or tests). Pass `null` to clear.
  */
-export function setPublicRoutesConfig(routes: readonly string[] | null): void {
+export function setPublicRoutesConfig(routes: readonly PublicRouteBinding[] | null): void {
 	routeStore()[PUBLIC_ROUTES_KEY] = routes;
 }
 
 /** Read the configured runtime public route contract, if any. */
-export function getPublicRoutesConfig(): readonly string[] | null | undefined {
+export function getPublicRoutesConfig(): readonly PublicRouteBinding[] | null | undefined {
 	return routeStore()[PUBLIC_ROUTES_KEY];
 }
 
@@ -63,12 +73,36 @@ export interface ResolvedPublicContentPath {
 
 export interface ResolvePublicContentPathOptions {
 	trailingSlash?: "always" | "never" | "ignore";
-	publicRoutes?: readonly string[] | null;
+	publicRoutes?: readonly PublicRouteBinding[] | null;
 }
 
 interface HostVirtualConfig {
 	trailingSlash: "always" | "never" | "ignore";
-	publicRoutes: readonly string[] | null;
+	publicRoutes: readonly PublicRouteBinding[] | null;
+}
+
+function isPublicRouteBinding(v: unknown): v is PublicRouteBinding {
+	if (typeof v !== "object" || v === null) return false;
+	if (!("pattern" in v) || typeof v.pattern !== "string") return false;
+	if (!("owner" in v) || typeof v.owner !== "object" || v.owner === null) return false;
+	const owner = v.owner;
+	if (!("kind" in owner) || typeof owner.kind !== "string") return false;
+	if (owner.kind === "homepage") return true;
+	if (
+		owner.kind === "collection" &&
+		"collection" in owner &&
+		typeof owner.collection === "string"
+	) {
+		return true;
+	}
+	if (
+		owner.kind === "uniqueUrlPattern" &&
+		"pattern" in owner &&
+		typeof owner.pattern === "string"
+	) {
+		return true;
+	}
+	return false;
 }
 
 async function getHostVirtualConfig(): Promise<HostVirtualConfig> {
@@ -85,9 +119,7 @@ async function getHostVirtualConfig(): Promise<HostVirtualConfig> {
 		const trailingSlash =
 			rawTs === "always" || rawTs === "never" || rawTs === "ignore" ? rawTs : "ignore";
 		const rawRoutes: unknown = "publicRoutes" in def ? def.publicRoutes : undefined;
-		const publicRoutes = Array.isArray(rawRoutes)
-			? rawRoutes.filter((r): r is string => typeof r === "string")
-			: null;
+		const publicRoutes = Array.isArray(rawRoutes) ? rawRoutes.filter(isPublicRouteBinding) : null;
 		return { trailingSlash, publicRoutes };
 	} catch {
 		return { trailingSlash: "ignore", publicRoutes: null };
@@ -213,11 +245,39 @@ export async function resolvePublicContentPaths(
 	if (!configuredRoutes || configuredRoutes.length === 0) {
 		return refs.map((ref) => resultEntry(ref, null));
 	}
-	const routeSet = new Set(configuredRoutes.map(normalizeRoutePattern));
+	const routeBindings = new Map<string, PublicRouteBinding>();
+	for (const binding of configuredRoutes) {
+		routeBindings.set(normalizeRoutePattern(binding.pattern), binding);
+	}
 	const defaultLocale = getI18nConfig()?.defaultLocale ?? "en";
 
 	type ResolvedCollection = Awaited<ReturnType<SchemaRegistry["getCollection"]>>;
 	const collectionCache = new Map<string, ResolvedCollection>();
+	let allCollectionsPromise: Promise<
+		Awaited<ReturnType<SchemaRegistry["listCollections"]>>
+	> | null = null;
+	const getAllCollections = () => {
+		if (!allCollectionsPromise) allCollectionsPromise = registry.listCollections();
+		return allCollectionsPromise;
+	};
+	const isOwnedByCollection = async (
+		binding: PublicRouteBinding | undefined,
+		collection: string,
+	): Promise<boolean> => {
+		if (!binding) return false;
+		if (binding.owner.kind === "collection") {
+			return binding.owner.collection === collection;
+		}
+		if (binding.owner.kind === "uniqueUrlPattern") {
+			const wantPattern = normalizeRoutePattern(binding.owner.pattern);
+			const all = await getAllCollections();
+			const owners = all.filter(
+				(c) => c.routable && c.urlPattern && normalizeRoutePattern(c.urlPattern) === wantPattern,
+			);
+			return owners.length === 1 && owners[0]?.slug === collection;
+		}
+		return false;
+	};
 	const getCollection = async (slug: string): Promise<ResolvedCollection> => {
 		if (collectionCache.has(slug)) return collectionCache.get(slug) ?? null;
 		try {
@@ -274,7 +334,7 @@ export async function resolvePublicContentPaths(
 			(homepage.id === item.translationGroup || homepage.id === item.id);
 
 		if (isHomepage) {
-			if (!routeSet.has("/")) {
+			if (routeBindings.get("/")?.owner.kind !== "homepage") {
 				results.push(resultEntry(ref, null));
 				continue;
 			}
@@ -291,13 +351,21 @@ export async function resolvePublicContentPaths(
 		let candidatePattern: string | null = null;
 		if (collectionInfo.urlPattern) {
 			candidatePattern = normalizeRoutePattern(collectionInfo.urlPattern);
-		} else if (routeSet.has(`/${ref.collection}/{slug}`)) {
+		} else if (
+			await isOwnedByCollection(routeBindings.get(`/${ref.collection}/{slug}`), ref.collection)
+		) {
 			candidatePattern = `/${ref.collection}/{slug}`;
-		} else if (ref.collection === "pages" && routeSet.has("/{slug}")) {
+		} else if (
+			ref.collection === "pages" &&
+			(await isOwnedByCollection(routeBindings.get("/{slug}"), "pages"))
+		) {
 			candidatePattern = "/{slug}";
 		}
 
-		if (!candidatePattern || !routeSet.has(candidatePattern)) {
+		if (
+			!candidatePattern ||
+			!(await isOwnedByCollection(routeBindings.get(candidatePattern), ref.collection))
+		) {
 			results.push(resultEntry(ref, null));
 			continue;
 		}

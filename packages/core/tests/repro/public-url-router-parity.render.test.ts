@@ -68,13 +68,24 @@ describe("Public URL active-template route contract parity (blog-cloudflare)", (
 		setPublicRoutesConfig(null);
 	});
 
-	it("discovers blog-cloudflare routes (excluding catch-alls and wp-shell) and matches real route rendering", async () => {
+	it("discovers blog-cloudflare collection-owned routes (excluding catch-alls and wp-shell) and matches real route rendering", async () => {
 		const routes = discoverTemplatePublicRoutes(blogSrcDir);
-		expect(routes).toContain("/");
-		expect(routes).toContain("/pages/{slug}");
-		expect(routes).toContain("/posts/{slug}");
-		expect(routes).toContain("/events/{slug}");
-		expect(routes.some((r) => r.includes("wp-shell") || r.includes("date"))).toBe(false);
+		expect(routes).toContainEqual({ pattern: "/", owner: { kind: "homepage" } });
+		expect(routes).toContainEqual({
+			pattern: "/pages/{slug}",
+			owner: { kind: "collection", collection: "pages" },
+		});
+		expect(routes).toContainEqual({
+			pattern: "/posts/{slug}",
+			owner: { kind: "collection", collection: "posts" },
+		});
+		expect(routes).toContainEqual({
+			pattern: "/events/{slug}",
+			owner: { kind: "uniqueUrlPattern", pattern: "/events/{slug}" },
+		});
+		expect(routes.some((r) => r.pattern.includes("wp-shell") || r.pattern.includes("date"))).toBe(
+			false,
+		);
 
 		const db = await setupTestDatabase();
 		try {
@@ -82,6 +93,10 @@ describe("Public URL active-template route contract parity (blog-cloudflare)", (
 			await registry.createCollection({ slug: "pages", label: "Pages" });
 			await registry.createCollection({ slug: "articles", label: "Articles" });
 			await registry.updateCollection("articles", { urlPattern: "/journal/{slug}" });
+			// Same-pattern wrong-owner: custom collection claiming `/pages/{slug}` even
+			// though `blog-cloudflare/src/pages/pages/[slug].astro` only reads `pages`.
+			await registry.createCollection({ slug: "guides", label: "Guides" });
+			await registry.updateCollection("guides", { urlPattern: "/pages/{slug}" });
 
 			const { ContentRepository } = await import("../../src/database/repositories/content.js");
 			const repo = new ContentRepository(db);
@@ -97,18 +112,26 @@ describe("Public URL active-template route contract parity (blog-cloudflare)", (
 				status: "published",
 				data: {},
 			});
+			const guide = await repo.create({
+				type: "guides",
+				slug: "about",
+				status: "published",
+				data: {},
+			});
 
 			const resolved = await resolvePublicContentPaths(
 				db,
 				[
 					{ collection: "pages", id: page.id },
 					{ collection: "articles", id: article.id },
+					{ collection: "guides", id: guide.id },
 				],
 				{ publicRoutes: routes },
 			);
 			expect(resolved).toEqual([
 				{ collection: "pages", id: page.id, path: "/pages/about" },
 				{ collection: "articles", id: article.id, path: null },
+				{ collection: "guides", id: guide.id, path: null },
 			]);
 
 			// Synthetic render assertion through the real pages/[slug].astro route

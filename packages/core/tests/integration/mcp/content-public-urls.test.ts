@@ -46,11 +46,14 @@ describe("MCP content_public_urls", () => {
 		setI18nConfig(null);
 		_resetAstroI18nCacheForTests();
 		setPublicRoutesConfig([
-			"/",
-			"/pages/{slug}",
-			"/posts/{slug}",
-			"/events/{slug}",
-			"/journal/{slug}",
+			{ pattern: "/", owner: { kind: "homepage" } },
+			{ pattern: "/pages/{slug}", owner: { kind: "collection", collection: "pages" } },
+			{ pattern: "/posts/{slug}", owner: { kind: "collection", collection: "posts" } },
+			{
+				pattern: "/events/{slug}",
+				owner: { kind: "uniqueUrlPattern", pattern: "/events/{slug}" },
+			},
+			{ pattern: "/journal/{slug}", owner: { kind: "collection", collection: "articles" } },
 		]);
 		db = await setupTestDatabase();
 		harness = await connectMcpHarness({
@@ -405,8 +408,11 @@ describe("MCP content_public_urls", () => {
 			{ collection: "articles", id: article.id, path: null },
 		]);
 
-		// starter-cloudflare contract (/[slug], no /pages/[slug], no /posts/[slug])
-		setPublicRoutesConfig(["/", "/{slug}"]);
+		// starter-cloudflare contract (/[slug] owned by pages; no /pages/[slug], no /posts/[slug])
+		setPublicRoutesConfig([
+			{ pattern: "/", owner: { kind: "homepage" } },
+			{ pattern: "/{slug}", owner: { kind: "collection", collection: "pages" } },
+		]);
 		const starter = await resolveUrls([
 			{ collection: "pages", id: page.id },
 			{ collection: "posts", id: post.id },
@@ -416,8 +422,17 @@ describe("MCP content_public_urls", () => {
 			{ collection: "posts", id: post.id, path: null },
 		]);
 
-		// blog-cloudflare contract (/pages/{slug}, /posts/{slug}, /events/{slug}; NO /journal/{slug})
-		setPublicRoutesConfig(["/", "/pages/{slug}", "/posts/{slug}", "/events/{slug}"]);
+		// blog-cloudflare contract (/pages/{slug} owned by pages, /posts/{slug} owned by posts,
+		// /events/{slug} owned by uniqueUrlPattern; NO /journal/{slug})
+		setPublicRoutesConfig([
+			{ pattern: "/", owner: { kind: "homepage" } },
+			{ pattern: "/pages/{slug}", owner: { kind: "collection", collection: "pages" } },
+			{ pattern: "/posts/{slug}", owner: { kind: "collection", collection: "posts" } },
+			{
+				pattern: "/events/{slug}",
+				owner: { kind: "uniqueUrlPattern", pattern: "/events/{slug}" },
+			},
+		]);
 		const blog = await resolveUrls([
 			{ collection: "pages", id: page.id },
 			{ collection: "posts", id: post.id },
@@ -427,6 +442,72 @@ describe("MCP content_public_urls", () => {
 			{ collection: "pages", id: page.id, path: "/pages/about" },
 			{ collection: "posts", id: post.id, path: "/posts/hello" },
 			{ collection: "articles", id: article.id, path: null },
+		]);
+	});
+
+	it("rejects same-pattern wrong-owner collections and ambiguous uniqueUrlPattern routes", async () => {
+		const page = await createEntry({
+			collection: "pages",
+			title: "Real Page",
+			slug: "shared-slug",
+			status: "published",
+		});
+
+		// Custom routable collection configured with `/pages/{slug}` even though
+		// the template route `/pages/{slug}` is owned by `pages`.
+		await createCollection("guides", "Guides", {
+			urlPattern: "/pages/{slug}",
+			routable: true,
+		});
+		const guide = await createEntry({
+			collection: "guides",
+			title: "Wrong Owner Guide",
+			slug: "shared-slug",
+			status: "published",
+		});
+
+		// Unique routable owner on `/events/{slug}` resolves; adding a second
+		// routable owner on `/events/{slug}` makes ownership ambiguous -> both null.
+		await createCollection("mec_events", "Events", {
+			urlPattern: "/events/{slug}",
+			routable: true,
+		});
+		const eventA = await createEntry({
+			collection: "mec_events",
+			title: "Autumn Fair",
+			slug: "autumn-fair",
+			status: "published",
+		});
+
+		const beforeAmbiguity = await resolveUrls([
+			{ collection: "pages", id: page.id },
+			{ collection: "guides", id: guide.id },
+			{ collection: "mec_events", id: eventA.id },
+		]);
+		expect(beforeAmbiguity.items).toEqual([
+			{ collection: "pages", id: page.id, path: "/pages/shared-slug" },
+			{ collection: "guides", id: guide.id, path: null },
+			{ collection: "mec_events", id: eventA.id, path: "/events/autumn-fair" },
+		]);
+
+		await createCollection("workshops", "Workshops", {
+			urlPattern: "/events/{slug}",
+			routable: true,
+		});
+		const eventB = await createEntry({
+			collection: "workshops",
+			title: "Woodworking",
+			slug: "woodworking",
+			status: "published",
+		});
+
+		const afterAmbiguity = await resolveUrls([
+			{ collection: "mec_events", id: eventA.id },
+			{ collection: "workshops", id: eventB.id },
+		]);
+		expect(afterAmbiguity.items).toEqual([
+			{ collection: "mec_events", id: eventA.id, path: null },
+			{ collection: "workshops", id: eventB.id, path: null },
 		]);
 	});
 

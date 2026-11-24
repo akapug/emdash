@@ -4,11 +4,12 @@
  * Defines and injects all EmDash routes into the Astro application.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { PublicRouteBinding, PublicRouteOwner } from "../../content/public-url.js";
 import { routeArtifactName } from "./route-naming.js";
 
 const TS_EXT = /\.tsx?$/;
@@ -73,21 +74,45 @@ export function hasUserDefinedPublicRoute(srcDir: URL, basename: string): boolea
 
 const IGNORED_PUBLIC_ROUTE_DIRS = new Set(["wp-shell", "api", "_emdash"]);
 const DYNAMIC_SEGMENT_RE = /\[([^\]/]+)\]/g;
+const ENTRY_COLLECTION_CALL_RE = /\bgetEmDashEntry\s*\(\s*["']([a-z][a-z0-9_-]*)["']/g;
+const LOAD_EVENT_CALL_RE = /\bloadEvent\s*\(/;
+const PATTERN_OWNER_CALL_RE = /\bgetCollectionByUrlPattern\s*\(\s*["']([^"']+)["']/;
+
+function inferPublicRouteOwner(pattern: string, source: string): PublicRouteOwner | null {
+	if (pattern === "/") return { kind: "homepage" };
+	const directCollections = new Set<string>();
+	for (const match of source.matchAll(ENTRY_COLLECTION_CALL_RE)) {
+		if (match[1]) directCollections.add(match[1]);
+	}
+	if (directCollections.size === 1) {
+		const [collection] = directCollections;
+		if (collection) return { kind: "collection", collection };
+	}
+	const patternMatch = PATTERN_OWNER_CALL_RE.exec(source);
+	if (patternMatch?.[1]) {
+		return { kind: "uniqueUrlPattern", pattern: patternMatch[1] };
+	}
+	if (pattern === "/events/{slug}" && LOAD_EVENT_CALL_RE.test(source)) {
+		return { kind: "uniqueUrlPattern", pattern: "/events/{slug}" };
+	}
+	return null;
+}
 
 /**
- * Discover the explicit public `.astro` page route patterns served by the
- * active template's `src/pages/` directory (excluding internal rewrite routes,
- * API routes, 404 pages, and rest catch-alls like `[...date].astro`).
+ * Discover the collection-aware public `.astro` page route contract served by
+ * the active template's `src/pages/` directory (excluding internal rewrite
+ * routes, API routes, 404 pages, rest catch-alls like `[...date].astro`, and
+ * routes whose collection ownership cannot be proven).
  *
  * Examples:
- * - `index.astro` -> `"/"`
- * - `pages/[slug].astro` -> `"/pages/{slug}"`
- * - `[slug].astro` -> `"/{slug}"`
+ * - `index.astro` -> `{ pattern: "/", owner: { kind: "homepage" } }`
+ * - `pages/[slug].astro` calling `getEmDashEntry("pages", ...)` -> `{ pattern: "/pages/{slug}", owner: { kind: "collection", collection: "pages" } }`
+ * - `events/[slug].astro` calling `loadEvent(...)` -> `{ pattern: "/events/{slug}", owner: { kind: "uniqueUrlPattern", pattern: "/events/{slug}" } }`
  */
-export function discoverTemplatePublicRoutes(srcDir: URL): string[] {
+export function discoverTemplatePublicRoutes(srcDir: URL): PublicRouteBinding[] {
 	const pagesDir = resolve(fileURLToPath(srcDir), "pages");
 	if (!existsSync(pagesDir)) return [];
-	const routes = new Set<string>();
+	const routes = new Map<string, PublicRouteBinding>();
 
 	const walk = (dir: string, prefix: string[]): void => {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -103,12 +128,15 @@ export function discoverTemplatePublicRoutes(srcDir: URL): string[] {
 			const stem = entry.name.slice(0, -".astro".length);
 			const segments = stem === "index" ? prefix : [...prefix, stem];
 			const normalized = segments.map((seg) => seg.replace(DYNAMIC_SEGMENT_RE, "{$1}"));
-			routes.add(normalized.length === 0 ? "/" : `/${normalized.join("/")}`);
+			const pattern = normalized.length === 0 ? "/" : `/${normalized.join("/")}`;
+			const source = readFileSync(resolve(dir, entry.name), "utf8");
+			const owner = inferPublicRouteOwner(pattern, source);
+			if (owner) routes.set(pattern, { pattern, owner });
 		}
 	};
 
 	walk(pagesDir, []);
-	return [...routes].toSorted();
+	return [...routes.values()].toSorted((a, b) => a.pattern.localeCompare(b.pattern));
 }
 
 /**
