@@ -472,20 +472,48 @@ function isCompleteWxrTerm(term: Partial<WxrTerm>): term is WxrTerm {
  * Markup in a title stays as text; only entities are decoded.
  */
 const NAMED_TITLE_ENTITIES: Record<string, string> = {
-	amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0", hellip: "\u2026", ndash: "\u2013",
-	mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d", laquo: "\u00ab",
-	raquo: "\u00bb", copy: "\u00a9", reg: "\u00ae", trade: "\u2122", eacute: "\u00e9",
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: '"',
+	apos: "'",
+	nbsp: "\u00a0",
+	hellip: "\u2026",
+	ndash: "\u2013",
+	mdash: "\u2014",
+	lsquo: "\u2018",
+	rsquo: "\u2019",
+	ldquo: "\u201c",
+	rdquo: "\u201d",
+	laquo: "\u00ab",
+	raquo: "\u00bb",
+	copy: "\u00a9",
+	reg: "\u00ae",
+	trade: "\u2122",
+	eacute: "\u00e9",
 };
 
 export function decodeTitleEntities(text: string): string {
-	return text.replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,8});/giu, (whole, ref: string) => {
-		if (ref[0] === "#") {
-			const code = ref[1] === "x" || ref[1] === "X" ? Number.parseInt(ref.slice(2), 16) : Number.parseInt(ref.slice(1), 10);
-			if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return whole;
-			return String.fromCodePoint(code);
-		}
-		return NAMED_TITLE_ENTITIES[ref.toLowerCase()] ?? whole;
-	});
+	return text.replace(
+		/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,8});/giu,
+		(whole, ref: string) => {
+			if (ref[0] === "#") {
+				const code =
+					ref[1] === "x" || ref[1] === "X"
+						? Number.parseInt(ref.slice(2), 16)
+						: Number.parseInt(ref.slice(1), 10);
+				if (
+					!Number.isFinite(code) ||
+					code <= 0 ||
+					code > 0x10ffff ||
+					(code >= 0xd800 && code <= 0xdfff)
+				)
+					return whole;
+				return String.fromCodePoint(code);
+			}
+			return NAMED_TITLE_ENTITIES[ref.toLowerCase()] ?? whole;
+		},
+	);
 }
 
 export function parseWxr(stream: Readable): Promise<WxrData> {
