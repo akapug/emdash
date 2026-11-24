@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { isSqlite, tableExists as dialectTableExists } from "../database/dialect-helpers.js";
 import type { Database } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
+import { invalidateSchemaRequestCache } from "../request-cache.js";
 import { SEARCH_TOKENIZERS } from "./types.js";
 import type { SearchConfig, SearchTokenizer } from "./types.js";
 
@@ -450,6 +451,7 @@ export class FTSManager {
 			.set({ search_config: JSON.stringify(config) })
 			.where("slug", "=", collectionSlug)
 			.execute();
+		invalidateSchemaRequestCache();
 	}
 
 	/**

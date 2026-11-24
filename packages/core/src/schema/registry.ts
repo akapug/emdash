@@ -42,7 +42,7 @@ import {
 	markContentMediaUsageCollectionStaleSafely,
 } from "../media/usage/content-refresh.js";
 import { prepareVisibilityRevBump } from "../page-cache/state.js";
-import { clearRequestCacheByPrefix, requestCached } from "../request-cache.js";
+import { invalidateSchemaRequestCache, requestCached } from "../request-cache.js";
 import { FTSManager } from "../search/fts-manager.js";
 import { getPortableTableSpec } from "../transfer/format/columns.js";
 import { canonicalDigest } from "../transfer/format/digest.js";
@@ -337,9 +337,7 @@ export class SchemaRegistry {
 	 * Notify the dev typegen hook that the schema has changed.
 	 */
 	private notifyTypegen(): void {
-		clearRequestCacheByPrefix("schema:");
-		clearRequestCacheByPrefix("mediaFields:");
-		clearRequestCacheByPrefix("reference-field-constraints:");
+		invalidateSchemaRequestCache();
 		refreshDevTypes(this.db);
 	}
 

@@ -58,9 +58,17 @@ import { after } from "../../../../../after.js";
 import { validateIdentifier } from "../../../../../database/validate.js";
 import { getI18nConfig } from "../../../../../i18n/config.js";
 import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
-import { refreshContentMediaUsageAfterWrite } from "../../../../../media/usage/content-refresh.js";
-import { processDueMediaUsageWork } from "../../../../../media/usage/work-processor.js";
-import { coalesceObjectCacheWrites } from "../../../../../object-cache/index.js";
+import {
+	isIncrementalCaptureActive,
+	processDueMediaUsageWork,
+} from "../../../../../media/usage/work-processor.js";
+import {
+	coalesceObjectCacheWrites,
+	flushCoalescedObjectCacheWrites,
+	invalidateBylineObjectCache,
+	invalidateCollectionCache,
+	invalidateTaxonomyObjectCache,
+} from "../../../../../object-cache/index.js";
 import { sanitizeSlug } from "./analyze.js";
 import {
 	contentWithMappedEmbed,
@@ -280,6 +288,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	}
 };
 
+export const DEFAULT_EPOCH_FLUSH_INTERVAL = 25;
+
+function readCreatedItem(
+	data: unknown,
+): { id: string; slug?: string | null; locale?: string | null } | undefined {
+	if (typeof data !== "object" || data === null || !("item" in data)) return undefined;
+	const item = data.item;
+	if (typeof item !== "object" || item === null || !("id" in item) || typeof item.id !== "string") {
+		return undefined;
+	}
+	return {
+		id: item.id,
+		slug: "slug" in item && typeof item.slug === "string" ? item.slug : null,
+		locale: "locale" in item && typeof item.locale === "string" ? item.locale : null,
+	};
+}
+
 export async function importContent(
 	posts: WxrPost[],
 	config: ImportConfig,
@@ -293,6 +318,10 @@ export async function importContent(
 	siteLanguage?: string,
 	/** The export's `<generator>`: another program's export is stored as written (texturizes). */
 	generator?: string,
+	options?: {
+		/** Flush held object-cache epoch writes every N created rows (default 25). */
+		epochFlushInterval?: number;
+	},
 ): Promise<ImportResult> {
 	const result: ImportResult = {
 		success: true,
@@ -340,32 +369,40 @@ export async function importContent(
 	const bylineCache = new Map<string, string>();
 	const defaultLocale = getI18nConfig()?.defaultLocale ?? "en";
 
+	const enabledCollections = new Set<string>();
+	for (const mapping of Object.values(config.postTypeMappings)) {
+		if (!mapping?.enabled) continue;
+		const col = sanitizeSlug(mapping.collection);
+		if (manifest?.collections[col]) enabledCollections.add(col);
+	}
+
 	// Preload existing (slug, locale) -> id once per enabled collection when
-	// skipExisting is active, avoiding N sequential findBySlug round-trips.
-	const existingByCollection = new Map<string, Map<string, string>>();
+	// skipExisting is active so preload HITs skip without a DB round-trip.
+	// Any preload MISS is still confirmed with findBySlug before creating.
+	const existingByCollection = new Map<
+		string,
+		{ byLocale: Map<string, string>; anyLocale: Map<string, string> }
+	>();
 	const existingSeoByCollection = new Map<string, Set<string>>();
 	if (config.skipExisting) {
-		const enabledCollections = new Set<string>();
-		for (const mapping of Object.values(config.postTypeMappings)) {
-			if (!mapping?.enabled) continue;
-			const col = sanitizeSlug(mapping.collection);
-			if (manifest?.collections[col]) enabledCollections.add(col);
-		}
 		for (const col of enabledCollections) {
 			validateIdentifier(col, "collection name");
 			const rows = await sql<{ id: string; slug: string | null; locale: string | null }>`
 				SELECT id, slug, locale
 				FROM ${sql.ref(`ec_${col}`)}
 				WHERE deleted_at IS NULL AND slug IS NOT NULL
+				ORDER BY locale ASC
 			`.execute(emdash.db);
-			const map = new Map<string, string>();
+			const byLocale = new Map<string, string>();
+			const anyLocale = new Map<string, string>();
 			for (const row of rows.rows) {
 				if (!row.slug) continue;
-				map.set(`${row.slug}\0${row.locale ?? defaultLocale}`, row.id);
+				byLocale.set(`${row.slug}\0${row.locale ?? defaultLocale}`, row.id);
+				if (!anyLocale.has(row.slug)) anyLocale.set(row.slug, row.id);
 			}
-			existingByCollection.set(col, map);
+			existingByCollection.set(col, { byLocale, anyLocale });
 
-			if (seoTally && manifest.collections[col]?.hasSeo === true && map.size > 0) {
+			if (seoTally && manifest.collections[col]?.hasSeo === true && anyLocale.size > 0) {
 				const seoRows = await emdash.db
 					.selectFrom("_emdash_seo")
 					.select("content_id")
@@ -376,7 +413,10 @@ export async function importContent(
 		}
 	}
 
-	const createdForUsage: Array<{ collection: string; id: string }> = [];
+	const incrementalCaptureActive = await isIncrementalCaptureActive(emdash.db);
+	let createdWithDeferredUsage = 0;
+	const epochFlushInterval = options?.epochFlushInterval ?? DEFAULT_EPOCH_FLUSH_INTERVAL;
+	let createdSinceFlush = 0;
 
 	// Source-side translation group ID -> the EmDash ID of the first post we
 	// imported for that group. Subsequent translations are linked via
@@ -455,14 +495,25 @@ export async function importContent(
 
 			// Check if already exists (idempotency). Match against the
 			// per-post locale so the same slug in different locales doesn't
-			// false-positive as duplicate.
+			// false-positive as duplicate. A preload HIT skips without a DB
+			// round-trip; a preload MISS is confirmed via findBySlug before
+			// creating so any-locale matches and concurrent inserts keep exact
+			// skipExisting semantics.
 			const existingKey = `${slug}\0${postLocale ?? defaultLocale}`;
 			if (config.skipExisting) {
 				const preloaded = existingByCollection.get(collection);
-				const existingId = preloaded
-					? preloaded.get(existingKey)
-					: (await contentRepo.findBySlug(collection, slug, postLocale))?.id;
+				const preloadHit = preloaded
+					? postLocale !== undefined
+						? preloaded.byLocale.get(existingKey)
+						: preloaded.anyLocale.get(slug)
+					: undefined;
+				const existingId =
+					preloadHit ?? (await contentRepo.findBySlug(collection, slug, postLocale))?.id;
 				if (existingId) {
+					if (preloaded && !preloadHit) {
+						preloaded.byLocale.set(existingKey, existingId);
+						if (!preloaded.anyLocale.has(slug)) preloaded.anyLocale.set(slug, existingId);
+					}
 					stored(post, collection, existingId);
 					// Record the translation group mapping so later
 					// translations in this WXR can link to the existing
@@ -567,7 +618,9 @@ export async function importContent(
 			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
 			const publishedAt = createStatus === "published" && createdAt ? createdAt : undefined;
 
-			// Create the content item (defer per-row media usage refresh to post-import batch)
+			// Create the content item (defer per-row media usage refresh only when
+			// durable incremental DB capture triggers are active; otherwise keep the
+			// immediate synchronous path so interrupted imports never lose usage).
 			const createResult = await emdash.handleContentCreate(
 				collection,
 				{
@@ -583,7 +636,7 @@ export async function importContent(
 					publishedAt,
 					seo: seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined,
 				},
-				{ skipMediaUsageRefresh: true },
+				{ skipMediaUsageRefresh: incrementalCaptureActive },
 			);
 
 			if (createResult.success) {
@@ -608,13 +661,27 @@ export async function importContent(
 				// `api/handlers/content.ts`). `HandlerResponse.data` is
 				// typed as `unknown` to avoid coupling the route surface to
 				// internal handler types, so we narrow here.
-				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- handler contract documented at handleContentCreate
-				const createdItem = (createResult.data as { item: { id: string } } | undefined)?.item;
+				const createdItem = readCreatedItem(createResult.data);
 
 				if (createdItem) {
 					stored(post, collection, createdItem.id);
-					existingByCollection.get(collection)?.set(existingKey, createdItem.id);
-					createdForUsage.push({ collection, id: createdItem.id });
+					const preloaded = existingByCollection.get(collection);
+					if (preloaded) {
+						const storedSlug = createdItem.slug ?? slug;
+						const storedLocale = createdItem.locale ?? postLocale ?? defaultLocale;
+						preloaded.byLocale.set(`${storedSlug}\0${storedLocale}`, createdItem.id);
+						if (!preloaded.anyLocale.has(storedSlug)) {
+							preloaded.anyLocale.set(storedSlug, createdItem.id);
+						}
+					}
+					if (incrementalCaptureActive) {
+						createdWithDeferredUsage++;
+					}
+					createdSinceFlush++;
+					if (epochFlushInterval > 0 && createdSinceFlush >= epochFlushInterval) {
+						flushCoalescedObjectCacheWrites();
+						createdSinceFlush = 0;
+					}
 				}
 
 				// A SCHEDULED POST CARRIES ITS MOMENT. The row was created as `draft`,
@@ -736,15 +803,20 @@ export async function importContent(
 		}
 	}
 
-	if (createdForUsage.length > 0) {
-		const createdBatch = createdForUsage;
+	// Any execute that returns bumps every enabled collection plus taxonomies
+	// and bylines once, even if this retry skipped all rows committed by an
+	// earlier cut attempt.
+	for (const col of enabledCollections) {
+		invalidateCollectionCache(col);
+	}
+	invalidateTaxonomyObjectCache();
+	invalidateBylineObjectCache();
+
+	if (createdWithDeferredUsage > 0) {
+		// Durable debt is already recorded in _emdash_media_usage_work by the
+		// active incremental capture DB triggers; after() is an accelerator.
 		after(async () => {
-			const tick = await processDueMediaUsageWork(emdash.db);
-			if (tick.candidateCount === 0 && tick.completedCount === 0) {
-				for (const entry of createdBatch) {
-					await refreshContentMediaUsageAfterWrite(emdash.db, entry.collection, entry.id);
-				}
-			}
+			await processDueMediaUsageWork(emdash.db);
 		});
 	}
 

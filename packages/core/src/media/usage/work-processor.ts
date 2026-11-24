@@ -453,7 +453,7 @@ function canContinueBulkWork(): boolean {
 	return !metrics || metrics.dbCount + 150 <= 900;
 }
 
-async function isIncrementalCaptureActive(db: Kysely<Database>): Promise<boolean> {
+export async function isIncrementalCaptureActive(db: Kysely<Database>): Promise<boolean> {
 	const row = await db
 		.selectFrom("_emdash_media_usage_activation")
 		.select("state")

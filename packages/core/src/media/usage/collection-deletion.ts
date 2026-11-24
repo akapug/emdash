@@ -15,6 +15,7 @@ import type {
 	CollectionDeletionGuardResult,
 } from "../../db/adapters.js";
 import { prepareVisibilityRevBump } from "../../page-cache/state.js";
+import { invalidateSchemaRequestCache } from "../../request-cache.js";
 import { FTSManager } from "../../search/fts-manager.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { verifyMediaUsageCaptureTriggers } from "./capture-triggers.js";
@@ -399,6 +400,7 @@ export class MediaUsageCollectionDeletionRepository {
 				.execute();
 
 			await prepareVisibilityRevBump().execute(trx);
+			invalidateSchemaRequestCache();
 
 			const checkpoint = await trx
 				.updateTable("_emdash_media_usage_collection_deletions")

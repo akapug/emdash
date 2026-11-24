@@ -150,3 +150,13 @@ export function clearRequestCacheByPrefix(prefix: string): void {
 		if (key.startsWith(prefix)) cache.delete(key);
 	}
 }
+
+/**
+ * Invalidate all per-request schema and derived collection-field caches.
+ * Must be called by every write path that mutates `_emdash_collections` or `_emdash_fields`.
+ */
+export function invalidateSchemaRequestCache(): void {
+	clearRequestCacheByPrefix("schema:");
+	clearRequestCacheByPrefix("mediaFields:");
+	clearRequestCacheByPrefix("reference-field-constraints:");
+}

@@ -757,6 +757,22 @@ export async function coalesceObjectCacheWrites<T>(fn: () => Promise<T>): Promis
 }
 
 /**
+ * Flush any backend epoch writes currently held in the active
+ * `coalesceObjectCacheWrites` scope without closing the scope.
+ *
+ * Used by long-running bulk writes (such as WXR import) to bound object-cache
+ * staleness if the request is cancelled before `coalesceObjectCacheWrites`'s
+ * `finally` block can run. No-ops outside an active coalescing scope.
+ */
+export function flushCoalescedObjectCacheWrites(): void {
+	const scope = writeScopes.getStore();
+	if (!scope || scope.closed || scope.held.size === 0) return;
+	const writes = [...scope.held.values()];
+	scope.held.clear();
+	for (const write of writes) write();
+}
+
+/**
  * Fixed namespaces for data shared across collections. Content reads fold the
  * `BYLINES` and `TAXONOMIES` epochs into their keys (via {@link cachedQuery})
  * because entries hydrate byline and taxonomy-term data — so renaming an

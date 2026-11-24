@@ -23,6 +23,7 @@ import {
 	invalidateCollectionCache,
 	invalidateObjectCache,
 } from "../../object-cache/index.js";
+import { invalidateSchemaRequestCache } from "../../request-cache.js";
 import { resetRegisteredCollectionsCache } from "../../schema/collection-slugs-cache.js";
 import { invalidateSchemaCache } from "../../schema/zod-generator.js";
 import { FTSManager } from "../../search/fts-manager.js";
@@ -207,6 +208,7 @@ async function searchUnit(
 		.set({ search_config: JSON.stringify(target.config) })
 		.where("id", "=", target.record.id)
 		.execute();
+	invalidateSchemaRequestCache();
 	return { step: "search", after: slug };
 }
 
