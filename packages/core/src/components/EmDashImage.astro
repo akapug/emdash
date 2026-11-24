@@ -34,6 +34,7 @@ import {
 } from "../media/responsive.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { focalPointToObjectPosition } from "../media/focal-point.js";
+import { getCommittedVariants, srcsetWidthsFor } from "../media/variant-read.js";
 
 interface Props extends Omit<
 	HTMLAttributes<"img">,
@@ -142,6 +143,24 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		const absoluteSrc = toAbsoluteMediaUrl(src, publicOrigin);
 		if (finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`)) {
 			astroImageSrc = absoluteSrc;
+			// WHAT IS COMMITTED, not what we wish existed. A fixed ladder here would
+			// promise 300w over a 9.6 MB original on every tenant alive today: worse
+			// than no srcset, because the browser believes it. Empty (no variants, no
+			// readable id) leaves the markup byte-identical to a site without variants,
+			// which is what keeps the repro arms green.
+			const committed = img.id
+				? await getCommittedVariants(Astro.locals.emdash?.db as never, img.id, img.contentHash ?? null)
+				: [];
+			const rungs = srcsetWidthsFor(committed, finalWidth);
+			if (rungs.length) {
+				srcset = rungs
+					.map((w) => {
+						const h = Math.round((w * finalHeight) / finalWidth);
+						return `${variantUrl(src, w)} ${w}w`;
+					})
+					.join(", ");
+				sizes = responsiveSizes(finalWidth);
+			}
 		} else {
 			const optimized = await buildResponsiveImage(getImage, {
 				src: absoluteSrc,
