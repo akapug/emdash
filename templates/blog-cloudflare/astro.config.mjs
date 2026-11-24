@@ -1,6 +1,6 @@
 import cloudflare from "@astrojs/cloudflare";
 import react from "@astrojs/react";
-import { d1, r2 } from "@emdash-cms/cloudflare";
+import { d1, kvCache, r2 } from "@emdash-cms/cloudflare";
 import { cloudflareEmail } from "@emdash-cms/cloudflare/plugins";
 import { designPlugin } from "@emdash-cms/plugin-design";
 import { embarkHelperPlugin } from "@emdash-cms/plugin-embark-helper";
@@ -33,8 +33,9 @@ export default defineConfig({
 	integrations: [
 		react(),
 		emdash({
-			database: d1({ binding: "DB", session: "auto" }),
+			database: d1({ binding: "DB", session: "auto", coalesce: true }),
 			storage: r2({ binding: "MEDIA" }),
+			objectCache: kvCache({ binding: "SESSION", keyPrefix: "objcache", defaultTtl: 300 }),
 			// Email subscriptions to new posts: a migrated site's sign-up posts here (layouts/WpShell.astro).
 			// The AI Helper stays inert until Embark writes the site's link key.
 			plugins: [
