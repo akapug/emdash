@@ -30,7 +30,10 @@ const eventView = z
 		searchBar: z
 			.object({ text: z.boolean().optional(), monthYear: z.boolean().optional() })
 			.strict()
-			.refine((bar) => bar.text === true || bar.monthYear === true, "A search bar needs text or monthYear")
+			.refine(
+				(bar) => bar.text === true || bar.monthYear === true,
+				"A search bar needs text or monthYear",
+			)
 			.optional(),
 	})
 	.strict()
