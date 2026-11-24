@@ -4,13 +4,20 @@ import EventFacts from "./EventFacts.astro";
 import EventCover from "./EventCover.astro";
 import {
 	eventAvailableYears,
+	eventCalendarGrid,
+	eventExcerpt,
+	eventMonthNavigation,
 	eventSearchQuery,
 	eventSummary,
 	eventString,
 	eventPage,
+	eventViewDisplayMode,
+	eventViewTabUrls,
 	filterEventsBySearch,
 	formatEventMonth,
 	formatEventMonthName,
+	formatEventTimes,
+	groupEventsByMonth,
 	selectEventView,
 	sortEvents,
 	type EventEntry,
@@ -54,6 +61,18 @@ const events = entries.flatMap((entry) => {
 	return summary ? [summary] : [];
 });
 const url = new URL(Astro.originPathname + Astro.url.search, Astro.url.origin);
+const isListSkin = view?.layout === "list";
+const isUpcomingList = isListSkin && view?.mode === "upcoming";
+const displayMode = view && isUpcomingList ? eventViewDisplayMode(view, url) : "list";
+const tabUrls = view && isUpcomingList ? eventViewTabUrls(view, url) : null;
+const monthlyNav =
+	view && isUpcomingList && displayMode === "monthly"
+		? eventMonthNavigation(view, url, now, referenceTimezone)
+		: null;
+const calendarWeeks =
+	view && monthlyNav
+		? eventCalendarGrid(entries, view, monthlyNav.month, now, referenceTimezone)
+		: [];
 const searchBar = view?.searchBar;
 const searchQuery = view && searchBar ? eventSearchQuery(view, url) : null;
 const baseViewEvents = view ? selectEventView(events, view, now, navigation?.month) : [];
@@ -213,7 +232,82 @@ const groups = grouped.map((group) => {
 		)
 	}
 	{
-		unavailable ? (
+		tabUrls && (
+			<nav class="event-view-tabs" aria-label="Calendar view">
+				<a
+					href={tabUrls.monthly}
+					class:list={["event-view-tabs__tab", displayMode === "monthly" && "is-active"]}
+					aria-current={displayMode === "monthly" ? "page" : undefined}
+				>
+					Monthly
+				</a>
+				<a
+					href={tabUrls.list}
+					class:list={["event-view-tabs__tab", displayMode === "list" && "is-active"]}
+					aria-current={displayMode === "list" ? "page" : undefined}
+				>
+					List
+				</a>
+			</nav>
+		)
+	}
+	{
+		displayMode === "monthly" && monthlyNav ? (
+			<section class="event-calendar">
+				<nav class="event-month-nav" aria-label={`Calendar months for ${view?.viewSlug}`}>
+					{monthlyNav.prev && (
+						<a href={monthlyNav.prev} rel="prev">
+							Previous month
+						</a>
+					)}
+					<strong>{formatEventMonth(monthlyNav.month, locale)}</strong>
+					{monthlyNav.next && (
+						<a href={monthlyNav.next} rel="next">
+							Next month
+						</a>
+					)}
+				</nav>
+				<table class="event-calendar-grid">
+					<thead>
+						<tr>
+							<th scope="col">Sun</th>
+							<th scope="col">Mon</th>
+							<th scope="col">Tue</th>
+							<th scope="col">Wed</th>
+							<th scope="col">Thu</th>
+							<th scope="col">Fri</th>
+							<th scope="col">Sat</th>
+						</tr>
+					</thead>
+					<tbody>
+						{calendarWeeks.map((week) => (
+							<tr>
+								{week.map((cell) => (
+									<td class:list={[!cell.inMonth && "is-outside"]}>
+										<span class="event-calendar-grid__day">{cell.day}</span>
+										{cell.events.length > 0 && (
+											<ul class="event-calendar-grid__events">
+												{cell.events.map((ev) => {
+													const times = formatEventTimes(ev, locale);
+													return (
+														<li>
+															<a href={`/events/${encodeURIComponent(ev.entry.id)}/`}>
+																{eventString(ev.entry.data.title) ?? ev.entry.id}
+															</a>
+															{times && <span class="event-calendar-grid__time">{times}</span>}
+														</li>
+													);
+												})}
+											</ul>
+										)}
+									</td>
+								))}
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</section>
+		) : unavailable ? (
 			<p>
 				Event listing unavailable. The complete schedule could not be read.
 				Please try again later.
@@ -228,6 +322,39 @@ const groups = grouped.map((group) => {
 						</p>
 					) : group.page.events.length === 0 ? (
 						<p>No {group.title.toLowerCase()} to show.</p>
+					) : isListSkin ? (
+						groupEventsByMonth(group.page.events).map((monthGroup) => (
+							<div class="event-month-group">
+								<h3 class="event-month-heading">
+									{formatEventMonth(monthGroup.month, locale)}
+								</h3>
+								<ul>
+									{monthGroup.events.map((event) => {
+										const excerpt = eventExcerpt(event.entry);
+										const href = `/events/${encodeURIComponent(event.entry.id)}/`;
+										return (
+											<li class="event-card">
+												<EventCover image={event.entry.data.featured_image} />
+												<div class="event-card__body">
+													<h3>
+														<a href={href}>
+															{eventString(event.entry.data.title) ?? event.entry.id}
+														</a>
+													</h3>
+													<EventFacts event={event} compact />
+													{excerpt && <p class="event-card__excerpt">{excerpt}</p>}
+													{isUpcomingList && (
+														<a class="event-card__detail" href={href}>
+															View Detail
+														</a>
+													)}
+												</div>
+											</li>
+										);
+									})}
+								</ul>
+							</div>
+						))
 					) : (
 						<ul>
 							{group.page.events.map((event) => (
@@ -369,6 +496,79 @@ const groups = grouped.map((group) => {
 	}
 	.event-search-form__clear {
 		padding: 0.4rem 0.25rem;
+	}
+	.event-view-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-block-end: 1.5rem;
+	}
+	.event-view-tabs__tab {
+		padding: 0.4rem 0.85rem;
+		border: 1px solid currentColor;
+		text-decoration: none;
+	}
+	.event-view-tabs__tab.is-active {
+		font-weight: 600;
+		text-decoration: underline;
+	}
+	.event-month-group + .event-month-group {
+		margin-block-start: 2.5rem;
+	}
+	.event-month-heading {
+		margin: 0 0 1rem;
+		padding-bottom: 0.35rem;
+		border-bottom: 1px solid currentColor;
+		font-size: 1.15em;
+		font-weight: 600;
+	}
+	.event-card__excerpt {
+		margin: 0;
+		line-height: 1.55;
+	}
+	.event-card__detail {
+		align-self: flex-start;
+		font-weight: 600;
+	}
+	.event-month-nav {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-block-end: 1rem;
+	}
+	.event-calendar-grid {
+		width: 100%;
+		border-collapse: collapse;
+		table-layout: fixed;
+	}
+	.event-calendar-grid th,
+	.event-calendar-grid td {
+		border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+		padding: 0.4rem;
+		vertical-align: top;
+	}
+	.event-calendar-grid td {
+		min-height: 5rem;
+	}
+	.event-calendar-grid td.is-outside {
+		opacity: 0.45;
+	}
+	.event-calendar-grid__day {
+		display: block;
+		font-weight: 600;
+		margin-bottom: 0.25rem;
+	}
+	.event-calendar-grid__events {
+		font-size: 0.85em;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+	.event-calendar-grid__time {
+		display: block;
+		opacity: 0.75;
+		font-size: 0.9em;
 	}
 	@media (max-width: 767px) {
 		.event-list--list .event-card {
