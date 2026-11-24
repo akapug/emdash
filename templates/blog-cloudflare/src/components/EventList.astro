@@ -61,20 +61,25 @@ const events = entries.flatMap((entry) => {
 	return summary ? [summary] : [];
 });
 const url = new URL(Astro.originPathname + Astro.url.search, Astro.url.origin);
+const searchBar = view?.searchBar;
+const searchQuery = view && searchBar ? eventSearchQuery(view, url) : null;
 const isListSkin = view?.layout === "list";
 const isUpcomingList = isListSkin && view?.mode === "upcoming";
 const displayMode = view && isUpcomingList ? eventViewDisplayMode(view, url) : "list";
 const tabUrls = view && isUpcomingList ? eventViewTabUrls(view, url) : null;
-const monthlyNav =
-	view && isUpcomingList && displayMode === "monthly"
-		? eventMonthNavigation(view, url, now, referenceTimezone)
-		: null;
+let monthlyNav: EventMonthNavigation | null = null;
+if (view && isUpcomingList && displayMode === "monthly") {
+	monthlyNav = eventMonthNavigation(view, url, now, referenceTimezone);
+	if (!monthlyNav) {
+		const normalized = new URL(url);
+		normalized.searchParams.delete(`events-month[${view.viewSlug}]`);
+		monthlyNav = eventMonthNavigation(view, normalized, now, referenceTimezone);
+	}
+}
 const calendarWeeks =
 	view && monthlyNav
-		? eventCalendarGrid(entries, view, monthlyNav.month, now, referenceTimezone)
+		? eventCalendarGrid(entries, view, monthlyNav.month, now, referenceTimezone, searchQuery)
 		: [];
-const searchBar = view?.searchBar;
-const searchQuery = view && searchBar ? eventSearchQuery(view, url) : null;
 const baseViewEvents = view ? selectEventView(events, view, now, navigation?.month) : [];
 const availableYears =
 	view && searchBar?.monthYear ? eventAvailableYears(baseViewEvents, view.order) : [];
