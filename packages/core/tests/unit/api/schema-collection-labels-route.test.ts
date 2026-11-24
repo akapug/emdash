@@ -60,7 +60,11 @@ describeEachDialect("schema collection label PATCH", (dialect) => {
 
 	it("changes only the label pair and timestamp and returns the same envelope as GET", async () => {
 		const before = await storedCollection();
-		expect(body.expected).toMatchObject({ labelSingular: null, description: null, urlPattern: null });
+		expect(body.expected).toMatchObject({
+			labelSingular: null,
+			description: null,
+			urlPattern: null,
+		});
 
 		const response = await patch(body);
 
@@ -130,7 +134,9 @@ describeEachDialect("schema collection label PATCH", (dialect) => {
 			patch({ ...withMetadata, label: "Calendar entries", labelSingular: "Calendar entry" }),
 		]);
 
-		expect(results.map((response) => response.status).toSorted((a, b) => a - b)).toEqual([200, 409]);
+		expect(results.map((response) => response.status).toSorted((a, b) => a - b)).toEqual([
+			200, 409,
+		]);
 		const winner = results.find((response) => response.status === 200);
 		expect(await winner?.json()).toEqual({ success: true, data: { item: await readCollection() } });
 		expect(invalidateUrlPatternCache).toHaveBeenCalledTimes(1);
@@ -161,7 +167,12 @@ describeEachDialect("schema collection label PATCH", (dialect) => {
 		expect(invalidateUrlPatternCache).not.toHaveBeenCalled();
 	});
 
-	function routeContext(method: string, requestedSlug: string, role: RoleLevel | null, input?: unknown) {
+	function routeContext(
+		method: string,
+		requestedSlug: string,
+		role: RoleLevel | null,
+		input?: unknown,
+	) {
 		const url = new URL(`http://localhost/_emdash/api/schema/collections/${requestedSlug}`);
 		return {
 			url,
