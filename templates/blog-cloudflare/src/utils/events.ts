@@ -15,8 +15,21 @@ const EVENT_VIEW_KEYS = new Set([
 	"limit",
 	"navigation",
 	"filters",
+	"searchBar",
 ]);
+const EVENT_SEARCH_BAR_KEYS = new Set(["text", "monthYear"]);
+const EVENT_MONTH_NUM_PATTERN = /^(?:0[1-9]|1[0-2])$/;
+const EVENT_YEAR_PATTERN = /^(?!0000)\d{4}$/;
 export type EventEntry = ContentEntry;
+export interface EventSearchBar {
+	text?: boolean;
+	monthYear?: boolean;
+}
+export interface EventSearchQuery {
+	text: string;
+	month: string;
+	year: string;
+}
 export type EventView = {
 	version: 1;
 	viewSlug: string;
@@ -27,6 +40,7 @@ export type EventView = {
 	limit?: number;
 	navigation?: boolean;
 	filters?: Partial<Record<"category" | "location" | "organizer", string[]>>;
+	searchBar?: EventSearchBar;
 };
 export interface EventSummary {
 	entry: EventEntry;
@@ -255,7 +269,103 @@ function isEventView(value: unknown): value is EventView {
 				return false;
 		}
 	}
+	if (value.searchBar !== undefined) {
+		if (!object(value.searchBar)) return false;
+		if (Object.keys(value.searchBar).some((key) => !EVENT_SEARCH_BAR_KEYS.has(key))) return false;
+		if (
+			(value.searchBar.text !== undefined && typeof value.searchBar.text !== "boolean") ||
+			(value.searchBar.monthYear !== undefined && typeof value.searchBar.monthYear !== "boolean")
+		)
+			return false;
+		if (!value.searchBar.text && !value.searchBar.monthYear) return false;
+	}
 	return true;
+}
+
+export function eventSearchQuery(view: EventView, url: URL): EventSearchQuery {
+	const rawText = view.searchBar?.text
+		? (url.searchParams.get(`events-q[${view.viewSlug}]`) ?? "").trim().slice(0, 200)
+		: "";
+	const rawMonth = view.searchBar?.monthYear
+		? (url.searchParams.get(`events-month-num[${view.viewSlug}]`) ?? "").trim()
+		: "";
+	const rawYear = view.searchBar?.monthYear
+		? (url.searchParams.get(`events-year[${view.viewSlug}]`) ?? "").trim()
+		: "";
+	return {
+		text: rawText,
+		month: EVENT_MONTH_NUM_PATTERN.test(rawMonth) ? rawMonth : "",
+		year: EVENT_YEAR_PATTERN.test(rawYear) ? rawYear : "",
+	};
+}
+
+function portableTextPlain(value: unknown): string {
+	if (!Array.isArray(value)) return "";
+	const parts: string[] = [];
+	for (const block of value) {
+		if (!object(block) || !Array.isArray(block.children)) continue;
+		for (const child of block.children) {
+			if (object(child) && typeof child.text === "string") parts.push(child.text);
+		}
+	}
+	return parts.join(" ");
+}
+
+export function filterEventsBySearch(
+	events: EventSummary[],
+	query: EventSearchQuery,
+): EventSummary[] {
+	const needle = query.text.toLowerCase();
+	if (!needle && !query.month && !query.year) return events;
+	return events.filter((event) => {
+		if (
+			query.year &&
+			event.date.slice(0, 4) !== query.year &&
+			event.endDate?.slice(0, 4) !== query.year
+		) {
+			return false;
+		}
+		if (
+			query.month &&
+			event.date.slice(5, 7) !== query.month &&
+			event.endDate?.slice(5, 7) !== query.month
+		) {
+			return false;
+		}
+		if (!needle) return true;
+		const data = event.entry.data;
+		const haystack = [
+			eventString(data.title) ?? event.entry.id,
+			...eventTermLabels(event.entry, "location"),
+			...eventTermLabels(event.entry, "organizer"),
+			...eventTermLabels(event.entry, "category"),
+			eventString(data.time_note) ?? "",
+			portableTextPlain(data.content),
+		]
+			.join(" ")
+			.toLowerCase();
+		return haystack.includes(needle);
+	});
+}
+
+export function eventAvailableYears(
+	events: EventSummary[],
+	order: "asc" | "desc" = "desc",
+): string[] {
+	const years = new Set<string>();
+	for (const event of events) {
+		if (event.date.length >= 4) years.add(event.date.slice(0, 4));
+		if (event.endDate && event.endDate.length >= 4) years.add(event.endDate.slice(0, 4));
+	}
+	return [...years].toSorted((a, b) => (order === "asc" ? a.localeCompare(b) : b.localeCompare(a)));
+}
+
+export function formatEventMonthName(monthNum: string, locale?: string): string {
+	if (!EVENT_MONTH_NUM_PATTERN.test(monthNum)) return monthNum;
+	return new Intl.DateTimeFormat(displayLocale(locale), {
+		month: "long",
+		timeZone: "UTC",
+	}).format(new Date(`2000-${monthNum}-01T12:00:00Z`));
 }
 
 export function parseEventView(value: unknown): EventView | null {

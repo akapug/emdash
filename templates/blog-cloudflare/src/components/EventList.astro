@@ -3,10 +3,14 @@ import { getSiteSettingsWithCacheHint } from "emdash";
 import EventFacts from "./EventFacts.astro";
 import EventCover from "./EventCover.astro";
 import {
+	eventAvailableYears,
+	eventSearchQuery,
 	eventSummary,
 	eventString,
 	eventPage,
+	filterEventsBySearch,
 	formatEventMonth,
+	formatEventMonthName,
 	selectEventView,
 	sortEvents,
 	type EventEntry,
@@ -49,12 +53,51 @@ const events = entries.flatMap((entry) => {
 	const summary = eventSummary(entry, now, undefined, referenceTimezone);
 	return summary ? [summary] : [];
 });
+const url = new URL(Astro.originPathname + Astro.url.search, Astro.url.origin);
+const searchBar = view?.searchBar;
+const searchQuery = view && searchBar ? eventSearchQuery(view, url) : null;
+const baseViewEvents = view ? selectEventView(events, view, now, navigation?.month) : [];
+const availableYears =
+	view && searchBar?.monthYear ? eventAvailableYears(baseViewEvents, view.order) : [];
+const months = [
+	"01",
+	"02",
+	"03",
+	"04",
+	"05",
+	"06",
+	"07",
+	"08",
+	"09",
+	"10",
+	"11",
+	"12",
+];
+const ownedSearchKeys = view
+	? new Set([
+			`events-q[${view.viewSlug}]`,
+			`events-month-num[${view.viewSlug}]`,
+			`events-year[${view.viewSlug}]`,
+			`events-page[${view.viewSlug}]`,
+		])
+	: new Set<string>();
+const preservedParams = searchBar
+	? [...url.searchParams.entries()].filter(([k]) => !ownedSearchKeys.has(k))
+	: [];
+const clearUrl = new URL(url);
+for (const key of ownedSearchKeys) clearUrl.searchParams.delete(key);
+const clearHref = `${clearUrl.pathname}${clearUrl.search}`;
+const hasActiveSearch = Boolean(
+	searchQuery && (searchQuery.text || searchQuery.month || searchQuery.year),
+);
 const grouped = view
 	? [
 			{
 				key: view.viewSlug,
 				title: view.mode === "past" ? "Past events" : "Upcoming events",
-				events: selectEventView(events, view, now, navigation?.month),
+				events: searchQuery
+					? filterEventsBySearch(baseViewEvents, searchQuery)
+					: baseViewEvents,
 			},
 		]
 	: [
@@ -77,7 +120,6 @@ const grouped = view
 				events: sortEvents(events.filter((e) => e.period === "preview")),
 			},
 		];
-const url = new URL(Astro.originPathname + Astro.url.search, Astro.url.origin);
 const groups = grouped.map((group) => {
 	const page: EventPage | null = paginated
 		? eventPage(group.events, group.key, url, perPage)
@@ -95,6 +137,64 @@ const groups = grouped.map((group) => {
 		paginated && "event-list--contained",
 	]}
 >
+	{
+		view && searchBar && searchQuery && (
+			<form
+				method="get"
+				action={url.pathname}
+				class="event-search-form"
+				role="search"
+				aria-label={`Filter ${view.mode} events`}
+			>
+				{preservedParams.map(([k, v]) => (
+					<input type="hidden" name={k} value={v} />
+				))}
+				{searchBar.text && (
+					<label class="event-search-form__field">
+						<span>Search</span>
+						<input
+							type="search"
+							name={`events-q[${view.viewSlug}]`}
+							value={searchQuery.text}
+							placeholder="Search events…"
+						/>
+					</label>
+				)}
+				{searchBar.monthYear && (
+					<>
+						<label class="event-search-form__field">
+							<span>Month</span>
+							<select name={`events-month-num[${view.viewSlug}]`}>
+								<option value="">All months</option>
+								{months.map((m) => (
+									<option value={m} selected={searchQuery.month === m}>
+										{formatEventMonthName(m, locale)}
+									</option>
+								))}
+							</select>
+						</label>
+						<label class="event-search-form__field">
+							<span>Year</span>
+							<select name={`events-year[${view.viewSlug}]`}>
+								<option value="">All years</option>
+								{availableYears.map((y) => (
+									<option value={y} selected={searchQuery.year === y}>
+										{y}
+									</option>
+								))}
+							</select>
+						</label>
+					</>
+				)}
+				<button type="submit">Filter</button>
+				{hasActiveSearch && (
+					<a class="event-search-form__clear" href={clearHref}>
+						Clear
+					</a>
+				)}
+			</form>
+		)
+	}
 	{
 		navigation && (
 			<nav aria-label={`Event months for ${view?.viewSlug}`}>
@@ -247,6 +347,28 @@ const groups = grouped.map((group) => {
 		flex-wrap: wrap;
 		gap: 1rem;
 		margin-block-start: 1.5rem;
+	}
+	.event-search-form {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 0.75rem 1rem;
+		margin-block-end: 1.5rem;
+	}
+	.event-search-form__field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-size: 0.9em;
+	}
+	.event-search-form__field input,
+	.event-search-form__field select,
+	.event-search-form button {
+		font: inherit;
+		padding: 0.4rem 0.65rem;
+	}
+	.event-search-form__clear {
+		padding: 0.4rem 0.25rem;
 	}
 	@media (max-width: 767px) {
 		.event-list--list .event-card {
