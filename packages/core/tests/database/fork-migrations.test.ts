@@ -71,6 +71,7 @@ describe("fork migrations", () => {
 			"embark_001_import_baselines",
 			"embark_002_import_sync_grants",
 			"embark_003_protected_content",
+			"embark_004_wxr_import_receipts",
 		]);
 		const sorted = [...MIGRATION_NAMES].toSorted((a, b) => a.localeCompare(b));
 		expect(sorted.slice(-fork.length)).toEqual(fork);

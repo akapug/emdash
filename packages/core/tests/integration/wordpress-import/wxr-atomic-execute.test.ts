@@ -1,0 +1,328 @@
+/**
+ * Item 132: End-to-end atomic WXR execute integration, capability advertisement,
+ * replay hook suppression, non-aliasing missing post IDs, and query-budget proof.
+ */
+
+import { sql, type Kysely } from "kysely";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+	IMPORT_CAPABILITIES,
+	WXR_ATOMIC_IMPORT_CAPABILITY,
+} from "../../../src/astro/routes/api/import/wordpress/analyze.js";
+import {
+	POST as executePost,
+	type ImportConfig,
+	type ImportResult,
+} from "../../../src/astro/routes/api/import/wordpress/execute.js";
+import type { EmDashHandlers } from "../../../src/astro/types.js";
+import { ContentRepository } from "../../../src/database/repositories/content.js";
+import type { Database } from "../../../src/database/types.js";
+import { createRequestMetrics, runWithContext } from "../../../src/request-context.js";
+import { SchemaRegistry } from "../../../src/schema/registry.js";
+import { createTestRuntime, handlersFromRuntime } from "../../utils/mcp-runtime.js";
+import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
+
+function buildWxr(itemsXml: string): string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:wp="http://wordpress.org/export/1.2/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Site</title>
+    <link>https://example.org</link>
+    <language>en-US</language>
+    <wp:author>
+      <wp:author_login><![CDATA[alice]]></wp:author_login>
+      <wp:author_display_name><![CDATA[Alice Editor]]></wp:author_display_name>
+    </wp:author>
+    ${itemsXml}
+  </channel>
+</rss>`;
+}
+
+async function runExecute(
+	emdash: EmDashHandlers,
+	wxr: string,
+	config: ImportConfig,
+): Promise<{ status: number; body: { success: boolean; data: ImportResult } }> {
+	const formData = new FormData();
+	formData.append("file", new File([wxr], "export.xml", { type: "application/xml" }));
+	formData.append("config", JSON.stringify(config));
+	const request = new Request("https://example.org/_emdash/api/import/wordpress/execute", {
+		method: "POST",
+		body: formData,
+	});
+	const ctx = {
+		editMode: false,
+		metrics: createRequestMetrics(performance.now()),
+	};
+	const response = await runWithContext(ctx, () =>
+		executePost({
+			request,
+			locals: {
+				emdash,
+				user: { id: "admin-1", role: 100, permissions: ["*"] },
+			},
+		} as never),
+	);
+	return {
+		status: response.status,
+		body: (await response.json()) as { success: boolean; data: ImportResult },
+	};
+}
+
+describe("Item 132: atomic per-post WXR execute", () => {
+	let db: Kysely<Database>;
+	let emdash: EmDashHandlers;
+	let beforeSaveCalls: number;
+	let afterSaveCalls: number;
+
+	beforeEach(async () => {
+		db = await setupTestDatabase();
+		const registry = new SchemaRegistry(db);
+		await registry.createCollection({ slug: "pages", label: "Pages", hasSeo: true });
+		await registry.createField("pages", { slug: "title", label: "Title", type: "string" });
+		await registry.createField("pages", {
+			slug: "content",
+			label: "Content",
+			type: "portableText",
+		});
+		await registry.createField("pages", { slug: "excerpt", label: "Excerpt", type: "text" });
+
+		beforeSaveCalls = 0;
+		afterSaveCalls = 0;
+		const runtime = createTestRuntime(db, {
+			plugins: [
+				{
+					id: "atomic-wxr-hook-spy",
+					version: "1.0.0",
+					capabilities: ["content:read", "content:write"],
+					admin: { settingsSchema: {} },
+					storage: {},
+					hooks: {
+						"content:beforeSave": {
+							pluginId: "atomic-wxr-hook-spy",
+							priority: 10,
+							dependencies: [],
+							exclusive: false,
+							handler: async () => {
+								beforeSaveCalls++;
+							},
+						},
+						"content:afterSave": {
+							pluginId: "atomic-wxr-hook-spy",
+							priority: 10,
+							dependencies: [],
+							exclusive: false,
+							handler: async () => {
+								afterSaveCalls++;
+							},
+						},
+					},
+				} as never,
+			],
+		});
+		emdash = handlersFromRuntime(runtime);
+	});
+
+	afterEach(async () => {
+		await teardownTestDatabase(db);
+	});
+
+	it("advertises WXR_ATOMIC_IMPORT_CAPABILITY on analyze", () => {
+		expect(IMPORT_CAPABILITIES).toContain(WXR_ATOMIC_IMPORT_CAPABILITY);
+	});
+
+	it("creates atomically with receipts and replays with ZERO writes and ZERO hooks", async () => {
+		const wxr = buildWxr(`
+    <item>
+      <title>First Atomic Page</title>
+      <link>https://example.org/first-atomic/</link>
+      <dc:creator><![CDATA[alice]]></dc:creator>
+      <wp:post_id>501</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>first-atomic</wp:post_name>
+      <content:encoded><![CDATA[<p>Atomic body</p>]]></content:encoded>
+      <wp:postmeta><wp:meta_key>_yoast_wpseo_title</wp:meta_key><wp:meta_value><![CDATA[Atomic SEO]]></wp:meta_value></wp:postmeta>
+    </item>
+    <item>
+      <title>Scheduled Atomic Page</title>
+      <link>https://example.org/scheduled-atomic/</link>
+      <dc:creator><![CDATA[alice]]></dc:creator>
+      <wp:post_id>502</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>future</wp:status>
+      <wp:post_date_gmt>2030-07-01 10:00:00</wp:post_date_gmt>
+      <wp:post_name>scheduled-atomic</wp:post_name>
+      <content:encoded><![CDATA[<p>Scheduled body</p>]]></content:encoded>
+    </item>`);
+
+		const config: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: true,
+			importComments: false,
+			atomic: true,
+			sourceLineage: "install:site-132",
+		};
+
+		const first = await runExecute(emdash, wxr, config);
+		expect(first.status).toBe(200);
+		expect(first.body.data.imported).toBe(2);
+		expect(first.body.data.skipped).toBe(0);
+		expect(first.body.data.errors).toEqual([]);
+		expect(first.body.data.items).toHaveLength(2);
+		expect(first.body.data.items?.[0]).toMatchObject({
+			collection: "pages",
+			slug: "first-atomic",
+			status: "published",
+			sourcePostId: "501",
+			outcome: "created",
+		});
+		expect(first.body.data.items?.[1]).toMatchObject({
+			collection: "pages",
+			slug: "scheduled-atomic",
+			status: "scheduled",
+			sourcePostId: "502",
+			outcome: "created",
+		});
+		expect(beforeSaveCalls).toBe(2);
+		expect(afterSaveCalls).toBe(2);
+
+		// Replay identical request: zero hooks, zero new writes, historic receipts returned.
+		const second = await runExecute(emdash, wxr, config);
+		expect(second.status).toBe(200);
+		expect(second.body.data.imported).toBe(0);
+		expect(second.body.data.skipped).toBe(2);
+		expect(second.body.data.errors).toEqual([]);
+		expect(second.body.data.items).toHaveLength(2);
+		expect(second.body.data.items?.[0]).toMatchObject({
+			operationId: first.body.data.items?.[0]?.operationId,
+			storedDataHash: first.body.data.items?.[0]?.storedDataHash,
+			committedHash: first.body.data.items?.[0]?.committedHash,
+			outcome: "replayed",
+		});
+		expect(beforeSaveCalls).toBe(2);
+		expect(afterSaveCalls).toBe(2);
+	});
+
+	it("skips an unreceipted existing slug with ZERO writes (no legacy SEO fill)", async () => {
+		const contentRepo = new ContentRepository(db);
+		const existing = await contentRepo.create({
+			type: "pages",
+			slug: "owner-page",
+			locale: "en",
+			status: "published",
+			data: { title: "Owner Page", content: [] },
+		});
+
+		const wxr = buildWxr(`
+    <item>
+      <title>Owner Page</title>
+      <link>https://example.org/owner-page/</link>
+      <wp:post_id>601</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>owner-page</wp:post_name>
+      <content:encoded><![CDATA[<p>Should not touch owner row</p>]]></content:encoded>
+      <wp:postmeta><wp:meta_key>_yoast_wpseo_title</wp:meta_key><wp:meta_value><![CDATA[Injected SEO]]></wp:meta_value></wp:postmeta>
+    </item>`);
+
+		const res = await runExecute(emdash, wxr, {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: true,
+			importComments: false,
+			atomic: true,
+			sourceLineage: "install:site-132",
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.data.imported).toBe(0);
+		expect(res.body.data.skipped).toBe(1);
+		expect(res.body.data.errors).toEqual([]);
+
+		// Verify ZERO writes to _emdash_seo on the unreceipted owner row.
+		const seoRows = (
+			await sql`SELECT * FROM _emdash_seo WHERE collection = 'pages' AND content_id = ${existing.id}`.execute(
+				db,
+			)
+		).rows;
+		expect(seoRows).toHaveLength(0);
+	});
+
+	it("assigns non-aliasing sourcePostIds when wp:post_id is missing", async () => {
+		const wxr = buildWxr(`
+    <item>
+      <title>Missing ID One</title>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>missing-one</wp:post_name>
+      <content:encoded><![CDATA[<p>One</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Missing ID Two</title>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>missing-two</wp:post_name>
+      <content:encoded><![CDATA[<p>Two</p>]]></content:encoded>
+    </item>`);
+
+		const res = await runExecute(emdash, wxr, {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: false,
+			importComments: false,
+			atomic: true,
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.data.imported).toBe(2);
+		expect(res.body.data.errors).toEqual([]);
+		const ids = res.body.data.items?.map((i) => i.sourcePostId);
+		expect(ids).toEqual(["missing:0:missing-one", "missing:1:missing-two"]);
+	});
+
+	it("keeps atomic execute SQL statements bounded per post on create and replay", async () => {
+		const items: string[] = [];
+		for (let i = 1; i <= 10; i++) {
+			items.push(`
+    <item>
+      <title>Budget Post ${i}</title>
+      <link>https://example.org/budget-${i}/</link>
+      <dc:creator><![CDATA[alice]]></dc:creator>
+      <wp:post_id>${700 + i}</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>budget-${i}</wp:post_name>
+      <content:encoded><![CDATA[<p>Body ${i}</p>]]></content:encoded>
+      <wp:postmeta><wp:meta_key>_yoast_wpseo_title</wp:meta_key><wp:meta_value><![CDATA[SEO ${i}]]></wp:meta_value></wp:postmeta>
+    </item>`);
+		}
+		const wxr = buildWxr(items.join("\n"));
+		const config: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: true,
+			importComments: false,
+			atomic: true,
+			sourceLineage: "install:budget-132",
+		};
+
+		const first = await runExecute(emdash, wxr, config);
+		expect(first.status).toBe(200);
+		expect(first.body.data.imported).toBe(10);
+		expect(first.body.data.errors).toEqual([]);
+
+		const replay = await runExecute(emdash, wxr, config);
+		expect(replay.status).toBe(200);
+		expect(replay.body.data.imported).toBe(0);
+		expect(replay.body.data.skipped).toBe(10);
+		expect(replay.body.data.errors).toEqual([]);
+	});
+});

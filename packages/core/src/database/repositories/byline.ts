@@ -1327,6 +1327,70 @@ export class BylineRepository {
 	 * each `bylineId` resolves to) — adequate for the autosave round-trip,
 	 * which then re-hydrates the entry against its own locale separately.
 	 */
+	/**
+	 * Resolve byline wire IDs to translation groups and build multi-statement
+	 * INSERTs for `_emdash_content_bylines` (chunked for D1's 100-bind limit)
+	 * so atomic batch callers share the exact same resolution logic as `setContentBylines`.
+	 */
+	async prepareSetContentBylines(
+		collectionSlug: string,
+		contentId: string,
+		inputBylines: readonly ContentBylineInput[],
+		now: string = new Date().toISOString(),
+	): Promise<{ primaryBylineId: string | null; statements: ReturnType<typeof sql>[] }> {
+		validateIdentifier(collectionSlug, "collection slug");
+		if (inputBylines.length === 0) {
+			return { primaryBylineId: null, statements: [] };
+		}
+		const wireIds = [...new Set(inputBylines.map((item) => item.bylineId))];
+		const rows = await this.db
+			.selectFrom("_emdash_bylines")
+			.select(["id", "translation_group"])
+			.where("id", "in", wireIds)
+			.execute();
+		if (rows.length !== wireIds.length) {
+			throw new Error("One or more byline IDs do not exist");
+		}
+		const idToGroup = new Map<string, string>();
+		for (const row of rows) {
+			idToGroup.set(row.id, row.translation_group ?? row.id);
+		}
+		const seenGroups = new Set<string>();
+		const resolved: Array<{ group: string; roleLabel: string | null; sortOrder: number }> = [];
+		for (const item of inputBylines) {
+			const group = idToGroup.get(item.bylineId);
+			if (!group) {
+				throw new Error(`Missing translation_group for byline ${item.bylineId}`);
+			}
+			if (seenGroups.has(group)) continue;
+			seenGroups.add(group);
+			resolved.push({
+				group,
+				roleLabel: item.roleLabel ?? null,
+				sortOrder: resolved.length,
+			});
+		}
+		const statements: ReturnType<typeof sql>[] = [];
+		// 7 columns per row -> max 14 rows per statement (98 <= 100 D1 bind limit).
+		const CHUNK = 14;
+		for (let i = 0; i < resolved.length; i += CHUNK) {
+			const chunk = resolved.slice(i, i + CHUNK);
+			const tuples = chunk.map(
+				(item) =>
+					sql`(${ulid()}, ${collectionSlug}, ${contentId}, ${item.group}, ${item.sortOrder}, ${item.roleLabel}, ${now})`,
+			);
+			statements.push(sql`
+				INSERT INTO _emdash_content_bylines
+					(id, collection_slug, content_id, byline_id, sort_order, role_label, created_at)
+				VALUES ${sql.join(tuples, sql`, `)}
+			`);
+		}
+		return {
+			primaryBylineId: resolved[0]?.group ?? null,
+			statements,
+		};
+	}
+
 	async setContentBylines(
 		collectionSlug: string,
 		contentId: string,

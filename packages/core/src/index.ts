@@ -5,6 +5,21 @@ export {
 	passwordVerifierSchema,
 	contentProtectionSchema,
 } from "./content/protection.js";
+export {
+	AtomicWxrImportRepository,
+	WXR_ATOMIC_IMPORT_CAPABILITY,
+	D1_MAX_BINDS_PER_STATEMENT,
+	D1_MAX_SQL_BYTES,
+	D1_MAX_VALUE_BYTES,
+	canonicalJson,
+	computeStoredDataHash,
+} from "./database/repositories/wxr-atomic-import.js";
+export type {
+	AtomicWxrCreateInput,
+	AtomicWxrItemReceipt,
+	AtomicWxrApplyResult,
+	WxrTermPivot,
+} from "./database/repositories/wxr-atomic-import.js";
 export type { PasswordVerifier, ContentProtection } from "./content/protection.js";
 export { resolveProtectedEntry } from "./content/protected-render.js";
 

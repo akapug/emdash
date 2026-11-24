@@ -48,6 +48,7 @@ import {
 	isWxrTaxonomyConflictError,
 	mirrorTermsToLocales,
 	preImportWxrTaxonomies,
+	resolvePostTaxonomyPivots,
 	setPostTermAssignmentsReplacing,
 	type TaxonomyImportPlan,
 } from "#import/wxr-taxonomies.js";
@@ -55,6 +56,11 @@ import type { EmDashHandlers, EmDashManifest } from "#types";
 import { slugify } from "#utils/slugify.js";
 
 import { after } from "../../../../../after.js";
+import {
+	AtomicWxrImportRepository,
+	canonicalJson,
+	type AtomicWxrItemReceipt,
+} from "../../../../../database/repositories/wxr-atomic-import.js";
 import { validateIdentifier } from "../../../../../database/validate.js";
 import { getI18nConfig } from "../../../../../i18n/config.js";
 import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
@@ -69,6 +75,7 @@ import {
 	invalidateCollectionCache,
 	invalidateTaxonomyObjectCache,
 } from "../../../../../object-cache/index.js";
+import { computeContentHash } from "../../../../../utils/hash.js";
 import { sanitizeSlug } from "./analyze.js";
 import {
 	contentWithMappedEmbed,
@@ -104,6 +111,10 @@ export interface ImportConfig extends ProtectedImportOptions {
 	embeds?: Record<string, MappedPostEmbeds>;
 	/** Carry each item's approved comments (`importWxrComments`). Defaults to true. */
 	importComments?: boolean;
+	/** Host installation lineage for atomic producer receipts (file digest used only as fallback). */
+	sourceLineage?: string;
+	/** Opt into atomic per-post D1 batch import with durable producer receipts. */
+	atomic?: boolean;
 }
 
 export interface ImportResult {
@@ -112,6 +123,8 @@ export interface ImportResult {
 	skipped: number;
 	errors: Array<{ title: string; error: string }>;
 	byCollection: Record<string, number>;
+	/** Per-item producer receipts when atomic per-post WXR import is active. */
+	items?: AtomicWxrItemReceipt[];
 	/** Sections import results (if enabled) */
 	sections?: {
 		created: number;
@@ -251,6 +264,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			}
 
 			const seoSite = wxrSeoContext(wxr, config, emdashManifest);
+			const fallbackSourceLineage = config.atomic
+				? `wxr:${await computeContentHash(new TextEncoder().encode(text))}`
+				: undefined;
 
 			// Import content (locale from config scopes all items)
 			const result = await importContent(
@@ -265,6 +281,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 				seoSite,
 				wxr.site.language,
 				wxr.site.generator,
+				{
+					fallbackSourceLineage,
+					siteLink: wxr.site.link,
+				},
 			);
 
 			// Import reusable blocks as sections (if enabled)
@@ -339,6 +359,10 @@ export async function importContent(
 	options?: {
 		/** Flush held object-cache epoch writes every N created rows (default 25). */
 		epochFlushInterval?: number;
+		/** File-digest lineage fallback when caller does not supply `config.sourceLineage`. */
+		fallbackSourceLineage?: string;
+		/** Parsed `<channel><link>` included in per-item fingerprints for reconciliation. */
+		siteLink?: string;
 	},
 ): Promise<ImportResult> {
 	const result: ImportResult = {
@@ -394,12 +418,37 @@ export async function importContent(
 		if (manifest?.collections[col]) enabledCollections.add(col);
 	}
 
+	const useAtomic = config.atomic === true;
+	if (useAtomic && typeof emdash.handleContentCreateAtomicWxr !== "function") {
+		result.success = false;
+		result.errors.push({
+			title: "Import configuration",
+			error: "Atomic WXR import requested but runtime does not support it",
+		});
+		return result;
+	}
+	const utf8Encoder = new TextEncoder();
+	const effectiveSourceLineage = useAtomic
+		? (config.sourceLineage ??
+			options?.fallbackSourceLineage ??
+			`wxr:${await computeContentHash(
+				utf8Encoder.encode(
+					canonicalJson(
+						posts.map((p, idx) => [idx, p.id ?? null, p.postName ?? null, p.title ?? null]),
+					),
+				),
+			)}`)
+		: "";
+	if (useAtomic) {
+		result.items = [];
+	}
+
 	// Preload existing (slug, locale) -> id once per enabled collection when
-	// skipExisting is active so preload HITs skip without a DB round-trip.
-	// Any preload MISS is still confirmed with findBySlug before creating.
+	// skipExisting is active on the legacy path so preload HITs skip without a DB
+	// round-trip. Any preload MISS is still confirmed with findBySlug before creating.
 	const existingByCollection = new Map<string, PreloadedExisting>();
 	const existingSeoByCollection = new Map<string, Set<string>>();
-	if (config.skipExisting) {
+	if (config.skipExisting && !useAtomic) {
 		for (const col of enabledCollections) {
 			validateIdentifier(col, "collection name");
 			const rows = await sql<{ id: string; slug: string | null; locale: string | null }>`
@@ -449,7 +498,7 @@ export async function importContent(
 		collectionByWpId.set(post.id, collection);
 	};
 
-	for (const post of posts) {
+	for (const [postIndex, post] of posts.entries()) {
 		const postType = post.postType || "post";
 		const mapping = config.postTypeMappings[postType];
 
@@ -509,14 +558,11 @@ export async function importContent(
 			// land correctly. See issue #1080.
 			const postLocale = post.locale ?? locale;
 
-			// Check if already exists (idempotency). Match against the
-			// per-post locale so the same slug in different locales doesn't
-			// false-positive as duplicate. A preload HIT skips without a DB
-			// round-trip; a preload MISS is confirmed via findBySlug before
-			// creating and memoized strictly under the row's stored locale so
-			// a locale-less hit on a non-default row never poisons the default
-			// locale slot.
-			if (config.skipExisting) {
+			// Check if already exists (idempotency) on the legacy path. On the
+			// atomic path, receipt lookup + unreceipted-slug skip happen inside
+			// handleContentCreateAtomicWxr with ZERO writes (no legacy SEO fill,
+			// no unreceipted translationGroupMap authority).
+			if (config.skipExisting && !useAtomic) {
 				const preloaded = existingByCollection.get(collection);
 				const preloadHit = preloaded
 					? postLocale !== undefined
@@ -627,6 +673,217 @@ export async function importContent(
 				}
 			}
 
+			// Preserve original WordPress dates using the shared WXR date parser.
+			// Fallback chain: postDateGmt (UTC) → pubDate (RFC 2822) → postDate (site-local).
+			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
+			const publishedAt = createStatus === "published" && createdAt ? createdAt : undefined;
+
+			if (useAtomic && emdash.handleContentCreateAtomicWxr) {
+				const sourcePostId =
+					post.id !== undefined ? String(post.id) : `missing:${postIndex}:${slug}`;
+				const atomicStatus: "draft" | "published" | "scheduled" =
+					status === "scheduled" && scheduledMoment.date
+						? "scheduled"
+						: status === "published"
+							? "published"
+							: "draft";
+				const atomicScheduledAt =
+					atomicStatus === "scheduled" && scheduledMoment.date
+						? scheduledMoment.date.toISOString()
+						: undefined;
+				const resolvedTerms = await resolvePostTaxonomyPivots(
+					emdash.db,
+					collection,
+					post,
+					taxonomyPlan,
+				);
+				const atomicSeo = seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined;
+				// Fingerprint the deterministic source inputs (not Portable Text's
+				// freshly-generated random block `_key`s or newly-minted byline ULIDs)
+				// so an identical retry always computes the exact same fingerprint.
+				const inputFingerprint = `v1:${await computeContentHash(
+					utf8Encoder.encode(
+						canonicalJson({
+							siteLink: options?.siteLink ?? null,
+							collection,
+							sourcePostId,
+							slug,
+							locale: postLocale ?? defaultLocale,
+							status: atomicStatus,
+							scheduledAt: atomicScheduledAt ?? null,
+							title: data.title ?? null,
+							rawContent: post.content ?? "",
+							excerpt: data.excerpt ?? null,
+							featuredImage: data.featured_image ?? null,
+							mappedData,
+							mappedEmbed: mappedEmbed ?? null,
+							creator: post.creator ?? null,
+							authorId: authorId ?? null,
+							seo: atomicSeo ?? null,
+							terms: resolvedTerms.pivots,
+							replaceTaxonomies: translationOf ? resolvedTerms.carriedTaxonomies : [],
+						}),
+					),
+				)}`;
+
+				// Check durable receipt BEFORE resolving/creating guest bylines so a
+				// replay performs strictly ZERO writes (not even a guest byline).
+				const atomicRepo = new AtomicWxrImportRepository(emdash.db);
+				const existingReceipt = await atomicRepo.findReceipt(
+					effectiveSourceLineage,
+					sourcePostId,
+					postLocale ?? defaultLocale,
+				);
+				if (existingReceipt) {
+					if (existingReceipt.collection !== collection) {
+						result.errors.push({
+							title: post.title || "Untitled",
+							error: `Source "${sourcePostId}" (${postLocale ?? defaultLocale}) was already imported into "${existingReceipt.collection}", not "${collection}"`,
+						});
+						continue;
+					}
+					if (existingReceipt.input_fingerprint !== inputFingerprint) {
+						result.errors.push({
+							title: post.title || "Untitled",
+							error: `Source "${sourcePostId}" (${postLocale ?? defaultLocale}) was already imported with a different input fingerprint`,
+						});
+						continue;
+					}
+					result.skipped++;
+					result.items?.push({
+						collection: existingReceipt.collection,
+						id: existingReceipt.entry_id,
+						slug: existingReceipt.slug,
+						locale: existingReceipt.locale,
+						translationGroup: existingReceipt.translation_group,
+						status: existingReceipt.status,
+						operationId: existingReceipt.operation_id,
+						sourcePostId: existingReceipt.source_post_id,
+						storedDataHash: existingReceipt.stored_data_hash,
+						committedHash: existingReceipt.committed_hash,
+						outcome: "replayed",
+					});
+					stored(post, collection, existingReceipt.entry_id);
+					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+						translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
+					}
+					continue;
+				}
+
+				const atomicBylineId = await resolveImportByline(
+					post.creator,
+					authorDisplayNames?.get(post.creator ?? "") ?? post.creator,
+					authorId,
+					bylineRepo,
+					bylineCache,
+				);
+
+				const atomicResult = await emdash.handleContentCreateAtomicWxr(
+					collection,
+					{
+						sourceLineage: effectiveSourceLineage,
+						sourcePostId,
+						inputFingerprint,
+						data,
+						protection: protection.protection,
+						slug,
+						status: atomicStatus,
+						authorId,
+						bylines: atomicBylineId ? [{ bylineId: atomicBylineId }] : undefined,
+						locale: postLocale,
+						seo: atomicSeo,
+						translationOf,
+						terms: resolvedTerms.pivots,
+						replaceTaxonomies: translationOf ? resolvedTerms.carriedTaxonomies : undefined,
+						createdAt,
+						publishedAt: atomicStatus === "published" ? createdAt : undefined,
+						scheduledAt: atomicScheduledAt,
+					},
+					{ skipMediaUsageRefresh: incrementalCaptureActive },
+				);
+
+				if (!atomicResult.success || !atomicResult.data) {
+					result.errors.push({
+						title: post.title || "Untitled",
+						error: atomicResult.error?.message || "Atomic WXR import failed",
+					});
+					continue;
+				}
+
+				const applied = atomicResult.data;
+				if (applied.outcome === "created") {
+					result.imported++;
+					result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
+					result.items?.push(applied.receipt);
+					stored(post, collection, applied.receipt.id);
+					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+						translationGroupMap.set(post.translationGroup, applied.receipt.id);
+					}
+					if (result.taxonomies) {
+						result.taxonomies.assignments += resolvedTerms.pivots.length;
+					}
+					for (const warning of converted.warnings) {
+						result.errors.push({ title: post.title || "Untitled", error: warning });
+					}
+					if (protection.protected && !protection.protection) {
+						(result.drafted ??= []).push({
+							title: post.title || "Untitled",
+							reason: protection.unrecoverable ? "password-unrecoverable" : "password-protected",
+						});
+					}
+					if (
+						post.status === "future" &&
+						scheduledMoment.unzonedLocalOnly &&
+						!(protection.protected && !protection.protection)
+					) {
+						result.errors.push({
+							title: post.title || "Untitled",
+							error: "scheduled time has no timezone (only site-local post_date); kept as draft",
+						});
+					}
+					if (seoTally && seo) {
+						if (collectionHasSeo) tallyWxrSeo(seoTally, seo);
+						else tallyWxrSeoNoCollection(seoTally, seo);
+					}
+					if (incrementalCaptureActive) {
+						createdWithDeferredUsage++;
+					}
+					createdSinceFlush++;
+					if (epochFlushInterval > 0 && createdSinceFlush >= epochFlushInterval) {
+						flushCoalescedObjectCacheWrites();
+						createdSinceFlush = 0;
+					}
+				} else if (applied.outcome === "replayed") {
+					result.skipped++;
+					result.items?.push(applied.receipt);
+					stored(post, collection, applied.receipt.id);
+					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+						translationGroupMap.set(post.translationGroup, applied.receipt.id);
+					}
+				} else if (applied.outcome === "skipped") {
+					result.skipped++;
+					stored(post, collection, applied.existingId);
+					// Record the unreceipted anchor id so a later translation in the
+					// same WXR passes `translationOf` into `applyCreate`, which checks
+					// `_emdash_wxr_group_baselines` and refuses it as a conflict with
+					// zero writes rather than creating a detached translation.
+					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+						translationGroupMap.set(post.translationGroup, applied.existingId);
+					}
+				} else if (applied.outcome === "conflict") {
+					result.errors.push({
+						title: post.title || "Untitled",
+						error: applied.reason,
+					});
+				} else {
+					result.errors.push({
+						title: post.title || "Untitled",
+						error: applied.message,
+					});
+				}
+				continue;
+			}
+
 			const bylineId = await resolveImportByline(
 				post.creator,
 				authorDisplayNames?.get(post.creator ?? "") ?? post.creator,
@@ -634,11 +891,6 @@ export async function importContent(
 				bylineRepo,
 				bylineCache,
 			);
-
-			// Preserve original WordPress dates using the shared WXR date parser.
-			// Fallback chain: postDateGmt (UTC) → pubDate (RFC 2822) → postDate (site-local).
-			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
-			const publishedAt = createStatus === "published" && createdAt ? createdAt : undefined;
 
 			// Create the content item (defer per-row media usage refresh only when
 			// durable incremental DB capture triggers are active; otherwise keep the

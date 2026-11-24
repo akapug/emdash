@@ -542,6 +542,36 @@ export async function setPostTermAssignmentsReplacing(
 }
 
 /**
+ * Resolve all permitted taxonomy pivots for a WXR post up front so atomic
+ * per-post D1 batches can attach/replace them in the same batch as the
+ * content row.
+ */
+export async function resolvePostTaxonomyPivots(
+	db: Kysely<Database>,
+	collection: string,
+	post: WxrPost,
+	plan: TaxonomyImportPlan,
+): Promise<{
+	pivots: Array<{ taxonomy: string; termGroup: string }>;
+	carriedTaxonomies: string[];
+}> {
+	const repo = new TaxonomyRepository(db);
+	const resolved = resolvePostTermAssignments(collection, post, plan);
+	const pivots: Array<{ taxonomy: string; termGroup: string }> = [];
+	const carriedTaxonomies: string[] = [];
+	for (const [taxonomyName, termIds] of resolved) {
+		carriedTaxonomies.push(taxonomyName);
+		for (const termId of termIds) {
+			const group = await termTranslationGroup(repo, plan, termId);
+			if (group) {
+				pivots.push({ taxonomy: taxonomyName, termGroup: group });
+			}
+		}
+	}
+	return { pivots, carriedTaxonomies };
+}
+
+/**
  * Resolve a term id to its `translation_group` (the value
  * `content_taxonomies` stores). Caches the result on the plan so
  * repeated attaches of the same term don't repeat the lookup.

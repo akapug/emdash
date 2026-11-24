@@ -36,10 +36,12 @@ export class ProtectedContentRepository {
 		contentId: string,
 		protection: ContentProtection,
 		data: Record<string, unknown>,
+		seo?: ContentSeoInput | null,
 	): RawBuilder<unknown> {
 		const validated = contentProtectionSchema.parse(protection);
+		const serializedSeo = seo ? JSON.stringify(seo) : null;
 		return sql`INSERT INTO _emdash_protected_content (collection, content_id, credential_version, verifier, data, seo)
-			VALUES (${collection}, ${contentId}, 1, ${JSON.stringify(validated.verifier)}, ${JSON.stringify(data)}, NULL)`;
+			VALUES (${collection}, ${contentId}, 1, ${JSON.stringify(validated.verifier)}, ${JSON.stringify(data)}, ${serializedSeo})`;
 	}
 
 	async create(

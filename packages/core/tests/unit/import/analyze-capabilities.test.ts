@@ -6,6 +6,7 @@ import {
 	IMPORT_CAPABILITIES,
 	importCapabilities,
 	POST,
+	WXR_ATOMIC_IMPORT_CAPABILITY,
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
 import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../src/content/protection.js";
@@ -45,10 +46,14 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 	it("omits event-search-bar when the execute schema rejects searchBar and includes it when accepted", () => {
 		const rejecting = { safeParse: () => ({ success: false }) };
 		const accepting = { safeParse: () => ({ success: true }) };
-		expect(importCapabilities(rejecting)).toEqual([PROTECTED_CONTENT_CAPABILITY]);
+		expect(importCapabilities(rejecting)).toEqual([
+			PROTECTED_CONTENT_CAPABILITY,
+			WXR_ATOMIC_IMPORT_CAPABILITY,
+		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_SEARCH_BAR_CAPABILITY,
+			WXR_ATOMIC_IMPORT_CAPABILITY,
 		]);
 	});
 });

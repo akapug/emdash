@@ -816,9 +816,43 @@ export interface ProtectedRevisionTable {
 	data: string;
 }
 
+export interface WxrImportReceiptTable {
+	operation_id: string;
+	source_lineage: string;
+	source_post_id: string;
+	collection: string;
+	entry_id: string;
+	slug: string;
+	locale: string;
+	translation_group: string;
+	status: string;
+	input_fingerprint: string;
+	stored_data_hash: string;
+	committed_hash: string;
+	has_seo: number;
+	receipt_state: string;
+	created_at: string;
+}
+
+export interface WxrGroupBaselineTable {
+	collection: string;
+	translation_group: string;
+	source_lineage: string;
+	anchor_entry_id: string;
+	anchor_updated_at: string;
+	anchor_seo_json: string | null;
+	generation: number;
+	anchor_state_hash: string;
+	terms_json: string;
+	last_operation_id: string;
+	updated_at: string;
+}
+
 export interface Database {
 	_emdash_protected_content: ProtectedContentTable;
 	_emdash_protected_revisions: ProtectedRevisionTable;
+	_emdash_wxr_import_receipts: WxrImportReceiptTable;
+	_emdash_wxr_group_baselines: WxrGroupBaselineTable;
 	revisions: RevisionTable;
 	_emdash_import_baselines: ImportBaselineTable;
 	_emdash_import_operations: ImportOperationTable;
