@@ -3,60 +3,190 @@ import {
 	eventString,
 	eventTermLabels,
 	formatEventDate,
+	formatEventMecDayMonth,
+	formatEventMecTimes,
 	formatEventTimes,
 	type EventSummary,
 } from "../utils/events.js";
+import { safeHref } from "../utils/wp-shell.js";
+
 interface Props {
 	event: EventSummary;
 	compact?: boolean;
+	dateStyle?: "mec";
+	hideDate?: boolean;
 }
-const { event, compact = false } = Astro.props;
+
+const { event, compact = false, dateStyle, hideDate = false } = Astro.props;
 const data = event.entry.data;
 // Query results carry the native row locale even on single-language sites,
 // where Astro's routing locale is absent. Neither path needs a settings read.
 const locale = Astro.currentLocale ?? eventString(data.locale);
 const times = formatEventTimes(event, locale);
+const mecTimes = formatEventMecTimes(event);
 const locations = eventTermLabels(event.entry, "location");
+const locationAddress = eventString(data.location_address);
 const organizers = eventTermLabels(event.entry, "organizer");
 const categories = eventTermLabels(event.entry, "category");
+const timeNote = eventString(data.time_note);
+const cost = eventString(data.cost);
+
+const rawMoreInfo = eventString(data.more_info);
+const moreInfoHref = rawMoreInfo ? safeHref(rawMoreInfo) : "#";
+const rawOrganizerUrl = eventString(data.organizer_url);
+const organizerHref = rawOrganizerUrl ? safeHref(rawOrganizerUrl) : "#";
+
+function displayUrlLabel(href: string): string {
+	try {
+		const u = new URL(href);
+		const path = u.pathname === "/" ? "" : u.pathname.replace(/\/$/, "");
+		return `${u.host.replace(/^www\./, "")}${path}`;
+	} catch {
+		return href;
+	}
+}
+
+const websiteHref = organizerHref !== "#" ? organizerHref : moreInfoHref;
+const websiteLabel =
+	organizerHref !== "#"
+		? displayUrlLabel(organizerHref)
+		: (eventString(data.more_info_title) ?? displayUrlLabel(moreInfoHref));
+const secondaryMoreInfoHref =
+	organizerHref !== "#" && moreInfoHref !== "#" && moreInfoHref !== organizerHref
+		? moreInfoHref
+		: "#";
 ---
 
 <div class="event-facts">
-	<p>
-		<time datetime={event.date}>{formatEventDate(event.date, locale)}</time>{
-			event.endDate && event.endDate !== event.date && (
-				<>
-					{" "}
-					–{" "}
-					<time datetime={event.endDate}>
-						{formatEventDate(event.endDate, locale)}
-					</time>
-				</>
-			)
-		}
-		{
-			times && (
-				<>
-					<span aria-hidden="true"> · </span>
-					{times}
-					{event.timezone && <> ({event.timezone})</>}
-				</>
-			)
-		}
-	</p>
-	{eventString(data.time_note) && <p>{eventString(data.time_note)}</p>}
-	{locations.length > 0 && <p>Location: {locations.join(", ")}</p>}
 	{
-		!compact && organizers.length > 0 && (
-			<p>Organizer: {organizers.join(", ")}</p>
+		compact && dateStyle === "mec" ? (
+			<>
+				{!hideDate && (
+					<div class="event-facts__when event-facts__when--mec">
+						<span class="event-facts__day">
+							<time datetime={event.date}>
+								{formatEventMecDayMonth(event.date, locale)}
+							</time>
+							{event.endDate && event.endDate !== event.date && (
+								<>
+									{" - "}
+									<time datetime={event.endDate}>
+										{formatEventMecDayMonth(event.endDate, locale)}
+									</time>
+								</>
+							)}
+						</span>
+						{mecTimes && (
+							<span class="event-facts__time">
+								{mecTimes}
+								{event.timezone && <> ({event.timezone})</>}
+							</span>
+						)}
+					</div>
+				)}
+				{hideDate && mecTimes && (
+					<p class="event-facts__time">
+						{mecTimes}
+						{event.timezone && <> ({event.timezone})</>}
+					</p>
+				)}
+				{timeNote && <p class="event-facts__note">{timeNote}</p>}
+				{(locations.length > 0 || locationAddress) && (
+					<p class="event-facts__where">
+						{locations.length > 0 && (
+							<span class="event-facts__venue">{locations.join(", ")}</span>
+						)}
+						{locationAddress && (
+							<span class="event-facts__address">{locationAddress}</span>
+						)}
+					</p>
+				)}
+			</>
+		) : compact ? (
+			<>
+				<p class="event-facts__when">
+					<time datetime={event.date}>{formatEventDate(event.date, locale)}</time>
+					{event.endDate && event.endDate !== event.date && (
+						<>
+							{" – "}
+							<time datetime={event.endDate}>
+								{formatEventDate(event.endDate, locale)}
+							</time>
+						</>
+					)}
+					{times && (
+						<>
+							<span aria-hidden="true"> · </span>
+							{times}
+							{event.timezone && <> ({event.timezone})</>}
+						</>
+					)}
+				</p>
+				{timeNote && <p>{timeNote}</p>}
+				{(locations.length > 0 || locationAddress) && (
+					<p class="event-facts__where">
+						Location: {locations.join(", ")}
+						{locations.length > 0 && locationAddress && " · "}
+						{locationAddress}
+					</p>
+				)}
+			</>
+		) : (
+			<>
+				<p class="event-facts__row">
+					Date: <time datetime={event.date}>{formatEventDate(event.date, locale)}</time>
+					{event.endDate && event.endDate !== event.date && (
+						<>
+							{" – "}
+							<time datetime={event.endDate}>
+								{formatEventDate(event.endDate, locale)}
+							</time>
+						</>
+					)}
+				</p>
+				{times && (
+					<p class="event-facts__row">
+						Time: {times}
+						{event.timezone && <> ({event.timezone})</>}
+					</p>
+				)}
+				{timeNote && <p class="event-facts__row">{timeNote}</p>}
+				{(locations.length > 0 || locationAddress) && (
+					<p class="event-facts__row event-facts__where">
+						{locations.length > 0 ? `Location: ${locations.join(", ")}` : "Location:"}
+						{locationAddress && (
+							<span class="event-facts__address">
+								{locations.length > 0 ? " — " : " "}
+								{locationAddress}
+							</span>
+						)}
+					</p>
+				)}
+				{categories.length > 0 && (
+					<p class="event-facts__row">Category: {categories.join(", ")}</p>
+				)}
+				{organizers.length > 0 && (
+					<p class="event-facts__row">Organizer: {organizers.join(", ")}</p>
+				)}
+				{cost && <p class="event-facts__row">Cost: {cost}</p>}
+				{websiteHref !== "#" && (
+					<p class="event-facts__row event-facts__website">
+						Website:{" "}
+						<a href={websiteHref} rel="noopener noreferrer">
+							{websiteLabel}
+						</a>
+					</p>
+				)}
+				{secondaryMoreInfoHref !== "#" && (
+					<p class="event-facts__row">
+						<a href={secondaryMoreInfoHref} rel="noopener noreferrer">
+							{eventString(data.more_info_title) ?? "More information"}
+						</a>
+					</p>
+				)}
+			</>
 		)
 	}
-	{
-		!compact && categories.length > 0 && (
-			<p>Category: {categories.join(", ")}</p>
-		)
-	}
-	{!compact && eventString(data.cost) && <p>Cost: {eventString(data.cost)}</p>}
 	{
 		event.cancelled && (
 			<p role="status">
@@ -79,5 +209,25 @@ const categories = eventTermLabels(event.entry, "category");
 	}
 	.event-facts p:last-child {
 		margin-bottom: 0;
+	}
+	.event-facts__when--mec {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		margin-block-end: 0.5rem;
+	}
+	.event-facts__day {
+		font-weight: 600;
+	}
+	.event-facts__where {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+	.event-facts__venue {
+		font-weight: 500;
+	}
+	.event-facts__address {
+		opacity: 0.85;
 	}
 </style>

@@ -35,6 +35,7 @@ const eventView = z
 				"A search bar needs text or monthYear",
 			)
 			.optional(),
+		dateStyle: z.enum(["mec"]).optional(),
 	})
 	.strict()
 	.refine(
