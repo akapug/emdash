@@ -146,4 +146,109 @@ describe("MEC upcoming list skin, timezone today-occurrence rule, and Monthly ca
 		// Both Nov 23 and Nov 30 Monday occurrences appear in the November calendar grid
 		expect(html.match(/Yoga with Magi King on Mondays!/g)?.length).toBe(2);
 	});
+
+	it("keeps a midnight-crossing weekly event (21:00–01:00 NY) on its start day at 22:30 and 00:30, then advances after 01:00", () => {
+		const midnightWeekly = makeEvent("midnight-jam", "Midnight Jam", "2026-11-23", {
+			start_time: "21:00",
+			end_time: "01:00",
+			occurrences: ["2026-11-23", "2026-11-30"],
+		});
+		// 2026-11-23 22:30 EST (= 2026-11-24T03:30:00Z): still in progress on start day
+		const at2230 = eventSummary(
+			midnightWeekly,
+			new Date("2026-11-24T03:30:00Z"),
+			undefined,
+			"America/New_York",
+		);
+		expect(at2230?.date).toBe("2026-11-23");
+		expect(at2230?.period).toBe("upcoming");
+
+		// 2026-11-24 00:30 EST (= 2026-11-24T05:30:00Z): still before 01:00 end on next civil day
+		const at0030 = eventSummary(
+			midnightWeekly,
+			new Date("2026-11-24T05:30:00Z"),
+			undefined,
+			"America/New_York",
+		);
+		expect(at0030?.date).toBe("2026-11-23");
+		expect(at0030?.period).toBe("upcoming");
+
+		// 2026-11-24 01:15 EST (= 2026-11-24T06:15:00Z): ended at 01:00 -> advances to Nov 30
+		const at0115 = eventSummary(
+			midnightWeekly,
+			new Date("2026-11-24T06:15:00Z"),
+			undefined,
+			"America/New_York",
+		);
+		expect(at0115?.date).toBe("2026-11-30");
+		expect(at0115?.period).toBe("upcoming");
+	});
+
+	it("expands JSON-string occurrences in Monthly calendar grid using the same decoder as List", async () => {
+		const jsonOccYoga = makeEvent("yoga-json-occ", "Yoga JSON Occurrences", "2026-01-05", {
+			start_time: "17:30",
+			end_time: "18:45",
+			occurrences: JSON.stringify(["2026-11-23", "2026-11-30"]),
+		});
+		const container = await AstroContainer.create();
+		const html = await container.renderToString(EventList, {
+			props: {
+				entries: [jsonOccYoga],
+				view: upcomingView,
+				now: new Date("2026-11-23T20:00:00Z"),
+			},
+			request: new Request(
+				"https://example.org/upcoming/?events-view%5Bupcoming-events%5D=monthly&events-month%5Bupcoming-events%5D=2026-11",
+			),
+		});
+		expect(html.match(/Yoga JSON Occurrences/g)?.length).toBe(2);
+	});
+
+	it("applies searchBar text filtering in Monthly view without List pagination", async () => {
+		const searchableView = parseEventView({
+			version: 1,
+			viewSlug: "upcoming-events",
+			mode: "upcoming",
+			order: "asc",
+			layout: "list",
+			start: "today",
+			searchBar: { text: true, monthYear: true },
+		})!;
+		const novSalsa = makeEvent("nov-salsa", "November Salsa Night", "2026-11-25", {
+			start_time: "18:00",
+			end_time: "20:00",
+		});
+		const container = await AstroContainer.create();
+		const html = await container.renderToString(EventList, {
+			props: {
+				entries: [yoga, novSalsa],
+				view: searchableView,
+				now: new Date("2026-11-23T20:00:00Z"),
+				pageSize: 1,
+			},
+			request: new Request(
+				"https://example.org/upcoming/?events-view%5Bupcoming-events%5D=monthly&events-month%5Bupcoming-events%5D=2026-11&events-q%5Bupcoming-events%5D=yoga",
+			),
+		});
+		expect(html).toContain("event-calendar-grid");
+		expect(html.match(/Yoga with Magi King on Mondays!/g)?.length).toBe(2);
+		expect(html).not.toContain("November Salsa Night");
+	});
+
+	it("normalizes an invalid events-month param in Monthly view to site-local current month and drops bad value from Monthly link", async () => {
+		const container = await AstroContainer.create();
+		const html = await container.renderToString(EventList, {
+			props: {
+				entries: [yoga, emigre],
+				view: upcomingView,
+				now: new Date("2026-11-24T03:30:00Z"), // 2026-11-23 22:30 America/New_York -> 2026-11
+			},
+			request: new Request(
+				"https://example.org/upcoming/?events-view%5Bupcoming-events%5D=monthly&events-month%5Bupcoming-events%5D=not-a-month",
+			),
+		});
+		expect(html).toContain("event-calendar-grid");
+		expect(html).toContain("November 2026");
+		expect(html).not.toContain("not-a-month");
+	});
 });
