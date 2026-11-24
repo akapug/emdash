@@ -57,8 +57,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		const body = await parseBody(request, wpPrepareBody);
 		if (isParseError(body)) return body;
 
-		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Zod schema output narrowed to PrepareRequest
-		const result = await prepareImport(emdash.db, body as PrepareRequest);
+		const result = await prepareImport(emdash.db, body);
 
 		// Routing caches schema separately from the per-request manifest, so repaired
 		// patterns must invalidate that cache just like newly created collections.
@@ -111,8 +110,8 @@ async function prepareImport(
 
 			if (!collection) {
 				// Create the collection
-				const label = capitalize(collectionSlug);
-				const labelSingular = capitalize(singularize(collectionSlug));
+				const label = isEventsType ? "Events" : capitalize(collectionSlug);
+				const labelSingular = isEventsType ? "Event" : capitalize(singularize(collectionSlug));
 
 				// Enable search by default for posts and pages
 				const isSearchable = ["posts", "pages", "post", "page"].includes(collectionSlug);

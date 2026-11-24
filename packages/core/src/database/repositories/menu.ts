@@ -547,6 +547,41 @@ export class MenuRepository {
 		return rowToMenuItem(row);
 	}
 
+	/** Repair a label without overwriting an editor who changed the item since it was read. */
+	async compareAndSetItemLabel(
+		menuId: string,
+		itemId: string,
+		expected: Omit<MenuItem, "createdAt" | "locale" | "translationGroup">,
+		label: string,
+	): Promise<MenuItem | null> {
+		if (menuId !== expected.menuId || itemId !== expected.id) return null;
+		// One statement: a separate read followed by UPDATE leaves an editor race.
+		const row = await this.db
+			.updateTable("_emdash_menu_items")
+			.set({ label })
+			.where("menu_id", "=", menuId)
+			.where("id", "=", itemId)
+			.where("label", "=", expected.label)
+			.where("type", "=", expected.type)
+			.where("sort_order", "=", expected.sortOrder)
+			.where("parent_id", expected.parentId === null ? "is" : "=", expected.parentId)
+			.where("custom_url", expected.customUrl === null ? "is" : "=", expected.customUrl)
+			.where("title_attr", expected.titleAttr === null ? "is" : "=", expected.titleAttr)
+			.where("target", expected.target === null ? "is" : "=", expected.target)
+			.where("css_classes", expected.cssClasses === null ? "is" : "=", expected.cssClasses)
+			.where(
+				"reference_collection",
+				expected.referenceCollection === null ? "is" : "=",
+				expected.referenceCollection,
+			)
+			.where("reference_id", expected.referenceId === null ? "is" : "=", expected.referenceId)
+			.returningAll()
+			.executeTakeFirst();
+		if (!row) return null;
+		invalidateMenuObjectCache();
+		return rowToMenuItem(row);
+	}
+
 	/** Delete an item scoped to its menu. Returns false if nothing was deleted. */
 	async deleteItem(menuId: string, itemId: string): Promise<boolean> {
 		const result = await this.db

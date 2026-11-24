@@ -408,6 +408,26 @@ export async function handleMenuItemUpdate(
 	}
 }
 
+export async function handleMenuItemLabelRepair(
+	db: Kysely<Database>,
+	menuName: string,
+	itemId: string,
+	expected: Omit<MenuItem, "createdAt" | "locale" | "translationGroup">,
+	label: string,
+	options: { locale?: string } = {},
+): Promise<ApiResult<MenuItem>> {
+	const repo = new MenuRepository(db);
+	const resolved = await resolveMenu(repo, menuName, options);
+	if (!resolved.success) return resolved;
+	const item = await repo.compareAndSetItemLabel(resolved.menu.id, itemId, expected, label);
+	return item
+		? { success: true, data: item }
+		: {
+				success: false,
+				error: { code: "CONFLICT", message: "Menu item changed; no label was written" },
+			};
+}
+
 /**
  * Delete a menu item.
  */

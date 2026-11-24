@@ -28,6 +28,25 @@ describe("MenuRepository", () => {
 		await teardownTestDatabase(db);
 	});
 
+	it("changes only a label and refuses snapshots invalidated by an editor", async () => {
+		const menu = await repo.create({ name: "primary", label: "Primary" });
+		const item = await repo.createItem(menu.id, menu.locale, {
+			type: "custom",
+			label: "Arts &#038; Music",
+			customUrl: "/arts",
+		});
+		const repaired = await repo.compareAndSetItemLabel(menu.id, item.id, item, "Arts & Music");
+		expect(repaired).toEqual({ ...item, label: "Arts & Music" });
+
+		const edited = await repo.updateItem(menu.id, item.id, { cssClasses: "owner-choice" });
+		expect(edited?.cssClasses).toBe("owner-choice");
+		expect(await repo.compareAndSetItemLabel(menu.id, item.id, repaired!, item.label)).toBeNull();
+		expect(await repo.compareAndSetItemLabel(menu.id, item.id, edited!, item.label)).toEqual({
+			...edited,
+			label: item.label,
+		});
+	});
+
 	describe("row → entity mapping", () => {
 		it("create() returns a camelCase Menu", async () => {
 			const menu = await repo.create({ name: "primary", label: "Primary" });

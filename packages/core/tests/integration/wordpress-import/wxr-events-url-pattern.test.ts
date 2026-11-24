@@ -55,30 +55,64 @@ describe("an events collection's url pattern", () => {
 		return registry.getCollection(collection);
 	}
 
-	it("gives tribe_events the /events/{slug} pattern", async () => {
-		const collection = await prepareType("tribe_events", "tribe_events");
-		expect(collection?.urlPattern, "a TEC event collection with no pattern 404s every event").toBe("/events/{slug}");
+	it.each([
+		["tribe_events", "tribe_events"],
+		["mec-events", "mec_events"],
+	])("labels a new %s collection Events without changing its slug or route", async (name, slug) => {
+		const collection = await prepareType(name, slug);
+		expect(collection).toMatchObject({
+			slug,
+			urlPattern: "/events/{slug}",
+			label: "Events",
+			labelSingular: "Event",
+		});
 	});
 
-	it("still gives mec-events the same pattern", async () => {
-		const collection = await prepareType("mec-events", "mec_events");
-		expect(collection?.urlPattern).toBe("/events/{slug}");
+	it("leaves non-carried post types with their usual labels and routes", async () => {
+		const posts = await prepareType("post", "posts");
+		expect(posts).toMatchObject({
+			label: "Posts",
+			labelSingular: "Post",
+			urlPattern: "/blog/{slug}",
+		});
+
+		const eventOn = await prepareType("ajde_events", "ajde_events");
+		expect(eventOn).toMatchObject({ label: "Ajde_events", labelSingular: "Ajde_event" });
+		expect(eventOn?.urlPattern).not.toBe("/events/{slug}");
 	});
 
-	it("NEGATIVE CONTROL: an ordinary post type gets no events pattern", async () => {
-		const collection = await prepareType("post", "posts");
-		expect(collection?.urlPattern).not.toBe("/events/{slug}");
+	it("preserves the operator's labels on an existing carried event collection", async () => {
+		const existing = await registry.createCollection({
+			slug: "tribe_events",
+			label: "Community calendar",
+			labelSingular: "Occasion",
+			urlPattern: "/events/{slug}",
+		});
+		const collection = await prepareType("tribe_events", existing.slug);
+		expect(collection).toMatchObject({
+			id: existing.id,
+			label: "Community calendar",
+			labelSingular: "Occasion",
+		});
 	});
 
 	it("an EXISTING different pattern stays an error, for tribe_events too", async () => {
 		// The conflict branch: a collection that already has its own pattern is not
 		// silently overwritten. It was `isMecEvent`-gated, so a TEC collection with
 		// a conflicting pattern was left alone with no error at all.
-		await registry.createCollection({ slug: "tribe_events", label: "Events", labelSingular: "Event", supports: [], urlPattern: "/calendar/{slug}" });
+		await registry.createCollection({
+			slug: "tribe_events",
+			label: "Events",
+			labelSingular: "Event",
+			supports: [],
+			urlPattern: "/calendar/{slug}",
+		});
 		const request = new Request("http://localhost/_emdash/api/import/wordpress/prepare", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ postTypes: [{ name: "tribe_events", collection: "tribe_events", fields }] }),
+			body: JSON.stringify({
+				postTypes: [{ name: "tribe_events", collection: "tribe_events", fields }],
+			}),
 		});
 		const response = await prepare({
 			request,
