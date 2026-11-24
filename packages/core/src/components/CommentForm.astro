@@ -31,6 +31,7 @@ interface Props {
 	turnstileSiteKey?: string;
 }
 
+import { optOutPageCache } from "../page-cache/state.js";
 import { getCollectionInfo } from "../schema/query.js";
 
 const {
@@ -42,6 +43,7 @@ const {
 } = Astro.props;
 
 const enabled = (await getCollectionInfo(collection))?.commentsEnabled ?? false;
+if (enabled) optOutPageCache();
 const { user } = Astro.locals;
 const formId = `ec-comment-form-${parentId ?? "root"}`;
 const endpoint = `/_emdash/api/comments/${encodeURIComponent(collection)}/${encodeURIComponent(contentId)}`;

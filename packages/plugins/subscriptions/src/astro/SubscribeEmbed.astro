@@ -9,7 +9,12 @@
  * The page to come back to is the one the visitor asked for
  * (`Astro.originPathname`), not the path a layout rewrote it to.
  */
+import * as emdashModule from "emdash";
 import { subscribeView, type SubscribeBlock } from "../block.js";
+
+if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
+	emdashModule.optOutPageCache();
+}
 
 interface Props {
 	node: Partial<SubscribeBlock>;

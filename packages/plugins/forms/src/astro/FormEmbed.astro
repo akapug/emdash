@@ -6,6 +6,7 @@
  * Without JavaScript, all pages are visible as one long form.
  * The client-side script enhances with multi-page navigation, AJAX, etc.
  */
+import * as emdashModule from "emdash";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 
 import { loadPublicFormDefinition } from "../public-definition.js";
@@ -26,6 +27,10 @@ const form = await loadPublicFormDefinition({
 	handlePublicPluginApiRoute,
 });
 if (!form) return;
+
+if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
+	emdashModule.optOutPageCache();
+}
 
 const submitUrl = `/_emdash/api/plugins/emdash-forms/submit`;
 const isMultiPage = form.pages.length > 1;

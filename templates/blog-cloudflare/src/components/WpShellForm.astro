@@ -13,6 +13,7 @@
  */
 import { blockComponents } from "@emdash-cms/plugin-forms/astro";
 import { loadPublicFormDefinition } from "@emdash-cms/plugin-forms/public-definition";
+import * as emdashModule from "emdash";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import { formSkin, renderWpShellForm } from "../utils/wp-shell";
 import { loadWpShell } from "../utils/wp-shell-loader";
@@ -40,6 +41,9 @@ const html =
 				submitUrl: "/_emdash/api/plugins/emdash-forms/submit",
 			})
 		: null;
+if (html && "optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
+	emdashModule.optOutPageCache();
+}
 ---
 
 {html ? <Fragment set:html={html} /> : <FormEmbed node={node} />}

@@ -27,6 +27,7 @@
  * site's subscriptions plugin, its count line the plugin's confirmed count.
  */
 import type { HTMLTag } from "astro/types";
+import * as emdashModule from "emdash";
 import {
 	getEditMeta,
 	getEmDashCollection,
@@ -196,6 +197,13 @@ async function subscribeFill(): Promise<WpShellSubscribeFill | null> {
 	}
 }
 const subscribe = hasSlot("subscribe") ? await subscribeFill() : null;
+if (
+	subscribe &&
+	"optOutPageCache" in emdashModule &&
+	typeof emdashModule.optOutPageCache === "function"
+) {
+	emdashModule.optOutPageCache();
+}
 
 // Captured footer widget areas and copyright socket: once seeded in EmDash, the widget area
 // is the truth (an emptied area draws nothing); before any seed (null), the captured fallback draws.

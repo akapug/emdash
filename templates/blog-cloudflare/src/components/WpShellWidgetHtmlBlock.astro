@@ -5,6 +5,7 @@
  * wrapper div or margin so captured footer widgets have zero visual drift on
  * first draw.
  */
+import * as emdashModule from "emdash";
 import { sanitizeContent } from "emdash";
 
 interface Props {
@@ -13,6 +14,13 @@ interface Props {
 
 const { node } = Astro.props;
 const html = node?.html ? sanitizeContent(node.html) : "";
+if (
+	/<form\b/i.test(html) &&
+	"optOutPageCache" in emdashModule &&
+	typeof emdashModule.optOutPageCache === "function"
+) {
+	emdashModule.optOutPageCache();
+}
 ---
 
 {html.length > 0 && <Fragment set:html={html} />}
