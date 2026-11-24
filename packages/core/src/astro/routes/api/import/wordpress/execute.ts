@@ -305,6 +305,24 @@ function readCreatedItem(
 	};
 }
 
+interface PreloadedExisting {
+	byLocale: Map<string, string>;
+	anyLocale: Map<string, { id: string; locale: string }>;
+}
+
+function recordExisting(
+	preloaded: PreloadedExisting,
+	rowSlug: string,
+	rowLocale: string,
+	rowId: string,
+): void {
+	preloaded.byLocale.set(`${rowSlug}\0${rowLocale}`, rowId);
+	const current = preloaded.anyLocale.get(rowSlug);
+	if (!current || rowLocale < current.locale) {
+		preloaded.anyLocale.set(rowSlug, { id: rowId, locale: rowLocale });
+	}
+}
+
 export async function importContent(
 	posts: WxrPost[],
 	config: ImportConfig,
@@ -379,10 +397,7 @@ export async function importContent(
 	// Preload existing (slug, locale) -> id once per enabled collection when
 	// skipExisting is active so preload HITs skip without a DB round-trip.
 	// Any preload MISS is still confirmed with findBySlug before creating.
-	const existingByCollection = new Map<
-		string,
-		{ byLocale: Map<string, string>; anyLocale: Map<string, string> }
-	>();
+	const existingByCollection = new Map<string, PreloadedExisting>();
 	const existingSeoByCollection = new Map<string, Set<string>>();
 	if (config.skipExisting) {
 		for (const col of enabledCollections) {
@@ -393,16 +408,17 @@ export async function importContent(
 				WHERE deleted_at IS NULL AND slug IS NOT NULL
 				ORDER BY locale ASC
 			`.execute(emdash.db);
-			const byLocale = new Map<string, string>();
-			const anyLocale = new Map<string, string>();
+			const preloaded: PreloadedExisting = {
+				byLocale: new Map<string, string>(),
+				anyLocale: new Map<string, { id: string; locale: string }>(),
+			};
 			for (const row of rows.rows) {
 				if (!row.slug) continue;
-				byLocale.set(`${row.slug}\0${row.locale ?? defaultLocale}`, row.id);
-				if (!anyLocale.has(row.slug)) anyLocale.set(row.slug, row.id);
+				recordExisting(preloaded, row.slug, row.locale ?? defaultLocale, row.id);
 			}
-			existingByCollection.set(col, { byLocale, anyLocale });
+			existingByCollection.set(col, preloaded);
 
-			if (seoTally && manifest.collections[col]?.hasSeo === true && anyLocale.size > 0) {
+			if (seoTally && manifest.collections[col]?.hasSeo === true && preloaded.anyLocale.size > 0) {
 				const seoRows = await emdash.db
 					.selectFrom("_emdash_seo")
 					.select("content_id")
@@ -497,22 +513,28 @@ export async function importContent(
 			// per-post locale so the same slug in different locales doesn't
 			// false-positive as duplicate. A preload HIT skips without a DB
 			// round-trip; a preload MISS is confirmed via findBySlug before
-			// creating so any-locale matches and concurrent inserts keep exact
-			// skipExisting semantics.
-			const existingKey = `${slug}\0${postLocale ?? defaultLocale}`;
+			// creating and memoized strictly under the row's stored locale so
+			// a locale-less hit on a non-default row never poisons the default
+			// locale slot.
 			if (config.skipExisting) {
 				const preloaded = existingByCollection.get(collection);
 				const preloadHit = preloaded
 					? postLocale !== undefined
-						? preloaded.byLocale.get(existingKey)
-						: preloaded.anyLocale.get(slug)
+						? preloaded.byLocale.get(`${slug}\0${postLocale}`)
+						: preloaded.anyLocale.get(slug)?.id
 					: undefined;
-				const existingId =
-					preloadHit ?? (await contentRepo.findBySlug(collection, slug, postLocale))?.id;
+				const existingRow = preloadHit
+					? undefined
+					: await contentRepo.findBySlug(collection, slug, postLocale);
+				const existingId = preloadHit ?? existingRow?.id;
 				if (existingId) {
-					if (preloaded && !preloadHit) {
-						preloaded.byLocale.set(existingKey, existingId);
-						if (!preloaded.anyLocale.has(slug)) preloaded.anyLocale.set(slug, existingId);
+					if (preloaded && existingRow) {
+						recordExisting(
+							preloaded,
+							existingRow.slug ?? slug,
+							existingRow.locale ?? defaultLocale,
+							existingRow.id,
+						);
 					}
 					stored(post, collection, existingId);
 					// Record the translation group mapping so later
@@ -667,12 +689,12 @@ export async function importContent(
 					stored(post, collection, createdItem.id);
 					const preloaded = existingByCollection.get(collection);
 					if (preloaded) {
-						const storedSlug = createdItem.slug ?? slug;
-						const storedLocale = createdItem.locale ?? postLocale ?? defaultLocale;
-						preloaded.byLocale.set(`${storedSlug}\0${storedLocale}`, createdItem.id);
-						if (!preloaded.anyLocale.has(storedSlug)) {
-							preloaded.anyLocale.set(storedSlug, createdItem.id);
-						}
+						recordExisting(
+							preloaded,
+							createdItem.slug ?? slug,
+							createdItem.locale ?? postLocale ?? defaultLocale,
+							createdItem.id,
+						);
 					}
 					if (incrementalCaptureActive) {
 						createdWithDeferredUsage++;

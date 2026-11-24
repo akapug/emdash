@@ -315,6 +315,77 @@ describe("WXR execute query budget, cache coalescing, and cut safety", () => {
 		);
 	});
 
+	it("B1c: memoizes a preload-miss findBySlug hit under the row's stored locale so a later explicit default-locale item is still created", async () => {
+		const runtime = createTestRuntime(rawDb);
+		const emdash = handlersFromRuntime(runtime);
+		const manifest = await emdash.getManifest();
+		const repo = new ContentRepository(rawDb);
+		const origCreate = emdash.handleContentCreate.bind(emdash);
+
+		// Inject a French row for `shared-page` AFTER the preload query runs,
+		// triggered during the first post's create.
+		let injectedFrId: string | undefined;
+		emdash.handleContentCreate = async (collection, body, options) => {
+			const res = await origCreate(collection, body, options);
+			if (!injectedFrId && body.slug === "seed-page") {
+				const createdFr = await repo.create({
+					type: "pages",
+					slug: "shared-page",
+					status: "published",
+					locale: "fr",
+					data: { title: "Page Partagee", content: [] },
+				});
+				injectedFrId = createdFr.id;
+			}
+			return res;
+		};
+
+		const wxr = await parseWxrString(buildMultiPostWxr(1));
+		const seedPost = wxr.posts[0];
+		expect(seedPost).toBeDefined();
+		if (!seedPost) throw new Error("expected seed post");
+
+		const posts = [
+			{ ...seedPost, id: 1, title: "Seed Page", postName: "seed-page", locale: undefined },
+			// Locale-less item: preload misses, findBySlug returns the injected French row -> skipped.
+			{
+				...seedPost,
+				id: 2,
+				title: "Shared Locale-less",
+				postName: "shared-page",
+				locale: undefined,
+			},
+			// Explicit English item with the same slug: must NOT hit the French memo -> CREATED.
+			{ ...seedPost, id: 3, title: "Shared English", postName: "shared-page", locale: "en" },
+		];
+		const plan = await preImportWxrTaxonomies(rawDb, posts, [], [], []);
+
+		const importResult = await importContent(
+			posts,
+			CONFIG,
+			emdash,
+			manifest,
+			new Map(),
+			undefined,
+			undefined,
+			plan,
+			undefined,
+			wxr.site.language,
+			wxr.site.generator,
+		);
+		expect(importResult.imported).toBe(2);
+		expect(importResult.skipped).toBe(1);
+		expect(importResult.errors).toEqual([]);
+		expect(injectedFrId).toBeDefined();
+
+		const frRow = await repo.findBySlug("pages", "shared-page", "fr");
+		const enRow = await repo.findBySlug("pages", "shared-page", "en");
+		expect(frRow?.id).toBe(injectedFrId);
+		expect(enRow?.id).toBeDefined();
+		expect(enRow?.id).not.toBe(injectedFrId);
+		expect(enRow?.locale).toBe("en");
+	});
+
 	it("B2: keeps media-usage durable with active capture and runs immediate refresh when inactive across interrupted/resumed import", async () => {
 		// Suppress after() completely to simulate a cut Worker request.
 		vi.spyOn(afterModule, "after").mockImplementation(() => {});
