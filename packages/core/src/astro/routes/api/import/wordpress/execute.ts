@@ -77,6 +77,30 @@ import {
 } from "./mapped-embeds.js";
 import { mappedFieldsSchema, validateMappedFields, wpExecuteConfig } from "./mapped-fields.js";
 
+/**
+ * May this EXISTING row be completed by this import?
+ *
+ * Only a key the host named in `completeOnly` — the keys ITS OWN earlier attempt
+ * saw no row at, so the row is one that attempt may have cut between the content
+ * write and the taxonomy write. Everything else on the site is somebody else's:
+ * the owner's edits, an earlier import, another tool. Completing those would be
+ * this import writing over work it never did, which is the one thing a re-import
+ * must never do.
+ *
+ * The key format is the host's `ledgerKey`: `collection slug locale`, with
+ * `(unknown)` for a locale the WXR did not carry. It is matched loosely on
+ * purpose: a locale that differs between the host's listing and the producer's
+ * decision must not make the row COMPLETE-able (that would be unsafe), so an
+ * unreadable key simply completes nothing.
+ */
+function shouldComplete(config: ImportConfig, post: WxrPost, collection: string, locale: string): boolean {
+	const list = config.completeOnly;
+	if (!list || list.length === 0) return false;
+	const slug = post.postName || "";
+	const keys = [`${collection} ${slug} ${locale}`, `${collection} ${slug} (unknown)`];
+	return keys.some((k) => list.includes(k));
+}
+
 export const prerender = false;
 
 export interface ImportConfig extends ProtectedImportOptions {
@@ -90,6 +114,23 @@ export interface ImportConfig extends ProtectedImportOptions {
 	>;
 	/** Whether to skip items that already exist (by slug) */
 	skipExisting: boolean;
+	/**
+	 * THE ROWS A RETRY MAY COMPLETE, and no others — `collection slug locale` keys
+	 * the host saw no row at before its own run started.
+	 *
+	 * WHY THIS EXISTS. A post's content row is written in one transaction and its
+	 * taxonomy assignments in a SECOND write after it. A request cut between the two
+	 * leaves a row with no pivots, and `skipExisting` would skip it forever: the entry
+	 * is there, its categories are not, and no report says so. MEASURED 2026-11-24:
+	 * 156 of 190 rows in after two cut attempts, media 0.
+	 *
+	 * CUSTODY NOT NEGOTIABLE: a row NOT in this list is somebody else's — an owner's
+	 * edit, an earlier import — and must stay untouched. Only a listed row is
+	 * completed, and only where the WXR can prove it incomplete.
+	 *
+	 * Optional, and an older host never sends it: absent means today's behaviour.
+	 */
+	completeOnly?: string[];
 	/** Whether to import reusable blocks (wp_block) as sections */
 	importSections?: boolean;
 	/** Author mappings (WP author login -> EmDash user ID) */
@@ -112,6 +153,12 @@ export interface ImportResult {
 	skipped: number;
 	errors: Array<{ title: string; error: string }>;
 	byCollection: Record<string, number>;
+	/**
+	 * ROWS AN EXISTING ENTRY WAS COMPLETED FOR: `collection slug locale`. Reported
+	 * rather than silent, because an operator re-running an import needs to know
+	 * which rows this run finished rather than skipped.
+	 */
+	completed?: string[];
 	/** Sections import results (if enabled) */
 	sections?: {
 		created: number;
@@ -563,6 +610,47 @@ export async function importContent(
 						} else {
 							knownSeo?.add(existingId);
 							seoTally.keptExisting++;
+						}
+					}
+					// A LISTED ROW IS ONE THIS RUN MAY HAVE CUT MID-WAY. Its content row is
+					// ours and already written; its taxonomies may not be. Complete those,
+					// with REPLACE semantics for a row whose pivots are wholly absent — the
+					// WXR declares the full set, so a replace converges and a partial earlier
+					// write is cured rather than half-fixed.
+					//
+					// EVERY OTHER EXISTING ROW IS UNTOUCHED: a row not in the list belongs to
+					// the owner or to a run this host knows nothing about, and this import has
+					// no business editing it. `insertIfAbsent` above is the shape of that
+					// rule for SEO; this is the same rule for taxonomies.
+					if (shouldComplete(config, post, collection, postLocale)) {
+						try {
+							const written = await setPostTermAssignmentsReplacing(emdash.db, collection, existingId, post, taxonomyPlan);
+							if (result.taxonomies) result.taxonomies.assignments += written;
+							// A CUT BETWEEN THE ROW AND ITS SCHEDULE leaves a real `draft` whose
+							// moment never landed. Complete it from the WXR — but only when the WXR
+							// carries a ZONED moment, the same rule the create path uses: an
+							// unzoned local time would place the post at the wrong hour, which is
+							// worse than leaving it a draft.
+							if (post.status === "future") {
+								const moment = parseScheduledWxrDate(post.postDateGmt, post.pubDate, post.postDate);
+								if (moment.date) {
+									const scheduled = await emdash.handleContentSchedule(collection, existingId, moment.date.toISOString());
+									if (!scheduled.success) {
+										result.errors.push({
+											title: post.title || "Untitled",
+											error: `row exists but its scheduled moment could not be set (${scheduled.error?.message ?? "unknown"}); it stays a draft`,
+										});
+									}
+								}
+							}
+							(result.completed ??= []).push(`${collection} ${slug} ${postLocale}`);
+						} catch (completeError) {
+							result.errors.push({
+								title: post.title || "Untitled",
+								error: completeError instanceof Error && completeError.message
+									? `Row exists but its taxonomies could not be completed: ${completeError.message}`
+									: "Row exists but its taxonomies could not be completed",
+							});
 						}
 					}
 					result.skipped++;
