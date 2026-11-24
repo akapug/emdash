@@ -1331,6 +1331,7 @@ export class BylineRepository {
 		collectionSlug: string,
 		contentId: string,
 		inputBylines: ContentBylineInput[],
+		options?: { isNewEntry?: boolean },
 	): Promise<ContentBylineCredit[]> {
 		validateIdentifier(collectionSlug, "collection slug");
 		const tableName = `ec_${collectionSlug}`;
@@ -1378,11 +1379,13 @@ export class BylineRepository {
 		// (content handlers wrap in withTransaction, seed applies sequentially).
 		// All operations use this.db directly -- callers are responsible for
 		// wrapping in a transaction when atomicity is required.
-		await this.db
-			.deleteFrom("_emdash_content_bylines")
-			.where("collection_slug", "=", collectionSlug)
-			.where("content_id", "=", contentId)
-			.execute();
+		if (!options?.isNewEntry) {
+			await this.db
+				.deleteFrom("_emdash_content_bylines")
+				.where("collection_slug", "=", collectionSlug)
+				.where("content_id", "=", contentId)
+				.execute();
+		}
 
 		for (let i = 0; i < bylines.length; i++) {
 			const item = bylines[i];

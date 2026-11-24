@@ -42,6 +42,7 @@ import {
 	markContentMediaUsageCollectionStaleSafely,
 } from "../media/usage/content-refresh.js";
 import { prepareVisibilityRevBump } from "../page-cache/state.js";
+import { clearRequestCacheByPrefix, requestCached } from "../request-cache.js";
 import { FTSManager } from "../search/fts-manager.js";
 import { getPortableTableSpec } from "../transfer/format/columns.js";
 import { canonicalDigest } from "../transfer/format/digest.js";
@@ -336,6 +337,9 @@ export class SchemaRegistry {
 	 * Notify the dev typegen hook that the schema has changed.
 	 */
 	private notifyTypegen(): void {
+		clearRequestCacheByPrefix("schema:");
+		clearRequestCacheByPrefix("mediaFields:");
+		clearRequestCacheByPrefix("reference-field-constraints:");
 		refreshDevTypes(this.db);
 	}
 
@@ -374,12 +378,14 @@ export class SchemaRegistry {
 	 * Get a collection with all its fields
 	 */
 	async getCollectionWithFields(slug: string): Promise<CollectionWithFields | null> {
-		const collection = await this.getCollection(slug);
-		if (!collection) return null;
+		return requestCached(`schema:collectionWithFields:${slug}`, async () => {
+			const collection = await this.getCollection(slug);
+			if (!collection) return null;
 
-		const fields = await this.listFields(collection.id);
+			const fields = await this.listFields(collection.id);
 
-		return { ...collection, fields };
+			return { ...collection, fields };
+		});
 	}
 
 	/**

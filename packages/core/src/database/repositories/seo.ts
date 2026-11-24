@@ -121,15 +121,21 @@ export class SeoRepository {
 	 * Upsert SEO data for a content item using INSERT ON CONFLICT DO UPDATE
 	 * for atomicity. Skips no-op writes when input has no fields set.
 	 */
-	async upsert(collection: string, contentId: string, input: ContentSeoInput): Promise<ContentSeo> {
+	async upsert(
+		collection: string,
+		contentId: string,
+		input: ContentSeoInput,
+		options?: { isNewUnprotected?: boolean },
+	): Promise<ContentSeo> {
 		// Skip no-op: empty input (e.g., `{ seo: {} }` from form libs)
 		if (!hasAnyField(input)) {
-			return this.get(collection, contentId);
+			return options?.isNewUnprotected ? { ...SEO_DEFAULTS } : this.get(collection, contentId);
 		}
 
 		if (
+			!options?.isNewUnprotected &&
 			(await new ProtectedContentRepository(this.db).writeSeo(collection, contentId, input)) !==
-			null
+				null
 		) {
 			return { ...SEO_DEFAULTS, noIndex: true };
 		}
@@ -162,6 +168,15 @@ export class SeoRepository {
 		`.execute(this.db);
 
 		invalidateCollectionCache(collection);
+		if (options?.isNewUnprotected) {
+			return {
+				title: input.title ?? null,
+				description: input.description ?? null,
+				image: input.image ?? null,
+				canonical: input.canonical ?? null,
+				noIndex: Boolean(input.noIndex),
+			};
+		}
 		return this.get(collection, contentId);
 	}
 

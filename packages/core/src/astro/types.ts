@@ -376,6 +376,11 @@ export interface EmDashHandlers {
 			replaceBlocks?: boolean;
 			actor?: { id: string; role: number };
 		},
+		options?: {
+			skipSaveHooks?: boolean;
+			excludeAfterSavePluginId?: string;
+			skipMediaUsageRefresh?: boolean;
+		},
 	) => Promise<HandlerResponse>;
 
 	handleContentUpdate: (

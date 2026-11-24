@@ -48,6 +48,7 @@ import {
 	type ScheduledPolicyRejection,
 } from "../../plugins/content-policy.js";
 import { invalidateRedirectCache } from "../../redirects/cache.js";
+import { requestCached } from "../../request-cache.js";
 import { isStoragelessFieldRow } from "../../schema/types.js";
 import { FTSManager } from "../../search/fts-manager.js";
 import { invalidateTermCache } from "../../taxonomies/index.js";
@@ -232,28 +233,32 @@ const SEO_DEFAULTS: ContentSeo = {
  * Check if a collection has SEO enabled.
  */
 async function collectionHasSeo(db: Kysely<Database>, collection: string): Promise<boolean> {
-	const row = await db
-		.selectFrom("_emdash_collections")
-		.select("has_seo")
-		.where("slug", "=", collection)
-		.executeTakeFirst();
-	return row?.has_seo === 1;
+	return requestCached(`schema:collectionHasSeo:${collection}`, async () => {
+		const row = await db
+			.selectFrom("_emdash_collections")
+			.select("has_seo")
+			.where("slug", "=", collection)
+			.executeTakeFirst();
+		return row?.has_seo === 1;
+	});
 }
 
 async function getCollectionPublishConfig(
 	db: Kysely<Database>,
 	collection: string,
 ): Promise<{ supportsRevisions: boolean; routable: boolean }> {
-	const row = await db
-		.selectFrom("_emdash_collections")
-		.select(["supports", "routable"])
-		.where("slug", "=", collection)
-		.executeTakeFirst();
-	const supports: unknown = row?.supports ? JSON.parse(row.supports) : [];
-	return {
-		supportsRevisions: Array.isArray(supports) && supports.includes("revisions"),
-		routable: row?.routable !== 0,
-	};
+	return requestCached(`schema:collectionPublishConfig:${collection}`, async () => {
+		const row = await db
+			.selectFrom("_emdash_collections")
+			.select(["supports", "routable"])
+			.where("slug", "=", collection)
+			.executeTakeFirst();
+		const supports: unknown = row?.supports ? JSON.parse(row.supports) : [];
+		return {
+			supportsRevisions: Array.isArray(supports) && supports.includes("revisions"),
+			routable: row?.routable !== 0,
+		};
+	});
 }
 
 function requireRoutablePublishSlug(routable: boolean, slug: string | null | undefined): void {
@@ -665,18 +670,20 @@ async function storagelessDataKeys(
 	collection: string,
 	data: Record<string, unknown>,
 ): Promise<string[]> {
-	const collectionRow = await db
-		.selectFrom("_emdash_collections")
-		.select("id")
-		.where("slug", "=", collection)
-		.executeTakeFirst();
-	if (!collectionRow) return [];
-	const fields = await db
-		.selectFrom("_emdash_fields")
-		.select(["slug", "type", "validation"])
-		.where("collection_id", "=", collectionRow.id)
-		.execute();
-	const storageless = new Set(fields.filter(isStoragelessFieldRow).map((f) => f.slug));
+	const storageless = await requestCached(`schema:storagelessFields:${collection}`, async () => {
+		const collectionRow = await db
+			.selectFrom("_emdash_collections")
+			.select("id")
+			.where("slug", "=", collection)
+			.executeTakeFirst();
+		if (!collectionRow) return new Set<string>();
+		const fields = await db
+			.selectFrom("_emdash_fields")
+			.select(["slug", "type", "validation"])
+			.where("collection_id", "=", collectionRow.id)
+			.execute();
+		return new Set(fields.filter(isStoragelessFieldRow).map((f) => f.slug));
+	});
 	if (storageless.size === 0) return [];
 	return Object.keys(data).filter((key) => storageless.has(key));
 }
@@ -1286,14 +1293,27 @@ export async function handleContentCreate(
 				publishedAt: body.publishedAt,
 			});
 
+			let bylinesHydrated = false;
 			if (body.bylines !== undefined) {
-				const credits = await bylineRepo.setContentBylines(collection, created.id, body.bylines);
+				const credits = await bylineRepo.setContentBylines(collection, created.id, body.bylines, {
+					isNewEntry: true,
+				});
 				// `setContentBylines` translates wire row ids to their
 				// `translation_group` before writing. The response-shape
 				// `primaryBylineId` must match what's now in the DB, so read
 				// it from the returned credit (whose `byline` came from a
 				// hydration round-trip).
 				created.primaryBylineId = credits[0]?.byline.translationGroup ?? null;
+				// Reuse the already-hydrated credits when they match the entry's
+				// locale, avoiding a duplicate `getContentBylines` round-trip.
+				if (
+					credits.length > 0 &&
+					(!created.locale || credits.every((c) => c.byline.locale === created.locale))
+				) {
+					created.bylines = credits.map((c) => ({ ...c, source: "explicit" as const }));
+					created.byline = credits[0]?.byline ?? null;
+					bylinesHydrated = true;
+				}
 			}
 
 			// Taxonomy assignments already belong to the content translation
@@ -1312,12 +1332,16 @@ export async function handleContentCreate(
 				}
 			}
 
-			await hydrateBylines(trx, collection, created);
+			if (!bylinesHydrated) {
+				await hydrateBylines(trx, collection, created);
+			}
 
 			// Side-write SEO data if provided
 			if (body.seo && hasSeo) {
 				const seoRepo = new SeoRepository(trx);
-				created.seo = await seoRepo.upsert(collection, created.id, body.seo);
+				created.seo = await seoRepo.upsert(collection, created.id, body.seo, {
+					isNewUnprotected: !body.protection,
+				});
 			} else if (hasSeo) {
 				// Assign defaults in-memory — no DB round-trip needed
 				created.seo = { ...SEO_DEFAULTS };

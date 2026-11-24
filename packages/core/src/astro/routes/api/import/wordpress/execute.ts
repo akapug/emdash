@@ -22,6 +22,7 @@ import {
 	parseWxrDate,
 	parseScheduledWxrDate,
 } from "emdash";
+import { sql } from "kysely";
 
 import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
@@ -53,7 +54,13 @@ import {
 import type { EmDashHandlers, EmDashManifest } from "#types";
 import { slugify } from "#utils/slugify.js";
 
+import { after } from "../../../../../after.js";
+import { validateIdentifier } from "../../../../../database/validate.js";
+import { getI18nConfig } from "../../../../../i18n/config.js";
 import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
+import { refreshContentMediaUsageAfterWrite } from "../../../../../media/usage/content-refresh.js";
+import { processDueMediaUsageWork } from "../../../../../media/usage/work-processor.js";
+import { coalesceObjectCacheWrites } from "../../../../../object-cache/index.js";
 import { sanitizeSlug } from "./analyze.js";
 import {
 	contentWithMappedEmbed,
@@ -191,81 +198,83 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			authorDisplayNames.set(author.login, author.displayName || author.login);
 		}
 
-		// Pre-create taxonomy terms (categories, tags, custom taxonomies) so
-		// per-post assignments can resolve to existing rows. Done before any
-		// content insert because WXR exports list terms at the top of the
-		// file but per-item assignments only reference them by slug.
-		const taxonomyPlan = await preImportWxrTaxonomies(
-			emdash.db,
-			wxr.posts,
-			wxr.categories,
-			wxr.tags,
-			wxr.terms,
-			config.locale,
-		);
+		return await coalesceObjectCacheWrites(async () => {
+			// Pre-create taxonomy terms (categories, tags, custom taxonomies) so
+			// per-post assignments can resolve to existing rows. Done before any
+			// content insert because WXR exports list terms at the top of the
+			// file but per-item assignments only reference them by slug.
+			const taxonomyPlan = await preImportWxrTaxonomies(
+				emdash.db,
+				wxr.posts,
+				wxr.categories,
+				wxr.tags,
+				wxr.terms,
+				config.locale,
+			);
 
-		// Multilingual imports (WPML / Polylang -- see #1080) need a term
-		// row at each per-post locale, all sharing the canonical term's
-		// `translation_group`. Without this, `getTermsForEntry(..., locale)`
-		// on non-canonical translations comes back empty.
-		//
-		// The mirror raises `WxrTaxonomyConflictError` with an operator-
-		// actionable message when an existing locale row has an
-		// incompatible group. Surface its `publicMessage` directly so the
-		// admin UI can tell the user which (taxonomy, slug, locale) needs
-		// reconciliation. Other errors (DB connectivity, unexpected
-		// repository failures) re-throw to the outer catch where
-		// `handleError` masks them with the generic "Failed to import
-		// content" -- exposing raw DB errors to clients would leak schema
-		// names and bypass the AGENTS.md "never expose error.message" rule.
-		const postLocales = new Set<string>();
-		for (const post of wxr.posts) {
-			if (post.locale) postLocales.add(post.locale);
-		}
-		if (postLocales.size > 0) {
-			try {
-				await mirrorTermsToLocales(emdash.db, taxonomyPlan, postLocales, config.locale);
-			} catch (mirrorError) {
-				if (isWxrTaxonomyConflictError(mirrorError)) {
-					console.error("[WXR_IMPORT_TAXONOMY_CONFLICT]", mirrorError);
-					return apiError("WXR_IMPORT_TAXONOMY_CONFLICT", mirrorError.publicMessage, 409);
+			// Multilingual imports (WPML / Polylang -- see #1080) need a term
+			// row at each per-post locale, all sharing the canonical term's
+			// `translation_group`. Without this, `getTermsForEntry(..., locale)`
+			// on non-canonical translations comes back empty.
+			//
+			// The mirror raises `WxrTaxonomyConflictError` with an operator-
+			// actionable message when an existing locale row has an
+			// incompatible group. Surface its `publicMessage` directly so the
+			// admin UI can tell the user which (taxonomy, slug, locale) needs
+			// reconciliation. Other errors (DB connectivity, unexpected
+			// repository failures) re-throw to the outer catch where
+			// `handleError` masks them with the generic "Failed to import
+			// content" -- exposing raw DB errors to clients would leak schema
+			// names and bypass the AGENTS.md "never expose error.message" rule.
+			const postLocales = new Set<string>();
+			for (const post of wxr.posts) {
+				if (post.locale) postLocales.add(post.locale);
+			}
+			if (postLocales.size > 0) {
+				try {
+					await mirrorTermsToLocales(emdash.db, taxonomyPlan, postLocales, config.locale);
+				} catch (mirrorError) {
+					if (isWxrTaxonomyConflictError(mirrorError)) {
+						console.error("[WXR_IMPORT_TAXONOMY_CONFLICT]", mirrorError);
+						return apiError("WXR_IMPORT_TAXONOMY_CONFLICT", mirrorError.publicMessage, 409);
+					}
+					throw mirrorError;
 				}
-				throw mirrorError;
 			}
-		}
 
-		const seoSite = wxrSeoContext(wxr, config, emdashManifest);
+			const seoSite = wxrSeoContext(wxr, config, emdashManifest);
 
-		// Import content (locale from config scopes all items)
-		const result = await importContent(
-			wxr.posts,
-			config,
-			emdash,
-			emdashManifest,
-			attachmentMap,
-			config.locale,
-			authorDisplayNames,
-			taxonomyPlan,
-			seoSite,
-			wxr.site.language,
-			wxr.site.generator,
-		);
+			// Import content (locale from config scopes all items)
+			const result = await importContent(
+				wxr.posts,
+				config,
+				emdash,
+				emdashManifest,
+				attachmentMap,
+				config.locale,
+				authorDisplayNames,
+				taxonomyPlan,
+				seoSite,
+				wxr.site.language,
+				wxr.site.generator,
+			);
 
-		// Import reusable blocks as sections (if enabled)
-		if (config.importSections !== false) {
-			const sectionsResult = await importReusableBlocksAsSections(wxr.posts, emdash.db);
-			result.sections = {
-				created: sectionsResult.sectionsCreated,
-				skipped: sectionsResult.sectionsSkipped,
-			};
-			// Add section errors to main errors array
-			result.errors.push(...sectionsResult.errors);
-			if (sectionsResult.errors.length > 0) {
-				result.success = false;
+			// Import reusable blocks as sections (if enabled)
+			if (config.importSections !== false) {
+				const sectionsResult = await importReusableBlocksAsSections(wxr.posts, emdash.db);
+				result.sections = {
+					created: sectionsResult.sectionsCreated,
+					skipped: sectionsResult.sectionsSkipped,
+				};
+				// Add section errors to main errors array
+				result.errors.push(...sectionsResult.errors);
+				if (sectionsResult.errors.length > 0) {
+					result.success = false;
+				}
 			}
-		}
 
-		return apiSuccess(result);
+			return apiSuccess(result);
+		});
 	} catch (error) {
 		return handleError(error, "Failed to import content", "WXR_IMPORT_ERROR");
 	}
@@ -329,6 +338,45 @@ export async function importContent(
 	const seoRepo = new SeoRepository(emdash.db);
 	const bylineRepo = new BylineRepository(emdash.db);
 	const bylineCache = new Map<string, string>();
+	const defaultLocale = getI18nConfig()?.defaultLocale ?? "en";
+
+	// Preload existing (slug, locale) -> id once per enabled collection when
+	// skipExisting is active, avoiding N sequential findBySlug round-trips.
+	const existingByCollection = new Map<string, Map<string, string>>();
+	const existingSeoByCollection = new Map<string, Set<string>>();
+	if (config.skipExisting) {
+		const enabledCollections = new Set<string>();
+		for (const mapping of Object.values(config.postTypeMappings)) {
+			if (!mapping?.enabled) continue;
+			const col = sanitizeSlug(mapping.collection);
+			if (manifest?.collections[col]) enabledCollections.add(col);
+		}
+		for (const col of enabledCollections) {
+			validateIdentifier(col, "collection name");
+			const rows = await sql<{ id: string; slug: string | null; locale: string | null }>`
+				SELECT id, slug, locale
+				FROM ${sql.ref(`ec_${col}`)}
+				WHERE deleted_at IS NULL AND slug IS NOT NULL
+			`.execute(emdash.db);
+			const map = new Map<string, string>();
+			for (const row of rows.rows) {
+				if (!row.slug) continue;
+				map.set(`${row.slug}\0${row.locale ?? defaultLocale}`, row.id);
+			}
+			existingByCollection.set(col, map);
+
+			if (seoTally && manifest.collections[col]?.hasSeo === true && map.size > 0) {
+				const seoRows = await emdash.db
+					.selectFrom("_emdash_seo")
+					.select("content_id")
+					.where("collection", "=", col)
+					.execute();
+				existingSeoByCollection.set(col, new Set(seoRows.map((r) => r.content_id)));
+			}
+		}
+	}
+
+	const createdForUsage: Array<{ collection: string; id: string }> = [];
 
 	// Source-side translation group ID -> the EmDash ID of the first post we
 	// imported for that group. Subsequent translations are linked via
@@ -408,10 +456,14 @@ export async function importContent(
 			// Check if already exists (idempotency). Match against the
 			// per-post locale so the same slug in different locales doesn't
 			// false-positive as duplicate.
+			const existingKey = `${slug}\0${postLocale ?? defaultLocale}`;
 			if (config.skipExisting) {
-				const existing = await contentRepo.findBySlug(collection, slug, postLocale);
-				if (existing) {
-					stored(post, collection, existing.id);
+				const preloaded = existingByCollection.get(collection);
+				const existingId = preloaded
+					? preloaded.get(existingKey)
+					: (await contentRepo.findBySlug(collection, slug, postLocale))?.id;
+				if (existingId) {
+					stored(post, collection, existingId);
 					// Record the translation group mapping so later
 					// translations in this WXR can link to the existing
 					// item. We deliberately trust the WXR's grouping over
@@ -423,15 +475,20 @@ export async function importContent(
 					// the user is responsible for reconciling those through
 					// the admin if they don't match the WXR.
 					if (post.translationGroup) {
-						translationGroupMap.set(post.translationGroup, existing.id);
+						translationGroupMap.set(post.translationGroup, existingId);
 					}
 					// An entry imported before its SEO was carried gets it now,
 					// unless it already has an SEO row of its own.
 					if (seoTally && seo?.found && collectionHasSeo && hasWxrSeo(seo)) {
-						if (await seoRepo.insertIfAbsent(collection, existing.id, seo.seo)) {
+						const knownSeo = existingSeoByCollection.get(collection);
+						if (knownSeo?.has(existingId)) {
+							seoTally.keptExisting++;
+						} else if (await seoRepo.insertIfAbsent(collection, existingId, seo.seo)) {
+							knownSeo?.add(existingId);
 							seoTally.filledExisting++;
 							tallyWxrSeo(seoTally, seo);
 						} else {
+							knownSeo?.add(existingId);
 							seoTally.keptExisting++;
 						}
 					}
@@ -510,20 +567,24 @@ export async function importContent(
 			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
 			const publishedAt = createStatus === "published" && createdAt ? createdAt : undefined;
 
-			// Create the content item
-			const createResult = await emdash.handleContentCreate(collection, {
-				data,
-				protection: protection.protection,
-				slug,
-				status: createStatus,
-				authorId,
-				bylines: bylineId ? [{ bylineId }] : undefined,
-				locale: postLocale,
-				translationOf,
-				createdAt,
-				publishedAt,
-				seo: seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined,
-			});
+			// Create the content item (defer per-row media usage refresh to post-import batch)
+			const createResult = await emdash.handleContentCreate(
+				collection,
+				{
+					data,
+					protection: protection.protection,
+					slug,
+					status: createStatus,
+					authorId,
+					bylines: bylineId ? [{ bylineId }] : undefined,
+					locale: postLocale,
+					translationOf,
+					createdAt,
+					publishedAt,
+					seo: seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined,
+				},
+				{ skipMediaUsageRefresh: true },
+			);
 
 			if (createResult.success) {
 				result.imported++;
@@ -550,13 +611,22 @@ export async function importContent(
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- handler contract documented at handleContentCreate
 				const createdItem = (createResult.data as { item: { id: string } } | undefined)?.item;
 
-				if (createdItem) stored(post, collection, createdItem.id);
+				if (createdItem) {
+					stored(post, collection, createdItem.id);
+					existingByCollection.get(collection)?.set(existingKey, createdItem.id);
+					createdForUsage.push({ collection, id: createdItem.id });
+				}
 
 				// A SCHEDULED POST CARRIES ITS MOMENT. The row was created as `draft`,
 				// and `handleContentSchedule` transitions `draft -> scheduled` with
 				// `scheduled_at` atomically. If scheduling fails (or the WXR only had
 				// an unzoned local `post_date`), the row stays a real `draft` and is named.
-				if (createdItem && post.status === "future" && scheduledMoment.unzonedLocalOnly && !(protection.protected && !protection.protection)) {
+				if (
+					createdItem &&
+					post.status === "future" &&
+					scheduledMoment.unzonedLocalOnly &&
+					!(protection.protected && !protection.protection)
+				) {
 					result.errors.push({
 						title: post.title || "Untitled",
 						error: "scheduled time has no timezone (only site-local post_date); kept as draft",
@@ -666,6 +736,18 @@ export async function importContent(
 		}
 	}
 
+	if (createdForUsage.length > 0) {
+		const createdBatch = createdForUsage;
+		after(async () => {
+			const tick = await processDueMediaUsageWork(emdash.db);
+			if (tick.candidateCount === 0 && tick.completedCount === 0) {
+				for (const entry of createdBatch) {
+					await refreshContentMediaUsageAfterWrite(emdash.db, entry.collection, entry.id);
+				}
+			}
+		});
+	}
+
 	result.success = result.errors.length === 0;
 	return result;
 }
@@ -717,7 +799,11 @@ export function wxrSeoContext(
  * `pending` and `private` stay `draft`: neither is public, and a private post is
  * admins-only, which a draft is the honest EmDash shape of.
  */
-export function mapStatus(wpStatus: string | undefined, scheduledAt?: Date | null, now: Date = new Date()): string {
+export function mapStatus(
+	wpStatus: string | undefined,
+	scheduledAt?: Date | null,
+	now: Date = new Date(),
+): string {
 	switch (wpStatus) {
 		case "publish":
 			return "published";

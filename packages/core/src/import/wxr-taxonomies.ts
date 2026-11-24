@@ -507,6 +507,7 @@ export async function attachPostTaxonomies(
 			if (group) groups.add(group);
 		}
 	}
+	if (groups.size === 0) return 0;
 	return repo.attachGroupsToEntry(collection, entryId, [...groups]);
 }
 

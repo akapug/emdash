@@ -3616,7 +3616,11 @@ export class EmDashRuntime {
 			migrateBlocks?: boolean;
 			replaceBlocks?: boolean;
 		},
-		options: { skipSaveHooks?: boolean; excludeAfterSavePluginId?: string } = {},
+		options: {
+			skipSaveHooks?: boolean;
+			excludeAfterSavePluginId?: string;
+			skipMediaUsageRefresh?: boolean;
+		} = {},
 	) {
 		const actor = body.actor ? { ...body.actor } : undefined;
 		let locale: string;
@@ -3768,7 +3772,7 @@ export class EmDashRuntime {
 			authorId: body.authorId,
 			bylines: body.bylines,
 		});
-		if (result.success && result.data) {
+		if (!options.skipMediaUsageRefresh && result.success && result.data) {
 			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 
