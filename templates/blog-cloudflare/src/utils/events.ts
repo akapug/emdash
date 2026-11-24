@@ -223,7 +223,10 @@ export function eventSummary(
 	const startClock = clock(data.start_time);
 	const endClock = clock(data.end_time);
 	const crossesMidnight =
-		!allDay && startClock !== undefined && endClock !== undefined && endClock < startClock;
+		!allDay &&
+		startClock !== undefined &&
+		endClock !== undefined &&
+		civilClock(endClock).getTime() < civilClock(startClock).getTime();
 	const occurrenceEndDate = (startDay: string): string =>
 		crossesMidnight ? addCivilDays(startDay, 1) : startDay;
 	const cutoff = eventCurrentClock(now, referenceTimezone);
