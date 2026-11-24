@@ -1,5 +1,10 @@
 import type { APIContext } from "astro";
-import { getPageCacheState, optInPageCache, optOutPageCache, type PageCacheAuthority } from "emdash";
+import {
+	getPageCacheState,
+	optInPageCache,
+	optOutPageCache,
+	type PageCacheAuthority,
+} from "emdash";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({
@@ -75,7 +80,10 @@ function attachAstroCookies(res: Response, cookieHeaders: string[]): Response {
 
 const DEFAULT_SCOPE = "d1-acme-1:inc-0001";
 const ENABLED_ENV = { EMDASH_PAGE_CACHE: "1", EMDASH_PAGE_CACHE_SCOPE: DEFAULT_SCOPE };
-const DEFAULT_AUTH: PageCacheAuthority = { activeIncarnation: DEFAULT_SCOPE, visibilityRev: "rev-1" };
+const DEFAULT_AUTH: PageCacheAuthority = {
+	activeIncarnation: DEFAULT_SCOPE,
+	visibilityRev: "rev-1",
+};
 
 describe("Item 124: epochCloudflareCache full-page cache", () => {
 	it("is OFF by default when EMDASH_PAGE_CACHE or EMDASH_PAGE_CACHE_SCOPE is unset, uses a distinct provider name, and isolates incarnations/D1 replacements on the same host/build", async () => {
@@ -95,7 +103,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ({}),
 				openCache: openNamed,
 				schedule: (p) => void p,
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
@@ -124,13 +135,17 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
 				openCache: openNamed,
 				schedule: (p) => void p,
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 		const resNoScope = await providerNoScope.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
-			async () => new Response("no-scope", { status: 200, headers: { "content-type": "text/html" } }),
+			async () =>
+				new Response("no-scope", { status: 200, headers: { "content-type": "text/html" } }),
 		);
 		expect(resNoScope.headers.get("x-embark-page-cache")).toBeNull();
 		expect(cachesByName.size).toBe(0);
@@ -144,7 +159,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ({ EMDASH_PAGE_CACHE: "1", EMDASH_PAGE_CACHE_SCOPE: currentScope }),
 				openCache: openNamed,
 				schedule: (p) => pending.push(p),
-				readVector: async () => ({ vector: "v1|b=b1|s=0|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=0|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => ({ activeIncarnation: currentScope, visibilityRev: "rev-0" }),
 				now: () => 10_000,
 			},
@@ -153,7 +171,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			makeContext("https://shared.example.org/pages/about"),
 			async () => {
 				optInPageCache(300);
-				return new Response("incarnation-1", { status: 200, headers: { "content-type": "text/html" } });
+				return new Response("incarnation-1", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		await Promise.all(pending);
@@ -165,7 +186,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			makeContext("https://shared.example.org/pages/about"),
 			async () => {
 				optInPageCache(300);
-				return new Response("incarnation-2", { status: 200, headers: { "content-type": "text/html" } });
+				return new Response("incarnation-2", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		expect(rInc2.headers.get("x-embark-page-cache")).toBe("MISS");
@@ -188,7 +212,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => authority,
 				now: () => 10_000,
 			},
@@ -200,7 +227,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			async () => {
 				renders++;
 				optInPageCache(300);
-				return new Response("cached-old-on", { status: 200, headers: { "content-type": "text/html" } });
+				return new Response("cached-old-on", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		await Promise.all(pending);
@@ -209,7 +239,8 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 
 		const r2 = await oldOnProvider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
-			async () => new Response("unexpected", { status: 200, headers: { "content-type": "text/html" } }),
+			async () =>
+				new Response("unexpected", { status: 200, headers: { "content-type": "text/html" } }),
 		);
 		expect(r2.headers.get("x-embark-page-cache")).toBe("HIT");
 		expect(await r2.text()).toBe("cached-old-on");
@@ -221,7 +252,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			async () => {
 				renders++;
 				optInPageCache(300);
-				return new Response("fresh-after-off", { status: 200, headers: { "content-type": "text/html" } });
+				return new Response("fresh-after-off", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		await Promise.all(pending);
@@ -237,7 +271,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			async () => {
 				renders++;
 				optInPageCache(300);
-				return new Response("fresh-after-rotate", { status: 200, headers: { "content-type": "text/html" } });
+				return new Response("fresh-after-rotate", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		expect(rAfterRotate.headers.get("x-embark-page-cache")).toBe("BYPASS");
@@ -256,7 +293,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 				now: () => 10_000,
 			},
@@ -319,7 +359,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ENABLED_ENV,
 				openCache,
 				schedule: (p) => pending.push(p),
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
@@ -332,12 +375,24 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			["https://acme.sites.embarkeasy.com/events/"],
 			["https://acme.sites.embarkeasy.com/search"],
 			["https://acme.sites.embarkeasy.com/pages/about", { method: "POST" }],
-			["https://acme.sites.embarkeasy.com/pages/about", { headers: { cookie: "astro-session=abc" } }],
+			[
+				"https://acme.sites.embarkeasy.com/pages/about",
+				{ headers: { cookie: "astro-session=abc" } },
+			],
 			["https://acme.sites.embarkeasy.com/pages/about", { headers: { cookie: "unknown=1" } }],
 			["https://acme.sites.embarkeasy.com/pages/about", { headers: { cookie: "malformed" } }],
-			["https://acme.sites.embarkeasy.com/pages/about", { headers: { authorization: "Bearer tok" } }],
-			["https://acme.sites.embarkeasy.com/pages/about", { headers: { "cf-access-jwt-assertion": "jwt" } }],
-			["https://acme.sites.embarkeasy.com/pages/about", { headers: { "if-modified-since": "Mon, 01 Jan 2024 00:00:00 GMT" } }],
+			[
+				"https://acme.sites.embarkeasy.com/pages/about",
+				{ headers: { authorization: "Bearer tok" } },
+			],
+			[
+				"https://acme.sites.embarkeasy.com/pages/about",
+				{ headers: { "cf-access-jwt-assertion": "jwt" } },
+			],
+			[
+				"https://acme.sites.embarkeasy.com/pages/about",
+				{ headers: { "if-modified-since": "Mon, 01 Jan 2024 00:00:00 GMT" } },
+			],
 			["https://acme.sites.embarkeasy.com/pages/about", { headers: { "if-none-match": '"old"' } }],
 			["https://acme.sites.embarkeasy.com/pages/about", { headers: { range: "bytes=0-10" } }],
 		];
@@ -358,7 +413,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			{
 				getEnv: () => ENABLED_ENV,
 				openCache,
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
@@ -379,7 +437,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
@@ -426,7 +487,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 				now: () => 10_000,
 			},
@@ -480,7 +544,8 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 
 		const rHit = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/bookmark"),
-			async () => new Response("should-not-run", { status: 200, headers: { "content-type": "text/html" } }),
+			async () =>
+				new Response("should-not-run", { status: 200, headers: { "content-type": "text/html" } }),
 		);
 		expect(rHit.headers.get("x-embark-page-cache")).toBe("HIT");
 		expect(rHit.headers.getSetCookie()).toEqual([]);
@@ -493,13 +558,17 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: async () => {
 					throw new Error("cache api unavailable");
 				},
-				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVector: async () => ({
+					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+					certain: true,
+				}),
 				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 		const rFallback = await brokenCacheProvider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/bookmark"),
-			async () => new Response("rendered-live", { status: 200, headers: { "content-type": "text/html" } }),
+			async () =>
+				new Response("rendered-live", { status: 200, headers: { "content-type": "text/html" } }),
 		);
 		expect(rFallback.status).toBe(200);
 		expect(await rFallback.text()).toBe("rendered-live");
@@ -536,7 +605,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			makeContext("https://acme.sites.embarkeasy.com/pages/secret"),
 			async () => {
 				optInPageCache(300);
-				return new Response(`public-v${version}`, { status: 200, headers: { "content-type": "text/html" } });
+				return new Response(`public-v${version}`, {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		await Promise.all(pending);
@@ -544,7 +616,8 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 
 		const r2 = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/secret"),
-			async () => new Response("unexpected", { status: 200, headers: { "content-type": "text/html" } }),
+			async () =>
+				new Response("unexpected", { status: 200, headers: { "content-type": "text/html" } }),
 		);
 		expect(r2.headers.get("x-embark-page-cache")).toBe("HIT");
 		expect(await r2.text()).toBe("public-v1");
@@ -572,7 +645,10 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			async () => {
 				optInPageCache(300);
 				authority = { activeIncarnation: DEFAULT_SCOPE, visibilityRev: "rev-102" };
-				return new Response("stale-race-body", { status: 200, headers: { "content-type": "text/html" } });
+				return new Response("stale-race-body", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
 			},
 		);
 		await Promise.all(pending);
@@ -584,7 +660,8 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		kvCertain = false;
 		const r4 = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/secret"),
-			async () => new Response("live-fallback", { status: 200, headers: { "content-type": "text/html" } }),
+			async () =>
+				new Response("live-fallback", { status: 200, headers: { "content-type": "text/html" } }),
 		);
 		expect(r4.headers.get("x-embark-page-cache")).toBe("BYPASS");
 		expect(await r4.text()).toBe("live-fallback");

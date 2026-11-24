@@ -23,7 +23,7 @@ const navigation = view?.navigation
 	: undefined;
 const result =
 	view && navigation !== null ? await loadEvents(Astro.currentLocale) : null;
-optOutPageCache();
+optOutPageCache?.();
 if (Astro.cache?.enabled) {
 	if (site) Astro.cache.set(site.cacheHint);
 	if (result) {

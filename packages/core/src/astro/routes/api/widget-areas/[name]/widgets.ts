@@ -12,9 +12,10 @@ import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
 import { createWidgetBody } from "#api/schemas.js";
 import { widgetAreaTag } from "#cache/chrome-tags.js";
-import { invalidateWidgetObjectCache } from "../../../../../object-cache/index.js";
 import { rowToWidget } from "#widgets/index.js";
 import type { WidgetRow } from "#widgets/types.js";
+
+import { invalidateWidgetObjectCache } from "../../../../../object-cache/index.js";
 
 export const prerender = false;
 

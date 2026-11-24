@@ -1053,8 +1053,7 @@ export class ContentRepository {
 		}
 		updates.version = sql`version + 1`;
 
-		const needsVisibilityBump =
-			updates.status !== undefined && updates.status !== "published";
+		const needsVisibilityBump = updates.status !== undefined && updates.status !== "published";
 		if (privateWrite) {
 			const queries = [
 				...privateWrite.queries,

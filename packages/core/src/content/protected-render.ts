@@ -11,8 +11,8 @@ import type { ContentItem } from "../database/repositories/types.js";
 import type { Database } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import { getDb } from "../loader.js";
-import { isMissingTableError } from "../utils/db-errors.js";
 import { optOutPageCache } from "../page-cache/state.js";
+import { isMissingTableError } from "../utils/db-errors.js";
 import { verifyContentPassword } from "./protection.js";
 
 export const PROTECTED_RATE_LIMIT_SETTING = "protected_content:rate_limit" as const;

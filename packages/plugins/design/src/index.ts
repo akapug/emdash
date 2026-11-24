@@ -72,19 +72,26 @@ async function readHistory(ctx: PluginContext): Promise<DesignRule[][]> {
 	return Array.isArray(raw) ? raw : [];
 }
 
-async function pushHistory(ctx: PluginContext, snapshot: DesignRule[], maxHistory: number): Promise<number> {
+async function pushHistory(
+	ctx: PluginContext,
+	snapshot: DesignRule[],
+	maxHistory: number,
+): Promise<number> {
 	const history = await readHistory(ctx);
 	const next = [...history, snapshot].slice(-Math.max(1, maxHistory));
 	await ctx.kv.set(HISTORY_KV_KEY, next);
 	return next.length;
 }
 
+const FINGERPRINT_TAG_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const FINGERPRINT_HASH_RE = /^[0-9a-f]{8}$/;
+
 function parseFingerprint(raw: unknown): ElementFingerprint | null {
 	if (!isRecord(raw)) return null;
 	if (typeof raw.tag !== "string" || typeof raw.textHash !== "string") return null;
 	const tag = raw.tag.trim().toLowerCase();
 	const textHash = raw.textHash.trim().toLowerCase();
-	if (!/^[a-z][a-z0-9-]{0,31}$/.test(tag) || !/^[0-9a-f]{8}$/.test(textHash)) return null;
+	if (!FINGERPRINT_TAG_RE.test(tag) || !FINGERPRINT_HASH_RE.test(textHash)) return null;
 	return { tag, textHash };
 }
 
@@ -92,7 +99,9 @@ function makeRuleId(): string {
 	return `dr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function designPlugin(options: DesignPluginOptions = {}): PluginDescriptor<DesignPluginOptions> {
+export function designPlugin(
+	options: DesignPluginOptions = {},
+): PluginDescriptor<DesignPluginOptions> {
 	return {
 		id: "design",
 		version,
@@ -139,7 +148,10 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 			"rules/list": {
 				handler: async (ctx) => {
 					const [rules, history] = await Promise.all([readRules(ctx), readHistory(ctx)]);
-					const pagePath = isRecord(ctx.input) && typeof ctx.input.pagePath === "string" ? ctx.input.pagePath : undefined;
+					const pagePath =
+						isRecord(ctx.input) && typeof ctx.input.pagePath === "string"
+							? ctx.input.pagePath
+							: undefined;
 					return {
 						rules,
 						historyCount: history.length,
@@ -160,13 +172,17 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 					const pathRes = sanitizePagePath(ctx.input.pagePath);
 					if (!pathRes.ok) return { ok: false, error: pathRes.error };
 					const fingerprint = parseFingerprint(ctx.input.fingerprint);
-					if (!fingerprint) return { ok: false, error: "valid fingerprint { tag, textHash } is required" };
+					if (!fingerprint)
+						return { ok: false, error: "valid fingerprint { tag, textHash } is required" };
 
 					const rules = await readRules(ctx);
-					const requestedId = typeof ctx.input.id === "string" && ctx.input.id.trim() ? ctx.input.id.trim() : null;
+					const requestedId =
+						typeof ctx.input.id === "string" && ctx.input.id.trim() ? ctx.input.id.trim() : null;
 					const existingIdx = requestedId
 						? rules.findIndex((r) => r.id === requestedId)
-						: rules.findIndex((r) => r.selector === selRes.value && (r.pagePath ?? undefined) === pathRes.value);
+						: rules.findIndex(
+								(r) => r.selector === selRes.value && (r.pagePath ?? undefined) === pathRes.value,
+							);
 
 					if (existingIdx < 0 && rules.length >= MAX_RULES) {
 						return { ok: false, error: `rule limit (${MAX_RULES}) reached` };
@@ -208,7 +224,8 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 
 			"rules/delete": {
 				handler: async (ctx) => {
-					const id = isRecord(ctx.input) && typeof ctx.input.id === "string" ? ctx.input.id.trim() : "";
+					const id =
+						isRecord(ctx.input) && typeof ctx.input.id === "string" ? ctx.input.id.trim() : "";
 					if (!id) return { ok: false, error: "id is required" };
 					const rules = await readRules(ctx);
 					const nextRules = rules.filter((r) => r.id !== id);
@@ -241,7 +258,7 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 					});
 					if (flagged > 0) {
 						await ctx.kv.set(RULES_KV_KEY, nextRules);
-					invalidatePluginObjectCache();
+						invalidatePluginObjectCache();
 					}
 					return { ok: true, flagged, rules: nextRules, css: compileDesignCss(nextRules) };
 				},
@@ -252,9 +269,15 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 					const history = await readHistory(ctx);
 					if (history.length === 0) {
 						const rules = await readRules(ctx);
-						return { ok: true, restored: false, rules, historyCount: 0, css: compileDesignCss(rules) };
+						return {
+							ok: true,
+							restored: false,
+							rules,
+							historyCount: 0,
+							css: compileDesignCss(rules),
+						};
 					}
-					const previous = history[history.length - 1]!;
+					const previous = history.at(-1)!;
 					const nextHistory = history.slice(0, -1);
 					await ctx.kv.set(RULES_KV_KEY, previous);
 					await ctx.kv.set(HISTORY_KV_KEY, nextHistory);
@@ -272,7 +295,10 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 			"rules/css": {
 				handler: async (ctx) => {
 					const rules = await readRules(ctx);
-					const pagePath = isRecord(ctx.input) && typeof ctx.input.pagePath === "string" ? ctx.input.pagePath : undefined;
+					const pagePath =
+						isRecord(ctx.input) && typeof ctx.input.pagePath === "string"
+							? ctx.input.pagePath
+							: undefined;
 					return { css: compileDesignCss(rules, pagePath) };
 				},
 			},

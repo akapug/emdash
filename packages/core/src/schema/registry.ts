@@ -23,7 +23,6 @@ import {
 	removeImportBaselineCollectionTriggers,
 } from "../database/import-baseline-triggers.js";
 import { withTransaction } from "../database/transaction.js";
-import { prepareVisibilityRevBump } from "../page-cache/state.js";
 import type { CollectionTable, Database, FieldTable } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import {
@@ -42,6 +41,7 @@ import {
 	invalidateContentMediaUsageSchemaChange,
 	markContentMediaUsageCollectionStaleSafely,
 } from "../media/usage/content-refresh.js";
+import { prepareVisibilityRevBump } from "../page-cache/state.js";
 import { FTSManager } from "../search/fts-manager.js";
 import { getPortableTableSpec } from "../transfer/format/columns.js";
 import { canonicalDigest } from "../transfer/format/digest.js";

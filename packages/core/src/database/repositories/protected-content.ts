@@ -7,9 +7,9 @@ import {
 } from "../../content/protection.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
 import { prepareVisibilityRevBump } from "../../page-cache/state.js";
+import { isMissingTableError } from "../../utils/db-errors.js";
 import { executeAtomicBatchIfSupported } from "../dialect-helpers.js";
 import { withTransaction } from "../transaction.js";
-import { isMissingTableError } from "../../utils/db-errors.js";
 import type { Database, ProtectedContentTable } from "../types.js";
 import type { ContentItem, ContentSeoInput } from "./types.js";
 

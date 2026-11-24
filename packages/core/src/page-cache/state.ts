@@ -53,10 +53,7 @@ function getPageCacheAls(): AsyncLocalStorage<PageCacheRequestState> {
 }
 
 /** Run `fn` inside a fresh per-request page-cache eligibility scope. */
-export function runWithPageCacheState<T>(
-	fn: () => T,
-	opts?: { fillPrimary?: boolean },
-): T {
+export function runWithPageCacheState<T>(fn: () => T, opts?: { fillPrimary?: boolean }): T {
 	return getPageCacheAls().run(
 		{
 			optedIn: false,
@@ -114,7 +111,9 @@ export function optInPageCache(ttlSeconds: number): void {
  *   OFF-era Worker commits the revision bump atomically in the same D1 batch
  *   or SQL transaction as the public-visibility mutation.
  */
-export function prepareVisibilityRevBump(revision: string = crypto.randomUUID()): RawBuilder<unknown> {
+export function prepareVisibilityRevBump(
+	revision: string = crypto.randomUUID(),
+): RawBuilder<unknown> {
 	return sql`
 		UPDATE options
 		SET revision = ${revision}

@@ -14,8 +14,8 @@ import type {
 	CollectionDeletionGuardInput,
 	CollectionDeletionGuardResult,
 } from "../../db/adapters.js";
-import { FTSManager } from "../../search/fts-manager.js";
 import { prepareVisibilityRevBump } from "../../page-cache/state.js";
+import { FTSManager } from "../../search/fts-manager.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { verifyMediaUsageCaptureTriggers } from "./capture-triggers.js";
 

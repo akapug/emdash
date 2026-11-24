@@ -253,11 +253,15 @@ export interface EpochCacheRuntimeDeps {
  * Returns `null` when absent, retired (`value = ''`), or on any DB/timeout error
  * so callers fail closed.
  */
+function isD1Like(v: unknown): v is D1Like {
+	return typeof v === "object" && v !== null && "prepare" in v && typeof v.prepare === "function";
+}
+
 export async function readPrimaryPageCacheAuthorityFromD1(
-	d1: D1Like | undefined,
+	d1: unknown,
 	timeoutMs: number,
 ): Promise<PageCacheAuthority | null> {
-	if (!d1 || typeof d1.prepare !== "function") return null;
+	if (!isD1Like(d1)) return null;
 	try {
 		const target = typeof d1.withSession === "function" ? d1.withSession("first-primary") : d1;
 		const row = await withTimeout(
@@ -305,7 +309,8 @@ export function createEpochCacheProvider(
 	const disabledWhenPlayground = config.disabledWhenPlayground === true;
 
 	const allowedCookies = new Set<string>([bookmarkCookie, "theme"]);
-	const getEnv = deps.getEnv ?? (() => env as unknown as Record<string, unknown>);
+	const readEnv = (key: string): unknown =>
+		deps.getEnv ? deps.getEnv()[key] : Reflect.get(env, key);
 	const openCache = deps.openCache ?? ((name: string) => caches.open(name));
 	const schedule = deps.schedule ?? ((p: Promise<unknown>) => waitUntil(p));
 	const readVector = deps.readVector ?? ((b?: string) => readPageGenerationVector(b));
@@ -313,7 +318,7 @@ export function createEpochCacheProvider(
 	const readAuthority =
 		deps.readAuthority ??
 		((binding: string, timeoutMs: number) =>
-			readPrimaryPageCacheAuthorityFromD1(getEnv()[binding] as D1Like | undefined, timeoutMs));
+			readPrimaryPageCacheAuthorityFromD1(readEnv(binding), timeoutMs));
 
 	const cacheNameForScope = (scope: string): string => {
 		const safeScope = scope.replace(NON_ID_CHARS_RE, "");
@@ -356,9 +361,8 @@ export function createEpochCacheProvider(
 		name: "emdash-epoch-cache",
 
 		async onRequest(context, next) {
-			const envObj = getEnv();
-			const scope = resolvePageCacheScope(envObj[scopeEnvVar]);
-			if (!isCacheEnabledFlag(envObj[enabledEnvVar]) || scope === null) {
+			const scope = resolvePageCacheScope(readEnv(scopeEnvVar));
+			if (!isCacheEnabledFlag(readEnv(enabledEnvVar)) || scope === null) {
 				return next();
 			}
 
@@ -558,7 +562,7 @@ export function createEpochCacheProvider(
 				}
 			}
 			if (options.path) {
-				const scope = resolvePageCacheScope(getEnv()[scopeEnvVar]);
+				const scope = resolvePageCacheScope(readEnv(scopeEnvVar));
 				if (!scope) return;
 				try {
 					const cache = await openCache(cacheNameForScope(scope));

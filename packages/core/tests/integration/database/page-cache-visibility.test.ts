@@ -14,7 +14,11 @@ import {
 } from "../../../src/page-cache/state.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 import { FTSManager } from "../../../src/search/fts-manager.js";
-import { setupForDialect, teardownForDialect, type DialectTestContext } from "../../utils/test-db.js";
+import {
+	setupForDialect,
+	teardownForDialect,
+	type DialectTestContext,
+} from "../../utils/test-db.js";
 
 describe("page-cache D1-primary authority and visibility revision on real migrated schema", () => {
 	let ctx: DialectTestContext;
@@ -177,13 +181,15 @@ describe("page-cache D1-primary authority and visibility revision on real migrat
 		});
 
 		// Inject a SQLite trigger that forces the conditional UPDATE on options to fail
-		await sql.raw(`
+		await sql
+			.raw(`
 			CREATE TRIGGER fail_vis_rev BEFORE UPDATE ON options
 			WHEN NEW.name = '${VISIBILITY_REV_OPTION}'
 			BEGIN
 				SELECT RAISE(ABORT, 'injected visibility_rev failure');
 			END
-		`).execute(ctx.db);
+		`)
+			.execute(ctx.db);
 
 		await expect(content.unpublish("pages", created.id)).rejects.toThrow(
 			/injected visibility_rev failure/,
@@ -228,13 +234,15 @@ describe("page-cache D1-primary authority and visibility revision on real migrat
 		expect(before).toContain("trigger:_emdash_fts_articles_update");
 		expect(before).toContain("trigger:_emdash_fts_articles_delete");
 
-		await sql.raw(`
+		await sql
+			.raw(`
 			CREATE TRIGGER fail_vis_rev_fts BEFORE UPDATE ON options
 			WHEN NEW.name = '${VISIBILITY_REV_OPTION}'
 			BEGIN
 				SELECT RAISE(ABORT, 'injected fts delete vis_rev failure');
 			END
-		`).execute(ctx.db);
+		`)
+			.execute(ctx.db);
 
 		await expect(registry.deleteCollection("articles", { force: true })).rejects.toThrow(
 			/injected fts delete vis_rev failure/,

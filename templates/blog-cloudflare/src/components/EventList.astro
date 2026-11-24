@@ -52,7 +52,7 @@ const perPage = pageSize ?? site?.data.postsPerPage;
 const referenceTimezone = timezone ?? eventString(site?.data.timezone);
 const locale = Astro.currentLocale ?? eventString(entries[0]?.data.locale);
 // The source-zone day changes the selection even when no content is edited.
-optOutPageCache();
+optOutPageCache?.();
 if (Astro.cache?.enabled) {
 	if (site) Astro.cache.set(site.cacheHint);
 	Astro.cache.set(false);

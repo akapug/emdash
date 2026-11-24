@@ -16,7 +16,7 @@ const { entry, now, title = true, shell = false } = Astro.props;
 const PortableText = shell ? WpShellPortableText : BlogPortableText;
 const site = await getSiteSettingsWithCacheHint();
 // A recurrence preview's next date can change without a content write.
-optOutPageCache();
+optOutPageCache?.();
 if (Astro.cache?.enabled) {
 	Astro.cache.set(site.cacheHint);
 	Astro.cache.set(false);
