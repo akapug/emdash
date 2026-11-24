@@ -20,6 +20,10 @@ import {
 	parseEventView,
 	selectEventView,
 } from "../../../../templates/blog-cloudflare/src/utils/events.js";
+import {
+	getPageCacheState as readPageCacheState,
+	runWithPageCacheState,
+} from "../../src/page-cache/state.js";
 
 const reads = vi.hoisted(() => ({
 	shell: null as unknown,
@@ -33,8 +37,22 @@ const reads = vi.hoisted(() => ({
 async function emdashReads() {
 	const { getEditMeta } =
 		await vi.importActual<typeof import("../../src/query.js")>("../../src/query.js");
+	const {
+		capPageCacheUntil,
+		getPageCacheState,
+		optInPageCache,
+		optOutPageCache,
+		PAGE_CACHE_MIN_TTL_SECONDS,
+		PAGE_CACHE_MAX_TTL_SECONDS,
+	} = await import("../../src/page-cache/state.js");
 	reads.editMeta.mockImplementation(getEditMeta);
 	return {
+		capPageCacheUntil,
+		getPageCacheState,
+		optInPageCache,
+		optOutPageCache,
+		PAGE_CACHE_MIN_TTL_SECONDS,
+		PAGE_CACHE_MAX_TTL_SECONDS,
 		getEditMeta: reads.editMeta,
 		getCollectionByUrlPattern: reads.schema,
 		getEmDashCollection: reads.collection,
@@ -556,6 +574,75 @@ describe("event rendering in the actual Astro template", () => {
 		});
 		expect(response.status).toBe(404);
 	});
+	it.each([
+		{ variant: "Base", index: EventsIndex, detail: EventDetail, shell: null },
+		{ variant: "WpShell", index: ShellEventsIndex, detail: ShellEventDetail, shell },
+	])(
+		"requests epoch caching only for successful public $variant event pages without a query",
+		async ({ index, detail, shell: routeShell }) => {
+			vi.useFakeTimers();
+			vi.setSystemTime(now);
+			reads.shell = routeShell;
+			const indexUrl = "https://example.org/events/";
+			const detailUrl = `${indexUrl}open-day/`;
+			const params = { slug: "open-day" };
+			const cacheState = (...args: Parameters<typeof render>) =>
+				runWithPageCacheState(async () => {
+					await render(...args);
+					return readPageCacheState();
+				});
+
+			expect(await cacheState(index, {}, indexUrl)).toMatchObject({
+				optedIn: true,
+				ttlSeconds: 300,
+			});
+			expect(await cacheState(detail, {}, detailUrl, params)).toMatchObject({
+				optedIn: true,
+				ttlSeconds: 300,
+			});
+			expect(
+				await cacheState(index, {}, `${indexUrl}?events-page[index-upcoming]=2`),
+			).toMatchObject({
+				optedIn: false,
+			});
+			expect(await cacheState(detail, {}, `${detailUrl}?q=open`, params)).toMatchObject({
+				optedIn: false,
+			});
+			if (routeShell) {
+				const internal = "https://example.org/wp-shell/events/";
+				expect(await cacheState(index, {}, internal)).toMatchObject({ optedIn: false });
+				expect(await cacheState(detail, {}, `${internal}open-day/`, params)).toMatchObject({
+					optedIn: false,
+				});
+			}
+
+			reads.entry.mockResolvedValue({
+				entry: entry("open-day", {
+					timezone: "UTC",
+					all_day: true,
+					occurrences: ["2026-11-21", "2026-11-28"],
+				}),
+				cacheHint: {},
+			});
+			vi.setSystemTime(new Date("2026-11-21T23:59:00Z"));
+			expect(await cacheState(detail, {}, detailUrl, params)).toMatchObject({
+				optedIn: true,
+				deadlineMs: Date.parse("2026-11-22T00:00:00Z"),
+			});
+			vi.setSystemTime(new Date("2026-11-21T23:59:45Z"));
+			expect(await cacheState(detail, {}, detailUrl, params)).toMatchObject({ optedOut: true });
+
+			vi.setSystemTime(now);
+			reads.collection.mockResolvedValue({
+				entries: [],
+				error: new Error("unavailable"),
+				cacheHint: {},
+			});
+			reads.entry.mockResolvedValue({ entry: null, cacheHint: {} });
+			expect(await cacheState(index, {}, indexUrl)).toMatchObject({ optedIn: false });
+			expect(await cacheState(detail, {}, detailUrl, params)).toMatchObject({ optedIn: false });
+		},
+	);
 	it("renders the full detail through both public fallback and shell routes, keeping source dates and query", async () => {
 		const detailed = entry("open-day", {
 			start_date: "2026-11-21",

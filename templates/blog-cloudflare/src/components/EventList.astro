@@ -3,6 +3,7 @@ import * as emdashModule from "emdash";
 import { getSiteSettingsWithCacheHint } from "emdash";
 import EventFacts from "./EventFacts.astro";
 import EventCover from "./EventCover.astro";
+import { boundEventPageCache } from "../utils/event-page-cache.js";
 import {
 	eventAvailableYears,
 	eventCalendarGrid,
@@ -52,19 +53,19 @@ const site =
 const perPage = pageSize ?? site?.data.postsPerPage;
 const referenceTimezone = timezone ?? eventString(site?.data.timezone);
 const locale = Astro.currentLocale ?? eventString(entries[0]?.data.locale);
-// The source-zone day changes the selection even when no content is edited.
-if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
-	emdashModule.optOutPageCache();
-}
-if (Astro.cache?.enabled) {
-	if (site) Astro.cache.set(site.cacheHint);
-	Astro.cache.set(false);
-}
+if (Astro.cache?.enabled) Astro.cache.set(false);
 const events = entries.flatMap((entry) => {
 	const summary = eventSummary(entry, now, undefined, referenceTimezone);
 	return summary ? [summary] : [];
 });
 const url = new URL(Astro.originPathname + Astro.url.search, Astro.url.origin);
+if (unavailable || url.search !== "") {
+	if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
+		emdashModule.optOutPageCache();
+	}
+} else {
+	boundEventPageCache(events, now, referenceTimezone);
+}
 const searchBar = view?.searchBar;
 const searchQuery = view && searchBar ? eventSearchQuery(view, url) : null;
 const isListSkin = view?.layout === "list";

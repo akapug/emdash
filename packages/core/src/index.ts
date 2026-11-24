@@ -297,6 +297,7 @@ export {
 	getPageCacheState,
 	optOutPageCache,
 	optInPageCache,
+	capPageCacheUntil,
 	prepareVisibilityRevBump,
 	activatePageCacheIncarnation,
 	retirePageCacheIncarnation,

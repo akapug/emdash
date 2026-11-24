@@ -1,10 +1,10 @@
 ---
-import * as emdashModule from "emdash";
 import { getSiteSettingsWithCacheHint } from "emdash";
 import EventCover from "./EventCover.astro";
 import BlogPortableText from "./BlogPortableText.astro";
 import WpShellPortableText from "./WpShellPortableText.astro";
 import EventFacts from "./EventFacts.astro";
+import { boundEventPageCache } from "../utils/event-page-cache.js";
 import { eventSummary, eventString, type EventEntry } from "../utils/events.js";
 import { safeHref } from "../utils/wp-shell.js";
 interface Props {
@@ -13,23 +13,12 @@ interface Props {
 	title?: boolean;
 	shell?: boolean;
 }
-const { entry, now, title = true, shell = false } = Astro.props;
+const { entry, now = new Date(), title = true, shell = false } = Astro.props;
 const PortableText = shell ? WpShellPortableText : BlogPortableText;
 const site = await getSiteSettingsWithCacheHint();
-// A recurrence preview's next date can change without a content write.
-if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
-	emdashModule.optOutPageCache();
-}
-if (Astro.cache?.enabled) {
-	Astro.cache.set(site.cacheHint);
-	Astro.cache.set(false);
-}
-const event = eventSummary(
-	entry,
-	now,
-	undefined,
-	eventString(site.data.timezone),
-);
+if (Astro.cache?.enabled) Astro.cache.set(false);
+const event = eventSummary(entry, now, undefined, eventString(site.data.timezone));
+if (event?.preview) boundEventPageCache([event], now);
 const data = entry.data;
 const more = eventString(data.more_info);
 const href = more ? safeHref(more) : "#";

@@ -65,6 +65,7 @@ const HEADER_VECTOR = "X-EmDash-Page-Vector";
 const HEADER_VISIBILITY_REV = "X-EmDash-Visibility-Rev";
 const HEADER_STORED_AT = "X-EmDash-Stored-At";
 const HEADER_TTL = "X-EmDash-Page-TTL";
+const HEADER_DEADLINE = "X-EmDash-Page-Deadline";
 const HEADER_STATUS = "X-Embark-Page-Cache";
 
 const INTERNAL_HEADERS = [
@@ -73,6 +74,7 @@ const INTERNAL_HEADERS = [
 	HEADER_VISIBILITY_REV,
 	HEADER_STORED_AT,
 	HEADER_TTL,
+	HEADER_DEADLINE,
 ];
 
 const CREDENTIAL_HEADERS = [
@@ -109,6 +111,8 @@ const ALLOWLIST_EXACT_PATHS = new Set([
 	"/",
 	"/posts",
 	"/posts/",
+	"/events",
+	"/events/",
 	"/sitemap.xml",
 	"/robots.txt",
 	"/rss.xml",
@@ -116,6 +120,7 @@ const ALLOWLIST_EXACT_PATHS = new Set([
 
 const ALLOWLIST_PATH_PATTERNS = [
 	/^\/posts\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
+	/^\/events\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
 	/^\/pages\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
 	/^\/category\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
 	/^\/tag\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
@@ -427,7 +432,9 @@ export function createEpochCacheProvider(
 				const storedVis = cached.headers.get(HEADER_VISIBILITY_REV);
 				const storedAt = Number.parseInt(cached.headers.get(HEADER_STORED_AT) ?? "0", 10);
 				const storedTtl = Number.parseInt(cached.headers.get(HEADER_TTL) ?? "0", 10);
-				const ageSeconds = (now() - storedAt) / 1000;
+				const storedDeadline = cached.headers.get(HEADER_DEADLINE);
+				const checkedAt = now();
+				const ageSeconds = (checkedAt - storedAt) / 1000;
 
 				if (
 					storedScope === scope &&
@@ -435,7 +442,9 @@ export function createEpochCacheProvider(
 					storedVis === preAuth.visibilityRev &&
 					storedTtl > 0 &&
 					ageSeconds >= 0 &&
-					ageSeconds < storedTtl
+					ageSeconds < storedTtl &&
+					(storedDeadline === null ||
+						(Number.isSafeInteger(Number(storedDeadline)) && checkedAt < Number(storedDeadline)))
 				) {
 					const hit = new Response(cached.body, cached);
 					stripInternalAndCdnHeaders(hit.headers);
@@ -517,16 +526,21 @@ export function createEpochCacheProvider(
 					readAuthority(d1Binding, visibilityTimeoutMs),
 				]);
 
+				const storedAt = now();
+				const ttl = Math.min(
+					PAGE_CACHE_MAX_TTL_SECONDS,
+					state.ttlSeconds,
+					state.deadlineMs === undefined
+						? PAGE_CACHE_MAX_TTL_SECONDS
+						: Math.floor((state.deadlineMs - storedAt) / 1000),
+				);
 				if (
+					ttl >= PAGE_CACHE_MIN_TTL_SECONDS &&
 					postVec.certain &&
 					isAuthorityActive(postAuth) &&
 					postVec.vector === preVec.vector &&
 					postAuth.visibilityRev === preAuth.visibilityRev
 				) {
-					const ttl = Math.min(
-						PAGE_CACHE_MAX_TTL_SECONDS,
-						Math.max(PAGE_CACHE_MIN_TTL_SECONDS, state.ttlSeconds),
-					);
 					const storeHeaders = new Headers(response.headers);
 					// Strip Set-Cookie ONLY on the stored copy (never on the MISS response).
 					storeHeaders.delete("set-cookie");
@@ -538,8 +552,10 @@ export function createEpochCacheProvider(
 					storeHeaders.set(HEADER_SCOPE, scope);
 					storeHeaders.set(HEADER_VECTOR, preVec.vector);
 					storeHeaders.set(HEADER_VISIBILITY_REV, preAuth.visibilityRev);
-					storeHeaders.set(HEADER_STORED_AT, String(now()));
+					storeHeaders.set(HEADER_STORED_AT, String(storedAt));
 					storeHeaders.set(HEADER_TTL, String(ttl));
+					if (state.deadlineMs === undefined) storeHeaders.delete(HEADER_DEADLINE);
+					else storeHeaders.set(HEADER_DEADLINE, String(state.deadlineMs));
 
 					const toStore = new Response(bodyBytes, {
 						status: response.status,

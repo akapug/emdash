@@ -1,4 +1,5 @@
 ---
+import * as emdashModule from "emdash";
 import { decodeSlug } from "emdash";
 import Base from "../../layouts/Base.astro";
 import EventArticle from "../../components/EventArticle.astro";
@@ -17,6 +18,14 @@ if (shellResult.shell)
 	return Astro.rewrite(
 		`/wp-shell/events/${encodeURIComponent(slug)}/${Astro.url.search}`,
 	);
+if (
+	!result.error &&
+	!Astro.url.search &&
+	"optInPageCache" in emdashModule &&
+	typeof emdashModule.optInPageCache === "function"
+) {
+	emdashModule.optInPageCache(300);
+}
 ---
 
 <Base

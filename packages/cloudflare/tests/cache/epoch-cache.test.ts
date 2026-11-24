@@ -1,5 +1,6 @@
 import type { APIContext } from "astro";
 import {
+	capPageCacheUntil,
 	getPageCacheState,
 	optInPageCache,
 	optOutPageCache,
@@ -372,7 +373,9 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			["https://acme.sites.embarkeasy.com/pages/about?utm_source=x"],
 			["https://acme.sites.embarkeasy.com/pages/about?_preview=tok"],
 			["https://acme.sites.embarkeasy.com/_emdash/admin"],
-			["https://acme.sites.embarkeasy.com/events/"],
+			["https://acme.sites.embarkeasy.com/wp-shell/events/"],
+			["https://acme.sites.embarkeasy.com/events/?events-page%5Bindex-upcoming%5D=2"],
+			["https://acme.sites.embarkeasy.com/pages/past-events/?events-q%5Bpast-events%5D=jazz"],
 			["https://acme.sites.embarkeasy.com/search"],
 			["https://acme.sites.embarkeasy.com/pages/about", { method: "POST" }],
 			[
@@ -736,6 +739,128 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(await rExpired.text()).toBe("v3");
 	});
 
+	describe("absolute page-cache deadlines", () => {
+		const startMs = Date.UTC(2026, 0, 1);
+
+		function setup(postRenderCheckMs = 0) {
+			const fake = makeFakeCache();
+			const pending: Promise<unknown>[] = [];
+			let clock = startMs;
+			let rendered = false;
+			const provider = createEpochCacheProvider(
+				{ buildId: "b1" },
+				{
+					getEnv: () => ENABLED_ENV,
+					openCache: async () => fake.cache,
+					schedule: (p) => pending.push(p),
+					readVector: async () => ({
+						vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
+						certain: true,
+					}),
+					readAuthority: async () => {
+						if (rendered) {
+							rendered = false;
+							await Promise.resolve();
+							clock += postRenderCheckMs;
+						}
+						return DEFAULT_AUTH;
+					},
+					now: () => clock,
+				},
+			);
+
+			return {
+				fake,
+				advance(ms: number) {
+					clock += ms;
+				},
+				async request(render: () => string) {
+					rendered = false;
+					const response = await provider.onRequest!(
+						makeContext("https://acme.sites.embarkeasy.com/pages/upcoming"),
+						async () => {
+							const body = render();
+							rendered = true;
+							return new Response(body, { headers: { "content-type": "text/html" } });
+						},
+					);
+					await Promise.all(pending);
+					return response;
+				},
+			};
+		}
+
+		it("caps max-age using the earliest deadline and time after all checks", async () => {
+			const { fake, advance, request } = setup(7_500);
+			await request(() => {
+				capPageCacheUntil(startMs + 100_000);
+				capPageCacheUntil(startMs + 55_500);
+				capPageCacheUntil(startMs + 80_000);
+				optInPageCache(300);
+				advance(2_500);
+				return "before the deadline";
+			});
+
+			expect(fake.putCalls).toBe(1);
+			const stored = [...fake.store.values()][0]!;
+			expect(stored.headers.get("cache-control")).toBe("public, max-age=45");
+		});
+
+		it.each([
+			{ scenario: "less than 30 seconds remain", postRenderCheckMs: 7_501 },
+			{ scenario: "the deadline has passed", postRenderCheckMs: 37_501 },
+		])("does not store when $scenario after checks", async ({ postRenderCheckMs }) => {
+			const { fake, advance, request } = setup(postRenderCheckMs);
+			const response = await request(() => {
+				optInPageCache(300);
+				capPageCacheUntil(startMs + 40_000);
+				advance(2_500);
+				return "rendered normally";
+			});
+
+			expect(response.headers.get("x-embark-page-cache")).toBe("MISS");
+			expect(await response.text()).toBe("rendered normally");
+			expect(fake.putCalls).toBe(0);
+		});
+
+		it("serves a hit just before the deadline but not at the exact deadline", async () => {
+			const { fake, advance, request } = setup();
+			await request(() => {
+				optInPageCache(300);
+				capPageCacheUntil(startMs + 30_000);
+				return "cached before the deadline";
+			});
+			expect(fake.putCalls).toBe(1);
+			// Exercise the absolute hit guard independently of the stored TTL clamp.
+			const stored = [...fake.store.values()][0]!;
+			stored.headers.set("X-EmDash-Page-TTL", "300");
+
+			const render = vi.fn(() => "fresh at the deadline");
+			advance(29_999);
+			const before = await request(render);
+			expect(before.headers.get("x-embark-page-cache")).toBe("HIT");
+			expect(before.headers.get("X-EmDash-Page-Deadline")).toBeNull();
+			expect(await before.text()).toBe("cached before the deadline");
+			expect(render).not.toHaveBeenCalled();
+
+			advance(1);
+			const at = await request(render);
+			expect(at.headers.get("x-embark-page-cache")).toBe("MISS");
+			expect(await at.text()).toBe("fresh at the deadline");
+		});
+
+		it("does not opt a page in when it only declares a deadline", async () => {
+			const { fake, request } = setup();
+			await request(() => {
+				capPageCacheUntil(startMs + 60_000);
+				expect(getPageCacheState()?.optedIn).toBe(false);
+				return "not opted in";
+			});
+
+			expect(fake.putCalls).toBe(0);
+		});
+	});
+
 	it("enforces positive route allowlist and strict cookie allowlist helpers", () => {
 		expect(isAllowlistedPublicPath("/")).toBe(true);
 		expect(isAllowlistedPublicPath("/posts")).toBe(true);
@@ -743,7 +868,9 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(isAllowlistedPublicPath("/pages/about")).toBe(true);
 		expect(isAllowlistedPublicPath("/sitemap.xml")).toBe(true);
 		expect(isAllowlistedPublicPath("/_emdash/admin")).toBe(false);
-		expect(isAllowlistedPublicPath("/events/")).toBe(false);
+		expect(isAllowlistedPublicPath("/events/")).toBe(true);
+		expect(isAllowlistedPublicPath("/events/weekly-practice")).toBe(true);
+		expect(isAllowlistedPublicPath("/wp-shell/events/")).toBe(false);
 		expect(isAllowlistedPublicPath("/pages/a/b")).toBe(false);
 
 		const allowed = new Set(["__em_d1_bookmark", "theme"]);

@@ -99,8 +99,12 @@ export function formatEventMonth(month: string, locale?: string): string {
 	}).format(new Date(`${month}-01T12:00:00Z`));
 }
 
+function clockWithSeconds(value: string): string {
+	return value.length === 5 ? `${value}:00` : value;
+}
+
 function civilClock(value: string): Date {
-	return new Date(`2000-01-01T${value.length === 5 ? `${value}:00` : value}Z`);
+	return new Date(`2000-01-01T${clockWithSeconds(value)}Z`);
 }
 
 export function formatEventTimes(
@@ -148,7 +152,7 @@ export function eventToday(now: Date, timezone?: string): string {
 	return now.toISOString().slice(0, 10);
 }
 
-function eventCurrentClock(now: Date, timezone?: string): string {
+export function eventCurrentClock(now: Date, timezone?: string): string {
 	if (timezone) {
 		try {
 			const parts = new Intl.DateTimeFormat("en-US", {
@@ -172,7 +176,28 @@ function beforeEventCutoff(date: string, value: unknown, anchor: string, cutoff:
 	if (date !== anchor) return date < anchor;
 	const time = clock(value);
 	// A missing clock cannot prove that an event on the cutoff day has already ended.
-	return time !== undefined && (time.length === 5 ? `${time}:00` : time) < cutoff;
+	return time !== undefined && clockWithSeconds(time) < cutoff;
+}
+
+function crossesMidnight(start: string | undefined, end: string | undefined): boolean {
+	return (
+		start !== undefined && end !== undefined && clockWithSeconds(end) < clockWithSeconds(start)
+	);
+}
+
+function eventCutoffClock(
+	startDay: string,
+	endDay: string,
+	start: string | undefined,
+	end: string | undefined,
+	today: string,
+): string | undefined {
+	if (endDay !== today || end === undefined) return undefined;
+	const endClock = clockWithSeconds(end);
+	if (startDay < today) return endClock;
+	if (startDay !== today || start === undefined) return undefined;
+	const startClock = clockWithSeconds(start);
+	return startClock > endClock ? startClock : endClock;
 }
 
 function addCivilDays(isoDate: string, days: number): string {
@@ -222,23 +247,15 @@ export function eventSummary(
 				: undefined;
 	const startClock = clock(data.start_time);
 	const endClock = clock(data.end_time);
-	const crossesMidnight =
-		!allDay &&
-		startClock !== undefined &&
-		endClock !== undefined &&
-		civilClock(endClock).getTime() < civilClock(startClock).getTime();
+	const overnight = !allDay && crossesMidnight(startClock, endClock);
 	const occurrenceEndDate = (startDay: string): string =>
-		crossesMidnight ? addCivilDays(startDay, 1) : startDay;
+		overnight ? addCivilDays(startDay, 1) : startDay;
 	const cutoff = eventCurrentClock(now, referenceTimezone);
 	const hasOccurrenceEnded = (startDay: string, endDay: string): boolean => {
-		if (endDay < today) return true;
-		if (endDay > today) return false;
+		if (endDay !== today) return endDay < today;
 		if (allDay) return false;
-		if (startDay < today) return beforeEventCutoff(endDay, data.end_time, today, cutoff);
-		return (
-			beforeEventCutoff(startDay, data.start_time, today, cutoff) &&
-			beforeEventCutoff(endDay, data.end_time, today, cutoff)
-		);
+		const end = eventCutoffClock(startDay, endDay, startClock, endClock, today);
+		return end !== undefined && end < cutoff;
 	};
 	const upcoming = dates?.find((d) => !hasOccurrenceEnded(d, occurrenceEndDate(d)));
 	const date = upcoming ?? dates?.at(-1) ?? data.start_date;
@@ -258,6 +275,38 @@ export function eventSummary(
 		cancelled: data.event_status === "cancelled" || data.event_status === "canceled",
 		preview,
 		period: preview ? (upcoming ? "upcoming" : "preview") : past ? "past" : "upcoming",
+	};
+}
+
+/** A timed start and the strict end cutoff relevant to today's event output. */
+export function eventBoundaryClocks(event: EventSummary, today: string) {
+	const data = event.entry.data;
+	const start = clock(data.start_time);
+	const end = clock(data.end_time);
+	const overnight = !event.allDay && crossesMidnight(start, end);
+	if (event.preview) {
+		if (event.allDay || start === undefined) return {};
+		// A month-scoped view can project an occurrence other than the one in the summary.
+		const dates = decodeEventOccurrences(data.occurrences);
+		const ending = overnight ? addCivilDays(today, -1) : today;
+		return {
+			start: dates?.includes(today) ? clockWithSeconds(start) : undefined,
+			cutoff: dates?.includes(ending)
+				? eventCutoffClock(ending, today, start, end, today)
+				: undefined,
+		};
+	}
+
+	const savedEndDay = event.endDate ?? event.date;
+	const effectiveEndDay = event.endDate ?? (overnight ? addCivilDays(event.date, 1) : event.date);
+	// Saved Past filters use the stored end day and raw clocks, even on all-day rows.
+	const saved = eventCutoffClock(event.date, savedEndDay, start, end, today);
+	const rendered = event.allDay
+		? undefined
+		: eventCutoffClock(event.date, effectiveEndDay, start, end, today);
+	return {
+		start: !event.allDay && start && event.date === today ? clockWithSeconds(start) : undefined,
+		cutoff: saved ?? rendered,
 	};
 }
 

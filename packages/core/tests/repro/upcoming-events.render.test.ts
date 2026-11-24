@@ -7,8 +7,16 @@ import {
 	parseEventView,
 } from "../../../../templates/blog-cloudflare/src/utils/events.js";
 
+const pageCache = vi.hoisted(() => ({
+	capPageCacheUntil: vi.fn<(deadlineMs: number) => void>(),
+	optOutPageCache: vi.fn<() => void>(),
+}));
+
 async function emdashReads() {
 	return {
+		...pageCache,
+		PAGE_CACHE_MIN_TTL_SECONDS: 30,
+		PAGE_CACHE_MAX_TTL_SECONDS: 300,
 		getSiteSettingsWithCacheHint: async () => ({
 			data: { title: "Dreaming Stone", timezone: "America/New_York", postsPerPage: 10 },
 			cacheHint: { tags: ["settings"] },
@@ -42,16 +50,148 @@ function makeParagraph(text: string) {
 	return [{ _type: "block", children: [{ _type: "span", text }] }];
 }
 
-describe("MEC upcoming list skin, timezone today-occurrence rule, and Monthly calendar tab (Item 118)", () => {
-	const upcomingView = parseEventView({
-		version: 1,
-		viewSlug: "upcoming-events",
-		mode: "upcoming",
-		order: "asc",
-		layout: "list",
-		start: "today",
-	})!;
+const upcomingView = parseEventView({
+	version: 1,
+	viewSlug: "upcoming-events",
+	mode: "upcoming",
+	order: "asc",
+	layout: "list",
+	start: "today",
+})!;
 
+describe("EventList full-page cache", () => {
+	async function renderAt(
+		time: string,
+		entries: ReturnType<typeof makeEvent>[],
+		view = upcomingView,
+	) {
+		const container = await AstroContainer.create();
+		const now = new Date(time);
+		pageCache.capPageCacheUntil.mockClear();
+		pageCache.optOutPageCache.mockClear();
+		const html = await container.renderToString(EventList, {
+			props: { entries, view, now },
+			request: new Request("https://example.org/upcoming/"),
+		});
+		return {
+			html,
+			nowMs: now.getTime(),
+			capMs: Math.min(...pageCache.capPageCacheUntil.mock.calls.map(([deadline]) => deadline)),
+			optedOut: pageCache.optOutPageCache.mock.calls.length > 0,
+		};
+	}
+
+	function expectCacheStopsBy(rendered: Awaited<ReturnType<typeof renderAt>>, boundary: string) {
+		if (!rendered.optedOut) {
+			expect(rendered.capMs).toBeGreaterThanOrEqual(rendered.nowMs);
+			expect(rendered.capMs).toBeLessThanOrEqual(Date.parse(boundary));
+		}
+	}
+
+	it("keeps the full 300-second route TTL when no boundary is near", async () => {
+		const entries = [
+			makeEvent("evening-workshop", "Evening Workshop", "2026-11-23", {
+				start_time: "17:30",
+				end_time: "18:45",
+			}),
+		];
+		const rendered = await renderAt("2026-11-23T20:00:00Z", entries);
+		expect(rendered.html).toContain("Evening Workshop");
+		expect(rendered.optedOut).toBe(false);
+		expect(rendered.capMs).toBeGreaterThanOrEqual(rendered.nowMs + 300_000);
+	});
+
+	it("bounds caching at a timed start without changing the list's existing selection rule", async () => {
+		const entries = [
+			makeEvent("evening-workshop", "Evening Workshop", "2026-11-23", {
+				start_time: "17:30",
+				end_time: "18:45",
+			}),
+		];
+		const start = "2026-11-23T22:30:00Z";
+		const before = await renderAt("2026-11-23T22:29:30Z", entries);
+		expect(before.html).toContain("Evening Workshop");
+		expectCacheStopsBy(before, start);
+		const after = await renderAt(start, entries);
+		expect(after.html).toContain("Evening Workshop");
+		expect(after.optedOut).toBe(false);
+		expect(after.capMs).toBeGreaterThanOrEqual(after.nowMs + 300_000);
+	});
+
+	it("bounds caching when an occurrence beyond the view limit can become the first card", async () => {
+		const view = { ...upcomingView, order: "desc" as const, limit: 1 };
+		const entries = [
+			makeEvent("midweek-workshop", "Midweek Workshop", "2026-11-25", { all_day: true }),
+			makeEvent("weekly-practice", "Weekly Practice", "2026-11-23", {
+				start_time: "17:30",
+				end_time: "18:45",
+				occurrences: ["2026-11-23", "2026-11-30"],
+			}),
+		];
+		// The projection uses a strict comparison at wall-clock second precision.
+		const boundary = "2026-11-23T23:45:01Z";
+		const before = await renderAt("2026-11-23T23:44:31Z", entries, view);
+		expect(before.html).toContain("Midweek Workshop");
+		expect(before.html).not.toContain("Weekly Practice");
+		expectCacheStopsBy(before, boundary);
+
+		const after = await renderAt(boundary, entries, view);
+		expect(after.html).toContain("Weekly Practice");
+		expect(after.html).toContain('datetime="2026-11-30"');
+		expect(after.html).not.toContain("Midweek Workshop");
+	});
+
+	it("bounds caching at an all-day event's source-zone midnight, not the site's midnight", async () => {
+		const entries = [
+			makeEvent("west-coast-market", "West Coast Market", "2026-11-23", {
+				all_day: true,
+				timezone: "America/Los_Angeles",
+			}),
+		];
+		const boundary = "2026-11-24T08:00:00Z";
+		const before = await renderAt("2026-11-24T07:59:30Z", entries);
+		expect(before.html).toContain("West Coast Market");
+		expectCacheStopsBy(before, boundary);
+
+		const after = await renderAt(boundary, entries);
+		expect(after.html).not.toContain("West Coast Market");
+		expect(after.html).toContain("No upcoming events to show.");
+	});
+
+	it.each([
+		{
+			transition: "spring-forward gap",
+			date: "2027-03-14",
+			endTime: "02:30",
+			time: "2027-03-14T06:59:30Z",
+			boundary: "2027-03-14T07:00:00Z",
+			visibleBefore: true,
+		},
+		{
+			transition: "fall-back fold",
+			date: "2026-11-01",
+			endTime: "01:45",
+			time: "2026-11-01T05:59:30Z",
+			boundary: "2026-11-01T06:00:00Z",
+			visibleBefore: false,
+		},
+	])("bounds caching over the New York $transition", async (fixture) => {
+		const entries = [
+			makeEvent("clock-change", "Clock Change Event", fixture.date, {
+				start_time: "01:30",
+				end_time: fixture.endTime,
+			}),
+		];
+		const before = await renderAt(fixture.time, entries);
+		expect(before.html.includes("Clock Change Event")).toBe(fixture.visibleBefore);
+		expectCacheStopsBy(before, fixture.boundary);
+
+		const after = await renderAt(fixture.boundary, entries);
+		expect(after.html.includes("Clock Change Event")).toBe(!fixture.visibleBefore);
+	});
+});
+
+describe("MEC upcoming list skin, timezone today-occurrence rule, and Monthly calendar tab (Item 118)", () => {
 	const yoga = makeEvent("yoga-with-magi-king", "Yoga with Magi King on Mondays!", "2026-01-05", {
 		start_time: "17:30",
 		end_time: "18:45",

@@ -1,4 +1,5 @@
 ---
+import * as emdashModule from "emdash";
 import { decodeSlug } from "emdash";
 import WpShell from "../../../layouts/WpShell.astro";
 import EventArticle from "../../../components/EventArticle.astro";
@@ -17,6 +18,14 @@ if (!result) return new Response(null, { status: 404 });
 if (Astro.cache?.enabled) {
 	Astro.cache.set(shellResult.cacheHint);
 	Astro.cache.set(result.cacheHint);
+}
+if (
+	!result.error &&
+	!Astro.url.search &&
+	"optInPageCache" in emdashModule &&
+	typeof emdashModule.optInPageCache === "function"
+) {
+	emdashModule.optInPageCache(300);
 }
 const title = eventString(result.entry.data.title) ?? slug;
 ---

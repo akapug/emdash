@@ -24,7 +24,11 @@ const navigation = view?.navigation
 	: undefined;
 const result =
 	view && navigation !== null ? await loadEvents(Astro.currentLocale) : null;
-if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
+if (
+	result?.unavailable &&
+	"optOutPageCache" in emdashModule &&
+	typeof emdashModule.optOutPageCache === "function"
+) {
 	emdashModule.optOutPageCache();
 }
 if (Astro.cache?.enabled) {

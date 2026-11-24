@@ -38,6 +38,7 @@ export interface PageCacheRequestState {
 	optedOut: boolean;
 	ttlSeconds: number;
 	fillPrimary: boolean;
+	deadlineMs?: number;
 }
 
 const STATE_ALS_KEY = Symbol.for("emdash.pageCacheState");
@@ -98,6 +99,17 @@ export function optInPageCache(ttlSeconds: number): void {
 	);
 	state.optedIn = true;
 	state.ttlSeconds = state.ttlSeconds > 0 ? Math.min(state.ttlSeconds, clamped) : clamped;
+}
+
+/** Bound any route opt-in by an absolute Unix-millisecond deadline. */
+export function capPageCacheUntil(deadlineMs: number): void {
+	const state = getPageCacheAls().getStore();
+	if (!state || state.optedOut) return;
+	if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0) {
+		optOutPageCache();
+		return;
+	}
+	state.deadlineMs = Math.min(state.deadlineMs ?? deadlineMs, deadlineMs);
 }
 
 /**
