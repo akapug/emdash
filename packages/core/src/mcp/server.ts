@@ -38,6 +38,7 @@ import { hasScope } from "../auth/api-tokens.js";
 import { menuTag, siteSettingsTag, taxonomyTag } from "../cache/chrome-tags.js";
 import { convertDataForRead, convertDataForWrite } from "../client/portable-text.js";
 import type { FieldSchema } from "../client/portable-text.js";
+import { resolvePublicContentPaths } from "../content/public-url.js";
 import { decodeCursor, InvalidCursorError } from "../database/repositories/types.js";
 import type { RouteCallerInput } from "../plugins/routes.js";
 import {
@@ -1120,6 +1121,50 @@ export function createMcpServer(
 				await applyReadMarkdown(ec, args.collection, [result.data.item]);
 			}
 			return unwrap(result);
+		},
+	);
+
+	server.registerTool(
+		"content_public_urls",
+		{
+			title: "Resolve Public Content URLs",
+			description:
+				"Resolve canonical public relative paths for content items by (collection, id) " +
+				"against the live published row, public-visibility rules, homepage override, " +
+				"collection URL pattern, and site i18n config. Returns null for unpublished, " +
+				"password-protected, non-routable, or unknown/carried routes.",
+			inputSchema: z.object({
+				items: z
+					.array(
+						z
+							.object({
+								collection: z.string().min(1).describe("Collection slug (e.g. 'pages', 'posts')"),
+								id: z.string().min(1).optional().describe("Content item row ID (ULID)"),
+								referenceId: z
+									.string()
+									.min(1)
+									.optional()
+									.describe("Menu translation-group reference ID (resolved in `locale`)"),
+								locale: z
+									.string()
+									.min(1)
+									.optional()
+									.describe("Menu locale used to resolve `referenceId`"),
+							})
+							.refine((v) => Boolean(v.id || v.referenceId), {
+								message: "Either id or referenceId is required",
+							}),
+					)
+					.max(100)
+					.describe("Content references to resolve (max 100)"),
+			}),
+			annotations: { readOnlyHint: true },
+		},
+		async (args, extra) => {
+			requireScope(extra, "content:read");
+			const ec = getEmDash(extra);
+			const items = await resolvePublicContentPaths(ec.db, args.items);
+			return jsonResult({ items });
 		},
 	);
 

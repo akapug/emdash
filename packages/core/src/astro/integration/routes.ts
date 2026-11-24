@@ -4,11 +4,12 @@
  * Defines and injects all EmDash routes into the Astro application.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isPublicRouteBinding, type PublicRouteBinding } from "../../content/public-url.js";
 import { routeArtifactName } from "./route-naming.js";
 
 const TS_EXT = /\.tsx?$/;
@@ -69,6 +70,32 @@ export function hasUserDefinedPublicRoute(srcDir: URL, basename: string): boolea
 			existsSync(resolve(srcDirPath, "pages", `${basename}${extension}`)) ||
 			existsSync(resolve(srcDirPath, "pages", basename, `index${extension}`)),
 	);
+}
+
+/**
+ * Load the explicit collection-aware public route contract declared by the
+ * active template in `src/public-routes.json`.
+ *
+ * Fail-closed: templates that do not declare `src/public-routes.json` (or whose
+ * declaration is unreadable/invalid) return `[]`, so unknown routes emit no
+ * public links.
+ */
+export function discoverTemplatePublicRoutes(srcDir: URL): PublicRouteBinding[] {
+	const manifestPath = resolve(fileURLToPath(srcDir), "public-routes.json");
+	if (!existsSync(manifestPath)) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+	} catch {
+		return [];
+	}
+	if (!Array.isArray(parsed)) return [];
+	const routes = new Map<string, PublicRouteBinding>();
+	for (const entry of parsed) {
+		if (!isPublicRouteBinding(entry)) continue;
+		routes.set(entry.pattern, entry);
+	}
+	return [...routes.values()].toSorted((a, b) => a.pattern.localeCompare(b.pattern));
 }
 
 /**

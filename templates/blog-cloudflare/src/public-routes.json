@@ -1,0 +1,9 @@
+[
+	{ "pattern": "/", "owner": { "kind": "homepage" } },
+	{ "pattern": "/pages/{slug}", "owner": { "kind": "collection", "collection": "pages" } },
+	{ "pattern": "/posts/{slug}", "owner": { "kind": "collection", "collection": "posts" } },
+	{
+		"pattern": "/events/{slug}",
+		"owner": { "kind": "uniqueUrlPattern", "pattern": "/events/{slug}" }
+	}
+]

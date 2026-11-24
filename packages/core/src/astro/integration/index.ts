@@ -39,6 +39,7 @@ import { local } from "../storage/adapters.js";
 import { createDebouncedTypegenRefresh } from "./dev-typegen.js";
 import { notoSans } from "./font-provider.js";
 import {
+	discoverTemplatePublicRoutes,
 	injectCoreRoutes,
 	injectBuiltinAuthRoutes,
 	injectAuthProviderRoutes,
@@ -529,9 +530,10 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 				// EmDashHead must not access Astro.csp when the host has disabled
 				// Astro's built-in CSP runtime; Astro logs a warning for that access.
 				serializableConfig.astroCspEnabled = Boolean(astroConfig.security.csp);
-				// Expose Astro's trailingSlash routing policy so plugins can build
-				// URLs (sitemap/canonical/hreflang) that match what the site serves.
+				// Expose Astro's trailingSlash routing policy and active template public routes
+				// so public URL resolution only emits paths the deployed template actually serves.
 				serializableConfig.trailingSlash = astroConfig.trailingSlash;
+				serializableConfig.publicRoutes = discoverTemplatePublicRoutes(astroConfig.srcDir);
 				normalizedI18n = normalizeAstroI18n(astroConfig.i18n);
 				if (normalizedI18n) serializableConfig.i18n = normalizedI18n;
 
