@@ -53,18 +53,16 @@ function plainDescription(event: EventSummary): string {
 	if (!Array.isArray(content)) return "";
 	const chunks: string[] = [];
 	for (const block of content) {
-		if (
-			block &&
-			typeof block === "object" &&
-			"children" in block &&
-			Array.isArray((block as { children?: unknown }).children)
-		) {
-			const text = ((block as { children: Array<{ text?: unknown }> }).children ?? [])
-				.map((c) => (typeof c?.text === "string" ? c.text : ""))
-				.join("")
-				.trim();
-			if (text) chunks.push(text);
-		}
+		if (!block || typeof block !== "object" || !("children" in block)) continue;
+		const children: unknown = block.children;
+		if (!Array.isArray(children)) continue;
+		const text = children
+			.map((c: unknown) =>
+				c && typeof c === "object" && "text" in c && typeof c.text === "string" ? c.text : "",
+			)
+			.join("")
+			.trim();
+		if (text) chunks.push(text);
 	}
 	return chunks.join("\n\n").slice(0, 1000);
 }
