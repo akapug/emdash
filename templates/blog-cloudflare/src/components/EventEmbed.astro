@@ -1,5 +1,6 @@
 ---
-import { getSiteSettingsWithCacheHint, optOutPageCache } from "emdash";
+import * as emdashModule from "emdash";
+import { getSiteSettingsWithCacheHint } from "emdash";
 import EventList from "./EventList.astro";
 import {
 	eventMonthNavigation,
@@ -23,7 +24,9 @@ const navigation = view?.navigation
 	: undefined;
 const result =
 	view && navigation !== null ? await loadEvents(Astro.currentLocale) : null;
-optOutPageCache?.();
+if ("optOutPageCache" in emdashModule && typeof emdashModule.optOutPageCache === "function") {
+	emdashModule.optOutPageCache();
+}
 if (Astro.cache?.enabled) {
 	if (site) Astro.cache.set(site.cacheHint);
 	if (result) {

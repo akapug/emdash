@@ -182,16 +182,31 @@ function hasNontrivialVary(response: Response): boolean {
 	return tokens.some((t) => t !== "accept-encoding");
 }
 
+function isStringIterable(v: unknown): v is Iterable<unknown> {
+	return typeof v === "object" && v !== null && Symbol.iterator in v;
+}
+
 /**
  * Inspect Astro's real response cookie queue attached via `Symbol.for("astro.cookies")`
  * WITHOUT calling `.consume()`, so the adapter still emits every queued cookie.
  */
 function readResponseQueuedCookies(response: Response): string[] {
-	const jar = Reflect.get(response, ASTRO_COOKIES_SYMBOL) as
-		| { headers?: () => Iterable<string> }
-		| undefined;
-	if (!jar || typeof jar.headers !== "function") return [];
-	return [...jar.headers()];
+	const jar: unknown = Reflect.get(response, ASTRO_COOKIES_SYMBOL);
+	if (
+		typeof jar !== "object" ||
+		jar === null ||
+		!("headers" in jar) ||
+		typeof jar.headers !== "function"
+	) {
+		return [];
+	}
+	const raw: unknown = jar.headers();
+	if (!isStringIterable(raw)) return [];
+	const out: string[] = [];
+	for (const header of raw) {
+		if (typeof header === "string" && header.length > 0) out.push(header);
+	}
+	return out;
 }
 
 /** Preserve Astro's `Symbol.for("astro.cookies")` queue when wrapping a Response. */
