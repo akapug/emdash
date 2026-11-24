@@ -17,12 +17,37 @@ import { RESERVED_COLLECTION_SLUGS } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../../../content/protection.js";
+import { mappedEmbedsSchema } from "./mapped-embeds.js";
 
 export const EVENT_SEARCH_BAR_CAPABILITY = "emdash.event-search-bar.v1" as const;
-export const IMPORT_CAPABILITIES = [
-	PROTECTED_CONTENT_CAPABILITY,
-	EVENT_SEARCH_BAR_CAPABILITY,
-] as const;
+
+export const EVENT_SEARCH_BAR_PROBE = {
+	"1": {
+		_type: "embed",
+		_key: "probe",
+		provider: "embark-events",
+		url: "/events/",
+		events: {
+			version: 1,
+			viewSlug: "probe",
+			mode: "past",
+			order: "desc",
+			layout: "list",
+			start: "today",
+			searchBar: { text: true, monthYear: true },
+		},
+	},
+} as const;
+
+export function importCapabilities(
+	embedsSchema: { safeParse: (input: unknown) => { success: boolean } } = mappedEmbedsSchema,
+): readonly string[] {
+	return embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success
+		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY]
+		: [PROTECTED_CONTENT_CAPABILITY];
+}
+
+export const IMPORT_CAPABILITIES: readonly string[] = importCapabilities();
 
 export const prerender = false;
 
