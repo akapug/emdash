@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
 	EVENT_SEARCH_BAR_CAPABILITY,
+	EVENT_SEARCH_BAR_PROBE,
 	IMPORT_CAPABILITIES,
+	importCapabilities,
 	POST,
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
+import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../src/content/protection.js";
 
 const MINIMAL_WXR = `<?xml version="1.0" encoding="UTF-8"?>
@@ -13,7 +16,8 @@ const MINIMAL_WXR = `<?xml version="1.0" encoding="UTF-8"?>
 </rss>`;
 
 describe("WordPress WXR analyze capabilities (Item 109)", () => {
-	it("advertises capabilities[] including protected-content and event-search-bar alongside protectedContentCapability", async () => {
+	it("advertises event-search-bar iff execute's mappedEmbedsSchema accepts searchBar", async () => {
+		const acceptsSearchBar = mappedEmbedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success;
 		const form = new FormData();
 		form.set("file", new File([MINIMAL_WXR], "site.wxr", { type: "text/xml" }));
 		const response = await POST({
@@ -35,6 +39,16 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		expect(body.data.protectedContentCapability).toBe(PROTECTED_CONTENT_CAPABILITY);
 		expect(body.data.capabilities).toEqual([...IMPORT_CAPABILITIES]);
 		expect(body.data.capabilities).toContain(PROTECTED_CONTENT_CAPABILITY);
-		expect(body.data.capabilities).toContain(EVENT_SEARCH_BAR_CAPABILITY);
+		expect(body.data.capabilities.includes(EVENT_SEARCH_BAR_CAPABILITY)).toBe(acceptsSearchBar);
+	});
+
+	it("omits event-search-bar when the execute schema rejects searchBar and includes it when accepted", () => {
+		const rejecting = { safeParse: () => ({ success: false }) };
+		const accepting = { safeParse: () => ({ success: true }) };
+		expect(importCapabilities(rejecting)).toEqual([PROTECTED_CONTENT_CAPABILITY]);
+		expect(importCapabilities(accepting)).toEqual([
+			PROTECTED_CONTENT_CAPABILITY,
+			EVENT_SEARCH_BAR_CAPABILITY,
+		]);
 	});
 });
