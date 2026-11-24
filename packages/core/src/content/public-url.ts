@@ -1,18 +1,19 @@
 /**
- * Tenant-side canonical public URL path resolution by `(collection, entryId)`.
+ * Tenant-side canonical public URL path resolution by `(collection, entryId)`
+ * or by menu translation-group reference `(collection, referenceId, locale)`.
  *
  * Resolves each entry against:
  * - the live published row (never drafts, scheduled, or deleted rows),
- * - public-visibility checks (`routable`, non-empty slug, not password-protected),
- * - the site's configured homepage override and collection `url_pattern`,
- * - the runtime i18n and trailing-slash routing policy.
- *
- * Abstains (`null`) on unknown routes, including carried collections whose
- * schema does not describe a `url_pattern`, unresolved date/route tokens, and
- * locales outside the configured i18n list.
+ * - public-visibility & discovery checks (`routable`, non-empty slug,
+ *   not password-protected, not `seo_no_index = 1`),
+ * - the active template's deployed public route contract (`publicRoutes` from
+ *   `virtual:emdash/config` — fails closed with `null` when no route contract
+ *   proves the deployed template serves the resolved pattern),
+ * - the site's configured homepage override, collection `url_pattern`, and
+ *   runtime i18n + trailing-slash routing policy.
  */
 
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 
 import { ContentRepository } from "../database/repositories/content.js";
 import { ProtectedContentRepository } from "../database/repositories/protected-content.js";
@@ -22,39 +23,82 @@ import { getI18nConfig } from "../i18n/config.js";
 import { localizePath, resolveLocalizedContentRoutePath } from "../i18n/resolve.js";
 import { SchemaRegistry } from "../schema/registry.js";
 import { getSiteSettingWithDb } from "../settings/index.js";
+import { isMissingTableError } from "../utils/db-errors.js";
 
-/** Built-in template collections that have standard routes even without an explicit `url_pattern`. */
-const STANDARD_TEMPLATE_COLLECTIONS = new Set(["pages", "posts"]);
 const UNRESOLVED_TOKEN_RE = /\{[^}]+\}/;
 const TRAILING_SLASH_RE = /\/$/;
+const PUBLIC_ROUTES_KEY = Symbol.for("emdash:public-routes");
+
+function routeStore(): Record<symbol, readonly string[] | null | undefined> {
+	return globalThis;
+}
+
+/**
+ * Configure the active template's public route contract (e.g. from integration
+ * startup or tests). Pass `null` to clear.
+ */
+export function setPublicRoutesConfig(routes: readonly string[] | null): void {
+	routeStore()[PUBLIC_ROUTES_KEY] = routes;
+}
+
+/** Read the configured runtime public route contract, if any. */
+export function getPublicRoutesConfig(): readonly string[] | null | undefined {
+	return routeStore()[PUBLIC_ROUTES_KEY];
+}
 
 export interface PublicContentPathRef {
 	collection: string;
-	id: string;
+	id?: string;
+	referenceId?: string;
+	locale?: string;
 }
 
 export interface ResolvedPublicContentPath {
 	collection: string;
-	id: string;
+	id?: string;
+	referenceId?: string;
+	locale?: string;
 	path: string | null;
 }
 
 export interface ResolvePublicContentPathOptions {
 	trailingSlash?: "always" | "never" | "ignore";
+	publicRoutes?: readonly string[] | null;
 }
 
-async function getHostTrailingSlash(): Promise<"always" | "never" | "ignore"> {
+interface HostVirtualConfig {
+	trailingSlash: "always" | "never" | "ignore";
+	publicRoutes: readonly string[] | null;
+}
+
+async function getHostVirtualConfig(): Promise<HostVirtualConfig> {
 	try {
 		const mod: unknown = await import("virtual:emdash/config");
-		if (typeof mod !== "object" || mod === null || !("default" in mod)) return "ignore";
+		if (typeof mod !== "object" || mod === null || !("default" in mod)) {
+			return { trailingSlash: "ignore", publicRoutes: null };
+		}
 		const def: unknown = mod.default;
-		if (typeof def !== "object" || def === null || !("trailingSlash" in def)) return "ignore";
-		const ts: unknown = def.trailingSlash;
-		if (ts === "always" || ts === "never" || ts === "ignore") return ts;
-		return "ignore";
+		if (typeof def !== "object" || def === null) {
+			return { trailingSlash: "ignore", publicRoutes: null };
+		}
+		const rawTs: unknown = "trailingSlash" in def ? def.trailingSlash : undefined;
+		const trailingSlash =
+			rawTs === "always" || rawTs === "never" || rawTs === "ignore" ? rawTs : "ignore";
+		const rawRoutes: unknown = "publicRoutes" in def ? def.publicRoutes : undefined;
+		const publicRoutes = Array.isArray(rawRoutes)
+			? rawRoutes.filter((r): r is string => typeof r === "string")
+			: null;
+		return { trailingSlash, publicRoutes };
 	} catch {
-		return "ignore";
+		return { trailingSlash: "ignore", publicRoutes: null };
 	}
+}
+
+function normalizeRoutePattern(pattern: string): string {
+	let p = pattern.trim();
+	if (!p.startsWith("/")) p = `/${p}`;
+	if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+	return p;
 }
 
 function applyTrailingSlash(path: string, trailingSlash: "always" | "never" | "ignore"): string {
@@ -63,10 +107,85 @@ function applyTrailingSlash(path: string, trailingSlash: "always" | "never" | "i
 	return path;
 }
 
+interface LocalizedRowCandidate {
+	id: string;
+	locale: string;
+}
+
+/** Matches menus/index.ts:432-444 localized row preference. */
+function shouldPreferLocalizedRow(
+	candidate: LocalizedRowCandidate,
+	existing: LocalizedRowCandidate | undefined,
+	locale: string,
+): boolean {
+	if (!existing) return true;
+	if (candidate.locale === locale) return existing.locale !== locale || candidate.id < existing.id;
+	if (existing.locale === locale) return false;
+	return (
+		candidate.locale < existing.locale ||
+		(candidate.locale === existing.locale && candidate.id < existing.id)
+	);
+}
+
+async function resolveEntryIdByTranslationGroup(
+	db: Kysely<Database>,
+	collection: string,
+	referenceId: string,
+	locale: string,
+): Promise<string | null> {
+	validateIdentifier(collection, "collection slug");
+	const result = await sql<LocalizedRowCandidate>`
+		SELECT id, locale
+		FROM ${sql.ref(`ec_${collection}`)}
+		WHERE translation_group = ${referenceId}
+		AND deleted_at IS NULL
+	`.execute(db);
+	let preferred: LocalizedRowCandidate | undefined;
+	for (const row of result.rows) {
+		if (shouldPreferLocalizedRow(row, preferred, locale)) {
+			preferred = row;
+		}
+	}
+	if (preferred) return preferred.id;
+	// Fallback for legacy rows whose menu reference_id stored the row ID directly.
+	return referenceId;
+}
+
+async function isNoindexEntry(
+	db: Kysely<Database>,
+	collection: string,
+	contentId: string,
+): Promise<boolean> {
+	try {
+		const row = await db
+			.selectFrom("_emdash_seo")
+			.select("seo_no_index")
+			.where("collection", "=", collection)
+			.where("content_id", "=", contentId)
+			.where("seo_no_index", "=", 1)
+			.executeTakeFirst();
+		return row !== undefined;
+	} catch (error) {
+		if (isMissingTableError(error)) return false;
+		throw error;
+	}
+}
+
+function resultEntry(ref: PublicContentPathRef, path: string | null): ResolvedPublicContentPath {
+	return {
+		collection: ref.collection,
+		...(ref.id !== undefined ? { id: ref.id } : {}),
+		...(ref.referenceId !== undefined ? { referenceId: ref.referenceId } : {}),
+		...(ref.locale !== undefined ? { locale: ref.locale } : {}),
+		path,
+	};
+}
+
 /**
  * Resolve canonical public relative paths for a batch of `(collection, id)`
- * references. Returns one result per input reference in the same order, with
- * `path: null` whenever the entry is not publicly routable.
+ * or menu `(collection, referenceId, locale)` references. Returns one result
+ * per input reference in the same order, with `path: null` whenever the entry
+ * is not publicly discoverable or the active template does not serve its route.
  */
 export async function resolvePublicContentPaths(
 	db: Kysely<Database>,
@@ -78,10 +197,23 @@ export async function resolvePublicContentPaths(
 	const contentRepo = new ContentRepository(db);
 	const protectedRepo = new ProtectedContentRepository(db);
 	const registry = new SchemaRegistry(db);
-	const [homepage, trailingSlash] = await Promise.all([
+	const [homepage, hostConfig] = await Promise.all([
 		getSiteSettingWithDb("homepage", db),
-		options.trailingSlash ? Promise.resolve(options.trailingSlash) : getHostTrailingSlash(),
+		getHostVirtualConfig(),
 	]);
+	const trailingSlash = options.trailingSlash ?? hostConfig.trailingSlash;
+	const configuredRoutes =
+		options.publicRoutes !== undefined
+			? options.publicRoutes
+			: getPublicRoutesConfig() !== undefined
+				? getPublicRoutesConfig()
+				: hostConfig.publicRoutes;
+
+	// Fail closed: without an active template route contract, never guess a URL.
+	if (!configuredRoutes || configuredRoutes.length === 0) {
+		return refs.map((ref) => resultEntry(ref, null));
+	}
+	const routeSet = new Set(configuredRoutes.map(normalizeRoutePattern));
 	const defaultLocale = getI18nConfig()?.defaultLocale ?? "en";
 
 	type ResolvedCollection = Awaited<ReturnType<SchemaRegistry["getCollection"]>>;
@@ -103,19 +235,35 @@ export async function resolvePublicContentPaths(
 	for (const ref of refs) {
 		const collectionInfo = await getCollection(ref.collection);
 		if (!collectionInfo || !collectionInfo.routable) {
-			results.push({ collection: ref.collection, id: ref.id, path: null });
+			results.push(resultEntry(ref, null));
 			continue;
 		}
 
-		const item = await contentRepo.findById(ref.collection, ref.id);
+		const targetId = ref.referenceId
+			? await resolveEntryIdByTranslationGroup(
+					db,
+					ref.collection,
+					ref.referenceId,
+					ref.locale || defaultLocale,
+				)
+			: (ref.id ?? null);
+		if (!targetId) {
+			results.push(resultEntry(ref, null));
+			continue;
+		}
+
+		const item = await contentRepo.findById(ref.collection, targetId);
 		if (!item || item.status !== "published" || !item.slug || item.slug.trim() === "") {
-			results.push({ collection: ref.collection, id: ref.id, path: null });
+			results.push(resultEntry(ref, null));
 			continue;
 		}
 
-		const protectedRow = await protectedRepo.find(ref.collection, item.id);
-		if (protectedRow) {
-			results.push({ collection: ref.collection, id: ref.id, path: null });
+		const [protectedRow, noindex] = await Promise.all([
+			protectedRepo.find(ref.collection, item.id),
+			isNoindexEntry(db, ref.collection, item.id),
+		]);
+		if (protectedRow || noindex) {
+			results.push(resultEntry(ref, null));
 			continue;
 		}
 
@@ -126,22 +274,36 @@ export async function resolvePublicContentPaths(
 			(homepage.id === item.translationGroup || homepage.id === item.id);
 
 		if (isHomepage) {
+			if (!routeSet.has("/")) {
+				results.push(resultEntry(ref, null));
+				continue;
+			}
 			const localizedHome = await localizePath("/", locale);
-			results.push({
-				collection: ref.collection,
-				id: ref.id,
-				path: localizedHome === null ? null : applyTrailingSlash(localizedHome, trailingSlash),
-			});
+			results.push(
+				resultEntry(
+					ref,
+					localizedHome === null ? null : applyTrailingSlash(localizedHome, trailingSlash),
+				),
+			);
 			continue;
 		}
 
-		if (!collectionInfo.urlPattern && !STANDARD_TEMPLATE_COLLECTIONS.has(ref.collection)) {
-			results.push({ collection: ref.collection, id: ref.id, path: null });
+		let candidatePattern: string | null = null;
+		if (collectionInfo.urlPattern) {
+			candidatePattern = normalizeRoutePattern(collectionInfo.urlPattern);
+		} else if (routeSet.has(`/${ref.collection}/{slug}`)) {
+			candidatePattern = `/${ref.collection}/{slug}`;
+		} else if (ref.collection === "pages" && routeSet.has("/{slug}")) {
+			candidatePattern = "/{slug}";
+		}
+
+		if (!candidatePattern || !routeSet.has(candidatePattern)) {
+			results.push(resultEntry(ref, null));
 			continue;
 		}
 
 		const resolved = await resolveLocalizedContentRoutePath({
-			pattern: collectionInfo.urlPattern ?? null,
+			pattern: candidatePattern,
 			collection: ref.collection,
 			slug: item.slug,
 			id: item.id,
@@ -150,7 +312,7 @@ export async function resolvePublicContentPaths(
 			trailingSlash,
 		});
 		const safePath = resolved === null || UNRESOLVED_TOKEN_RE.test(resolved) ? null : resolved;
-		results.push({ collection: ref.collection, id: ref.id, path: safePath });
+		results.push(resultEntry(ref, safePath));
 	}
 
 	return results;

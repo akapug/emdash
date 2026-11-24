@@ -15,6 +15,7 @@ import { Role } from "@emdash-cms/auth";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { setPublicRoutesConfig } from "../../../src/content/public-url.js";
 import { ProtectedContentRepository } from "../../../src/database/repositories/protected-content.js";
 import type { Database } from "../../../src/database/types.js";
 import { setI18nConfig } from "../../../src/i18n/config.js";
@@ -28,7 +29,13 @@ import {
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
 interface PublicUrlResult {
-	items: Array<{ collection: string; id: string; path: string | null }>;
+	items: Array<{
+		collection: string;
+		id?: string;
+		referenceId?: string;
+		locale?: string;
+		path: string | null;
+	}>;
 }
 
 describe("MCP content_public_urls", () => {
@@ -38,6 +45,13 @@ describe("MCP content_public_urls", () => {
 	beforeEach(async () => {
 		setI18nConfig(null);
 		_resetAstroI18nCacheForTests();
+		setPublicRoutesConfig([
+			"/",
+			"/pages/{slug}",
+			"/posts/{slug}",
+			"/events/{slug}",
+			"/journal/{slug}",
+		]);
 		db = await setupTestDatabase();
 		harness = await connectMcpHarness({
 			db,
@@ -51,6 +65,7 @@ describe("MCP content_public_urls", () => {
 
 	afterEach(async () => {
 		setI18nConfig(null);
+		setPublicRoutesConfig(null);
 		_resetAstroI18nCacheForTests();
 		await harness.cleanup();
 		await teardownTestDatabase(db);
@@ -91,7 +106,7 @@ describe("MCP content_public_urls", () => {
 	}
 
 	async function resolveUrls(
-		items: Array<{ collection: string; id: string }>,
+		items: Array<{ collection: string; id?: string; referenceId?: string; locale?: string }>,
 	): Promise<PublicUrlResult> {
 		const res = await harness.client.callTool({
 			name: "content_public_urls",
@@ -353,6 +368,116 @@ describe("MCP content_public_urls", () => {
 			{ collection: "mec_events", id: event.id, path: "/events/summer-gala" },
 			{ collection: "pages", id: dePage.id, path: null },
 			{ collection: "pages", id: "nonexistent-id", path: null },
+		]);
+	});
+
+	it("requires an active template route contract (null without proof; respects starter /[slug] vs blog /pages/[slug] and rejects unserved patterns)", async () => {
+		const page = await createEntry({
+			collection: "pages",
+			title: "About",
+			slug: "about",
+			status: "published",
+		});
+		const post = await createEntry({
+			collection: "posts",
+			title: "Hello",
+			slug: "hello",
+			status: "published",
+		});
+		await createCollection("articles", "Articles", { urlPattern: "/journal/{slug}" });
+		const article = await createEntry({
+			collection: "articles",
+			title: "Spring",
+			slug: "spring",
+			status: "published",
+		});
+
+		// Without any active template route contract -> abstain (fail closed)
+		setPublicRoutesConfig(null);
+		const none = await resolveUrls([
+			{ collection: "pages", id: page.id },
+			{ collection: "posts", id: post.id },
+			{ collection: "articles", id: article.id },
+		]);
+		expect(none.items).toEqual([
+			{ collection: "pages", id: page.id, path: null },
+			{ collection: "posts", id: post.id, path: null },
+			{ collection: "articles", id: article.id, path: null },
+		]);
+
+		// starter-cloudflare contract (/[slug], no /pages/[slug], no /posts/[slug])
+		setPublicRoutesConfig(["/", "/{slug}"]);
+		const starter = await resolveUrls([
+			{ collection: "pages", id: page.id },
+			{ collection: "posts", id: post.id },
+		]);
+		expect(starter.items).toEqual([
+			{ collection: "pages", id: page.id, path: "/about" },
+			{ collection: "posts", id: post.id, path: null },
+		]);
+
+		// blog-cloudflare contract (/pages/{slug}, /posts/{slug}, /events/{slug}; NO /journal/{slug})
+		setPublicRoutesConfig(["/", "/pages/{slug}", "/posts/{slug}", "/events/{slug}"]);
+		const blog = await resolveUrls([
+			{ collection: "pages", id: page.id },
+			{ collection: "posts", id: post.id },
+			{ collection: "articles", id: article.id },
+		]);
+		expect(blog.items).toEqual([
+			{ collection: "pages", id: page.id, path: "/pages/about" },
+			{ collection: "posts", id: post.id, path: "/posts/hello" },
+			{ collection: "articles", id: article.id, path: null },
+		]);
+	});
+
+	it("resolves menu translation-group referenceId in the menu's locale and omits noindex entries", async () => {
+		setI18nConfig({
+			defaultLocale: "en",
+			locales: ["en", "fr"],
+			prefixDefaultLocale: false,
+		});
+		_resetAstroI18nCacheForTests();
+
+		const en = await createEntry({
+			collection: "pages",
+			title: "About",
+			slug: "about",
+			locale: "en",
+		});
+		await createEntry({
+			collection: "pages",
+			title: "A propos",
+			slug: "a-propos",
+			locale: "fr",
+			translationOf: en.id,
+		});
+		const group = en.translationGroup ?? en.id;
+
+		// Noindex published page -> omitted
+		const hidden = await createEntry({
+			collection: "pages",
+			title: "Thank You",
+			slug: "thank-you",
+			locale: "en",
+		});
+		await db
+			.insertInto("_emdash_seo")
+			.values({
+				collection: "pages",
+				content_id: hidden.id,
+				seo_no_index: 1,
+			})
+			.execute();
+
+		const out = await resolveUrls([
+			{ collection: "pages", referenceId: group, locale: "en" },
+			{ collection: "pages", referenceId: group, locale: "fr" },
+			{ collection: "pages", id: hidden.id },
+		]);
+		expect(out.items).toEqual([
+			{ collection: "pages", referenceId: group, locale: "en", path: "/pages/about" },
+			{ collection: "pages", referenceId: group, locale: "fr", path: "/fr/pages/a-propos" },
+			{ collection: "pages", id: hidden.id, path: null },
 		]);
 	});
 });

@@ -1136,10 +1136,24 @@ export function createMcpServer(
 			inputSchema: z.object({
 				items: z
 					.array(
-						z.object({
-							collection: z.string().min(1).describe("Collection slug (e.g. 'pages', 'posts')"),
-							id: z.string().min(1).describe("Content item ID (ULID)"),
-						}),
+						z
+							.object({
+								collection: z.string().min(1).describe("Collection slug (e.g. 'pages', 'posts')"),
+								id: z.string().min(1).optional().describe("Content item row ID (ULID)"),
+								referenceId: z
+									.string()
+									.min(1)
+									.optional()
+									.describe("Menu translation-group reference ID (resolved in `locale`)"),
+								locale: z
+									.string()
+									.min(1)
+									.optional()
+									.describe("Menu locale used to resolve `referenceId`"),
+							})
+							.refine((v) => Boolean(v.id || v.referenceId), {
+								message: "Either id or referenceId is required",
+							}),
 					)
 					.max(100)
 					.describe("Content references to resolve (max 100)"),

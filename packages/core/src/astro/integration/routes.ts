@@ -4,7 +4,7 @@
  * Defines and injects all EmDash routes into the Astro application.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,46 @@ export function hasUserDefinedPublicRoute(srcDir: URL, basename: string): boolea
 			existsSync(resolve(srcDirPath, "pages", `${basename}${extension}`)) ||
 			existsSync(resolve(srcDirPath, "pages", basename, `index${extension}`)),
 	);
+}
+
+const IGNORED_PUBLIC_ROUTE_DIRS = new Set(["wp-shell", "api", "_emdash"]);
+const DYNAMIC_SEGMENT_RE = /\[([^\]/]+)\]/g;
+
+/**
+ * Discover the explicit public `.astro` page route patterns served by the
+ * active template's `src/pages/` directory (excluding internal rewrite routes,
+ * API routes, 404 pages, and rest catch-alls like `[...date].astro`).
+ *
+ * Examples:
+ * - `index.astro` -> `"/"`
+ * - `pages/[slug].astro` -> `"/pages/{slug}"`
+ * - `[slug].astro` -> `"/{slug}"`
+ */
+export function discoverTemplatePublicRoutes(srcDir: URL): string[] {
+	const pagesDir = resolve(fileURLToPath(srcDir), "pages");
+	if (!existsSync(pagesDir)) return [];
+	const routes = new Set<string>();
+
+	const walk = (dir: string, prefix: string[]): void => {
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			if (entry.name.startsWith("_")) continue;
+			if (entry.isDirectory()) {
+				if (prefix.length === 0 && IGNORED_PUBLIC_ROUTE_DIRS.has(entry.name)) continue;
+				if (entry.name.includes("[...")) continue;
+				walk(resolve(dir, entry.name), [...prefix, entry.name]);
+				continue;
+			}
+			if (!entry.isFile() || !entry.name.endsWith(".astro")) continue;
+			if (entry.name === "404.astro" || entry.name.includes("[...")) continue;
+			const stem = entry.name.slice(0, -".astro".length);
+			const segments = stem === "index" ? prefix : [...prefix, stem];
+			const normalized = segments.map((seg) => seg.replace(DYNAMIC_SEGMENT_RE, "{$1}"));
+			routes.add(normalized.length === 0 ? "/" : `/${normalized.join("/")}`);
+		}
+	};
+
+	walk(pagesDir, []);
+	return [...routes].toSorted();
 }
 
 /**
