@@ -463,6 +463,31 @@ function isCompleteWxrTerm(term: Partial<WxrTerm>): term is WxrTerm {
 /**
  * Parse a WordPress WXR export file
  */
+
+/**
+ * WordPress stores titles as HTML: wptexturize saves "Staff & Board" as `Staff &#038; Board`,
+ * and a theme prints it unescaped, so a visitor reads "Staff & Board". EmDash keeps titles as
+ * plain text and escapes them when it renders, so an entity left in the title is shown to the
+ * visitor as `&#038;`. Decode character references here, once, where the title enters EmDash.
+ * Markup in a title stays as text; only entities are decoded.
+ */
+const NAMED_TITLE_ENTITIES: Record<string, string> = {
+	amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0", hellip: "\u2026", ndash: "\u2013",
+	mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d", laquo: "\u00ab",
+	raquo: "\u00bb", copy: "\u00a9", reg: "\u00ae", trade: "\u2122", eacute: "\u00e9",
+};
+
+export function decodeTitleEntities(text: string): string {
+	return text.replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z][a-z0-9]{1,8});/giu, (whole, ref: string) => {
+		if (ref[0] === "#") {
+			const code = ref[1] === "x" || ref[1] === "X" ? Number.parseInt(ref.slice(2), 16) : Number.parseInt(ref.slice(1), 10);
+			if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return whole;
+			return String.fromCodePoint(code);
+		}
+		return NAMED_TITLE_ENTITIES[ref.toLowerCase()] ?? whole;
+	});
+}
+
 export function parseWxr(stream: Readable): Promise<WxrData> {
 	return new Promise((resolve, reject) => {
 		const parser = sax.createStream(true, { trim: false, normalize: false });
@@ -566,7 +591,7 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 			if (currentPath.length === 3 && currentPath[0] === "rss" && currentPath[1] === "channel") {
 				switch (tag) {
 					case "title":
-						data.site.title = text;
+						data.site.title = decodeTitleEntities(text);
 						break;
 					case "link":
 						data.site.link = text;
@@ -603,7 +628,7 @@ export function parseWxr(stream: Readable): Promise<WxrData> {
 				// Item (post/page/attachment) parsing
 				switch (tag) {
 					case "title":
-						currentItem.title = text;
+						currentItem.title = decodeTitleEntities(text);
 						break;
 					case "link":
 						currentItem.link = text;
@@ -990,7 +1015,7 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 			if (currentPath.length === 3 && currentPath[0] === "rss" && currentPath[1] === "channel") {
 				switch (tag) {
 					case "title":
-						data.site.title = text;
+						data.site.title = decodeTitleEntities(text);
 						break;
 					case "link":
 						data.site.link = text;
@@ -1027,7 +1052,7 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 				// Item (post/page/attachment) parsing
 				switch (tag) {
 					case "title":
-						currentItem.title = text;
+						currentItem.title = decodeTitleEntities(text);
 						break;
 					case "link":
 						currentItem.link = text;
