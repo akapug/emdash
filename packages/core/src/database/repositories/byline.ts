@@ -1336,11 +1336,19 @@ export class BylineRepository {
 	): Promise<Array<{ group: string; roleLabel: string | null; sortOrder: number }>> {
 		if (inputBylines.length === 0) return [];
 		const wireIds = [...new Set(inputBylines.map((item) => item.bylineId))];
-		const rows = await this.db
-			.selectFrom("_emdash_bylines")
-			.select(["id", "translation_group"])
-			.where("id", "in", wireIds)
-			.execute();
+		// Chunk IN lookups at 90 IDs to stay under D1's 100-bind statement limit.
+		const IN_CHUNK = 90;
+		const rows: Array<{ id: string; translation_group: string | null }> = [];
+		for (let i = 0; i < wireIds.length; i += IN_CHUNK) {
+			const chunk = wireIds.slice(i, i + IN_CHUNK);
+			// oxlint-disable-next-line no-await-in-loop -- bounded D1 IN chunks
+			const batch = await this.db
+				.selectFrom("_emdash_bylines")
+				.select(["id", "translation_group"])
+				.where("id", "in", chunk)
+				.execute();
+			rows.push(...batch);
+		}
 		if (rows.length !== wireIds.length) {
 			throw new Error("One or more byline IDs do not exist");
 		}

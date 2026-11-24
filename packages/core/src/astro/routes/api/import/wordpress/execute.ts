@@ -29,7 +29,7 @@ import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody } from "#api/parse.js";
 import { BylineRepository } from "#db/repositories/byline.js";
 import { SeoRepository } from "#db/repositories/seo.js";
-import { importWxrComments } from "#import/comments.js";
+import { importWxrComments, prepareWxrPostComments } from "#import/comments.js";
 import { importProtection, type ProtectedImportOptions } from "#import/protection.js";
 import { resolveImportByline } from "#import/utils.js";
 import {
@@ -45,11 +45,15 @@ import {
 } from "#import/wxr-seo.js";
 import {
 	attachPostTaxonomies,
+	canonicalSourceTermIdentities,
 	isWxrTaxonomyConflictError,
+	loadAtomicTaxonomyStateFromDb,
 	mirrorTermsToLocales,
+	planAtomicPostTaxonomies,
 	preImportWxrTaxonomies,
-	resolvePostTaxonomyPivots,
+	recordCommittedAtomicTerms,
 	setPostTermAssignmentsReplacing,
+	type AtomicTaxonomyState,
 	type TaxonomyImportPlan,
 } from "#import/wxr-taxonomies.js";
 import type { EmDashHandlers, EmDashManifest } from "#types";
@@ -58,10 +62,12 @@ import { slugify } from "#utils/slugify.js";
 import { after } from "../../../../../after.js";
 import {
 	AtomicWxrImportRepository,
+	canonicalCommentsPlan,
 	canonicalJson,
 	sha256Hex,
 	supportsAtomicWxrImport,
 	type AtomicWxrItemReceipt,
+	type PendingGuestByline,
 } from "../../../../../database/repositories/wxr-atomic-import.js";
 import { validateIdentifier } from "../../../../../database/validate.js";
 import { getI18nConfig, resolveContentCreateLocale } from "../../../../../i18n/config.js";
@@ -220,6 +226,27 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		const text = await file.text();
 		const wxr = await parseWxrString(text);
 
+		// Refuse raw-password WXR in atomic mode BEFORE any writes (salted verifiers
+		// are non-deterministic across retries; require pre-supplied config.protections
+		// or redacted passwords).
+		if (
+			config.atomic &&
+			config.protectedContent === "emdash.protected-content.v1" &&
+			config.passwordSource === "raw-wxr" &&
+			wxr.posts.some((post) => {
+				const mapping = config.postTypeMappings[post.postType || "post"];
+				if (!mapping?.enabled) return false;
+				const carried = config.protections?.[String(post.id)];
+				return Boolean(post.postPassword) && carried === undefined;
+			})
+		) {
+			return apiError(
+				"ATOMIC_RAW_PASSWORD_UNSUPPORTED",
+				"Atomic WXR import does not support raw WXR passwords; supply deterministic config.protections or redact passwords",
+				400,
+			);
+		}
+
 		// Build attachment ID -> URL map for featured images
 		const attachmentMap = new Map<string, string>();
 		for (const att of wxr.attachments) {
@@ -236,51 +263,59 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		}
 
 		return await coalesceObjectCacheWrites(async () => {
-			// Pre-create taxonomy terms (categories, tags, custom taxonomies) so
-			// per-post assignments can resolve to existing rows. Done before any
-			// content insert because WXR exports list terms at the top of the
-			// file but per-item assignments only reference them by slug.
-			const taxonomyPlan = await preImportWxrTaxonomies(
-				emdash.db,
-				wxr.posts,
-				wxr.categories,
-				wxr.tags,
-				wxr.terms,
-				config.locale,
-			);
+			let taxonomyPlan: TaxonomyImportPlan | undefined;
+			let atomicTaxonomyState: AtomicTaxonomyState | undefined;
 
-			// Multilingual imports (WPML / Polylang -- see #1080) need a term
-			// row at each per-post locale, all sharing the canonical term's
-			// `translation_group`. Without this, `getTermsForEntry(..., locale)`
-			// on non-canonical translations comes back empty.
-			//
-			// The mirror raises `WxrTaxonomyConflictError` with an operator-
-			// actionable message when an existing locale row has an
-			// incompatible group. Surface its `publicMessage` directly so the
-			// admin UI can tell the user which (taxonomy, slug, locale) needs
-			// reconciliation. Other errors (DB connectivity, unexpected
-			// repository failures) re-throw to the outer catch where
-			// `handleError` masks them with the generic "Failed to import
-			// content" -- exposing raw DB errors to clients would leak schema
-			// names and bypass the AGENTS.md "never expose error.message" rule.
-			const postLocales = new Set<string>();
-			for (const post of wxr.posts) {
-				if (post.locale) postLocales.add(post.locale);
-			}
-			if (postLocales.size > 0) {
-				try {
-					await mirrorTermsToLocales(emdash.db, taxonomyPlan, postLocales, config.locale);
-				} catch (mirrorError) {
-					if (isWxrTaxonomyConflictError(mirrorError)) {
-						console.error("[WXR_IMPORT_TAXONOMY_CONFLICT]", mirrorError);
-						return apiError("WXR_IMPORT_TAXONOMY_CONFLICT", mirrorError.publicMessage, 409);
+			if (config.atomic) {
+				// Atomic path: load existing taxonomy defs and terms READ-ONLY (zero writes,
+				// zero conflict throws before per-post receipt/slug classification). Missing
+				// terms and locale mirrors are inserted INSIDE each new post's atomic batch.
+				atomicTaxonomyState = await loadAtomicTaxonomyStateFromDb(
+					emdash.db,
+					wxr.categories,
+					wxr.tags,
+					wxr.terms,
+				);
+			} else {
+				// Pre-create taxonomy terms (categories, tags, custom taxonomies) so
+				// per-post assignments can resolve to existing rows. Done before any
+				// content insert because WXR exports list terms at the top of the
+				// file but per-item assignments only reference them by slug.
+				taxonomyPlan = await preImportWxrTaxonomies(
+					emdash.db,
+					wxr.posts,
+					wxr.categories,
+					wxr.tags,
+					wxr.terms,
+					config.locale,
+				);
+
+				// Multilingual imports (WPML / Polylang -- see #1080) need a term
+				// row at each per-post locale, all sharing the canonical term's
+				// `translation_group`. Without this, `getTermsForEntry(..., locale)`
+				// on non-canonical translations comes back empty.
+				const postLocales = new Set<string>();
+				for (const post of wxr.posts) {
+					if (post.locale) postLocales.add(post.locale);
+				}
+				if (postLocales.size > 0) {
+					try {
+						await mirrorTermsToLocales(emdash.db, taxonomyPlan, postLocales, config.locale);
+					} catch (mirrorError) {
+						if (isWxrTaxonomyConflictError(mirrorError)) {
+							console.error("[WXR_IMPORT_TAXONOMY_CONFLICT]", mirrorError);
+							return apiError("WXR_IMPORT_TAXONOMY_CONFLICT", mirrorError.publicMessage, 409);
+						}
+						throw mirrorError;
 					}
-					throw mirrorError;
 				}
 			}
 
 			const seoSite = wxrSeoContext(wxr, config, emdashManifest);
 			const fallbackSourceLineage = config.atomic ? `wxr:${await sha256Hex(text)}` : undefined;
+			const effectiveSourceLineage = config.atomic
+				? (config.sourceLineage ?? fallbackSourceLineage ?? `wxr:${await sha256Hex(text)}`)
+				: "";
 
 			// Import content (locale from config scopes all items)
 			const result = await importContent(
@@ -298,20 +333,32 @@ export const POST: APIRoute = async ({ request, locals }) => {
 				{
 					fallbackSourceLineage,
 					siteLink: wxr.site.link,
+					atomicTaxonomyState,
 				},
 			);
 
 			// Import reusable blocks as sections (if enabled)
 			if (config.importSections !== false) {
-				const sectionsResult = await importReusableBlocksAsSections(wxr.posts, emdash.db);
-				result.sections = {
-					created: sectionsResult.sectionsCreated,
-					skipped: sectionsResult.sectionsSkipped,
-				};
-				// Add section errors to main errors array
-				result.errors.push(...sectionsResult.errors);
-				if (sectionsResult.errors.length > 0) {
-					result.success = false;
+				if (config.atomic) {
+					const canonicalLocale = resolveContentCreateLocale(config.locale);
+					await importReusableBlocksAsSectionsAtomic(
+						wxr.posts,
+						emdash.db,
+						effectiveSourceLineage,
+						canonicalLocale,
+						result,
+					);
+				} else {
+					const sectionsResult = await importReusableBlocksAsSections(wxr.posts, emdash.db);
+					result.sections = {
+						created: sectionsResult.sectionsCreated,
+						skipped: sectionsResult.sectionsSkipped,
+					};
+					// Add section errors to main errors array
+					result.errors.push(...sectionsResult.errors);
+					if (sectionsResult.errors.length > 0) {
+						result.success = false;
+					}
 				}
 			}
 
@@ -365,7 +412,7 @@ export async function importContent(
 	attachmentMap: Map<string, string>,
 	locale: string | undefined,
 	authorDisplayNames: Map<string, string> | undefined,
-	taxonomyPlan: TaxonomyImportPlan,
+	taxonomyPlan: TaxonomyImportPlan | undefined,
 	seoSite?: WxrSeoSite,
 	siteLanguage?: string,
 	/** The export's `<generator>`: another program's export is stored as written (texturizes). */
@@ -377,8 +424,13 @@ export async function importContent(
 		fallbackSourceLineage?: string;
 		/** Parsed `<channel><link>` included in per-item fingerprints for reconciliation. */
 		siteLink?: string;
+		/** Read-only atomic taxonomy state (atomic mode only; zero writes before classification). */
+		atomicTaxonomyState?: AtomicTaxonomyState;
 	},
 ): Promise<ImportResult> {
+	const atomicTaxonomyState = config.atomic
+		? (options?.atomicTaxonomyState ?? (await loadAtomicTaxonomyStateFromDb(emdash.db, [], [], [])))
+		: undefined;
 	const result: ImportResult = {
 		success: true,
 		imported: 0,
@@ -391,10 +443,10 @@ export async function importContent(
 			note: texturizeNote(siteLanguage, generator),
 		},
 		taxonomies: {
-			termsCreated: taxonomyPlan.termsCreated,
-			termsReused: taxonomyPlan.termsReused,
+			termsCreated: taxonomyPlan?.termsCreated ?? atomicTaxonomyState?.termsCreated ?? {},
+			termsReused: taxonomyPlan?.termsReused ?? atomicTaxonomyState?.termsReused ?? {},
 			assignments: 0,
-			missingTaxonomies: taxonomyPlan.missingTaxonomies,
+			missingTaxonomies: taxonomyPlan?.missingTaxonomies ?? [],
 		},
 	};
 
@@ -457,6 +509,17 @@ export async function importContent(
 	if (useAtomic) {
 		result.items = [];
 		result.changed = 0;
+		if (config.importComments !== false) {
+			result.comments = { imported: 0, skipped: 0, notCarried: {} };
+		}
+	}
+
+	const canonicalDefaultLocale = resolveContentCreateLocale(locale);
+	const atomicPostLocales = new Set<string>();
+	if (useAtomic) {
+		for (const p of posts) {
+			if (p.locale) atomicPostLocales.add(p.locale);
+		}
 	}
 
 	// Preload existing (slug, locale) -> id once per enabled collection when
@@ -500,11 +563,11 @@ export async function importContent(
 	let createdSinceFlush = 0;
 
 	// Source-side translation group ID -> the EmDash ID of the first RECEIPTED
-	// post we imported for that group. Skipped (unreceipted/wrong-source) anchors
-	// are tracked separately so siblings refuse instead of creating standalone rows
-	// or mutating the skipped row.
+	// post we imported for that group. Skipped, changed, or conflicting anchors
+	// are tracked separately so new siblings refuse instead of detaching into
+	// standalone rows or mutating the blocked anchor.
 	const translationGroupMap = new Map<string, string>();
-	const skippedTranslationGroups = new Set<string>();
+	const blockedTranslationGroups = new Set<string>();
 
 	// WP post ID -> the EmDash entry it is (stored now, or found already
 	// stored), and its collection: where the item's comments go.
@@ -699,7 +762,7 @@ export async function importContent(
 			const createdAt = parsedDate ? parsedDate.toISOString() : undefined;
 			const publishedAt = createStatus === "published" && createdAt ? createdAt : undefined;
 
-			if (useAtomic && emdash.handleContentCreateAtomicWxr) {
+			if (useAtomic && emdash.handleContentCreateAtomicWxr && atomicTaxonomyState) {
 				const sourcePostId =
 					post.id !== undefined ? String(post.id) : `missing:${postIndex}:${slug}`;
 				const canonicalLocale = resolveContentCreateLocale(postLocale);
@@ -713,12 +776,6 @@ export async function importContent(
 					atomicStatus === "scheduled" && scheduledMoment.date
 						? scheduledMoment.date.toISOString()
 						: undefined;
-				const resolvedTerms = await resolvePostTaxonomyPivots(
-					emdash.db,
-					collection,
-					post,
-					taxonomyPlan,
-				);
 				const atomicSeo = seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined;
 				const protectionFingerprint = protection.protection
 					? {
@@ -729,8 +786,20 @@ export async function importContent(
 					: protection.protected
 						? { mode: protection.unrecoverable ? "password-unrecoverable" : "password-protected" }
 						: null;
-				// Fingerprint the complete canonical source inputs & plan BEFORE wall-clock
-				// status transitions, Portable Text random block `_key`s, or guest byline ULIDs.
+
+				// Pure in-memory preparation of source term identities and carried comment plan
+				// (ZERO DB reads or writes, ZERO destination ULIDs).
+				const sourceTerms = canonicalSourceTermIdentities(post);
+				const commentSourcePost = config.protections?.[String(post.id)]
+					? { ...post, postPassword: "redacted" }
+					: post;
+				const preparedComments =
+					config.importComments !== false
+						? prepareWxrPostComments(commentSourcePost, texturize)
+						: { comments: [], notCarried: {} };
+
+				// Fingerprint STABLE SOURCE INPUTS ONLY (before any DB taxonomy/byline writes,
+				// before wall-clock status transitions, and before Portable Text random `_key`s).
 				const inputFingerprint = `v1:${await sha256Hex(
 					canonicalJson({
 						siteLink: options?.siteLink ?? null,
@@ -753,13 +822,14 @@ export async function importContent(
 						creator: post.creator ?? null,
 						authorId: authorId ?? null,
 						seo: atomicSeo ?? null,
-						terms: resolvedTerms.pivots,
-						replaceTaxonomies: translationOf ? resolvedTerms.carriedTaxonomies : [],
+						sourceTerms,
+						importComments: config.importComments !== false,
+						commentTexturize: texturize,
+						comments: canonicalCommentsPlan(preparedComments.comments),
 					}),
 				)}`;
 
-				// Check durable receipt BEFORE resolving/creating guest bylines so a
-				// replay/changed/conflict performs strictly ZERO writes.
+				// 1. ONE read-only receipt decision BEFORE any taxonomy/byline/comment/content writes.
 				const atomicRepo = new AtomicWxrImportRepository(emdash.db);
 				const existingReceipt = await atomicRepo.findReceipt(
 					effectiveSourceLineage,
@@ -768,6 +838,9 @@ export async function importContent(
 				);
 				if (existingReceipt) {
 					if (existingReceipt.collection !== collection) {
+						if (post.translationGroup) {
+							blockedTranslationGroups.add(post.translationGroup);
+						}
 						result.errors.push({
 							title: post.title || "Untitled",
 							error: `Source "${sourcePostId}" (${canonicalLocale}) was already imported into "${existingReceipt.collection}", not "${collection}"`,
@@ -775,6 +848,10 @@ export async function importContent(
 						continue;
 					}
 					if (existingReceipt.input_fingerprint !== inputFingerprint) {
+						// Changed anchor grants ZERO custody (no comments, no translation authority).
+						if (post.translationGroup) {
+							blockedTranslationGroups.add(post.translationGroup);
+						}
 						result.changed = (result.changed ?? 0) + 1;
 						result.items?.push({
 							collection: existingReceipt.collection,
@@ -789,16 +866,10 @@ export async function importContent(
 							committedHash: existingReceipt.committed_hash,
 							outcome: "changed",
 						});
-						stored(post, collection, existingReceipt.entry_id);
-						if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
-							translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
-						}
 						continue;
 					}
-					// When incremental media capture is inactive, check if a prior cut left
-					// derived media usage unindexed; if so, delegate to runtime replay repair
-					// without writing source rows, guest bylines, or firing hooks.
-					let needsUsageRepair = false;
+					// Replay: ZERO durable source writes, ZERO hooks, ZERO comments.
+					// Cheap derived-cache/index recovery if a prior cut lost the post-commit flush.
 					if (!incrementalCaptureActive) {
 						const existingUsageSource = await emdash.db
 							.selectFrom("_emdash_media_usage_sources")
@@ -806,55 +877,104 @@ export async function importContent(
 							.where("collection_slug", "=", collection)
 							.where("content_id", "=", existingReceipt.entry_id)
 							.executeTakeFirst();
-						needsUsageRepair = !existingUsageSource;
-					}
-					if (!needsUsageRepair) {
-						result.skipped++;
-						result.items?.push({
-							collection: existingReceipt.collection,
-							id: existingReceipt.entry_id,
-							slug: existingReceipt.slug,
-							locale: existingReceipt.locale,
-							translationGroup: existingReceipt.translation_group,
-							status: existingReceipt.status,
-							operationId: existingReceipt.operation_id,
-							sourcePostId: existingReceipt.source_post_id,
-							storedDataHash: existingReceipt.stored_data_hash,
-							committedHash: existingReceipt.committed_hash,
-							outcome: "replayed",
-						});
-						stored(post, collection, existingReceipt.entry_id);
-						if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
-							translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
+						if (!existingUsageSource) {
+							await emdash.handleContentCreateAtomicWxr(
+								collection,
+								{
+									sourceLineage: effectiveSourceLineage,
+									sourcePostId,
+									sourceGroupId: post.translationGroup,
+									inputFingerprint,
+									data,
+									slug,
+									status: atomicStatus,
+									locale: canonicalLocale,
+									terms: [],
+								},
+								{ skipMediaUsageRefresh: false },
+							);
 						}
-						continue;
 					}
+					invalidateCollectionCache(collection);
+					result.skipped++;
+					result.items?.push({
+						collection: existingReceipt.collection,
+						id: existingReceipt.entry_id,
+						slug: existingReceipt.slug,
+						locale: existingReceipt.locale,
+						translationGroup: existingReceipt.translation_group,
+						status: existingReceipt.status,
+						operationId: existingReceipt.operation_id,
+						sourcePostId: existingReceipt.source_post_id,
+						storedDataHash: existingReceipt.stored_data_hash,
+						committedHash: existingReceipt.committed_hash,
+						outcome: "replayed",
+					});
+					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+						translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
+					}
+					continue;
 				}
 
-				// If this item belongs to a translation group whose anchor was skipped
-				// (unreceipted or wrong source), refuse without creating a standalone row
-				// or mutating the skipped row.
+				// 2. Read-only existing slug check BEFORE blockedTranslationGroups so a
+				// 1-byte fallback re-export skips BOTH existing translation siblings cleanly
+				// with zero writes and zero errors, while a NEW sibling still refuses below.
+				const existingBySlug = await contentRepo.findBySlug(collection, slug, canonicalLocale);
+				if (existingBySlug) {
+					result.skipped++;
+					if (post.translationGroup) {
+						blockedTranslationGroups.add(post.translationGroup);
+					}
+					continue;
+				}
+
+				// 3. Refuse any NEW sibling whose translation anchor was skipped, changed, or
+				// conflicted — never let it detach into a standalone row.
 				if (
 					post.translationGroup &&
 					!translationOf &&
-					skippedTranslationGroups.has(post.translationGroup)
+					blockedTranslationGroups.has(post.translationGroup)
 				) {
 					result.errors.push({
 						title: post.title || "Untitled",
-						error: `Translation anchor for source group "${post.translationGroup}" was skipped without a matching import receipt`,
+						error: `Translation anchor for source group "${post.translationGroup}" was skipped, changed, or conflicted; sibling refused`,
 					});
 					continue;
 				}
 
-				const atomicBylineId = existingReceipt
-					? undefined
-					: await resolveImportByline(
-							post.creator,
-							authorDisplayNames?.get(post.creator ?? "") ?? post.creator,
-							authorId,
-							bylineRepo,
-							bylineCache,
-						);
+				// 4. NEW item only: read-only write planning (terms + guest byline + comments).
+				let plannedTerms: ReturnType<typeof planAtomicPostTaxonomies>;
+				try {
+					plannedTerms = planAtomicPostTaxonomies(
+						atomicTaxonomyState,
+						collection,
+						post,
+						canonicalLocale,
+						canonicalDefaultLocale,
+						atomicPostLocales,
+					);
+				} catch (taxErr) {
+					if (post.translationGroup) {
+						blockedTranslationGroups.add(post.translationGroup);
+					}
+					result.errors.push({
+						title: post.title || "Untitled",
+						error: isWxrTaxonomyConflictError(taxErr)
+							? taxErr.publicMessage
+							: taxErr instanceof Error
+								? taxErr.message
+								: "Failed to plan taxonomies",
+					});
+					continue;
+				}
+
+				const bylinePlan = await planAtomicByline(
+					post.creator,
+					authorDisplayNames?.get(post.creator ?? "") ?? post.creator,
+					authorId,
+					bylineRepo,
+					bylineCache,
+				);
 
 				const atomicResult = await emdash.handleContentCreateAtomicWxr(
 					collection,
@@ -868,12 +988,21 @@ export async function importContent(
 						slug,
 						status: atomicStatus,
 						authorId,
-						bylines: atomicBylineId ? [{ bylineId: atomicBylineId }] : undefined,
+						bylines: bylinePlan.existingBylineId
+							? [{ bylineId: bylinePlan.existingBylineId }]
+							: undefined,
+						pendingGuestByline: bylinePlan.pendingGuestByline,
 						locale: canonicalLocale,
 						seo: atomicSeo,
 						translationOf,
-						terms: resolvedTerms.pivots,
-						replaceTaxonomies: translationOf ? resolvedTerms.carriedTaxonomies : undefined,
+						terms: plannedTerms.pivots,
+						pendingTerms:
+							plannedTerms.pendingTerms.length > 0 ? plannedTerms.pendingTerms : undefined,
+						replaceTaxonomies: translationOf ? plannedTerms.carriedTaxonomies : undefined,
+						pendingComments:
+							config.importComments !== false && preparedComments.comments.length > 0
+								? preparedComments.comments
+								: undefined,
 						createdAt,
 						publishedAt: atomicStatus === "published" ? createdAt : undefined,
 						scheduledAt: atomicScheduledAt,
@@ -882,6 +1011,9 @@ export async function importContent(
 				);
 
 				if (!atomicResult.success || !atomicResult.data) {
+					if (post.translationGroup) {
+						blockedTranslationGroups.add(post.translationGroup);
+					}
 					result.errors.push({
 						title: post.title || "Untitled",
 						error: atomicResult.error?.message || "Atomic WXR import failed",
@@ -894,12 +1026,24 @@ export async function importContent(
 					result.imported++;
 					result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
 					result.items?.push(applied.receipt);
-					stored(post, collection, applied.receipt.id);
+					if (plannedTerms.pendingTerms.length > 0) {
+						recordCommittedAtomicTerms(atomicTaxonomyState, plannedTerms.pendingTerms);
+					}
+					if (applied.receipt.createdBylineId && bylinePlan.cacheKey) {
+						bylineCache.set(bylinePlan.cacheKey, applied.receipt.createdBylineId);
+					}
 					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
 						translationGroupMap.set(post.translationGroup, applied.receipt.id);
 					}
 					if (result.taxonomies) {
-						result.taxonomies.assignments += resolvedTerms.pivots.length;
+						result.taxonomies.assignments += plannedTerms.pivots.length;
+					}
+					if (result.comments && config.importComments !== false) {
+						result.comments.imported += preparedComments.comments.length;
+						for (const [reason, count] of Object.entries(preparedComments.notCarried)) {
+							result.comments.notCarried[reason] =
+								(result.comments.notCarried[reason] ?? 0) + count;
+						}
 					}
 					for (const warning of converted.warnings) {
 						result.errors.push({ title: post.title || "Untitled", error: warning });
@@ -933,32 +1077,36 @@ export async function importContent(
 						createdSinceFlush = 0;
 					}
 				} else if (applied.outcome === "replayed") {
+					invalidateCollectionCache(collection);
 					result.skipped++;
 					result.items?.push(applied.receipt);
-					stored(post, collection, applied.receipt.id);
 					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
 						translationGroupMap.set(post.translationGroup, applied.receipt.id);
 					}
 				} else if (applied.outcome === "changed") {
 					result.changed = (result.changed ?? 0) + 1;
 					result.items?.push(applied.receipt);
-					stored(post, collection, applied.receipt.id);
-					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
-						translationGroupMap.set(post.translationGroup, applied.receipt.id);
+					if (post.translationGroup) {
+						blockedTranslationGroups.add(post.translationGroup);
 					}
 				} else if (applied.outcome === "skipped") {
-					// A skipped (unreceipted or wrong-source) slug grants ZERO custody:
-					// never attach comments (`stored`) and never bind `translationGroupMap`.
+					// A skipped (unreceipted or wrong-source) slug grants ZERO custody.
 					result.skipped++;
 					if (post.translationGroup) {
-						skippedTranslationGroups.add(post.translationGroup);
+						blockedTranslationGroups.add(post.translationGroup);
 					}
 				} else if (applied.outcome === "conflict") {
+					if (post.translationGroup) {
+						blockedTranslationGroups.add(post.translationGroup);
+					}
 					result.errors.push({
 						title: post.title || "Untitled",
 						error: applied.reason,
 					});
 				} else {
+					if (post.translationGroup) {
+						blockedTranslationGroups.add(post.translationGroup);
+					}
 					result.errors.push({
 						title: post.title || "Untitled",
 						error: applied.message,
@@ -1088,7 +1236,7 @@ export async function importContent(
 				// Translations replace only taxonomies they explicitly carry.
 				// Since assignments belong to the content translation_group,
 				// that replacement is reflected in every sibling locale.
-				if (createdItem) {
+				if (createdItem && taxonomyPlan) {
 					try {
 						const written = translationOf
 							? await setPostTermAssignmentsReplacing(
@@ -1140,7 +1288,7 @@ export async function importContent(
 		}
 	}
 
-	if (config.importComments !== false) {
+	if (!useAtomic && config.importComments !== false) {
 		const comments = await importWxrComments(
 			posts.map((post) =>
 				config.protections?.[String(post.id)] ? { ...post, postPassword: "redacted" } : post,
@@ -1179,6 +1327,134 @@ export async function importContent(
 
 	result.success = result.errors.length === 0;
 	return result;
+}
+
+/**
+ * Read-only byline planner for atomic WXR import (ZERO writes). Resolves an
+ * existing byline by userId/cache/slug, or returns a `PendingGuestByline` to
+ * be inserted INSIDE the post's atomic batch.
+ */
+async function planAtomicByline(
+	authorLogin: string | undefined,
+	displayName: string | undefined,
+	mappedUserId: string | undefined,
+	bylineRepo: BylineRepository,
+	cache: Map<string, string>,
+): Promise<{
+	cacheKey?: string;
+	existingBylineId?: string;
+	pendingGuestByline?: PendingGuestByline;
+}> {
+	if (!authorLogin) return {};
+	const cacheKey = `${authorLogin}:${mappedUserId ?? ""}`;
+	const cached = cache.get(cacheKey);
+	if (cached) return { cacheKey, existingBylineId: cached };
+
+	if (mappedUserId) {
+		const existingForUser = await bylineRepo.findByUserId(mappedUserId);
+		if (existingForUser) {
+			cache.set(cacheKey, existingForUser.id);
+			return { cacheKey, existingBylineId: existingForUser.id };
+		}
+	}
+
+	const name = displayName || authorLogin;
+	const slugBase = slugify(authorLogin) || "author";
+	const existingByBase = await bylineRepo.findBySlug(slugBase);
+	if (
+		existingByBase &&
+		!mappedUserId &&
+		existingByBase.isGuest &&
+		existingByBase.displayName === name
+	) {
+		cache.set(cacheKey, existingByBase.id);
+		return { cacheKey, existingBylineId: existingByBase.id };
+	}
+
+	let candidateSlug = slugBase;
+	let suffix = 1;
+	while (await bylineRepo.findBySlug(candidateSlug)) {
+		// oxlint-disable-next-line no-await-in-loop -- read-only slug disambiguation
+		candidateSlug = `${slugBase}-${suffix}`;
+		suffix++;
+	}
+	return {
+		cacheKey,
+		pendingGuestByline: {
+			slug: candidateSlug,
+			displayName: name,
+			userId: mappedUserId ?? null,
+		},
+	};
+}
+
+/**
+ * Atomic per-section (`wp_block`) importer. Gives each reusable section its own
+ * receipt in `_emdash_wxr_import_receipts` (`collection = "_emdash_sections"`)
+ * committed in ONE atomic D1 `.batch()` / SQLite transaction with `_emdash_sections`.
+ */
+async function importReusableBlocksAsSectionsAtomic(
+	posts: WxrPost[],
+	db: EmDashHandlers["db"],
+	sourceLineage: string,
+	canonicalLocale: string,
+	result: ImportResult,
+): Promise<void> {
+	const reusableBlocks = posts.filter((post) => post.postType === "wp_block");
+	const summary = { created: 0, skipped: 0 };
+	if (reusableBlocks.length === 0) {
+		result.sections = summary;
+		return;
+	}
+
+	const atomicRepo = new AtomicWxrImportRepository(db);
+	for (const [idx, block] of reusableBlocks.entries()) {
+		const title = block.title || "Untitled Block";
+		const slug =
+			block.postName ||
+			slugify(block.title || `block-${block.id !== undefined ? block.id : `item-${idx}`}`);
+		const sourcePostId =
+			block.id !== undefined ? `section:${block.id}` : `section:missing:${idx}:${slug}`;
+		const inputFingerprint = `v1:${await sha256Hex(
+			canonicalJson({
+				slug,
+				title,
+				rawContent: block.content ?? "",
+			}),
+		)}`;
+		const content = block.content ? gutenbergToPortableText(block.content) : [];
+
+		const applied = await atomicRepo.applySectionCreate({
+			sourceLineage,
+			sourcePostId,
+			slug,
+			locale: canonicalLocale,
+			title,
+			contentJson: JSON.stringify(content),
+			inputFingerprint,
+		});
+
+		if (applied.outcome === "created") {
+			summary.created++;
+			result.items?.push(applied.receipt);
+		} else if (applied.outcome === "replayed") {
+			invalidateCollectionCache("_emdash_sections");
+			summary.skipped++;
+			result.items?.push(applied.receipt);
+		} else if (applied.outcome === "changed") {
+			result.changed = (result.changed ?? 0) + 1;
+			result.items?.push(applied.receipt);
+		} else if (applied.outcome === "skipped") {
+			summary.skipped++;
+		} else if (applied.outcome === "conflict") {
+			result.errors.push({ title, error: applied.reason });
+			result.success = false;
+		} else {
+			result.errors.push({ title, error: applied.message });
+			result.success = false;
+		}
+	}
+	result.sections = summary;
 }
 
 /**

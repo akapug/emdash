@@ -19,7 +19,7 @@
  */
 
 import { env } from "cloudflare:test";
-import { Kysely, SqliteAdapter, sql } from "kysely";
+import { Kysely, PostgresAdapter, SqliteAdapter, sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { RawBindingD1Dialect } from "../../../cloudflare/src/db/d1-dialect.js";
@@ -33,6 +33,7 @@ import {
 	AtomicWxrImportRepository,
 	computeStoredDataHash,
 	D1_MAX_VALUE_BYTES,
+	supportsAtomicWxrImport,
 	type AtomicWxrCreateInput,
 	type AtomicWxrItemReceipt,
 } from "../../src/database/repositories/wxr-atomic-import.js";
@@ -557,5 +558,263 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 		} finally {
 			await unproven.destroy();
 		}
+
+		// PostgreSQL adapter is also refused until a dedicated two-session concurrency proof exists.
+		class MockPgDialect extends RawBindingD1Dialect {
+			override createAdapter(): PostgresAdapter {
+				return new PostgresAdapter();
+			}
+		}
+		const pgDb = new Kysely<Database>({ dialect: new MockPgDialect({ database: env.DB }) });
+		try {
+			expect(supportsAtomicWxrImport(pgDb)).toBe(false);
+		} finally {
+			await pgDb.destroy();
+		}
+	});
+
+	it("commits pendingTerms + pendingGuestByline + pendingComments in ONE D1 batch and rolls ALL back on failure", async () => {
+		const before = await snapshot();
+		const termId = "01JZZZZZZZZZZZZZZZZZZZ0001";
+		const commentId = "01JZZZZZZZZZZZZZZZZZZZ0002";
+
+		// Forced assertion failure rolls back pending term, guest byline, comment, content, baseline, and receipt.
+		const failed = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "401",
+				slug: "all-in-one",
+				bylines: undefined,
+				pendingGuestByline: { slug: "guest-atomic", displayName: "Guest Atomic" },
+				pendingTerms: [
+					{
+						id: termId,
+						name: "category",
+						slug: "in-batch-cat",
+						label: "In Batch Cat",
+						locale: "en",
+						translationGroup: termId,
+					},
+				],
+				terms: [{ taxonomy: "category", termGroup: termId }],
+				pendingComments: [
+					{
+						id: commentId,
+						parentId: null,
+						authorName: "Commenter",
+						authorEmail: "c@example.org",
+						body: "Atomic comment",
+						status: "approved",
+						createdAt: "2026-01-01T00:00:00.000Z",
+					},
+				],
+				_forceAssertionFailure: true,
+			}),
+		);
+		expect(failed.outcome).toBe("conflict");
+		expect(await snapshot()).toEqual(before);
+		expect(
+			(await sql`SELECT * FROM taxonomies WHERE id = ${termId}`.execute(db)).rows,
+		).toHaveLength(0);
+		expect(
+			(await sql`SELECT * FROM _emdash_bylines WHERE slug = 'guest-atomic'`.execute(db)).rows,
+		).toHaveLength(0);
+		expect(
+			(await sql`SELECT * FROM _emdash_comments WHERE id = ${commentId}`.execute(db)).rows,
+		).toHaveLength(0);
+
+		// Now commit cleanly in ONE D1 batch.
+		batches = 0;
+		const created = requireCreated(
+			await repo.applyCreate(
+				makeInput({
+					sourcePostId: "401",
+					slug: "all-in-one",
+					bylines: undefined,
+					pendingGuestByline: { slug: "guest-atomic", displayName: "Guest Atomic" },
+					pendingTerms: [
+						{
+							id: termId,
+							name: "category",
+							slug: "in-batch-cat",
+							label: "In Batch Cat",
+							locale: "en",
+							translationGroup: termId,
+						},
+					],
+					terms: [{ taxonomy: "category", termGroup: termId }],
+					pendingComments: [
+						{
+							id: commentId,
+							parentId: null,
+							authorName: "Commenter",
+							authorEmail: "c@example.org",
+							body: "Atomic comment",
+							status: "approved",
+							createdAt: "2026-01-01T00:00:00.000Z",
+						},
+					],
+				}),
+			),
+		);
+		expect(batches).toBe(1);
+		expect(created.createdBylineId).toBeTruthy();
+		expect(
+			(await sql`SELECT * FROM taxonomies WHERE id = ${termId}`.execute(db)).rows,
+		).toHaveLength(1);
+		expect(
+			(await sql`SELECT * FROM _emdash_comments WHERE id = ${commentId}`.execute(db)).rows,
+		).toHaveLength(1);
+	});
+
+	it("requires sourceGroupId on translations, hashes post-inheritance readout, and guards NULL vs empty string", async () => {
+		const anchor = requireCreated(
+			await repo.applyCreate(
+				makeInput({
+					sourcePostId: "410",
+					sourceGroupId: "trid-410",
+					slug: "inherit-anchor",
+					data: { title: "Anchor", content: "[]", event_at: null },
+					inputFingerprint: "v1:fp-410-en",
+				}),
+			),
+		);
+
+		// Missing sourceGroupId on translation -> refused as conflict.
+		const missingGroup = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "411",
+				sourceGroupId: undefined,
+				slug: "inherit-fr",
+				locale: "fr",
+				translationOf: anchor.id,
+				inputFingerprint: "v1:fp-411-fr",
+			}),
+		);
+		expect(missingGroup.outcome).toBe("conflict");
+
+		// Concurrent drift from NULL to empty string "" on inherited field -> typed null-safe guard rejects!
+		const nullDrift = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "412",
+				sourceGroupId: "trid-410",
+				slug: "inherit-de",
+				locale: "de",
+				translationOf: anchor.id,
+				inheritFields: ["event_at"],
+				inputFingerprint: "v1:fp-412-de",
+				_beforeCommit: async () => {
+					await sql`UPDATE ec_posts SET event_at = '' WHERE id = ${anchor.id}`.execute(db);
+				},
+			}),
+		);
+		expect(nullDrift.outcome).toBe("conflict");
+
+		// Restore NULL and verify storedDataHash matches actual stored translated readout.
+		await sql`UPDATE ec_posts SET event_at = '2026-06-01T00:00:00.000Z' WHERE id = ${anchor.id}`.execute(
+			db,
+		);
+		const tr = requireCreated(
+			await repo.applyCreate(
+				makeInput({
+					sourcePostId: "413",
+					sourceGroupId: "trid-410",
+					slug: "inherit-es",
+					locale: "es",
+					translationOf: anchor.id,
+					data: { title: "Ancla ES", content: "[]" },
+					inheritFields: ["event_at"],
+					inputFingerprint: "v1:fp-413-es",
+				}),
+			),
+		);
+		expect(tr.storedDataHash).toBe(
+			await computeStoredDataHash({
+				title: "Ancla ES",
+				content: "[]",
+				event_at: "2026-06-01T00:00:00.000Z",
+			}),
+		);
+	});
+
+	it("commits reusable sections atomically, rolls back on failure, and re-classifies concurrent losers", async () => {
+		const before = await snapshot();
+		const failed = await repo.applySectionCreate({
+			sourceLineage: "install:site-132",
+			sourcePostId: "section:901",
+			slug: "hero-d1",
+			locale: "en",
+			title: "Hero D1",
+			contentJson: "[]",
+			inputFingerprint: "v1:sec-901",
+			_forceAssertionFailure: true,
+		});
+		expect(failed.outcome).toBe("conflict");
+		expect(await snapshot()).toEqual(before);
+		expect((await sql`SELECT * FROM _emdash_sections`.execute(db)).rows).toHaveLength(0);
+
+		batches = 0;
+		const created = requireCreated(
+			await repo.applySectionCreate({
+				sourceLineage: "install:site-132",
+				sourcePostId: "section:901",
+				slug: "hero-d1",
+				locale: "en",
+				title: "Hero D1",
+				contentJson: "[]",
+				inputFingerprint: "v1:sec-901",
+			}),
+		);
+		expect(batches).toBe(1);
+		expect(created.collection).toBe("_emdash_sections");
+
+		// Replay returns replayed with 0 batches.
+		const replayed = await repo.applySectionCreate({
+			sourceLineage: "install:site-132",
+			sourcePostId: "section:901",
+			slug: "hero-d1",
+			locale: "en",
+			title: "Hero D1",
+			contentJson: "[]",
+			inputFingerprint: "v1:sec-901",
+		});
+		expect(replayed.outcome).toBe("replayed");
+		expect(batches).toBe(1);
+
+		// Concurrent slug loser on section create rolls back and re-classifies as `skipped`.
+		const racedSection = await repo.applySectionCreate({
+			sourceLineage: "install:site-132",
+			sourcePostId: "section:902",
+			slug: "raced-hero",
+			locale: "en",
+			title: "Raced Hero",
+			contentJson: "[]",
+			inputFingerprint: "v1:sec-902",
+			_beforeCommit: async () => {
+				await sql`
+					INSERT INTO _emdash_sections (id, slug, title, content, source, created_at, updated_at)
+					VALUES ('01JZZZZZZZZZZZZZZZZZZZ0902', 'raced-hero', 'Owner Hero', '[]', 'user', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+				`.execute(db);
+			},
+		});
+		expect(racedSection.outcome).toBe("skipped");
+
+		// Concurrent slug loser on post create also rolls back and re-classifies as `skipped`.
+		const racedPost = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "903",
+				slug: "raced-post",
+				inputFingerprint: "v1:fp-903",
+				_beforeCommit: async () => {
+					await new ContentRepository(db).create({
+						type: "posts",
+						slug: "raced-post",
+						locale: "en",
+						status: "published",
+						data: { title: "Owner Post", content: [] },
+					});
+				},
+			}),
+		);
+		expect(racedPost.outcome).toBe("skipped");
 	});
 });

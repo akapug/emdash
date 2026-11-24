@@ -23,7 +23,10 @@ import virtualConfig from "virtual:emdash/config";
 import { z } from "zod";
 
 import { ErrorCode } from "./api/errors.js";
-import { validateContentCreatePreconditions } from "./api/handlers/content.js";
+import {
+	validateContentCreatePreconditions,
+	validatePublishedRoutableSlug,
+} from "./api/handlers/content.js";
 import { buildManifestCollections } from "./api/handlers/manifest.js";
 import {
 	handleMediaUpload as uploadMedia,
@@ -111,6 +114,7 @@ import {
 	refreshContentMediaUsageAfterWrite,
 } from "./media/usage/content-refresh.js";
 import { processMediaUsageWorkAfterWrite } from "./media/usage/work-processor.js";
+import { invalidateCollectionCache } from "./object-cache/index.js";
 import {
 	scheduledPolicyRejectionKey,
 	type ScheduledPolicyRejection,
@@ -3776,6 +3780,11 @@ export class EmDashRuntime {
 			status?: string;
 			authorId?: string;
 			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
 			locale?: string;
 			translationOf?: string;
 			taxonomies?: Record<string, string[]>;
@@ -3847,11 +3856,18 @@ export class EmDashRuntime {
 			status: "draft" | "published" | "scheduled";
 			authorId?: string;
 			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
 			locale?: string;
 			seo?: ContentWriteInput["seo"];
 			translationOf?: string;
 			terms: readonly WxrTermPivot[];
+			pendingTerms?: readonly import("./database/repositories/wxr-atomic-import.js").PendingAtomicTerm[];
 			replaceTaxonomies?: readonly string[];
+			pendingComments?: readonly import("./import/comments.js").PreparedAtomicComment[];
 			createdAt?: string | null;
 			publishedAt?: string | null;
 			scheduledAt?: string | null;
@@ -3934,6 +3950,8 @@ export class EmDashRuntime {
 					]);
 				}
 			}
+			// Cheap derived-cache recovery if a prior cut lost the post-commit cache flush (zero source writes/hooks).
+			invalidateCollectionCache(collection);
 			return {
 				success: true,
 				data: {
@@ -3975,12 +3993,25 @@ export class EmDashRuntime {
 			return { success: false, error: pre.error };
 		}
 
-		const finalSlug = pre.slug;
+		const finalSlug = body.slug?.trim();
 		if (!finalSlug) {
 			return {
 				success: false,
 				error: { code: "VALIDATION_ERROR", message: "Atomic WXR import requires a slug" },
 			};
+		}
+		if (body.status === "published") {
+			try {
+				await validatePublishedRoutableSlug(this.db, collection, finalSlug);
+			} catch (error) {
+				return {
+					success: false,
+					error: {
+						code: "VALIDATION_ERROR",
+						message: error instanceof Error ? error.message : "Invalid publish slug",
+					},
+				};
+			}
 		}
 
 		const applied = await atomicRepo.applyCreate({
@@ -3994,6 +4025,7 @@ export class EmDashRuntime {
 			data: processedData,
 			authorId: body.authorId,
 			bylines: body.bylines,
+			pendingGuestByline: body.pendingGuestByline,
 			seo: body.seo,
 			hasSeo: pre.hasSeo,
 			protection: body.protection,
@@ -4003,7 +4035,9 @@ export class EmDashRuntime {
 			translationOf: body.translationOf,
 			inheritFields: sharedFieldSlugs,
 			terms: body.terms,
+			pendingTerms: body.pendingTerms,
 			replaceTaxonomies: body.replaceTaxonomies,
+			pendingComments: body.pendingComments,
 			inputFingerprint: body.inputFingerprint,
 		});
 

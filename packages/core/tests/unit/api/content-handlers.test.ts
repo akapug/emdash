@@ -1111,6 +1111,31 @@ describe("Content Handlers — slug-change auto-redirect on publish", () => {
 		expect(published.error.message).toContain("eleven");
 		expect(published.error.message).toContain(taken.data!.item.id);
 	});
+
+	it("generates a slug from title for ordinary published creates with explicit null, empty, or omitted slug", async () => {
+		const fromNull = await handleContentCreate(db, "post", {
+			data: { title: "Published Null Slug" },
+			slug: null,
+			status: "published",
+		});
+		expect(fromNull.success).toBe(true);
+		expect(fromNull.data?.item.slug).toBe("published-null-slug");
+
+		const fromEmpty = await handleContentCreate(db, "post", {
+			data: { title: "Published Empty Slug" },
+			slug: "",
+			status: "published",
+		});
+		expect(fromEmpty.success).toBe(true);
+		expect(fromEmpty.data?.item.slug).toBe("published-empty-slug");
+
+		const fromOmitted = await handleContentCreate(db, "post", {
+			data: { title: "Published Omitted Slug" },
+			status: "published",
+		});
+		expect(fromOmitted.success).toBe(true);
+		expect(fromOmitted.data?.item.slug).toBe("published-omitted-slug");
+	});
 });
 
 describe("handleContentList — backing table missing deleted_at column", () => {

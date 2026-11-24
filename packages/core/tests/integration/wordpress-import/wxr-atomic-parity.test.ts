@@ -133,12 +133,21 @@ const RICH_PARITY_WXR = `<?xml version="1.0" encoding="UTF-8"?>
       <wp:post_name>community-gathering</wp:post_name>
       <content:encoded><![CDATA[<p>Event description [MEC id="1"].</p>]]></content:encoded>
     </item>
+    <item>
+      <title>Reusable CTA Section</title>
+      <wp:post_id>107</wp:post_id>
+      <wp:post_type>wp_block</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>reusable-cta</wp:post_name>
+      <content:encoded><![CDATA[<p>Join us this weekend.</p>]]></content:encoded>
+    </item>
   </channel>
 </rss>`;
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const EMBEDDED_ULID_PATTERN = /[0-9A-HJKMNP-TV-Z]{26}/g;
 const ISO_TS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const SQLITE_TS_PATTERN = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
 function mapId(raw: string, idMap: Map<string, string>): string {
 	let token = idMap.get(raw);
@@ -154,7 +163,11 @@ function normalizeJsonValue(value: unknown, idMap: Map<string, string>): unknown
 		if (ULID_PATTERN.test(value)) {
 			return mapId(value, idMap);
 		}
-		if (ISO_TS_PATTERN.test(value) && !value.startsWith("2025-") && !value.startsWith("2030-")) {
+		if (
+			(ISO_TS_PATTERN.test(value) || SQLITE_TS_PATTERN.test(value)) &&
+			!value.startsWith("2025-") &&
+			!value.startsWith("2030-")
+		) {
 			return "NOW_TS";
 		}
 		if (value.startsWith("media-usage-projection:v1:sha256:")) {
@@ -321,6 +334,14 @@ async function seedDeterministicIdMap(db: Kysely<Database>): Promise<Map<string,
 	for (const cm of commentRows) {
 		idMap.set(cm.id, `CMT_${idMap.get(cm.content_id) ?? cm.content_id}_${cm.author_email ?? ""}`);
 	}
+	const sectionRows = (
+		await sql<{ id: string; slug: string }>`
+			SELECT id, slug FROM _emdash_sections ORDER BY slug ASC
+		`.execute(db)
+	).rows;
+	for (const sec of sectionRows) {
+		idMap.set(sec.id, `SEC_${sec.slug}`);
+	}
 	return idMap;
 }
 
@@ -377,7 +398,7 @@ describe("Item 132: legacy vs atomic WXR execute parity", () => {
 				"mec-events": { collection: "events", enabled: true },
 			},
 			skipExisting: true,
-			importSections: false,
+			importSections: true,
 			importSeo: true,
 			importComments: true,
 			protectedContent: PROTECTED_CONTENT_CAPABILITY,

@@ -359,6 +359,11 @@ export interface EmDashHandlers {
 			status?: string;
 			authorId?: string;
 			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
 			locale?: string;
 			seo?: {
 				title?: string | null;
@@ -396,6 +401,11 @@ export interface EmDashHandlers {
 			status: "draft" | "published" | "scheduled";
 			authorId?: string;
 			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
 			locale?: string;
 			seo?: {
 				title?: string | null;
@@ -406,7 +416,9 @@ export interface EmDashHandlers {
 			};
 			translationOf?: string;
 			terms: readonly import("../database/repositories/wxr-atomic-import.js").WxrTermPivot[];
+			pendingTerms?: readonly import("../database/repositories/wxr-atomic-import.js").PendingAtomicTerm[];
 			replaceTaxonomies?: readonly string[];
+			pendingComments?: readonly import("../import/comments.js").PreparedAtomicComment[];
 			createdAt?: string | null;
 			publishedAt?: string | null;
 			scheduledAt?: string | null;

@@ -1178,7 +1178,6 @@ export async function validateContentCreatePreconditions(
 			ok: true;
 			hasSeo: boolean;
 			effectiveLocale: string | undefined;
-			slug: string | null | undefined;
 	  }
 	| {
 			ok: false;
@@ -1219,16 +1218,17 @@ export async function validateContentCreatePreconditions(
 		? resolveConfiguredLocale(body.locale)
 		: getI18nConfig()?.defaultLocale;
 
-	// For callers supplying an explicit slug (such as atomic WXR import), check
-	// routable publish requirements here. Generated-slug allocation stays inside
-	// `handleContentCreate`'s transaction so concurrent creates serialize properly.
-	const slug: string | null | undefined = body.slug;
-	if (slug !== undefined && body.status === "published") {
-		const publishConfig = await getCollectionPublishConfig(db, collection);
-		requireRoutablePublishSlug(publishConfig.routable, slug);
-	}
+	return { ok: true, hasSeo, effectiveLocale };
+}
 
-	return { ok: true, hasSeo, effectiveLocale, slug };
+/** Validate routable publish slug requirement for callers supplying an explicit slug (e.g. atomic WXR). */
+export async function validatePublishedRoutableSlug(
+	db: Kysely<Database>,
+	collection: string,
+	slug: string | null | undefined,
+): Promise<void> {
+	const publishConfig = await getCollectionPublishConfig(db, collection);
+	requireRoutablePublishSlug(publishConfig.routable, slug);
 }
 
 /**

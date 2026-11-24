@@ -16,6 +16,10 @@ import {
 	type ImportResult,
 } from "../../../src/astro/routes/api/import/wordpress/execute.js";
 import type { EmDashHandlers } from "../../../src/astro/types.js";
+import {
+	createPasswordVerifier,
+	PROTECTED_CONTENT_CAPABILITY,
+} from "../../../src/content/protection.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import type { Database } from "../../../src/database/types.js";
 import { createRequestMetrics, runWithContext } from "../../../src/request-context.js";
@@ -447,5 +451,272 @@ describe("Item 132: atomic per-post WXR execute", () => {
 		expect(secondExp.body.data.imported).toBe(0);
 		expect(secondExp.body.data.skipped).toBe(1);
 		expect(secondExp.body.data.errors).toEqual([]);
+	});
+
+	it("refuses raw-password WXR up front in atomic mode with ZERO writes, while supported protected input replays cleanly", async () => {
+		const rawWxr = buildWxr(`
+			<item>
+				<title>Protected fixture</title>
+				<wp:post_id>516</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>protected-fixture</wp:post_name>
+				<wp:post_password>synthetic-fixture</wp:post_password>
+				<content:encoded><![CDATA[<p>Fixture body</p>]]></content:encoded>
+			</item>`);
+		const rawRes = await runExecute(emdash, rawWxr, {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			atomic: true,
+			skipExisting: true,
+			importSections: false,
+			importComments: false,
+			protectedContent: PROTECTED_CONTENT_CAPABILITY,
+			passwordSource: "raw-wxr",
+		});
+		expect(rawRes.status).toBe(400);
+		expect(rawRes.body.error?.code).toBe("ATOMIC_RAW_PASSWORD_UNSUPPORTED");
+		expect((await sql`SELECT * FROM ec_pages`.execute(db)).rows).toHaveLength(0);
+		expect((await sql`SELECT * FROM _emdash_wxr_import_receipts`.execute(db)).rows).toHaveLength(0);
+
+		// Supported protected input (pre-supplied deterministic verifier) creates and replays cleanly.
+		const verifier = await createPasswordVerifier("synthetic-fixture");
+		const supportedCfg: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			atomic: true,
+			skipExisting: true,
+			importSections: false,
+			importComments: false,
+			sourceLineage: "install:protected-132",
+			protectedContent: PROTECTED_CONTENT_CAPABILITY,
+			protections: { "516": { version: 1, mode: "password", verifier } },
+		};
+		const first = await runExecute(emdash, rawWxr, supportedCfg);
+		expect(first.status).toBe(200);
+		expect(first.body.data.items?.[0]?.outcome).toBe("created");
+		const retry = await runExecute(emdash, rawWxr, supportedCfg);
+		expect(retry.status).toBe(200);
+		expect(retry.body.data.items?.[0]?.outcome).toBe("replayed");
+		expect(retry.body.data.errors).toEqual([]);
+	});
+
+	it("refuses remapping a receipted post to a different collection and prevents a changed anchor from detaching a new sibling", async () => {
+		const registry = new SchemaRegistry(db);
+		await registry.createCollection({ slug: "posts", label: "Posts", hasSeo: true });
+		await registry.createField("posts", { slug: "title", label: "Title", type: "string" });
+		await registry.createField("posts", {
+			slug: "content",
+			label: "Content",
+			type: "portableText",
+		});
+
+		const wxr = buildWxr(`
+			<item>
+				<title>Anchor EN</title>
+				<dc:creator><![CDATA[alice]]></dc:creator>
+				<wp:post_id>601</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>anchor-en</wp:post_name>
+				<content:encoded><![CDATA[<p>Original anchor</p>]]></content:encoded>
+				<category domain="category" nicename="news"><![CDATA[News]]></category>
+				<wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-601]]></wp:meta_value></wp:postmeta>
+			</item>`);
+		const baseCfg: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			atomic: true,
+			skipExisting: true,
+			importSections: false,
+			importComments: true,
+			sourceLineage: "install:remap-132",
+		};
+		const initial = await runExecute(emdash, wxr, baseCfg);
+		expect(initial.body.data.imported).toBe(1);
+
+		// 1. Remapping source post 601 from `pages` to `posts` refuses as conflict, not a second create.
+		const remapRes = await runExecute(emdash, wxr, {
+			...baseCfg,
+			postTypeMappings: { page: { collection: "posts", enabled: true } },
+		});
+		expect(remapRes.body.data.imported).toBe(0);
+		expect(remapRes.body.data.errors).toHaveLength(1);
+		expect(remapRes.body.data.errors[0]?.error).toContain("pages");
+		expect((await sql`SELECT * FROM ec_posts`.execute(db)).rows).toHaveLength(0);
+
+		// 2. Changed anchor + brand-new FR sibling + comment on changed anchor:
+		//    - changed anchor writes ZERO comments
+		//    - new FR sibling refuses (does NOT detach into a standalone row)
+		const changedAnchorWithSibling = buildWxr(`
+			<item>
+				<title>Anchor EN Edited</title>
+				<dc:creator><![CDATA[new-guest]]></dc:creator>
+				<wp:post_id>601</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>anchor-en</wp:post_name>
+				<content:encoded><![CDATA[<p>Edited anchor</p>]]></content:encoded>
+				<category domain="category" nicename="brand-new-cat"><![CDATA[Brand New Cat]]></category>
+				<wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-601]]></wp:meta_value></wp:postmeta>
+				<wp:comment>
+					<wp:comment_id>7701</wp:comment_id>
+					<wp:comment_author><![CDATA[Late Commenter]]></wp:comment_author>
+					<wp:comment_author_email>late@example.org</wp:comment_author_email>
+					<wp:comment_date_gmt>2025-04-01 00:00:00</wp:comment_date_gmt>
+					<wp:comment_content><![CDATA[Must not attach to changed anchor]]></wp:comment_content>
+					<wp:comment_approved>1</wp:comment_approved>
+				</wp:comment>
+			</item>
+			<item>
+				<title>Sibling FR</title>
+				<dc:creator><![CDATA[alice]]></dc:creator>
+				<wp:post_id>602</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>anchor-fr</wp:post_name>
+				<content:encoded><![CDATA[<p>Nouveau</p>]]></content:encoded>
+				<category domain="language" nicename="fr"><![CDATA[French]]></category>
+				<wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-601]]></wp:meta_value></wp:postmeta>
+			</item>`);
+		const changedRes = await runExecute(emdash, changedAnchorWithSibling, baseCfg);
+		expect(changedRes.body.data.imported).toBe(0);
+		expect(changedRes.body.data.changed).toBe(1);
+		expect(changedRes.body.data.errors).toHaveLength(1);
+		expect(changedRes.body.data.errors[0]?.error).toContain("trid-601");
+		expect((await sql`SELECT * FROM ec_pages`.execute(db)).rows).toHaveLength(1);
+		expect((await sql`SELECT * FROM _emdash_comments`.execute(db)).rows).toHaveLength(0);
+		// ZERO term or guest-byline writes for the changed item!
+		expect(
+			(await sql`SELECT * FROM taxonomies WHERE slug = 'brand-new-cat'`.execute(db)).rows,
+		).toHaveLength(0);
+		expect(
+			(await sql`SELECT * FROM _emdash_bylines WHERE slug = 'new-guest'`.execute(db)).rows,
+		).toHaveLength(0);
+	});
+
+	it("skips BOTH existing translation siblings on 1-byte fallback re-export while still refusing a NEW sibling", async () => {
+		const exportA = buildWxr(`
+			<item>
+				<title>Pair EN</title>
+				<wp:post_id>701</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>pair-page</wp:post_name>
+				<content:encoded><![CDATA[<p>EN</p>]]></content:encoded>
+				<wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-pair]]></wp:meta_value></wp:postmeta>
+			</item>
+			<item>
+				<title>Pair FR</title>
+				<wp:post_id>702</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>pair-page</wp:post_name>
+				<content:encoded><![CDATA[<p>FR</p>]]></content:encoded>
+				<category domain="language" nicename="fr"><![CDATA[French]]></category>
+				<wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-pair]]></wp:meta_value></wp:postmeta>
+			</item>`);
+		const cfg: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			atomic: true,
+			skipExisting: true,
+			importSections: false,
+			importComments: false,
+		};
+		const first = await runExecute(emdash, exportA, cfg);
+		expect(first.body.data.imported).toBe(2);
+		expect(first.body.data.errors).toEqual([]);
+
+		// 1-byte header diff -> new fallback lineage -> BOTH existing siblings skip cleanly with ZERO errors.
+		const exportB = exportA.replace("Example Site", "Example Site!");
+		const second = await runExecute(emdash, exportB, cfg);
+		expect(second.body.data.success).toBe(true);
+		expect(second.body.data.imported).toBe(0);
+		expect(second.body.data.skipped).toBe(2);
+		expect(second.body.data.errors).toEqual([]);
+
+		// Adding a brand-new DE sibling to exportB still refuses because the anchor was skipped (unreceipted for this lineage).
+		const exportC = exportB.replace(
+			"</channel>",
+			`<item>
+				<title>Pair DE</title>
+				<wp:post_id>703</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>pair-page</wp:post_name>
+				<content:encoded><![CDATA[<p>DE</p>]]></content:encoded>
+				<category domain="language" nicename="de"><![CDATA[German]]></category>
+				<wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-pair]]></wp:meta_value></wp:postmeta>
+			</item></channel>`,
+		);
+		const third = await runExecute(emdash, exportC, cfg);
+		expect(third.body.data.imported).toBe(0);
+		expect(third.body.data.skipped).toBe(2);
+		expect(third.body.data.errors).toHaveLength(1);
+		expect(third.body.data.errors[0]?.error).toContain("trid-pair");
+	});
+
+	it("commits comments and reusable sections with atomic receipts and replays cleanly without duplicating either", async () => {
+		const wxr = buildWxr(`
+			<item>
+				<title>Post With Comments</title>
+				<wp:post_id>850</wp:post_id>
+				<wp:post_type>page</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>post-with-comments</wp:post_name>
+				<content:encoded><![CDATA[<p>Body</p>]]></content:encoded>
+				<wp:comment>
+					<wp:comment_id>8501</wp:comment_id>
+					<wp:comment_author><![CDATA[Alice]]></wp:comment_author>
+					<wp:comment_author_email>alice@example.org</wp:comment_author_email>
+					<wp:comment_date_gmt>2025-05-01 10:00:00</wp:comment_date_gmt>
+					<wp:comment_content><![CDATA[First comment]]></wp:comment_content>
+					<wp:comment_approved>1</wp:comment_approved>
+				</wp:comment>
+			</item>
+			<item>
+				<title>Hero Banner</title>
+				<wp:post_id>851</wp:post_id>
+				<wp:post_type>wp_block</wp:post_type>
+				<wp:status>publish</wp:status>
+				<wp:post_name>hero-banner</wp:post_name>
+				<content:encoded><![CDATA[<p>Reusable hero</p>]]></content:encoded>
+			</item>`);
+		const cfg: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			atomic: true,
+			skipExisting: true,
+			importSections: true,
+			importComments: true,
+			sourceLineage: "install:sections-comments-132",
+		};
+
+		const first = await runExecute(emdash, wxr, cfg);
+		expect(first.status).toBe(200);
+		expect(first.body.data.imported).toBe(1);
+		expect(first.body.data.comments?.imported).toBe(1);
+		expect(first.body.data.sections).toEqual({ created: 1, skipped: 0 });
+		expect((await sql`SELECT * FROM _emdash_comments`.execute(db)).rows).toHaveLength(1);
+		expect((await sql`SELECT * FROM _emdash_sections`.execute(db)).rows).toHaveLength(1);
+
+		// Simulate lost-response retry (wipe derived media usage to verify replay recovery without duplicating comments or sections).
+		await sql`DELETE FROM _emdash_media_usage_sources`.execute(db);
+		const replay = await runExecute(emdash, wxr, cfg);
+		expect(replay.status).toBe(200);
+		expect(replay.body.data.imported).toBe(0);
+		expect(replay.body.data.sections).toEqual({ created: 0, skipped: 1 });
+		expect(replay.body.data.items?.every((i) => i.outcome === "replayed")).toBe(true);
+		expect((await sql`SELECT * FROM _emdash_comments`.execute(db)).rows).toHaveLength(1);
+		expect((await sql`SELECT * FROM _emdash_sections`.execute(db)).rows).toHaveLength(1);
+		expect(
+			(await sql`SELECT * FROM _emdash_media_usage_sources`.execute(db)).rows.length,
+		).toBeGreaterThan(0);
+
+		// Changing either a comment body OR a section body triggers `changed` with zero writes.
+		const changed = await runExecute(
+			emdash,
+			wxr.replace("First comment", "Edited comment").replace("Reusable hero", "Edited hero"),
+			cfg,
+		);
+		expect(changed.status).toBe(200);
+		expect(changed.body.data.changed).toBe(2);
+		expect(changed.body.data.errors).toEqual([]);
 	});
 });
