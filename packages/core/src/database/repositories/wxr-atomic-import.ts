@@ -7,7 +7,7 @@
  * adapters that offer neither.
  */
 
-import { sql, type Kysely, type QueryResult, type RawBuilder } from "kysely";
+import { PostgresAdapter, SqliteAdapter, sql, type Kysely, type RawBuilder } from "kysely";
 import { ulid } from "ulidx";
 
 import type { ContentProtection } from "../../content/protection.js";
@@ -43,6 +43,8 @@ export interface WxrTermPivot {
 export interface AtomicWxrCreateInput {
 	sourceLineage: string;
 	sourcePostId: string;
+	/** Source-side translation group ID (e.g. WPML/Polylang trid) bound to the group baseline. */
+	sourceGroupId?: string;
 	collection: string;
 	slug: string;
 	locale: string;
@@ -64,10 +66,10 @@ export interface AtomicWxrCreateInput {
 	replaceTaxonomies?: readonly string[];
 	/** Opaque SHA-256 fingerprint of the canonical WXR item + import config/plan. */
 	inputFingerprint: string;
-	/** Versioned stored-data hash (separate from internal guard digest). */
-	storedDataHash: string;
 	/** Test-only hook to force the final SQL integrity assertion to fail and roll back. */
 	_forceAssertionFailure?: boolean;
+	/** Test-only hook invoked right before executing the atomic batch/transaction. */
+	_beforeCommit?: () => Promise<void>;
 }
 
 export interface AtomicWxrItemReceipt {
@@ -81,17 +83,34 @@ export interface AtomicWxrItemReceipt {
 	sourcePostId: string;
 	storedDataHash: string;
 	committedHash: string;
-	outcome: "created" | "replayed";
+	outcome: "created" | "replayed" | "changed";
 }
 
 export type AtomicWxrApplyResult =
 	| { outcome: "created"; receipt: AtomicWxrItemReceipt }
 	| { outcome: "replayed"; receipt: AtomicWxrItemReceipt }
+	| { outcome: "changed"; receipt: AtomicWxrItemReceipt; reason: string }
 	| { outcome: "skipped"; reason: string; existingId: string }
 	| { outcome: "conflict"; reason: string }
 	| { outcome: "error"; code: string; message: string };
 
 const utf8Encoder = new TextEncoder();
+
+/**
+ * Returns true iff `db` supports either atomic D1 `.batch()` or a real
+ * SQLite/Postgres transaction (refusing adapters that offer neither).
+ */
+export function supportsAtomicWxrImport(db: Kysely<Database>): boolean {
+	const adapter = db.getExecutor().adapter;
+	if ("executeAtomicBatch" in adapter && typeof adapter.executeAtomicBatch === "function") {
+		return true;
+	}
+	if (adapter instanceof PostgresAdapter) return true;
+	if (adapter instanceof SqliteAdapter && adapter.constructor === SqliteAdapter) {
+		return true;
+	}
+	return false;
+}
 
 /** Deterministic JSON serialization (sorted object keys) for stable hashes/fingerprints. */
 export function canonicalJson(value: unknown): string {
@@ -140,6 +159,13 @@ function canonicalTermGroupCsv(terms: readonly WxrTermPivot[]): string {
 		a < b ? -1 : a > b ? 1 : 0,
 	);
 	return groups.join(",");
+}
+
+/** Ordered canonical string of an entry's byline credits (`sort_order:byline_id:role_label`). */
+function canonicalBylinesKey(
+	credits: ReadonlyArray<{ group: string; roleLabel: string | null; sortOrder: number }>,
+): string {
+	return credits.map((c) => `${c.sortOrder}:${c.group}:${c.roleLabel ?? ""}`).join("|");
 }
 
 interface BaselineSeoSnapshot {
@@ -250,7 +276,7 @@ function validateCompiledD1Limits(
 
 function receiptRowToItem(
 	row: WxrImportReceiptTable,
-	outcome: "created" | "replayed",
+	outcome: "created" | "replayed" | "changed",
 ): AtomicWxrItemReceipt {
 	return {
 		collection: row.collection,
@@ -267,14 +293,30 @@ function receiptRowToItem(
 	};
 }
 
-function rollbackAssertionStatement(
-	db: Kysely<Database>,
-	predicate: RawBuilder<boolean>,
-): RawBuilder<unknown> {
-	if (isPostgres(db)) {
-		return sql`SELECT CASE WHEN (${predicate}) THEN 1 ELSE 1 / 0 END AS ok`;
+function classifyExistingReceipt(
+	row: WxrImportReceiptTable,
+	collection: string,
+	inputFingerprint: string,
+	sourcePostId: string,
+	locale: string,
+): AtomicWxrApplyResult {
+	if (row.collection !== collection) {
+		return {
+			outcome: "conflict",
+			reason: `Source "${sourcePostId}" (${locale}) was already imported into "${row.collection}", not "${collection}"`,
+		};
 	}
-	return sql`SELECT CASE WHEN (${predicate}) THEN 1 ELSE json('incomplete atomic wxr import') END AS ok`;
+	if (row.input_fingerprint !== inputFingerprint) {
+		return {
+			outcome: "changed",
+			receipt: receiptRowToItem(row, "changed"),
+			reason: `Source "${sourcePostId}" (${locale}) changed since it was imported and was left as imported`,
+		};
+	}
+	return {
+		outcome: "replayed",
+		receipt: receiptRowToItem(row, "replayed"),
+	};
 }
 
 export class AtomicWxrImportRepository {
@@ -312,38 +354,51 @@ export class AtomicWxrImportRepository {
 	 */
 	async applyCreate(input: AtomicWxrCreateInput): Promise<AtomicWxrApplyResult> {
 		validateIdentifier(input.collection, "collection slug");
+		if (!supportsAtomicWxrImport(this.db)) {
+			return {
+				outcome: "error",
+				code: "ATOMIC_BATCH_UNSUPPORTED",
+				message: "Database adapter supports neither atomic D1 batch nor real transactions",
+			};
+		}
 		const tableName = `ec_${input.collection}`;
 
-		// 1. Replay / conflict check against immutable create receipt (ZERO writes).
+		// 1. Replay / changed / conflict check against immutable create receipt (ZERO writes).
 		const existingReceipt = await this.findReceipt(
 			input.sourceLineage,
 			input.sourcePostId,
 			input.locale,
 		);
 		if (existingReceipt) {
-			if (existingReceipt.collection !== input.collection) {
-				return {
-					outcome: "conflict",
-					reason: `Source "${input.sourcePostId}" (${input.locale}) was already imported into "${existingReceipt.collection}", not "${input.collection}"`,
-				};
-			}
-			if (existingReceipt.input_fingerprint !== input.inputFingerprint) {
-				return {
-					outcome: "conflict",
-					reason: `Source "${input.sourcePostId}" (${input.locale}) was already imported with a different input fingerprint`,
-				};
-			}
-			return {
-				outcome: "replayed",
-				receipt: receiptRowToItem(existingReceipt, "replayed"),
-			};
+			return classifyExistingReceipt(
+				existingReceipt,
+				input.collection,
+				input.inputFingerprint,
+				input.sourcePostId,
+				input.locale,
+			);
 		}
 
-		// 2. Legacy / owner row check: in the atomic path, a slug hit WITHOUT a
-		// matching receipt skips with ZERO writes to the row or its group (no SEO fill).
+		// 2. Legacy / owner / different-source row check: a slug hit WITHOUT a
+		// matching receipt skips with ZERO writes to the row or its group.
+		// Re-check receipt if a concurrent winner landed between steps 1 and 2.
 		const contentRepo = new ContentRepository(this.db);
 		const existingBySlug = await contentRepo.findBySlug(input.collection, input.slug, input.locale);
 		if (existingBySlug) {
+			const racedReceipt = await this.findReceipt(
+				input.sourceLineage,
+				input.sourcePostId,
+				input.locale,
+			);
+			if (racedReceipt) {
+				return classifyExistingReceipt(
+					racedReceipt,
+					input.collection,
+					input.inputFingerprint,
+					input.sourcePostId,
+					input.locale,
+				);
+			}
 			return {
 				outcome: "skipped",
 				reason: `Slug "${input.slug}" (${input.locale}) already exists without a matching import receipt`,
@@ -371,16 +426,30 @@ export class AtomicWxrImportRepository {
 					reason: `Translation group "${anchorGroup}" has no producer import baseline for this lineage (unreceipted anchor)`,
 				};
 			}
+			if (
+				input.sourceGroupId !== undefined &&
+				expectedBaseline.source_group_id !== input.sourceGroupId
+			) {
+				return {
+					outcome: "conflict",
+					reason: `Translation group "${anchorGroup}" belongs to source group "${expectedBaseline.source_group_id ?? ""}", not "${input.sourceGroupId}"`,
+				};
+			}
 			baselineTerms = parseTermsJson(expectedBaseline.terms_json);
 		}
 
-		// 4. Resolve bylines up front via shared BylineRepository preparation.
+		// 4. Resolve bylines up front via shared BylineRepository preparation (chunked <= 98 binds/stmt).
 		const now = new Date().toISOString();
 		const entryId = ulid();
 		const operationId = ulid();
 		const bylineRepo = new BylineRepository(this.db);
-		let resolvedBylines: { primaryBylineId: string | null; statements: RawBuilder<unknown>[] } = {
+		let resolvedBylines: {
+			primaryBylineId: string | null;
+			credits: Array<{ group: string; roleLabel: string | null; sortOrder: number }>;
+			statements: RawBuilder<unknown>[];
+		} = {
 			primaryBylineId: null,
+			credits: [],
 			statements: [],
 		};
 		if (input.bylines && input.bylines.length > 0) {
@@ -391,7 +460,7 @@ export class AtomicWxrImportRepository {
 				now,
 			);
 		} else if (input.translationOf) {
-			// Copy anchor's bylines atomically in the same batch
+			// Copy anchor's bylines atomically in the same batch using the shared chunked builder.
 			const anchorBylines = await this.db
 				.selectFrom("_emdash_content_bylines")
 				.select(["byline_id", "sort_order", "role_label"])
@@ -399,22 +468,16 @@ export class AtomicWxrImportRepository {
 				.where("content_id", "=", input.translationOf)
 				.orderBy("sort_order", "asc")
 				.execute();
-			if (anchorBylines.length > 0) {
-				const tuples = anchorBylines.map(
-					(b, idx) =>
-						sql`(${ulid()}, ${input.collection}, ${entryId}, ${b.byline_id}, ${idx}, ${b.role_label}, ${now})`,
-				);
-				resolvedBylines = {
-					primaryBylineId: anchorBylines[0]?.byline_id ?? null,
-					statements: [
-						sql`
-							INSERT INTO _emdash_content_bylines
-								(id, collection_slug, content_id, byline_id, sort_order, role_label, created_at)
-							VALUES ${sql.join(tuples, sql`, `)}
-						`,
-					],
-				};
-			}
+			resolvedBylines = bylineRepo.buildContentBylineInserts(
+				input.collection,
+				entryId,
+				anchorBylines.map((b, idx) => ({
+					group: b.byline_id,
+					roleLabel: b.role_label,
+					sortOrder: idx,
+				})),
+				now,
+			);
 		}
 
 		// 5. Build DB-side group state guard for translation writes (checked IN the batch).
@@ -426,6 +489,10 @@ export class AtomicWxrImportRepository {
 			const liveTermsCsvExpr = isPg
 				? sql`COALESCE((SELECT string_agg(ct.taxonomy_id, ',' ORDER BY ct.taxonomy_id ASC) FROM content_taxonomies AS ct WHERE ct.collection = ${input.collection} AND ct.entry_id = ${anchorGroup}), '')`
 				: sql`COALESCE((SELECT group_concat(taxonomy_id, ',') FROM (SELECT ct.taxonomy_id AS taxonomy_id FROM content_taxonomies AS ct WHERE ct.collection = ${input.collection} AND ct.entry_id = ${anchorGroup} ORDER BY ct.taxonomy_id ASC)), '')`;
+
+			const liveAnchorBylinesExpr = isPg
+				? sql`COALESCE((SELECT string_agg(cb.sort_order::text || ':' || cb.byline_id || ':' || COALESCE(cb.role_label, ''), '|' ORDER BY cb.sort_order ASC) FROM _emdash_content_bylines AS cb WHERE cb.collection_slug = ${input.collection} AND cb.content_id = ${expectedBaseline.anchor_entry_id}), '')`
+				: sql`COALESCE((SELECT group_concat(item, '|') FROM (SELECT CAST(cb.sort_order AS TEXT) || ':' || cb.byline_id || ':' || COALESCE(cb.role_label, '') AS item FROM _emdash_content_bylines AS cb WHERE cb.collection_slug = ${input.collection} AND cb.content_id = ${expectedBaseline.anchor_entry_id} ORDER BY cb.sort_order ASC)), '')`;
 
 			const anchorSeoSnap = parseSeoSnapshot(expectedBaseline.anchor_seo_json);
 			const anchorSeoPredicate = anchorSeoSnap
@@ -446,13 +513,20 @@ export class AtomicWxrImportRepository {
 						AND s.content_id = ${expectedBaseline.anchor_entry_id}
 				)`;
 
+			const sourceGroupPredicate =
+				input.sourceGroupId !== undefined
+					? sql<boolean>`AND gb.source_group_id = ${input.sourceGroupId}`
+					: sql<boolean>``;
+
 			// Guard checks IN the batch:
-			//  1. Mutable group baseline generation + lineage match
+			//  1. Mutable group baseline generation + lineage + source_group_id match
 			//  2. Anchor row is unedited (version = 1, updated_at matches baseline)
-			//  3. Live content_taxonomies for the group match baseline's exact sorted term_group set
-			//  4. Every live row in the group matches a finished receipt of this lineage with version = 1
-			//     and unchanged updated_at, and total group row count equals baseline generation
-			//  5. Anchor SEO row matches its baseline snapshot AND no sibling SEO row was added/edited
+			//  3. Live content_taxonomies match baseline's exact sorted term_group set
+			//  4. Live anchor bylines match baseline's exact ordered byline list
+			//  5. Every live row in the group matches a finished receipt of this lineage with
+			//     version = 1 & unchanged updated_at, and total count equals baseline generation
+			//  6. Anchor public SEO matches snapshot; NO sibling public SEO added, edited, OR deleted
+			//  7. NO protected group member had its _emdash_protected_content row deleted or SEO edited
 			groupGuardPredicate = sql<boolean>`
 				EXISTS (
 					SELECT 1 FROM _emdash_wxr_group_baselines AS gb
@@ -460,10 +534,12 @@ export class AtomicWxrImportRepository {
 						AND gb.translation_group = ${anchorGroup}
 						AND gb.source_lineage = ${input.sourceLineage}
 						AND gb.generation = ${expectedBaseline.generation}
+						${sourceGroupPredicate}
 				)
 				AND translation_source.version = 1
 				AND translation_source.updated_at = ${expectedBaseline.anchor_updated_at}
 				AND ${liveTermsCsvExpr} = ${expectedTermsCsv}
+				AND ${liveAnchorBylinesExpr} = ${expectedBaseline.anchor_bylines_json}
 				AND (
 					SELECT COUNT(*) FROM ${sql.ref(tableName)} AS c
 					WHERE c.translation_group = ${anchorGroup}
@@ -494,10 +570,40 @@ export class AtomicWxrImportRepository {
 						AND c.deleted_at IS NULL
 						AND (r.operation_id IS NULL OR r.has_seo = 0 OR s.updated_at != r.created_at)
 				)
+				AND NOT EXISTS (
+					SELECT 1 FROM _emdash_wxr_import_receipts AS r
+					INNER JOIN ${sql.ref(tableName)} AS c ON c.id = r.entry_id
+					WHERE r.collection = ${input.collection}
+						AND r.translation_group = ${anchorGroup}
+						AND r.source_lineage = ${input.sourceLineage}
+						AND r.has_seo = 1
+						AND c.deleted_at IS NULL
+						AND NOT EXISTS (
+							SELECT 1 FROM _emdash_seo AS s
+							WHERE s.collection = ${input.collection}
+								AND s.content_id = r.entry_id
+						)
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM _emdash_wxr_import_receipts AS r
+					INNER JOIN ${sql.ref(tableName)} AS c ON c.id = r.entry_id
+					WHERE r.collection = ${input.collection}
+						AND r.translation_group = ${anchorGroup}
+						AND r.source_lineage = ${input.sourceLineage}
+						AND r.has_protected = 1
+						AND c.deleted_at IS NULL
+						AND NOT EXISTS (
+							SELECT 1 FROM _emdash_protected_content AS pc
+							WHERE pc.collection = ${input.collection}
+								AND pc.content_id = r.entry_id
+								AND COALESCE(pc.seo, '') = COALESCE(r.protected_seo_json, '')
+						)
+				)
 			`;
 		}
 
 		// 6. Prepare content INSERT (+ protection + visibility bump) via shared ContentRepository.prepareCreate.
+		const protectedSeoInput = input.protection && input.hasSeo ? (input.seo ?? null) : null;
 		const preparedContent = await contentRepo.prepareCreate({
 			id: entryId,
 			now,
@@ -505,7 +611,7 @@ export class AtomicWxrImportRepository {
 			slug: input.slug,
 			data: input.data,
 			protection: input.protection,
-			protectedSeo: input.protection && input.hasSeo ? (input.seo ?? null) : null,
+			protectedSeo: protectedSeoInput,
 			status: input.status,
 			authorId: input.authorId,
 			primaryBylineId: resolvedBylines.primaryBylineId,
@@ -518,7 +624,8 @@ export class AtomicWxrImportRepository {
 			extraWhere: groupGuardPredicate,
 		});
 
-		// 7. Compute next group terms + internal guard digest.
+		// 7. Compute post-normalization storedDataHash + next group terms + internal guard digest.
+		const storedDataHash = await computeStoredDataHash(preparedContent.normalizedData);
 		const carriedSet = new Set(input.replaceTaxonomies ?? []);
 		const nextGroupTerms: WxrTermPivot[] = expectedBaseline
 			? [
@@ -528,6 +635,7 @@ export class AtomicWxrImportRepository {
 			: [...input.terms];
 		const nextTermsJson = canonicalTermsKey(nextGroupTerms);
 		const wroteUnprotectedSeo = Boolean(input.hasSeo && input.seo && !input.protection);
+		const protectedSeoJson = protectedSeoInput ? JSON.stringify(protectedSeoInput) : null;
 		const committedHash = await sha256Hex(
 			canonicalJson({
 				collection: input.collection,
@@ -535,7 +643,7 @@ export class AtomicWxrImportRepository {
 				locale: input.locale,
 				status: input.status,
 				scheduledAt: input.scheduledAt ?? null,
-				storedDataHash: input.storedDataHash,
+				storedDataHash,
 				primaryBylineId: resolvedBylines.primaryBylineId,
 				seo: input.hasSeo ? (input.seo ?? null) : null,
 				terms: nextTermsJson,
@@ -545,7 +653,7 @@ export class AtomicWxrImportRepository {
 		// 8. Assemble all statements in ONE bounded atomic batch.
 		const queries: RawBuilder<unknown>[] = [...preparedContent.queries];
 
-		// Bylines
+		// Bylines (chunked at 14 rows = 98 binds <= 100 D1 limit)
 		queries.push(...resolvedBylines.statements);
 
 		// SEO (unprotected rows only; protected SEO is already written into _emdash_protected_content.seo)
@@ -562,7 +670,6 @@ export class AtomicWxrImportRepository {
 		// Taxonomy pivots (packed/split inside the same batch for D1's 100-bind limit)
 		if (expectedBaseline && anchorGroup && carriedSet.size > 0) {
 			const carriedList = [...carriedSet];
-			// Guarded delete: only deletes if the new translation row was actually inserted (passed groupGuardPredicate)
 			queries.push(sql`
 				DELETE FROM content_taxonomies
 				WHERE collection = ${input.collection}
@@ -617,12 +724,16 @@ export class AtomicWxrImportRepository {
 			`);
 		} else {
 			const anchorSeoJson = wroteUnprotectedSeo ? serializeSeoSnapshot(input.seo, now) : null;
+			const anchorBylinesKey = canonicalBylinesKey(resolvedBylines.credits);
 			queries.push(sql`
 				INSERT INTO _emdash_wxr_group_baselines
-					(collection, translation_group, source_lineage, anchor_entry_id, anchor_updated_at,
-					anchor_seo_json, generation, anchor_state_hash, terms_json, last_operation_id, updated_at)
-				SELECT ${input.collection}, ${effectiveGroup}, ${input.sourceLineage}, ${entryId}, ${now},
-					${anchorSeoJson}, 1, ${committedHash}, ${nextTermsJson}, ${operationId}, ${now}
+					(collection, translation_group, source_lineage, source_group_id, anchor_entry_id,
+					anchor_updated_at, anchor_seo_json, anchor_bylines_json, generation,
+					anchor_state_hash, terms_json, last_operation_id, updated_at)
+				SELECT ${input.collection}, ${effectiveGroup}, ${input.sourceLineage},
+					${input.sourceGroupId ?? null}, ${entryId}, ${now},
+					${anchorSeoJson}, ${anchorBylinesKey}, 1,
+					${committedHash}, ${nextTermsJson}, ${operationId}, ${now}
 				WHERE EXISTS (SELECT 1 FROM ${sql.ref(tableName)} WHERE id = ${entryId} AND deleted_at IS NULL)
 			`);
 		}
@@ -632,15 +743,17 @@ export class AtomicWxrImportRepository {
 			INSERT INTO _emdash_wxr_import_receipts
 				(operation_id, source_lineage, source_post_id, collection, entry_id, slug, locale,
 				translation_group, status, input_fingerprint, stored_data_hash, committed_hash,
-				has_seo, receipt_state, created_at)
+				has_seo, has_protected, protected_seo_json, receipt_state, created_at)
 			SELECT ${operationId}, ${input.sourceLineage}, ${input.sourcePostId}, ${input.collection},
 				${entryId}, ${input.slug}, ${input.locale}, ${effectiveGroup}, ${input.status},
-				${input.inputFingerprint}, ${input.storedDataHash}, ${committedHash},
-				${wroteUnprotectedSeo ? 1 : 0}, 'finished', ${now}
+				${input.inputFingerprint}, ${storedDataHash}, ${committedHash},
+				${wroteUnprotectedSeo ? 1 : 0}, ${input.protection ? 1 : 0}, ${protectedSeoJson},
+				'finished', ${now}
 			WHERE EXISTS (SELECT 1 FROM ${sql.ref(tableName)} WHERE id = ${entryId} AND deleted_at IS NULL)
 		`);
 
-		// Final backend-native rollback assertion (forces atomic rollback if any predicate wrote 0 rows)
+		// Final integrity predicate: verifies content, receipt, baseline, AND that every
+		// written taxonomy pivot and byline credit still references a live target.
 		const expectedGeneration = expectedBaseline ? expectedBaseline.generation + 1 : 1;
 		const integrityPredicate = input._forceAssertionFailure
 			? sql<boolean>`1 = 0`
@@ -659,26 +772,59 @@ export class AtomicWxrImportRepository {
 						AND generation = ${expectedGeneration}
 						AND last_operation_id = ${operationId}
 				)
+				AND NOT EXISTS (
+					SELECT 1 FROM content_taxonomies AS ct
+					WHERE ct.collection = ${input.collection}
+						AND ct.entry_id = ${effectiveGroup}
+						AND NOT EXISTS (
+							SELECT 1 FROM taxonomies AS t
+							WHERE t.translation_group = ct.taxonomy_id
+						)
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM _emdash_content_bylines AS cb
+					WHERE cb.collection_slug = ${input.collection}
+						AND cb.content_id = ${entryId}
+						AND NOT EXISTS (
+							SELECT 1 FROM _emdash_bylines AS b
+							WHERE b.translation_group = cb.byline_id
+						)
+				)
 			`;
-		queries.push(rollbackAssertionStatement(this.db, integrityPredicate));
+
+		// On D1 `.batch()` (SQLite), append a SQLite-native rollback assertion statement.
+		// On real SQLite/Postgres transactions, check the predicate inside the transaction
+		// and throw to ROLLBACK cleanly without constant-folded `1 / 0` in Postgres.
+		const batchRollbackAssertion = sql`SELECT CASE WHEN (${integrityPredicate}) THEN 1 ELSE json('incomplete atomic wxr import') END AS ok`;
+		const trxIntegrityCheck = sql<{
+			ok: number;
+		}>`SELECT CASE WHEN (${integrityPredicate}) THEN 1 ELSE 0 END AS ok`;
 
 		// 9. Enforce D1 statement limits BEFORE sending (reject oversize with no fallback write).
-		const limitError = validateCompiledD1Limits(this.db, queries);
+		const limitError = validateCompiledD1Limits(this.db, [...queries, batchRollbackAssertion]);
 		if (limitError) {
 			return { outcome: "error", code: "D1_LIMIT_EXCEEDED", message: limitError };
 		}
 
-		// 10. Execute atomically: D1 .batch() OR real DB transaction. Refuse adapters with neither.
+		// 10. Execute atomically: D1 `.batch()` OR real DB transaction.
 		try {
-			const batched = await executeAtomicBatchIfSupported(this.db, queries);
+			if (input._beforeCommit) {
+				await input._beforeCommit();
+			}
+			const batched = await executeAtomicBatchIfSupported(this.db, [
+				...queries,
+				batchRollbackAssertion,
+			]);
 			if (!batched) {
 				await this.db.transaction().execute(async (trx) => {
-					const executed: QueryResult<unknown>[] = [];
 					for (const query of queries) {
 						// oxlint-disable-next-line no-await-in-loop -- statements execute sequentially in one transaction
-						executed.push(await query.execute(trx));
+						await query.execute(trx);
 					}
-					return executed;
+					const check = await trxIntegrityCheck.execute(trx);
+					if (Number(check.rows[0]?.ok) !== 1) {
+						throw new Error("incomplete atomic wxr import");
+					}
 				});
 			}
 		} catch (error) {
@@ -697,25 +843,15 @@ export class AtomicWxrImportRepository {
 				input.locale,
 			);
 			if (racedReceipt) {
-				if (
-					racedReceipt.collection === input.collection &&
-					racedReceipt.input_fingerprint === input.inputFingerprint
-				) {
-					return {
-						outcome: "replayed",
-						receipt: receiptRowToItem(racedReceipt, "replayed"),
-					};
-				}
-				return {
-					outcome: "conflict",
-					reason: `Concurrent import conflict for "${input.sourcePostId}" (${input.locale})`,
-				};
+				return classifyExistingReceipt(
+					racedReceipt,
+					input.collection,
+					input.inputFingerprint,
+					input.sourcePostId,
+					input.locale,
+				);
 			}
-			if (
-				msg.includes("incomplete atomic wxr import") ||
-				msg.includes("division by zero") ||
-				msg.includes("malformed JSON")
-			) {
+			if (msg.includes("incomplete atomic wxr import") || msg.includes("malformed JSON")) {
 				return {
 					outcome: "conflict",
 					reason: expectedBaseline
@@ -742,7 +878,7 @@ export class AtomicWxrImportRepository {
 				status: input.status,
 				operationId,
 				sourcePostId: input.sourcePostId,
-				storedDataHash: input.storedDataHash,
+				storedDataHash,
 				committedHash,
 				outcome: "created",
 			},

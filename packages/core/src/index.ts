@@ -13,6 +13,7 @@ export {
 	D1_MAX_VALUE_BYTES,
 	canonicalJson,
 	computeStoredDataHash,
+	supportsAtomicWxrImport,
 } from "./database/repositories/wxr-atomic-import.js";
 export type {
 	AtomicWxrCreateInput,

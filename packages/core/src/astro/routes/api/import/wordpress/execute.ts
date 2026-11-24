@@ -59,10 +59,12 @@ import { after } from "../../../../../after.js";
 import {
 	AtomicWxrImportRepository,
 	canonicalJson,
+	sha256Hex,
+	supportsAtomicWxrImport,
 	type AtomicWxrItemReceipt,
 } from "../../../../../database/repositories/wxr-atomic-import.js";
 import { validateIdentifier } from "../../../../../database/validate.js";
-import { getI18nConfig } from "../../../../../i18n/config.js";
+import { getI18nConfig, resolveContentCreateLocale } from "../../../../../i18n/config.js";
 import { interpolateUrlPattern } from "../../../../../i18n/resolve.js";
 import {
 	isIncrementalCaptureActive,
@@ -75,7 +77,6 @@ import {
 	invalidateCollectionCache,
 	invalidateTaxonomyObjectCache,
 } from "../../../../../object-cache/index.js";
-import { computeContentHash } from "../../../../../utils/hash.js";
 import { sanitizeSlug } from "./analyze.js";
 import {
 	contentWithMappedEmbed,
@@ -121,6 +122,8 @@ export interface ImportResult {
 	success: boolean;
 	imported: number;
 	skipped: number;
+	/** Source rows whose fingerprint changed since import and were left as imported (atomic path). */
+	changed?: number;
 	errors: Array<{ title: string; error: string }>;
 	byCollection: Record<string, number>;
 	/** Per-item producer receipts when atomic per-post WXR import is active. */
@@ -200,6 +203,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		);
 		if (isParseError(config)) return config;
 
+		// Refuse unsupported atomic mode BEFORE any preparation writes (taxonomy pre-import / mirroring).
+		if (
+			config.atomic &&
+			(typeof emdash.handleContentCreateAtomicWxr !== "function" ||
+				!supportsAtomicWxrImport(emdash.db))
+		) {
+			return apiError(
+				"ATOMIC_BATCH_UNSUPPORTED",
+				"Atomic WXR import requires an atomic batch or transactional database adapter",
+				400,
+			);
+		}
+
 		// Parse WXR
 		const text = await file.text();
 		const wxr = await parseWxrString(text);
@@ -264,9 +280,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 			}
 
 			const seoSite = wxrSeoContext(wxr, config, emdashManifest);
-			const fallbackSourceLineage = config.atomic
-				? `wxr:${await computeContentHash(new TextEncoder().encode(text))}`
-				: undefined;
+			const fallbackSourceLineage = config.atomic ? `wxr:${await sha256Hex(text)}` : undefined;
 
 			// Import content (locale from config scopes all items)
 			const result = await importContent(
@@ -419,28 +433,30 @@ export async function importContent(
 	}
 
 	const useAtomic = config.atomic === true;
-	if (useAtomic && typeof emdash.handleContentCreateAtomicWxr !== "function") {
+	if (
+		useAtomic &&
+		(typeof emdash.handleContentCreateAtomicWxr !== "function" ||
+			!supportsAtomicWxrImport(emdash.db))
+	) {
 		result.success = false;
 		result.errors.push({
 			title: "Import configuration",
-			error: "Atomic WXR import requested but runtime does not support it",
+			error: "Atomic WXR import requested but runtime or database adapter does not support it",
 		});
 		return result;
 	}
-	const utf8Encoder = new TextEncoder();
 	const effectiveSourceLineage = useAtomic
 		? (config.sourceLineage ??
 			options?.fallbackSourceLineage ??
-			`wxr:${await computeContentHash(
-				utf8Encoder.encode(
-					canonicalJson(
-						posts.map((p, idx) => [idx, p.id ?? null, p.postName ?? null, p.title ?? null]),
-					),
+			`wxr:${await sha256Hex(
+				canonicalJson(
+					posts.map((p, idx) => [idx, p.id ?? null, p.postName ?? null, p.title ?? null]),
 				),
 			)}`)
 		: "";
 	if (useAtomic) {
 		result.items = [];
+		result.changed = 0;
 	}
 
 	// Preload existing (slug, locale) -> id once per enabled collection when
@@ -483,10 +499,12 @@ export async function importContent(
 	const epochFlushInterval = options?.epochFlushInterval ?? DEFAULT_EPOCH_FLUSH_INTERVAL;
 	let createdSinceFlush = 0;
 
-	// Source-side translation group ID -> the EmDash ID of the first post we
-	// imported for that group. Subsequent translations are linked via
-	// `translationOf` so they share a `translation_group` on the EmDash side.
+	// Source-side translation group ID -> the EmDash ID of the first RECEIPTED
+	// post we imported for that group. Skipped (unreceipted/wrong-source) anchors
+	// are tracked separately so siblings refuse instead of creating standalone rows
+	// or mutating the skipped row.
 	const translationGroupMap = new Map<string, string>();
+	const skippedTranslationGroups = new Set<string>();
 
 	// WP post ID -> the EmDash entry it is (stored now, or found already
 	// stored), and its collection: where the item's comments go.
@@ -544,8 +562,11 @@ export async function importContent(
 					};
 			const content = converted.content;
 
-			// Generate slug from post name or title
-			const slug = post.postName || slugify(post.title || `post-${post.id || Date.now()}`);
+			// Generate deterministic slug from post name or title (never Date.now() so
+			// nameless missing-ID items produce the exact same key on retry).
+			const slug =
+				post.postName ||
+				slugify(post.title || `post-${post.id !== undefined ? post.id : `item-${postIndex}`}`);
 
 			const seo = seoTally && seoSite ? extractWxrSeo(post, seoSite) : undefined;
 			const collectionHasSeo = manifest.collections[collection]?.hasSeo === true;
@@ -681,6 +702,7 @@ export async function importContent(
 			if (useAtomic && emdash.handleContentCreateAtomicWxr) {
 				const sourcePostId =
 					post.id !== undefined ? String(post.id) : `missing:${postIndex}:${slug}`;
+				const canonicalLocale = resolveContentCreateLocale(postLocale);
 				const atomicStatus: "draft" | "published" | "scheduled" =
 					status === "scheduled" && scheduledMoment.date
 						? "scheduled"
@@ -698,91 +720,148 @@ export async function importContent(
 					taxonomyPlan,
 				);
 				const atomicSeo = seo && collectionHasSeo && hasWxrSeo(seo) ? seo.seo : undefined;
-				// Fingerprint the deterministic source inputs (not Portable Text's
-				// freshly-generated random block `_key`s or newly-minted byline ULIDs)
-				// so an identical retry always computes the exact same fingerprint.
-				const inputFingerprint = `v1:${await computeContentHash(
-					utf8Encoder.encode(
-						canonicalJson({
-							siteLink: options?.siteLink ?? null,
-							collection,
-							sourcePostId,
-							slug,
-							locale: postLocale ?? defaultLocale,
-							status: atomicStatus,
-							scheduledAt: atomicScheduledAt ?? null,
-							title: data.title ?? null,
-							rawContent: post.content ?? "",
-							excerpt: data.excerpt ?? null,
-							featuredImage: data.featured_image ?? null,
-							mappedData,
-							mappedEmbed: mappedEmbed ?? null,
-							creator: post.creator ?? null,
-							authorId: authorId ?? null,
-							seo: atomicSeo ?? null,
-							terms: resolvedTerms.pivots,
-							replaceTaxonomies: translationOf ? resolvedTerms.carriedTaxonomies : [],
-						}),
-					),
+				const protectionFingerprint = protection.protection
+					? {
+							version: protection.protection.version,
+							mode: "protected",
+							verifier: protection.protection.verifier,
+						}
+					: protection.protected
+						? { mode: protection.unrecoverable ? "password-unrecoverable" : "password-protected" }
+						: null;
+				// Fingerprint the complete canonical source inputs & plan BEFORE wall-clock
+				// status transitions, Portable Text random block `_key`s, or guest byline ULIDs.
+				const inputFingerprint = `v1:${await sha256Hex(
+					canonicalJson({
+						siteLink: options?.siteLink ?? null,
+						collection,
+						sourcePostId,
+						sourceTranslationGroup: post.translationGroup ?? null,
+						slug,
+						locale: canonicalLocale,
+						wpStatus: post.status ?? null,
+						postDateGmt: post.postDateGmt ?? null,
+						pubDate: post.pubDate ?? null,
+						postDate: post.postDate ?? null,
+						protection: protectionFingerprint,
+						title: data.title ?? null,
+						rawContent: post.content ?? "",
+						excerpt: data.excerpt ?? null,
+						featuredImage: data.featured_image ?? null,
+						mappedData,
+						mappedEmbed: mappedEmbed ?? null,
+						creator: post.creator ?? null,
+						authorId: authorId ?? null,
+						seo: atomicSeo ?? null,
+						terms: resolvedTerms.pivots,
+						replaceTaxonomies: translationOf ? resolvedTerms.carriedTaxonomies : [],
+					}),
 				)}`;
 
 				// Check durable receipt BEFORE resolving/creating guest bylines so a
-				// replay performs strictly ZERO writes (not even a guest byline).
+				// replay/changed/conflict performs strictly ZERO writes.
 				const atomicRepo = new AtomicWxrImportRepository(emdash.db);
 				const existingReceipt = await atomicRepo.findReceipt(
 					effectiveSourceLineage,
 					sourcePostId,
-					postLocale ?? defaultLocale,
+					canonicalLocale,
 				);
 				if (existingReceipt) {
 					if (existingReceipt.collection !== collection) {
 						result.errors.push({
 							title: post.title || "Untitled",
-							error: `Source "${sourcePostId}" (${postLocale ?? defaultLocale}) was already imported into "${existingReceipt.collection}", not "${collection}"`,
+							error: `Source "${sourcePostId}" (${canonicalLocale}) was already imported into "${existingReceipt.collection}", not "${collection}"`,
 						});
 						continue;
 					}
 					if (existingReceipt.input_fingerprint !== inputFingerprint) {
-						result.errors.push({
-							title: post.title || "Untitled",
-							error: `Source "${sourcePostId}" (${postLocale ?? defaultLocale}) was already imported with a different input fingerprint`,
+						result.changed = (result.changed ?? 0) + 1;
+						result.items?.push({
+							collection: existingReceipt.collection,
+							id: existingReceipt.entry_id,
+							slug: existingReceipt.slug,
+							locale: existingReceipt.locale,
+							translationGroup: existingReceipt.translation_group,
+							status: existingReceipt.status,
+							operationId: existingReceipt.operation_id,
+							sourcePostId: existingReceipt.source_post_id,
+							storedDataHash: existingReceipt.stored_data_hash,
+							committedHash: existingReceipt.committed_hash,
+							outcome: "changed",
 						});
+						stored(post, collection, existingReceipt.entry_id);
+						if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+							translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
+						}
 						continue;
 					}
-					result.skipped++;
-					result.items?.push({
-						collection: existingReceipt.collection,
-						id: existingReceipt.entry_id,
-						slug: existingReceipt.slug,
-						locale: existingReceipt.locale,
-						translationGroup: existingReceipt.translation_group,
-						status: existingReceipt.status,
-						operationId: existingReceipt.operation_id,
-						sourcePostId: existingReceipt.source_post_id,
-						storedDataHash: existingReceipt.stored_data_hash,
-						committedHash: existingReceipt.committed_hash,
-						outcome: "replayed",
-					});
-					stored(post, collection, existingReceipt.entry_id);
-					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
-						translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
+					// When incremental media capture is inactive, check if a prior cut left
+					// derived media usage unindexed; if so, delegate to runtime replay repair
+					// without writing source rows, guest bylines, or firing hooks.
+					let needsUsageRepair = false;
+					if (!incrementalCaptureActive) {
+						const existingUsageSource = await emdash.db
+							.selectFrom("_emdash_media_usage_sources")
+							.select("source_key")
+							.where("collection_slug", "=", collection)
+							.where("content_id", "=", existingReceipt.entry_id)
+							.executeTakeFirst();
+						needsUsageRepair = !existingUsageSource;
 					}
+					if (!needsUsageRepair) {
+						result.skipped++;
+						result.items?.push({
+							collection: existingReceipt.collection,
+							id: existingReceipt.entry_id,
+							slug: existingReceipt.slug,
+							locale: existingReceipt.locale,
+							translationGroup: existingReceipt.translation_group,
+							status: existingReceipt.status,
+							operationId: existingReceipt.operation_id,
+							sourcePostId: existingReceipt.source_post_id,
+							storedDataHash: existingReceipt.stored_data_hash,
+							committedHash: existingReceipt.committed_hash,
+							outcome: "replayed",
+						});
+						stored(post, collection, existingReceipt.entry_id);
+						if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
+							translationGroupMap.set(post.translationGroup, existingReceipt.entry_id);
+						}
+						continue;
+					}
+				}
+
+				// If this item belongs to a translation group whose anchor was skipped
+				// (unreceipted or wrong source), refuse without creating a standalone row
+				// or mutating the skipped row.
+				if (
+					post.translationGroup &&
+					!translationOf &&
+					skippedTranslationGroups.has(post.translationGroup)
+				) {
+					result.errors.push({
+						title: post.title || "Untitled",
+						error: `Translation anchor for source group "${post.translationGroup}" was skipped without a matching import receipt`,
+					});
 					continue;
 				}
 
-				const atomicBylineId = await resolveImportByline(
-					post.creator,
-					authorDisplayNames?.get(post.creator ?? "") ?? post.creator,
-					authorId,
-					bylineRepo,
-					bylineCache,
-				);
+				const atomicBylineId = existingReceipt
+					? undefined
+					: await resolveImportByline(
+							post.creator,
+							authorDisplayNames?.get(post.creator ?? "") ?? post.creator,
+							authorId,
+							bylineRepo,
+							bylineCache,
+						);
 
 				const atomicResult = await emdash.handleContentCreateAtomicWxr(
 					collection,
 					{
 						sourceLineage: effectiveSourceLineage,
 						sourcePostId,
+						sourceGroupId: post.translationGroup,
 						inputFingerprint,
 						data,
 						protection: protection.protection,
@@ -790,7 +869,7 @@ export async function importContent(
 						status: atomicStatus,
 						authorId,
 						bylines: atomicBylineId ? [{ bylineId: atomicBylineId }] : undefined,
-						locale: postLocale,
+						locale: canonicalLocale,
 						seo: atomicSeo,
 						translationOf,
 						terms: resolvedTerms.pivots,
@@ -860,15 +939,19 @@ export async function importContent(
 					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
 						translationGroupMap.set(post.translationGroup, applied.receipt.id);
 					}
-				} else if (applied.outcome === "skipped") {
-					result.skipped++;
-					stored(post, collection, applied.existingId);
-					// Record the unreceipted anchor id so a later translation in the
-					// same WXR passes `translationOf` into `applyCreate`, which checks
-					// `_emdash_wxr_group_baselines` and refuses it as a conflict with
-					// zero writes rather than creating a detached translation.
+				} else if (applied.outcome === "changed") {
+					result.changed = (result.changed ?? 0) + 1;
+					result.items?.push(applied.receipt);
+					stored(post, collection, applied.receipt.id);
 					if (post.translationGroup && !translationGroupMap.has(post.translationGroup)) {
-						translationGroupMap.set(post.translationGroup, applied.existingId);
+						translationGroupMap.set(post.translationGroup, applied.receipt.id);
+					}
+				} else if (applied.outcome === "skipped") {
+					// A skipped (unreceipted or wrong-source) slug grants ZERO custody:
+					// never attach comments (`stored`) and never bind `translationGroupMap`.
+					result.skipped++;
+					if (post.translationGroup) {
+						skippedTranslationGroups.add(post.translationGroup);
 					}
 				} else if (applied.outcome === "conflict") {
 					result.errors.push({

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
 	EVENT_SEARCH_BAR_CAPABILITY,
 	EVENT_SEARCH_BAR_PROBE,
-	IMPORT_CAPABILITIES,
 	importCapabilities,
 	POST,
 	WXR_ATOMIC_IMPORT_CAPABILITY,
@@ -38,8 +37,11 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		};
 		expect(body.success).toBe(true);
 		expect(body.data.protectedContentCapability).toBe(PROTECTED_CONTENT_CAPABILITY);
-		expect(body.data.capabilities).toEqual([...IMPORT_CAPABILITIES]);
+		expect(body.data.capabilities).toEqual([
+			...importCapabilities(mappedEmbedsSchema, { atomicSupported: false }),
+		]);
 		expect(body.data.capabilities).toContain(PROTECTED_CONTENT_CAPABILITY);
+		expect(body.data.capabilities).not.toContain(WXR_ATOMIC_IMPORT_CAPABILITY);
 		expect(body.data.capabilities.includes(EVENT_SEARCH_BAR_CAPABILITY)).toBe(acceptsSearchBar);
 	});
 
@@ -49,6 +51,9 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		expect(importCapabilities(rejecting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
+		]);
+		expect(importCapabilities(rejecting, { atomicSupported: false })).toEqual([
+			PROTECTED_CONTENT_CAPABILITY,
 		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,

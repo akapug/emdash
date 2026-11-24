@@ -19,6 +19,8 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		.addColumn("stored_data_hash", "text", (col) => col.notNull())
 		.addColumn("committed_hash", "text", (col) => col.notNull())
 		.addColumn("has_seo", "integer", (col) => col.notNull().defaultTo(0))
+		.addColumn("has_protected", "integer", (col) => col.notNull().defaultTo(0))
+		.addColumn("protected_seo_json", "text")
 		.addColumn("receipt_state", "text", (col) =>
 			col
 				.notNull()
@@ -47,9 +49,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		.addColumn("collection", "text", (col) => col.notNull())
 		.addColumn("translation_group", "text", (col) => col.notNull())
 		.addColumn("source_lineage", "text", (col) => col.notNull())
+		.addColumn("source_group_id", "text")
 		.addColumn("anchor_entry_id", "text", (col) => col.notNull())
 		.addColumn("anchor_updated_at", "text", (col) => col.notNull())
 		.addColumn("anchor_seo_json", "text")
+		.addColumn("anchor_bylines_json", "text", (col) => col.notNull().defaultTo("[]"))
 		.addColumn("generation", "integer", (col) => col.notNull().defaultTo(1))
 		.addColumn("anchor_state_hash", "text", (col) => col.notNull())
 		.addColumn("terms_json", "text", (col) => col.notNull())

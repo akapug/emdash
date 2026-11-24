@@ -17,7 +17,10 @@ import { RESERVED_COLLECTION_SLUGS } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../../../content/protection.js";
-import { WXR_ATOMIC_IMPORT_CAPABILITY } from "../../../../../database/repositories/wxr-atomic-import.js";
+import {
+	supportsAtomicWxrImport,
+	WXR_ATOMIC_IMPORT_CAPABILITY,
+} from "../../../../../database/repositories/wxr-atomic-import.js";
 import { mappedEmbedsSchema } from "./mapped-embeds.js";
 
 export const EVENT_SEARCH_BAR_CAPABILITY = "emdash.event-search-bar.v1" as const;
@@ -43,10 +46,16 @@ export const EVENT_SEARCH_BAR_PROBE = {
 
 export function importCapabilities(
 	embedsSchema: { safeParse: (input: unknown) => { success: boolean } } = mappedEmbedsSchema,
+	options?: { atomicSupported?: boolean },
 ): readonly string[] {
-	return embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success
-		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY, WXR_ATOMIC_IMPORT_CAPABILITY]
-		: [PROTECTED_CONTENT_CAPABILITY, WXR_ATOMIC_IMPORT_CAPABILITY];
+	const caps: string[] = [PROTECTED_CONTENT_CAPABILITY];
+	if (embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success) {
+		caps.push(EVENT_SEARCH_BAR_CAPABILITY);
+	}
+	if (options?.atomicSupported !== false) {
+		caps.push(WXR_ATOMIC_IMPORT_CAPABILITY);
+	}
+	return caps;
 }
 
 export const IMPORT_CAPABILITIES: readonly string[] = importCapabilities();
@@ -172,8 +181,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		// Fetch existing collections from schema registry
 		const existingCollections = await fetchExistingCollections(emdash?.db);
 
+		// Only advertise atomic WXR import when the runtime has the handler AND
+		// the database adapter supports atomic batch or real transactions.
+		const atomicSupported = Boolean(
+			emdash?.handleContentCreateAtomicWxr && emdash?.db && supportsAtomicWxrImport(emdash.db),
+		);
+
 		// Analyze content with schema compatibility
-		const analysis = analyzeWxr(wxr, existingCollections);
+		const analysis = analyzeWxr(wxr, existingCollections, atomicSupported);
 
 		return apiSuccess(analysis);
 	} catch (error) {
@@ -241,6 +256,7 @@ const FEATURED_IMAGE_FIELD: ImportFieldDef = {
 function analyzeWxr(
 	wxr: WxrData,
 	existingCollections: Map<string, ExistingCollection>,
+	atomicSupported: boolean,
 ): WxrAnalysis {
 	// Count post types and track which have featured images
 	const postTypeCounts = new Map<string, number>();
@@ -341,7 +357,7 @@ function analyzeWxr(
 
 	return {
 		protectedContentCapability: PROTECTED_CONTENT_CAPABILITY,
-		capabilities: [...IMPORT_CAPABILITIES],
+		capabilities: [...importCapabilities(mappedEmbedsSchema, { atomicSupported })],
 		site: {
 			title: wxr.site.title || "WordPress Site",
 			url: wxr.site.link || "",

@@ -1328,20 +1328,13 @@ export class BylineRepository {
 	 * which then re-hydrates the entry against its own locale separately.
 	 */
 	/**
-	 * Resolve byline wire IDs to translation groups and build multi-statement
-	 * INSERTs for `_emdash_content_bylines` (chunked for D1's 100-bind limit)
-	 * so atomic batch callers share the exact same resolution logic as `setContentBylines`.
+	 * Shared byline wire-ID -> translation_group resolution + deduping used by
+	 * both `setContentBylines` and `prepareSetContentBylines`.
 	 */
-	async prepareSetContentBylines(
-		collectionSlug: string,
-		contentId: string,
+	private async resolveBylineGroups(
 		inputBylines: readonly ContentBylineInput[],
-		now: string = new Date().toISOString(),
-	): Promise<{ primaryBylineId: string | null; statements: ReturnType<typeof sql>[] }> {
-		validateIdentifier(collectionSlug, "collection slug");
-		if (inputBylines.length === 0) {
-			return { primaryBylineId: null, statements: [] };
-		}
+	): Promise<Array<{ group: string; roleLabel: string | null; sortOrder: number }>> {
+		if (inputBylines.length === 0) return [];
 		const wireIds = [...new Set(inputBylines.map((item) => item.bylineId))];
 		const rows = await this.db
 			.selectFrom("_emdash_bylines")
@@ -1370,8 +1363,25 @@ export class BylineRepository {
 				sortOrder: resolved.length,
 			});
 		}
+		return resolved;
+	}
+
+	/**
+	 * Build D1-safe chunked INSERT statements for `_emdash_content_bylines`
+	 * (7 columns per row -> max 14 rows = 98 binds <= 100 D1 bind limit).
+	 */
+	buildContentBylineInserts(
+		collectionSlug: string,
+		contentId: string,
+		resolved: ReadonlyArray<{ group: string; roleLabel: string | null; sortOrder: number }>,
+		now: string = new Date().toISOString(),
+	): {
+		primaryBylineId: string | null;
+		credits: Array<{ group: string; roleLabel: string | null; sortOrder: number }>;
+		statements: ReturnType<typeof sql>[];
+	} {
+		validateIdentifier(collectionSlug, "collection slug");
 		const statements: ReturnType<typeof sql>[] = [];
-		// 7 columns per row -> max 14 rows per statement (98 <= 100 D1 bind limit).
 		const CHUNK = 14;
 		for (let i = 0; i < resolved.length; i += CHUNK) {
 			const chunk = resolved.slice(i, i + CHUNK);
@@ -1387,8 +1397,28 @@ export class BylineRepository {
 		}
 		return {
 			primaryBylineId: resolved[0]?.group ?? null,
+			credits: [...resolved],
 			statements,
 		};
+	}
+
+	/**
+	 * Resolve byline wire IDs to translation groups and build multi-statement
+	 * INSERTs for `_emdash_content_bylines` (chunked for D1's 100-bind limit)
+	 * so atomic batch callers share the exact same resolution logic as `setContentBylines`.
+	 */
+	async prepareSetContentBylines(
+		collectionSlug: string,
+		contentId: string,
+		inputBylines: readonly ContentBylineInput[],
+		now: string = new Date().toISOString(),
+	): Promise<{
+		primaryBylineId: string | null;
+		credits: Array<{ group: string; roleLabel: string | null; sortOrder: number }>;
+		statements: ReturnType<typeof sql>[];
+	}> {
+		const resolved = await this.resolveBylineGroups(inputBylines);
+		return this.buildContentBylineInserts(collectionSlug, contentId, resolved, now);
 	}
 
 	async setContentBylines(
@@ -1401,43 +1431,7 @@ export class BylineRepository {
 		const tableName = `ec_${collectionSlug}`;
 		validateIdentifier(tableName, "content table");
 
-		// Resolve each wire row id to its translation_group up front so we
-		// can (a) validate the rows exist and (b) dedupe by the value that
-		// actually lands in the junction. Deduping by wire row id BEFORE
-		// resolving would let two locale siblings of the same byline slip
-		// through and trigger a UNIQUE(collection, content, byline_id)
-		// failure at insert time. A single SELECT keeps this O(1) DB
-		// calls regardless of how many credits are being set.
-		const idToGroup = new Map<string, string>();
-		if (inputBylines.length > 0) {
-			const wireIds = [...new Set(inputBylines.map((item) => item.bylineId))];
-			const rows = await this.db
-				.selectFrom("_emdash_bylines")
-				.select(["id", "translation_group"])
-				.where("id", "in", wireIds)
-				.execute();
-			if (rows.length !== wireIds.length) {
-				throw new Error("One or more byline IDs do not exist");
-			}
-			for (const row of rows) {
-				idToGroup.set(row.id, row.translation_group ?? row.id);
-			}
-		}
-
-		// Dedupe by translation_group. Preserves the order of first
-		// occurrence so the editor's intent (which sibling appears first)
-		// is honored. `roleLabel` follows the first occurrence too.
-		const seenGroups = new Set<string>();
-		const bylines: Array<ContentBylineInput & { group: string }> = [];
-		for (const item of inputBylines) {
-			const group = idToGroup.get(item.bylineId);
-			if (!group) {
-				throw new Error(`Missing translation_group for byline ${item.bylineId}`);
-			}
-			if (seenGroups.has(group)) continue;
-			seenGroups.add(group);
-			bylines.push({ ...item, group });
-		}
+		const bylines = await this.resolveBylineGroups(inputBylines);
 
 		// This method is expected to be called within a transaction context
 		// (content handlers wrap in withTransaction, seed applies sequentially).
@@ -1451,9 +1445,7 @@ export class BylineRepository {
 				.execute();
 		}
 
-		for (let i = 0; i < bylines.length; i++) {
-			const item = bylines[i];
-			if (!item) continue;
+		for (const item of bylines) {
 			await this.db
 				.insertInto("_emdash_content_bylines")
 				.values({
@@ -1461,8 +1453,8 @@ export class BylineRepository {
 					collection_slug: collectionSlug,
 					content_id: contentId,
 					byline_id: item.group,
-					sort_order: i,
-					role_label: item.roleLabel ?? null,
+					sort_order: item.sortOrder,
+					role_label: item.roleLabel,
 					created_at: new Date().toISOString(),
 				})
 				.execute();

@@ -1219,15 +1219,11 @@ export async function validateContentCreatePreconditions(
 		? resolveConfiguredLocale(body.locale)
 		: getI18nConfig()?.defaultLocale;
 
-	const repo = new ContentRepository(db);
-	let slug: string | null | undefined = body.slug;
-	if (!slug) {
-		const slugSource = getSlugSource(body.data);
-		if (slugSource) {
-			slug = await repo.generateUniqueSlug(collection, slugSource, effectiveLocale);
-		}
-	}
-	if (body.status === "published") {
+	// For callers supplying an explicit slug (such as atomic WXR import), check
+	// routable publish requirements here. Generated-slug allocation stays inside
+	// `handleContentCreate`'s transaction so concurrent creates serialize properly.
+	const slug: string | null | undefined = body.slug;
+	if (slug !== undefined && body.status === "published") {
 		const publishConfig = await getCollectionPublishConfig(db, collection);
 		requireRoutablePublishSlug(publishConfig.routable, slug);
 	}
@@ -1265,7 +1261,7 @@ export async function handleContentCreate(
 	try {
 		const pre = await validateContentCreatePreconditions(db, collection, body);
 		if (!pre.ok) return { success: false, error: pre.error };
-		const { hasSeo, effectiveLocale, slug } = pre;
+		const { hasSeo, effectiveLocale } = pre;
 
 		// Wrap content + SEO writes in a transaction for atomicity
 		const item = await withTransaction(db, async (trx) => {
@@ -1313,6 +1309,20 @@ export async function handleContentCreate(
 					}
 					referenceWrites.push(resolved.data);
 				}
+			}
+
+			// Allocate generated slugs INSIDE the transaction so concurrent
+			// ordinary creates serialize instead of colliding on the same free slug.
+			let slug: string | null | undefined = body.slug;
+			if (!slug) {
+				const slugSource = getSlugSource(body.data);
+				if (slugSource) {
+					slug = await repo.generateUniqueSlug(collection, slugSource, effectiveLocale);
+				}
+			}
+			if (body.status === "published") {
+				const publishConfig = await getCollectionPublishConfig(trx, collection);
+				requireRoutablePublishSlug(publishConfig.routable, slug);
 			}
 
 			const created = await repo.create({

@@ -84,7 +84,6 @@ import type {
 } from "./database/repositories/types.js";
 import {
 	AtomicWxrImportRepository,
-	computeStoredDataHash,
 	type AtomicWxrApplyResult,
 	type WxrTermPivot,
 } from "./database/repositories/wxr-atomic-import.js";
@@ -3840,6 +3839,7 @@ export class EmDashRuntime {
 		body: {
 			sourceLineage: string;
 			sourcePostId: string;
+			sourceGroupId?: string;
 			inputFingerprint: string;
 			data: Record<string, unknown>;
 			protection?: ContentProtection;
@@ -3878,8 +3878,8 @@ export class EmDashRuntime {
 			};
 		}
 
-		// Fast-path replay/conflict check BEFORE running hooks or normalization so
-		// replays perform ZERO writes and fire ZERO hooks.
+		// Fast-path replay/changed/conflict check BEFORE running hooks or normalization so
+		// replays perform ZERO source writes and fire ZERO hooks.
 		const atomicRepo = new AtomicWxrImportRepository(this.db);
 		const existingReceipt = await atomicRepo.findReceipt(
 			body.sourceLineage,
@@ -3900,10 +3900,39 @@ export class EmDashRuntime {
 				return {
 					success: true,
 					data: {
-						outcome: "conflict",
-						reason: `Source "${body.sourcePostId}" (${resolvedLocale}) was already imported with a different input fingerprint`,
+						outcome: "changed",
+						reason: `Source "${body.sourcePostId}" (${resolvedLocale}) changed since it was imported and was left as imported`,
+						receipt: {
+							collection: existingReceipt.collection,
+							id: existingReceipt.entry_id,
+							slug: existingReceipt.slug,
+							locale: existingReceipt.locale,
+							translationGroup: existingReceipt.translation_group,
+							status: existingReceipt.status,
+							operationId: existingReceipt.operation_id,
+							sourcePostId: existingReceipt.source_post_id,
+							storedDataHash: existingReceipt.stored_data_hash,
+							committedHash: existingReceipt.committed_hash,
+							outcome: "changed",
+						},
 					},
 				};
+			}
+			// When incremental media-usage capture is inactive, repair derived media usage
+			// if a prior process cut happened after the atomic batch committed but before
+			// immediate usage refresh ran — without touching source rows or firing hooks.
+			if (!options.skipMediaUsageRefresh) {
+				const existingSource = await this.db
+					.selectFrom("_emdash_media_usage_sources")
+					.select("source_key")
+					.where("collection_slug", "=", collection)
+					.where("content_id", "=", existingReceipt.entry_id)
+					.executeTakeFirst();
+				if (!existingSource) {
+					await this.refreshContentUsageAfterSuccessfulWrite(collection, [
+						existingReceipt.entry_id,
+					]);
+				}
 			}
 			return {
 				success: true,
@@ -3954,10 +3983,10 @@ export class EmDashRuntime {
 			};
 		}
 
-		const storedDataHash = await computeStoredDataHash(processedData);
 		const applied = await atomicRepo.applyCreate({
 			sourceLineage: body.sourceLineage,
 			sourcePostId: body.sourcePostId,
+			sourceGroupId: body.sourceGroupId,
 			collection,
 			slug: finalSlug,
 			locale: pre.effectiveLocale ?? locale,
@@ -3976,7 +4005,6 @@ export class EmDashRuntime {
 			terms: body.terms,
 			replaceTaxonomies: body.replaceTaxonomies,
 			inputFingerprint: body.inputFingerprint,
-			storedDataHash,
 		});
 
 		if (applied.outcome === "error") {
@@ -3986,7 +4014,7 @@ export class EmDashRuntime {
 			};
 		}
 
-		// Post-commit side effects run ONLY on actual newly-created rows, NEVER on replay/skip/conflict.
+		// Post-commit side effects run ONLY on actual newly-created rows, NEVER on replay/changed/skip/conflict.
 		if (applied.outcome === "created") {
 			if (!options.skipMediaUsageRefresh) {
 				await this.refreshContentUsageAfterSuccessfulWrite(collection, [applied.receipt.id]);

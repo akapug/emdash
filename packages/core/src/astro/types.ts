@@ -388,6 +388,7 @@ export interface EmDashHandlers {
 		body: {
 			sourceLineage: string;
 			sourcePostId: string;
+			sourceGroupId?: string;
 			inputFingerprint: string;
 			data: Record<string, unknown>;
 			protection?: ContentProtection;

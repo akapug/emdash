@@ -830,6 +830,8 @@ export interface WxrImportReceiptTable {
 	stored_data_hash: string;
 	committed_hash: string;
 	has_seo: number;
+	has_protected: number;
+	protected_seo_json: string | null;
 	receipt_state: string;
 	created_at: string;
 }
@@ -838,9 +840,11 @@ export interface WxrGroupBaselineTable {
 	collection: string;
 	translation_group: string;
 	source_lineage: string;
+	source_group_id: string | null;
 	anchor_entry_id: string;
 	anchor_updated_at: string;
 	anchor_seo_json: string | null;
+	anchor_bylines_json: string;
 	generation: number;
 	anchor_state_hash: string;
 	terms_json: string;

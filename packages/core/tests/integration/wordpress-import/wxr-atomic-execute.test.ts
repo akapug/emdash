@@ -325,4 +325,127 @@ describe("Item 132: atomic per-post WXR execute", () => {
 		expect(replay.body.data.skipped).toBe(10);
 		expect(replay.body.data.errors).toEqual([]);
 	});
+
+	it("grants ZERO custody (no comments, no translation link) on unreceipted slug skip", async () => {
+		const contentRepo = new ContentRepository(db);
+		const ownerRow = await contentRepo.create({
+			type: "pages",
+			slug: "owned-anchor",
+			locale: "en",
+			status: "published",
+			data: { title: "Owner Anchor", content: [] },
+		});
+
+		const wxr = buildWxr(`
+    <item>
+      <title>Owned Anchor</title>
+      <wp:post_id>801</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>owned-anchor</wp:post_name>
+      <content:encoded><![CDATA[<p>Body</p>]]></content:encoded>
+      <wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-owned]]></wp:meta_value></wp:postmeta>
+      <wp:comment>
+        <wp:comment_id>9001</wp:comment_id>
+        <wp:comment_author><![CDATA[Bob]]></wp:comment_author>
+        <wp:comment_author_email>bob@example.org</wp:comment_author_email>
+        <wp:comment_date_gmt>2025-01-01 00:00:00</wp:comment_date_gmt>
+        <wp:comment_content><![CDATA[Must not attach to owner row]]></wp:comment_content>
+        <wp:comment_approved>1</wp:comment_approved>
+      </wp:comment>
+    </item>
+    <item>
+      <title>Owned Anchor FR</title>
+      <wp:post_id>802</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>owned-anchor-fr</wp:post_name>
+      <content:encoded><![CDATA[<p>Corps</p>]]></content:encoded>
+      <wp:postmeta><wp:meta_key>_icl_translation_id</wp:meta_key><wp:meta_value><![CDATA[trid-owned]]></wp:meta_value></wp:postmeta>
+      <category domain="language" nicename="fr"><![CDATA[French]]></category>
+    </item>`);
+
+		const res = await runExecute(emdash, wxr, {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: true,
+			importComments: true,
+			atomic: true,
+			sourceLineage: "install:site-132",
+		});
+		expect(res.status).toBe(200);
+		expect(res.body.data.imported).toBe(0);
+		expect(res.body.data.skipped).toBe(1);
+		expect(res.body.data.errors).toHaveLength(1);
+		expect(res.body.data.errors[0]?.error).toContain("trid-owned");
+		// Zero comments written to ownerRow, and French sibling was NOT created standalone.
+		expect(
+			(await sql`SELECT * FROM _emdash_comments WHERE content_id = ${ownerRow.id}`.execute(db))
+				.rows,
+		).toHaveLength(0);
+		expect((await sql`SELECT * FROM ec_pages`.execute(db)).rows).toHaveLength(1);
+	});
+
+	it("handles nameless missing-ID retry deterministically, reports changed fingerprint outside errors, and skips cleanly across 1-byte-different fallback exports", async () => {
+		const namelessWxr = buildWxr(`
+    <item>
+      <title></title>
+      <dc:creator><![CDATA[alice]]></dc:creator>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <content:encoded><![CDATA[<p>Nameless body</p>]]></content:encoded>
+    </item>`);
+		const cfg: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: false,
+			importComments: false,
+			atomic: true,
+			sourceLineage: "install:nameless-132",
+		};
+		const r1 = await runExecute(emdash, namelessWxr, cfg);
+		expect(r1.body.data.imported).toBe(1);
+		const r2 = await runExecute(emdash, namelessWxr, cfg);
+		expect(r2.body.data.imported).toBe(0);
+		expect(r2.body.data.skipped).toBe(1);
+		expect(r2.body.data.errors).toEqual([]);
+
+		// Changed source content on same lineage -> reported as `changed: 1`, NOT in `errors`, ZERO writes.
+		const changedWxr = namelessWxr.replace("Nameless body", "Edited body");
+		const rChanged = await runExecute(emdash, changedWxr, cfg);
+		expect(rChanged.body.data.success).toBe(true);
+		expect(rChanged.body.data.imported).toBe(0);
+		expect(rChanged.body.data.changed).toBe(1);
+		expect(rChanged.body.data.errors).toEqual([]);
+		expect(rChanged.body.data.items?.[0]?.outcome).toBe("changed");
+
+		// Cross-export fallback lineage (no sourceLineage, 1-byte header diff) -> skipped with ZERO writes & ZERO errors.
+		const exportA = buildWxr(`
+    <item>
+      <title>Cross Export</title>
+      <wp:post_id>901</wp:post_id>
+      <wp:post_type>page</wp:post_type>
+      <wp:status>publish</wp:status>
+      <wp:post_name>cross-export</wp:post_name>
+      <content:encoded><![CDATA[<p>Body</p>]]></content:encoded>
+    </item>`);
+		const exportB = exportA.replace("Example Site", "Example Site!");
+		const noLineageCfg: ImportConfig = {
+			postTypeMappings: { page: { collection: "pages", enabled: true } },
+			skipExisting: true,
+			importSections: false,
+			importSeo: false,
+			importComments: false,
+			atomic: true,
+		};
+		const firstExp = await runExecute(emdash, exportA, noLineageCfg);
+		expect(firstExp.body.data.imported).toBe(1);
+		const secondExp = await runExecute(emdash, exportB, noLineageCfg);
+		expect(secondExp.body.data.success).toBe(true);
+		expect(secondExp.body.data.imported).toBe(0);
+		expect(secondExp.body.data.skipped).toBe(1);
+		expect(secondExp.body.data.errors).toEqual([]);
+	});
 });

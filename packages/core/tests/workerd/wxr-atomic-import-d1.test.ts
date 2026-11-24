@@ -23,6 +23,7 @@ import { Kysely, SqliteAdapter, sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { RawBindingD1Dialect } from "../../../cloudflare/src/db/d1-dialect.js";
+import { createPasswordVerifier } from "../../src/content/protection.js";
 import { runMigrations } from "../../src/database/migrations/runner.js";
 import { BylineRepository } from "../../src/database/repositories/byline.js";
 import { ContentRepository } from "../../src/database/repositories/content.js";
@@ -30,6 +31,7 @@ import { SeoRepository } from "../../src/database/repositories/seo.js";
 import { TaxonomyRepository } from "../../src/database/repositories/taxonomy.js";
 import {
 	AtomicWxrImportRepository,
+	computeStoredDataHash,
 	D1_MAX_VALUE_BYTES,
 	type AtomicWxrCreateInput,
 	type AtomicWxrItemReceipt,
@@ -57,6 +59,7 @@ function makeInput(overrides: Partial<AtomicWxrCreateInput> = {}): AtomicWxrCrea
 	return {
 		sourceLineage: "install:site-alpha",
 		sourcePostId: "101",
+		sourceGroupId: "wp-trid-1",
 		collection: "posts",
 		slug: "hello-world",
 		locale: "en",
@@ -70,7 +73,6 @@ function makeInput(overrides: Partial<AtomicWxrCreateInput> = {}): AtomicWxrCrea
 			{ taxonomy: "tag", termGroup: tagGroup1 },
 		],
 		inputFingerprint: "v1:fp-101-en",
-		storedDataHash: "v1:data-101-en",
 		...overrides,
 	};
 }
@@ -129,6 +131,7 @@ beforeEach(async () => {
 	await registry.createCollection({ slug: "posts", label: "Posts", hasSeo: true });
 	await registry.createField("posts", { slug: "title", label: "Title", type: "string" });
 	await registry.createField("posts", { slug: "content", label: "Content", type: "string" });
+	await registry.createField("posts", { slug: "event_at", label: "Event At", type: "datetime" });
 	await registry.createCollection({ slug: "pages", label: "Pages", hasSeo: true });
 	await registry.createField("pages", { slug: "title", label: "Title", type: "string" });
 	await registry.createField("pages", { slug: "content", label: "Content", type: "string" });
@@ -168,7 +171,9 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 		);
 		expect(batches).toBe(1);
 		expect(receipt.status).toBe("scheduled");
-		expect(receipt.storedDataHash).toBe("v1:data-101-en");
+		expect(receipt.storedDataHash).toBe(
+			await computeStoredDataHash({ title: "Hello World", content: "[]" }),
+		);
 		expect(receipt.committedHash).toMatch(/^[0-9a-f]{64}$/);
 
 		const rows = (await sql`SELECT * FROM ec_posts WHERE id = ${receipt.id}`.execute(db)).rows;
@@ -208,14 +213,14 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 		expect(replay.outcome).toBe("replayed");
 		if (replay.outcome === "replayed" && res.outcome === "replayed") {
 			expect(replay.receipt.operationId).toBe(res.receipt.operationId);
-			expect(replay.receipt.storedDataHash).toBe("v1:data-101-en");
+			expect(replay.receipt.storedDataHash).toBe(res.receipt.storedDataHash);
 			expect(replay.receipt.committedHash).toBe(res.receipt.committedHash);
 		}
 		expect(batches).toBe(1);
 		expect(await snapshot()).toEqual(afterCommit);
 	});
 
-	it("refuses destination collection remap and fingerprint mismatch as conflict with ZERO writes", async () => {
+	it("classifies collection remap as conflict and changed fingerprint as changed with ZERO writes", async () => {
 		requireCreated(await repo.applyCreate(makeInput()));
 		const before = await snapshot();
 
@@ -223,7 +228,7 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 		expect(remapped.outcome).toBe("conflict");
 
 		const changed = await repo.applyCreate(makeInput({ inputFingerprint: "v1:different" }));
-		expect(changed.outcome).toBe("conflict");
+		expect(changed.outcome).toBe("changed");
 
 		expect(batches).toBe(1);
 		expect(await snapshot()).toEqual(before);
@@ -251,7 +256,6 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 				slug: "bonjour-monde",
 				translationOf: legacy.id,
 				inputFingerprint: "v1:fp-102-fr",
-				storedDataHash: "v1:data-102-fr",
 			}),
 		);
 		expect(refusedTranslation.outcome).toBe("conflict");
@@ -271,7 +275,6 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 					terms: [{ taxonomy: "category", termGroup: catGroupB }],
 					replaceTaxonomies: ["category"],
 					inputFingerprint: "v1:fp-102-fr",
-					storedDataHash: "v1:data-102-fr",
 				}),
 			),
 		);
@@ -288,7 +291,6 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 					terms: [{ taxonomy: "category", termGroup: catGroupA }],
 					replaceTaxonomies: ["category"],
 					inputFingerprint: "v1:fp-103-es",
-					storedDataHash: "v1:data-103-es",
 				}),
 			),
 		);
@@ -303,7 +305,13 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 		expect(baseline?.generation).toBe(3);
 	});
 
-	it.each(["anchor content", "anchor SEO", "group terms", "sibling content"] as const)(
+	it.each([
+		"anchor content",
+		"anchor SEO",
+		"group terms",
+		"sibling content",
+		"sibling SEO delete",
+	] as const)(
 		"refuses later translation with ZERO writes after owner edits %s",
 		async (editKind) => {
 			const anchor = requireCreated(await repo.applyCreate(makeInput()));
@@ -317,7 +325,6 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 						terms: [],
 						replaceTaxonomies: [],
 						inputFingerprint: "v1:fp-102-fr",
-						storedDataHash: "v1:data-102-fr",
 					}),
 				),
 			);
@@ -334,6 +341,10 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 				await new TaxonomyRepository(db).setTermsForEntry("posts", anchor.id, "category", [
 					catGroupB,
 				]);
+			} else if (editKind === "sibling SEO delete") {
+				await sql`DELETE FROM _emdash_seo WHERE collection = 'posts' AND content_id = ${fr.id}`.execute(
+					db,
+				);
 			} else {
 				await new ContentRepository(db).update("posts", fr.id, {
 					data: { title: "Owner Edited French Sibling", content: "[]" },
@@ -350,13 +361,151 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 					terms: [{ taxonomy: "category", termGroup: catGroupB }],
 					replaceTaxonomies: ["category"],
 					inputFingerprint: "v1:fp-103-es",
-					storedDataHash: "v1:data-103-es",
 				}),
 			);
 			expect(refused.outcome).toBe("conflict");
 			expect(await snapshot()).toEqual(before);
 		},
 	);
+
+	it("refuses translation after protected SEO edit, wrong sourceGroupId, or interleaved term/byline delete", async () => {
+		const verifier = await createPasswordVerifier("secret-pass");
+		const protectedAnchor = requireCreated(
+			await repo.applyCreate(
+				makeInput({
+					sourcePostId: "201",
+					sourceGroupId: "wp-trid-prot",
+					slug: "protected-post",
+					protection: { version: 1, mode: "password", verifier },
+					seo: { title: "Protected SEO" },
+					inputFingerprint: "v1:fp-201-en",
+				}),
+			),
+		);
+		// Wrong sourceGroupId on the SAME lineage must be refused.
+		const beforeWrongGroup = await snapshot();
+		const wrongGroup = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "202",
+				sourceGroupId: "wp-trid-OTHER",
+				slug: "protected-post-fr",
+				locale: "fr",
+				translationOf: protectedAnchor.id,
+				inputFingerprint: "v1:fp-202-fr",
+			}),
+		);
+		expect(wrongGroup.outcome).toBe("conflict");
+		expect(await snapshot()).toEqual(beforeWrongGroup);
+
+		// Edit protected SEO directly -> later translation must be refused with ZERO writes.
+		await sql`UPDATE _emdash_protected_content SET seo = '{"title":"Owner Edited"}' WHERE collection = 'posts' AND content_id = ${protectedAnchor.id}`.execute(
+			db,
+		);
+		const beforeProtEdit = await snapshot();
+		const refusedProt = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "202",
+				sourceGroupId: "wp-trid-prot",
+				slug: "protected-post-fr",
+				locale: "fr",
+				translationOf: protectedAnchor.id,
+				inputFingerprint: "v1:fp-202-fr",
+			}),
+		);
+		expect(refusedProt.outcome).toBe("conflict");
+		expect(await snapshot()).toEqual(beforeProtEdit);
+
+		// Interleaved term deletion right before commit -> batch rolls back with ZERO orphans.
+		const taxRepo = new TaxonomyRepository(db);
+		const tempTerm = await taxRepo.create({ name: "tag", slug: "ephemeral", label: "Ephemeral" });
+		const tempGroup = tempTerm.translationGroup ?? tempTerm.id;
+		const res = await repo.applyCreate(
+			makeInput({
+				sourcePostId: "203",
+				slug: "interleaved-term-delete",
+				terms: [{ taxonomy: "tag", termGroup: tempGroup }],
+				inputFingerprint: "v1:fp-203",
+				_beforeCommit: async () => {
+					await sql`DELETE FROM taxonomies WHERE id = ${tempTerm.id}`.execute(db);
+				},
+			}),
+		);
+		expect(res.outcome).toBe("conflict");
+		expect(
+			(await sql`SELECT * FROM ec_posts WHERE slug = 'interleaved-term-delete'`.execute(db)).rows,
+		).toHaveLength(0);
+	});
+
+	it("chunks 15 inherited byline credits under D1's 100-bind limit and binds storedDataHash to normalized UTC datetime", async () => {
+		const bylineRepo = new BylineRepository(db);
+		const fifteenBylines: Array<{ bylineId: string }> = [];
+		for (let i = 0; i < 15; i++) {
+			// oxlint-disable-next-line no-await-in-loop -- creating 15 distinct bylines sequentially
+			const b = await bylineRepo.create({
+				slug: `coauthor-${i}`,
+				displayName: `Coauthor ${i}`,
+				isGuest: true,
+			});
+			fifteenBylines.push({ bylineId: b.id });
+		}
+		batches = 0;
+
+		const anchor = requireCreated(
+			await repo.applyCreate(
+				makeInput({
+					sourcePostId: "301",
+					sourceGroupId: "wp-trid-15",
+					slug: "fifteen-credits",
+					data: {
+						title: "Fifteen Credits",
+						content: "[]",
+						event_at: "2026-05-01T14:30:00+02:00",
+					},
+					bylines: fifteenBylines,
+					inputFingerprint: "v1:fp-301-en",
+				}),
+			),
+		);
+		expect(batches).toBe(1);
+		// Verify storedDataHash matches the post-normalization UTC datetime stored in ec_posts.
+		const storedRow = (
+			await sql<{
+				event_at: string;
+			}>`SELECT event_at FROM ec_posts WHERE id = ${anchor.id}`.execute(db)
+		).rows[0];
+		expect(storedRow?.event_at).toBe("2026-05-01T12:30:00.000Z");
+		expect(anchor.storedDataHash).toBe(
+			await computeStoredDataHash({
+				title: "Fifteen Credits",
+				content: "[]",
+				event_at: "2026-05-01T12:30:00.000Z",
+			}),
+		);
+
+		// Translation inherits all 15 credits without explicit bylines -> chunked cleanly in 1 batch!
+		const tr = requireCreated(
+			await repo.applyCreate(
+				makeInput({
+					sourcePostId: "302",
+					sourceGroupId: "wp-trid-15",
+					slug: "quinze-credits",
+					locale: "fr",
+					translationOf: anchor.id,
+					bylines: undefined,
+					terms: [],
+					replaceTaxonomies: [],
+					inputFingerprint: "v1:fp-302-fr",
+				}),
+			),
+		);
+		expect(batches).toBe(2);
+		const copied = (
+			await sql`SELECT * FROM _emdash_content_bylines WHERE collection_slug = 'posts' AND content_id = ${tr.id}`.execute(
+				db,
+			)
+		).rows;
+		expect(copied).toHaveLength(15);
+	});
 
 	it("splits >30 taxonomy pivots inside ONE D1 batch and rejects >2 MB oversize values with ZERO writes", async () => {
 		const taxRepo = new TaxonomyRepository(db);
@@ -386,7 +535,6 @@ describe("atomic per-post WXR import on real D1 .batch()", () => {
 				slug: "too-big",
 				data: { title: "Too Big", content: huge },
 				inputFingerprint: "v1:fp-999",
-				storedDataHash: "v1:data-999",
 			}),
 		);
 		expect(oversize).toMatchObject({ outcome: "error", code: "D1_LIMIT_EXCEEDED" });
