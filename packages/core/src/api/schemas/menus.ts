@@ -121,6 +121,15 @@ export const menuItemSchema = z
 	})
 	.meta({ id: "MenuItem" });
 
+export const compareAndSetMenuItemLabelBody = z
+	.object({
+		label: z.string().min(1),
+		expected: menuItemSchema
+			.omit({ createdAt: true, locale: true, translationGroup: true })
+			.strict(),
+	})
+	.strict();
+
 export const menuTranslationsSchema = z
 	.object({
 		translationGroup: z.string().nullable(),

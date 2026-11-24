@@ -9,9 +9,14 @@ import type { APIRoute } from "astro";
 
 import { requirePerm } from "#api/authorize.js";
 import { apiError, handleError, unwrapResult } from "#api/error.js";
-import { handleMenuItemDelete, handleMenuItemUpdate } from "#api/handlers/menus.js";
+import {
+	handleMenuItemDelete,
+	handleMenuItemLabelRepair,
+	handleMenuItemUpdate,
+} from "#api/handlers/menus.js";
 import { isParseError, parseBody, parseQuery } from "#api/parse.js";
 import { localeFilterQuery, updateMenuItemBody } from "#api/schemas.js";
+import { compareAndSetMenuItemLabelBody } from "#api/schemas/menus.js";
 import { menuTag } from "#cache/chrome-tags.js";
 
 export const prerender = false;
@@ -43,6 +48,33 @@ export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
 		return unwrapResult(result);
 	} catch (error) {
 		return handleError(error, "Failed to update menu item", "MENU_ITEM_UPDATE_ERROR");
+	}
+};
+
+// Separate verb so a pre-repair artifact never accepts an unconditional write.
+export const PATCH: APIRoute = async ({ params, request, locals, cache }) => {
+	const denied = requirePerm(locals.user, "menus:manage");
+	if (denied) return denied;
+	const { name, id } = params;
+	if (!name || !id) return apiError("VALIDATION_ERROR", "menu and item id are required", 400);
+	const query = parseQuery(new URL(request.url), localeFilterQuery);
+	if (isParseError(query)) return query;
+
+	try {
+		const body = await parseBody(request, compareAndSetMenuItemLabelBody);
+		if (isParseError(body)) return body;
+		const result = await handleMenuItemLabelRepair(
+			locals.emdash.db,
+			name,
+			id,
+			body.expected,
+			body.label,
+			query,
+		);
+		if (result.success && cache?.enabled) await cache.invalidate({ tags: [menuTag(name)] });
+		return unwrapResult(result);
+	} catch (error) {
+		return handleError(error, "Failed to repair menu item label", "MENU_ITEM_UPDATE_ERROR");
 	}
 };
 

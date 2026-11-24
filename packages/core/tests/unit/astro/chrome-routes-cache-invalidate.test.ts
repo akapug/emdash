@@ -16,6 +16,7 @@ import {
 import { POST as postMenuItem } from "../../../src/astro/routes/api/menus/[name]/items.js";
 import {
 	DELETE as deleteMenuItem,
+	PATCH as patchMenuItem,
 	PUT as putMenuItem,
 } from "../../../src/astro/routes/api/menus/[name]/items/[id].js";
 import { POST as reorderMenuItems } from "../../../src/astro/routes/api/menus/[name]/reorder.js";
@@ -173,6 +174,45 @@ describe("Chrome write routes — edge cache invalidation", () => {
 
 			expect(response.status).toBe(200);
 			expect(invalidate).toHaveBeenCalledWith({ tags: ["emdash:menu:primary"] });
+		});
+
+		it("permits only a guarded label repair and invalidates on success, not refusal", async () => {
+			await menuFixture();
+			const created = await handleMenuItemCreate(db, "primary", {
+				type: "custom",
+				label: "Arts",
+				customUrl: "/arts",
+			});
+			if (!created.success) throw new Error("menu item fixture failed");
+			const {
+				createdAt: _createdAt,
+				locale: _locale,
+				translationGroup: _group,
+				...expected
+			} = created.data;
+			const { params, locals, cache, invalidate } = makeContext({
+				name: "primary",
+				id: expected.id,
+			});
+			const call = async (body: unknown, role: (typeof Role)[keyof typeof Role] = Role.ADMIN) =>
+				patchMenuItem({
+					request: await makeRequest("PATCH", body),
+					params,
+					locals: { ...locals, user: { ...admin, role } },
+					cache,
+				} as Parameters<typeof patchMenuItem>[0]);
+			const body = { expected, label: "Arts & Culture" };
+			expect((await call(body, Role.SUBSCRIBER)).status).toBe(403);
+			expect((await call({ label: body.label })).status).toBe(400);
+			expect(invalidate).not.toHaveBeenCalled();
+			const response = await call(body);
+			expect(response.status).toBe(200);
+			expect(await response.json()).toMatchObject({
+				success: true,
+				data: { ...expected, label: body.label },
+			});
+			expect((await call(body)).status).toBe(409);
+			expect(invalidate).toHaveBeenCalledExactlyOnceWith({ tags: ["emdash:menu:primary"] });
 		});
 
 		it("invalidates on item reorder", async () => {
