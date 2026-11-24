@@ -80,12 +80,22 @@ describe("MEC upcoming list skin, timezone today-occurrence rule, and Monthly ca
 
 	it("keeps today's recurring occurrence upcoming until end_time in the site's timezone, then advances", () => {
 		// 2026-11-23 18:00 EST (= 23:00 UTC): yoga (17:30-18:45 EST) is still in progress
-		const during = eventSummary(yoga, new Date("2026-11-23T23:00:00Z"), undefined, "America/New_York");
+		const during = eventSummary(
+			yoga,
+			new Date("2026-11-23T23:00:00Z"),
+			undefined,
+			"America/New_York",
+		);
 		expect(during?.date).toBe("2026-11-23");
 		expect(during?.period).toBe("upcoming");
 
 		// 2026-11-23 20:00 EST (= 2026-11-24T01:00:00Z): yoga ended at 18:45 EST -> advances to Nov 30
-		const after = eventSummary(yoga, new Date("2026-11-24T01:00:00Z"), undefined, "America/New_York");
+		const after = eventSummary(
+			yoga,
+			new Date("2026-11-24T01:00:00Z"),
+			undefined,
+			"America/New_York",
+		);
 		expect(after?.date).toBe("2026-11-30");
 		expect(after?.period).toBe("upcoming");
 
@@ -191,7 +201,12 @@ describe("MEC upcoming list skin, timezone today-occurrence rule, and Monthly ca
 			occurrences: ["2026-11-23", "2026-11-30"],
 		});
 		// 2026-11-23 12:00 EST (= 17:00 UTC): the Monday occurrence ended at 10:00, so it advances to Nov 30
-		const noon = eventSummary(mixed, new Date("2026-11-23T17:00:00Z"), undefined, "America/New_York");
+		const noon = eventSummary(
+			mixed,
+			new Date("2026-11-23T17:00:00Z"),
+			undefined,
+			"America/New_York",
+		);
 		expect(noon?.date).toBe("2026-11-30");
 	});
 
