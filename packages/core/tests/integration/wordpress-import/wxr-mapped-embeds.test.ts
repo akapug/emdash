@@ -268,6 +268,17 @@ describe("WXR carried embeds at the original content mutation", () => {
 		});
 	});
 
+	it("persists a source view's search bar through the execute request", async () => {
+		const past = {
+			...embed,
+			events: { ...embed.events, viewSlug: "past-886", mode: "past", order: "desc", searchBar: { text: true, monthYear: true } },
+		};
+		const response = await run("[MEC id=886]", { "7": { "886": past } });
+		expect((await response.json()).data).toMatchObject({ success: true, imported: 1, errors: [] });
+		const blocks: Block[] = JSON.parse((await row()).content as string);
+		expect(blocks.filter((b) => b.provider === "embark-events")).toEqual([{ ...past, _key: "mec-7-886-1" }]);
+	});
+
 	it("does not substitute another dictionary entry when the source view ID has no definition", async () => {
 		const response = await run("[MEC id=73]", { "7": { "84": { ...embed, _key: "mec-73" } } });
 		const result = (await response.json()).data;
@@ -463,6 +474,10 @@ describe("WXR carried embeds at the original content mutation", () => {
 			{ "7": { "73": null } },
 			{ "7": { "73": { ...embed, events: { ...embed.events, filters: { category: [] } } } } },
 			{ "7": { "73": { ...embed, events: { ...embed.events, navigation: true } } } },
+			{ "7": { ...embed, events: { ...embed.events, searchBar: {} } } },
+			{ "7": { ...embed, events: { ...embed.events, searchBar: { text: false, monthYear: false } } } },
+			{ "7": { ...embed, events: { ...embed.events, searchBar: { category: true } } } },
+			{ "7": { ...embed, events: { ...embed.events, searchBar: { text: "yes" } } } },
 		].map((embeds) => ({ embeds })),
 	)("rejects malformed embeds before writing: $embeds", async ({ embeds }) => {
 		const response = await run("[MEC id=73]", embeds);
