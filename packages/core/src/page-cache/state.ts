@@ -119,12 +119,14 @@ export function prepareVisibilityRevBump(revision: string = crypto.randomUUID())
 		UPDATE options
 		SET revision = ${revision}
 		WHERE name = ${VISIBILITY_REV_OPTION}
-			AND value <> ''
+			AND value NOT IN ('', 'null', '""')
 	`;
 }
 
 /**
  * Activate a fresh, never-reused page-cache incarnation on the primary database.
+ * Stores JSON-encoded string in `options.value` for compatibility with
+ * `OptionsRepository.getAll()`.
  */
 export async function activatePageCacheIncarnation(
 	db: Kysely<Database>,
@@ -133,20 +135,21 @@ export async function activatePageCacheIncarnation(
 ): Promise<PageCacheAuthority> {
 	const trimmed = incarnation.trim();
 	if (!trimmed) throw new Error("Page cache incarnation must be non-empty");
+	const encoded = JSON.stringify(trimmed);
 	await sql`
 		INSERT INTO options (name, value, revision)
-		VALUES (${VISIBILITY_REV_OPTION}, ${trimmed}, ${revision})
+		VALUES (${VISIBILITY_REV_OPTION}, ${encoded}, ${revision})
 		ON CONFLICT (name) DO UPDATE SET
-			value = ${trimmed},
+			value = ${encoded},
 			revision = ${revision}
 	`.execute(db);
 	return { activeIncarnation: trimmed, visibilityRev: revision };
 }
 
 /**
- * Retire the active page-cache incarnation on the primary database (`value = ''`).
- * Any old ON Worker reading primary authority stops serving retained copies
- * immediately.
+ * Retire the active page-cache incarnation on the primary database (`value = 'null'`,
+ * valid JSON for `OptionsRepository.getAll()`). Any old ON Worker reading primary
+ * authority stops serving retained copies immediately.
  */
 export async function retirePageCacheIncarnation(
 	db: Kysely<Database>,
@@ -154,11 +157,26 @@ export async function retirePageCacheIncarnation(
 ): Promise<void> {
 	await sql`
 		INSERT INTO options (name, value, revision)
-		VALUES (${VISIBILITY_REV_OPTION}, '', ${revision})
+		VALUES (${VISIBILITY_REV_OPTION}, 'null', ${revision})
 		ON CONFLICT (name) DO UPDATE SET
-			value = '',
+			value = 'null',
 			revision = ${revision}
 	`.execute(db);
+}
+
+/**
+ * Parse a JSON-encoded `options.value` for `emdash:visibility_rev`.
+ * Returns the non-empty active incarnation string, or `null` when retired/invalid.
+ */
+export function parsePageCacheIncarnationValue(raw: unknown): string | null {
+	if (typeof raw !== "string" || !raw) return null;
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed === "string" && parsed.trim().length > 0) return parsed.trim();
+		return null;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -174,7 +192,7 @@ export async function bumpVisibilityRev(
 
 /**
  * Read the authoritative `(activeIncarnation, visibilityRev)` from
- * `options(name, value, revision)`. Returns `null` when absent or retired (`value = ''`).
+ * `options(name, value, revision)`. Returns `null` when absent or retired (`value = 'null'`).
  */
 export async function readPageCacheAuthority(
 	db: Kysely<Database>,
@@ -184,8 +202,10 @@ export async function readPageCacheAuthority(
 		.select(["value", "revision"])
 		.where("name", "=", VISIBILITY_REV_OPTION)
 		.executeTakeFirst();
-	if (!row || !row.value || !row.revision) return null;
-	return { activeIncarnation: row.value, visibilityRev: row.revision };
+	if (!row || !row.revision) return null;
+	const activeIncarnation = parsePageCacheIncarnationValue(row.value);
+	if (!activeIncarnation) return null;
+	return { activeIncarnation, visibilityRev: row.revision };
 }
 
 /**

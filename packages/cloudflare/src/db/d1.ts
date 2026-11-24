@@ -347,7 +347,7 @@ async function executeDropBatch(
 			binding.prepare(`DROP TABLE IF EXISTS "${ftsTable}"`),
 			binding.prepare(`DROP TABLE IF EXISTS "${contentTable}"`),
 			binding
-				.prepare("UPDATE options SET revision = ? WHERE name = ? AND value <> ''")
+				.prepare("UPDATE options SET revision = ? WHERE name = ? AND value NOT IN ('', 'null', '\"\"')")
 				.bind(crypto.randomUUID(), VISIBILITY_REV_OPTION),
 			binding
 				.prepare(

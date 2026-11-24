@@ -1191,19 +1191,26 @@ export class SchemaRegistry {
 		try {
 			const tableName = this.getTableName(slug);
 			const ftsManager = new FTSManager(this.db);
+			const ftsDropQueries = ftsManager.prepareDropFtsQueries(slug);
 			const dropTableQuery = sql`DROP TABLE IF EXISTS ${sql.ref(tableName)}`;
 			const deleteRegistryQuery = this.db
 				.deleteFrom("_emdash_collections")
 				.where("id", "=", existing.id);
-			// On D1, batch drop + registry delete + conditional visibility bump atomically;
-			// on SQLite/Postgres, run inside a genuine SQL transaction.
-			await ftsManager.dropFtsTable(slug);
-			const queries = [dropTableQuery, deleteRegistryQuery, prepareVisibilityRevBump()];
+			// On D1, batch FTS teardown + table drop + registry delete + conditional
+			// visibility bump atomically; on SQLite/Postgres, run inside one transaction
+			// so a failure in any statement rolls back FTS triggers/table as well.
+			const queries = [
+				...ftsDropQueries,
+				dropTableQuery,
+				deleteRegistryQuery,
+				prepareVisibilityRevBump(),
+			];
 			const batched = await executeAtomicBatchIfSupported(this.db, queries);
 			if (batched) {
 				contentTableDropped = true;
 			} else {
 				await withTransaction(this.db, async (trx) => {
+					for (const q of ftsDropQueries) await q.execute(trx);
 					await dropTableQuery.execute(trx);
 					contentTableDropped = true;
 					await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();

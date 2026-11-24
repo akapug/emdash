@@ -4,7 +4,7 @@
  * Manages FTS5 virtual tables and triggers for search indexing.
  */
 
-import type { Kysely } from "kysely";
+import type { Kysely, RawBuilder } from "kysely";
 import { sql } from "kysely";
 
 import { isSqlite, tableExists as dialectTableExists } from "../database/dialect-helpers.js";
@@ -273,18 +273,28 @@ export class FTSManager {
 	}
 
 	/**
+	 * Build validated SQL statements to drop the FTS triggers and table inside
+	 * an existing atomic batch or transaction. Returns `[]` on non-SQLite DBs.
+	 */
+	prepareDropFtsQueries(collectionSlug: string): RawBuilder<unknown>[] {
+		if (!isSqlite(this.db)) return [];
+		this.validateInputs(collectionSlug);
+		const ftsTable = this.getFtsTableName(collectionSlug);
+		return [
+			sql.raw(`DROP TRIGGER IF EXISTS "${ftsTable}_insert"`),
+			sql.raw(`DROP TRIGGER IF EXISTS "${ftsTable}_update"`),
+			sql.raw(`DROP TRIGGER IF EXISTS "${ftsTable}_delete"`),
+			sql.raw(`DROP TABLE IF EXISTS "${ftsTable}"`),
+		];
+	}
+
+	/**
 	 * Drop the FTS table and triggers for a collection
 	 */
 	async dropFtsTable(collectionSlug: string): Promise<void> {
-		if (!isSqlite(this.db)) return;
-		this.validateInputs(collectionSlug);
-		const ftsTable = this.getFtsTableName(collectionSlug);
-
-		// Drop triggers first
-		await this.dropTriggers(collectionSlug);
-
-		// Drop the FTS table
-		await sql.raw(`DROP TABLE IF EXISTS "${ftsTable}"`).execute(this.db);
+		for (const query of this.prepareDropFtsQueries(collectionSlug)) {
+			await query.execute(this.db);
+		}
 	}
 
 	/**

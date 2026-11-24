@@ -268,8 +268,15 @@ export async function readPrimaryPageCacheAuthorityFromD1(
 			timeoutMs,
 		);
 		if (!row || !row.value || !row.revision) return null;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(String(row.value));
+		} catch {
+			return null;
+		}
+		if (typeof parsed !== "string" || parsed.trim().length === 0) return null;
 		return {
-			activeIncarnation: String(row.value),
+			activeIncarnation: parsed.trim(),
 			visibilityRev: String(row.revision),
 		};
 	} catch {

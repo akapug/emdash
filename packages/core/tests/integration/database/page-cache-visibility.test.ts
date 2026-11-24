@@ -2,6 +2,7 @@ import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ContentRepository } from "../../../src/database/repositories/content.js";
+import { OptionsRepository } from "../../../src/database/repositories/options.js";
 import { ProtectedContentRepository } from "../../../src/database/repositories/protected-content.js";
 import {
 	activatePageCacheIncarnation,
@@ -12,6 +13,7 @@ import {
 	VISIBILITY_REV_OPTION,
 } from "../../../src/page-cache/state.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
+import { FTSManager } from "../../../src/search/fts-manager.js";
 import { setupForDialect, teardownForDialect, type DialectTestContext } from "../../utils/test-db.js";
 
 describe("page-cache D1-primary authority and visibility revision on real migrated schema", () => {
@@ -69,6 +71,9 @@ describe("page-cache D1-primary authority and visibility revision on real migrat
 		const auth0 = await activatePageCacheIncarnation(ctx.db, "d1-acme:inc-1", "rev-0");
 		expect(auth0).toEqual({ activeIncarnation: "d1-acme:inc-1", visibilityRev: "rev-0" });
 		expect(await readPageCacheAuthority(ctx.db)).toEqual(auth0);
+		// OptionsRepository.getAll() parses every row as JSON — must succeed for active AND retired
+		const allActive = await new OptionsRepository(ctx.db).getAll();
+		expect(allActive.get(VISIBILITY_REV_OPTION)).toBe("d1-acme:inc-1");
 
 		await bumpVisibilityRev(ctx.db, "rev-1");
 		expect(await readPageCacheAuthority(ctx.db)).toEqual({
@@ -78,6 +83,8 @@ describe("page-cache D1-primary authority and visibility revision on real migrat
 
 		await retirePageCacheIncarnation(ctx.db, "rev-retired");
 		expect(await readPageCacheAuthority(ctx.db)).toBeNull();
+		const allRetired = await new OptionsRepository(ctx.db).getAll();
+		expect(allRetired.get(VISIBILITY_REV_OPTION)).toBeNull();
 	});
 
 	it("advances visibility_rev atomically on every public-visibility mutation when D1 primary is active (even from an OFF-era writer with no env flag), and skips ordinary draft saves", async () => {
@@ -192,5 +199,57 @@ describe("page-cache D1-primary authority and visibility revision on real migrat
 		const unpublished = await content.unpublish("pages", created.id);
 		expect(unpublished.status).toBe("draft");
 		expect((await readPageCacheAuthority(ctx.db))!.visibilityRev).not.toBe("rev-initial");
+	});
+
+	it("rolls back FTS table, FTS triggers, content table, and registry atomically when inactive collection deletion fails on visibility_rev", async () => {
+		await activatePageCacheIncarnation(ctx.db, "d1-acme:inc-1", "rev-fts-init");
+		const registry = new SchemaRegistry(ctx.db);
+		await registry.createCollection({
+			slug: "articles",
+			label: "Articles",
+			labelSingular: "Article",
+			fields: [{ slug: "title", label: "Title", type: "string", searchable: true }],
+		});
+		const fts = new FTSManager(ctx.db);
+		await fts.createFtsTable("articles", ["title"]);
+
+		const ftsObjects = async () => {
+			const res = await sql<{ name: string; type: string }>`
+				SELECT name, type FROM sqlite_master
+				WHERE name LIKE '_emdash_fts_articles%' OR name = 'ec_articles'
+				ORDER BY name
+			`.execute(ctx.db);
+			return res.rows.map((r) => `${r.type}:${r.name}`);
+		};
+		const before = await ftsObjects();
+		expect(before).toContain("table:ec_articles");
+		expect(before).toContain("table:_emdash_fts_articles");
+		expect(before).toContain("trigger:_emdash_fts_articles_insert");
+		expect(before).toContain("trigger:_emdash_fts_articles_update");
+		expect(before).toContain("trigger:_emdash_fts_articles_delete");
+
+		await sql.raw(`
+			CREATE TRIGGER fail_vis_rev_fts BEFORE UPDATE ON options
+			WHEN NEW.name = '${VISIBILITY_REV_OPTION}'
+			BEGIN
+				SELECT RAISE(ABORT, 'injected fts delete vis_rev failure');
+			END
+		`).execute(ctx.db);
+
+		await expect(registry.deleteCollection("articles", { force: true })).rejects.toThrow(
+			/injected fts delete vis_rev failure/,
+		);
+
+		// Content table, registry row, FTS table, AND all 3 FTS triggers MUST all survive!
+		expect(await ftsObjects()).toEqual(before);
+		expect(await registry.getCollection("articles")).not.toBeNull();
+		expect((await readPageCacheAuthority(ctx.db))!.visibilityRev).toBe("rev-fts-init");
+
+		// Clean retry succeeds and removes all objects together
+		await sql`DROP TRIGGER fail_vis_rev_fts`.execute(ctx.db);
+		await registry.deleteCollection("articles", { force: true });
+		expect(await registry.getCollection("articles")).toBeNull();
+		expect(await ftsObjects()).toEqual([]);
+		expect((await readPageCacheAuthority(ctx.db))!.visibilityRev).not.toBe("rev-fts-init");
 	});
 });
