@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { BATCH_REDIRECTS_CAPABILITY } from "../../../src/api/handlers/redirects.js";
 import {
 	EVENT_SEARCH_BAR_CAPABILITY,
 	EVENT_SEARCH_BAR_PROBE,
@@ -45,10 +46,14 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 	it("omits event-search-bar when the execute schema rejects searchBar and includes it when accepted", () => {
 		const rejecting = { safeParse: () => ({ success: false }) };
 		const accepting = { safeParse: () => ({ success: true }) };
-		expect(importCapabilities(rejecting)).toEqual([PROTECTED_CONTENT_CAPABILITY]);
+		expect(importCapabilities(rejecting)).toEqual([
+			PROTECTED_CONTENT_CAPABILITY,
+			BATCH_REDIRECTS_CAPABILITY,
+		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_SEARCH_BAR_CAPABILITY,
+			BATCH_REDIRECTS_CAPABILITY,
 		]);
 	});
 });
