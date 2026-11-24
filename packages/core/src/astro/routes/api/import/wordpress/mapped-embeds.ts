@@ -25,6 +25,13 @@ const eventView = z
 			})
 			.strict()
 			.optional(),
+		// The source view's own search/filter bar (MEC sf_status + sf-options), drawn by the
+		// template as a no-JS GET form. Same strict shape the template's parseEventView accepts.
+		searchBar: z
+			.object({ text: z.boolean().optional(), monthYear: z.boolean().optional() })
+			.strict()
+			.refine((bar) => bar.text === true || bar.monthYear === true, "A search bar needs text or monthYear")
+			.optional(),
 	})
 	.strict()
 	.refine(
