@@ -163,6 +163,30 @@ describe("Public URL active-template route contract parity (blog-cloudflare)", (
 					request: new Request("https://site.test/journal/spring"),
 				}),
 			).rejects.toThrow(/\/404/);
+
+			// Homepage positive on blog-cloudflare vs negative on marketing-cloudflare (undeclared)
+			const { setSiteSettings } = await import("../../src/settings/index.js");
+			await setSiteSettings(
+				{ homepage: { collection: "pages", id: page.translationGroup ?? page.id } },
+				db,
+			);
+			const blogHome = await resolvePublicContentPaths(db, [{ collection: "pages", id: page.id }], {
+				publicRoutes: routes,
+			});
+			expect(blogHome).toEqual([{ collection: "pages", id: page.id, path: "/" }]);
+
+			const marketingSrcDir = new URL(
+				"../../../../templates/marketing-cloudflare/src/",
+				import.meta.url,
+			);
+			const marketingRoutes = discoverTemplatePublicRoutes(marketingSrcDir);
+			expect(marketingRoutes).toEqual([]);
+			const marketingHome = await resolvePublicContentPaths(
+				db,
+				[{ collection: "pages", id: page.id }],
+				{ publicRoutes: marketingRoutes },
+			);
+			expect(marketingHome).toEqual([{ collection: "pages", id: page.id, path: null }]);
 		} finally {
 			await teardownTestDatabase(db);
 		}

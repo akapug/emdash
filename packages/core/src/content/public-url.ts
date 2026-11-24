@@ -21,6 +21,7 @@ import type { Database } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import { getI18nConfig } from "../i18n/config.js";
 import { localizePath, resolveLocalizedContentRoutePath } from "../i18n/resolve.js";
+import { findUniqueUrlPatternOwner } from "../schema/query.js";
 import { SchemaRegistry } from "../schema/registry.js";
 import { getSiteSettingWithDb } from "../settings/index.js";
 import { isMissingTableError } from "../utils/db-errors.js";
@@ -81,7 +82,7 @@ interface HostVirtualConfig {
 	publicRoutes: readonly PublicRouteBinding[] | null;
 }
 
-function isPublicRouteBinding(v: unknown): v is PublicRouteBinding {
+export function isPublicRouteBinding(v: unknown): v is PublicRouteBinding {
 	if (typeof v !== "object" || v === null) return false;
 	if (!("pattern" in v) || typeof v.pattern !== "string") return false;
 	if (!("owner" in v) || typeof v.owner !== "object" || v.owner === null) return false;
@@ -269,12 +270,8 @@ export async function resolvePublicContentPaths(
 			return binding.owner.collection === collection;
 		}
 		if (binding.owner.kind === "uniqueUrlPattern") {
-			const wantPattern = normalizeRoutePattern(binding.owner.pattern);
-			const all = await getAllCollections();
-			const owners = all.filter(
-				(c) => c.routable && c.urlPattern && normalizeRoutePattern(c.urlPattern) === wantPattern,
-			);
-			return owners.length === 1 && owners[0]?.slug === collection;
+			const resolved = findUniqueUrlPatternOwner(await getAllCollections(), binding.owner.pattern);
+			return resolved.status === "unique" && resolved.collection.slug === collection;
 		}
 		return false;
 	};

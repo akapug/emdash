@@ -511,6 +511,48 @@ describe("MCP content_public_urls", () => {
 		]);
 	});
 
+	it("matches exact stored urlPattern equality for uniqueUrlPattern routes (slash variants)", async () => {
+		// Sole collection with trailing-slash variant `/events/{slug}/` -> NOT matched by
+		// exact `/events/{slug}` owner lookup (same rule as getCollectionByUrlPattern / loadEvent).
+		await createCollection("slash_events", "Slash Events", {
+			urlPattern: "/events/{slug}/",
+			routable: true,
+		});
+		const slashEvent = await createEntry({
+			collection: "slash_events",
+			title: "Slash Gala",
+			slug: "slash-gala",
+			status: "published",
+		});
+
+		const slashOnly = await resolveUrls([{ collection: "slash_events", id: slashEvent.id }]);
+		expect(slashOnly.items).toEqual([
+			{ collection: "slash_events", id: slashEvent.id, path: null },
+		]);
+
+		// Adding a canonical `/events/{slug}` owner beside the slash variant makes
+		// the canonical collection the sole exact owner (resolves) while the slash variant stays null.
+		await createCollection("mec_events", "Events", {
+			urlPattern: "/events/{slug}",
+			routable: true,
+		});
+		const canonicalEvent = await createEntry({
+			collection: "mec_events",
+			title: "Canonical Gala",
+			slug: "canonical-gala",
+			status: "published",
+		});
+
+		const beside = await resolveUrls([
+			{ collection: "mec_events", id: canonicalEvent.id },
+			{ collection: "slash_events", id: slashEvent.id },
+		]);
+		expect(beside.items).toEqual([
+			{ collection: "mec_events", id: canonicalEvent.id, path: "/events/canonical-gala" },
+			{ collection: "slash_events", id: slashEvent.id, path: null },
+		]);
+	});
+
 	it("resolves menu translation-group referenceId in the menu's locale and omits noindex entries", async () => {
 		setI18nConfig({
 			defaultLocale: "en",
