@@ -297,6 +297,7 @@ export {
 	getPageCacheState,
 	optOutPageCache,
 	optInPageCache,
+	prepareVisibilityRevBump,
 	bumpVisibilityRev,
 	readVisibilityRev,
 } from "./page-cache/state.js";

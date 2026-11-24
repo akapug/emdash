@@ -10,15 +10,19 @@
  *   subsequent `optInPageCache()` call never clears `optedOut`.
  * - `optInPageCache(ttlSeconds)` requires an explicit positive TTL; tag-only
  *   hints or missing headers never opt a response in.
- * - `VISIBILITY_REV_OPTION` lives in the primary database `options` table so
- *   public -> draft/deleted/password-protected transitions are checked
- *   authoritatively on every cache HIT even while KV lags 60s+ or is down.
+ * - `fillPrimary` marks an eligible cache-fill render so D1 routes reads to
+ *   `first-primary` and `objectCache` is bypassed, coupling stored HTML bytes
+ *   to the authoritative primary visibility revision.
+ * - `VISIBILITY_REV_OPTION` lives in the canonical `options(name, value, revision)`
+ *   table (migrations/001_initial.ts) and uses an opaque UUID revision safe
+ *   across both SQLite/D1 and PostgreSQL.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type RawBuilder } from "kysely";
 
+import { OptionsRepository } from "../database/repositories/options.js";
 import type { Database } from "../database/types.js";
 
 export const PAGE_CACHE_MIN_TTL_SECONDS = 30;
@@ -29,6 +33,7 @@ export interface PageCacheRequestState {
 	optedIn: boolean;
 	optedOut: boolean;
 	ttlSeconds: number;
+	fillPrimary: boolean;
 }
 
 const STATE_ALS_KEY = Symbol.for("emdash.pageCacheState");
@@ -44,8 +49,19 @@ function getPageCacheAls(): AsyncLocalStorage<PageCacheRequestState> {
 }
 
 /** Run `fn` inside a fresh per-request page-cache eligibility scope. */
-export function runWithPageCacheState<T>(fn: () => T): T {
-	return getPageCacheAls().run({ optedIn: false, optedOut: false, ttlSeconds: 0 }, fn);
+export function runWithPageCacheState<T>(
+	fn: () => T,
+	opts?: { fillPrimary?: boolean },
+): T {
+	return getPageCacheAls().run(
+		{
+			optedIn: false,
+			optedOut: false,
+			ttlSeconds: 0,
+			fillPrimary: opts?.fillPrimary === true,
+		},
+		fn,
+	);
 }
 
 /** Read the current request's page-cache state, or `undefined` outside a scope. */
@@ -84,38 +100,40 @@ export function optInPageCache(ttlSeconds: number): void {
 }
 
 /**
- * Atomically advance the primary database's authoritative visibility revision.
- * Called synchronously whenever content leaves public visibility (unpublish,
- * soft-delete, permanent delete, or password protection creation/change).
+ * Build a dialect-safe statement that advances `emdash:visibility_rev` in the
+ * canonical `options(name, value, revision)` table. Join this statement into
+ * the same D1 atomic batch or SQL transaction as the visibility mutation so
+ * the two commit or roll back together.
  */
-export async function bumpVisibilityRev(db: Kysely<Database>): Promise<void> {
-	const now = Date.now();
-	const updatedAt = new Date(now).toISOString();
-	await sql`
-		INSERT INTO options (key, value, updated_at)
-		VALUES (${VISIBILITY_REV_OPTION}, ${String(now)}, ${updatedAt})
-		ON CONFLICT (key) DO UPDATE SET
-			value = CAST(
-				CASE
-					WHEN CAST(options.value AS INTEGER) >= ${now}
-					THEN CAST(options.value AS INTEGER) + 1
-					ELSE ${now}
-				END AS TEXT
-			),
-			updated_at = ${updatedAt}
-	`.execute(db);
+export function prepareVisibilityRevBump(revision: string = crypto.randomUUID()): RawBuilder<unknown> {
+	const serialized = JSON.stringify(revision);
+	return sql`
+		INSERT INTO options (name, value, revision)
+		VALUES (${VISIBILITY_REV_OPTION}, ${serialized}, ${revision})
+		ON CONFLICT (name) DO UPDATE SET
+			value = ${serialized},
+			revision = ${revision}
+	`;
 }
 
 /**
- * Read the authoritative visibility revision from the database.
- * Returns `"0"` when the option has never been bumped; throws on DB errors so
- * callers fail closed.
+ * Advance the authoritative visibility revision via `OptionsRepository`
+ * (`options(name, value, revision)`).
+ */
+export async function bumpVisibilityRev(db: Kysely<Database>): Promise<string> {
+	const rev = crypto.randomUUID();
+	return new OptionsRepository(db).setVersioned(VISIBILITY_REV_OPTION, rev);
+}
+
+/**
+ * Read the authoritative visibility revision from `options(name, value, revision)`.
+ * Returns `"0"` when never bumped; throws on DB errors so callers fail closed.
  */
 export async function readVisibilityRev(db: Kysely<Database>): Promise<string> {
 	const row = await db
 		.selectFrom("options")
-		.select("value")
-		.where("key", "=", VISIBILITY_REV_OPTION)
+		.select("revision")
+		.where("name", "=", VISIBILITY_REV_OPTION)
 		.executeTakeFirst();
-	return row?.value ?? "0";
+	return row?.revision ?? "0";
 }

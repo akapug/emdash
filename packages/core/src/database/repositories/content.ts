@@ -5,7 +5,7 @@ import type { ContentFieldFilterValue, ContentFieldFilters } from "../../content
 import { keepKnownFields, staleStoredKeys } from "../../content/known-fields.js";
 import { normalizeExplicitDatetime } from "../../datetime-normalization.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
-import { bumpVisibilityRev } from "../../page-cache/state.js";
+import { prepareVisibilityRevBump } from "../../page-cache/state.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
 import { buildFtsPrefixMatch, buildSlugGlobPrefix } from "../../search/match.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
@@ -449,7 +449,7 @@ export class ContentRepository {
 			`;
 
 		if (privateCreateQuery) {
-			const queries = [privateCreateQuery, publicInsertQuery];
+			const queries = [privateCreateQuery, publicInsertQuery, prepareVisibilityRevBump()];
 			const batched = await executeAtomicBatchIfSupported(this.db, queries);
 			if (!batched) {
 				await withTransaction(this.db, async (trx) => {
@@ -462,7 +462,6 @@ export class ContentRepository {
 			await publicInsertQuery.execute(this.db);
 		}
 
-		if (privateCreateQuery) await bumpVisibilityRev(this.db);
 		invalidateCollectionCache(type);
 
 		// Fetch and return the created item
@@ -1054,6 +1053,7 @@ export class ContentRepository {
 		}
 		updates.version = sql`version + 1`;
 
+		const needsVisibilityBump = updates.status !== undefined && updates.status !== "published";
 		if (privateWrite) {
 			const queries = [
 				...privateWrite.queries,
@@ -1062,18 +1062,39 @@ export class ContentRepository {
 					sql`, `,
 				)}
 				WHERE id = ${id} AND deleted_at IS NULL AND version = ${privateWrite.version} RETURNING id`,
+				...(needsVisibilityBump ? [prepareVisibilityRevBump()] : []),
 			];
+			const contentQueryIndex = privateWrite.queries.length;
 			const batched = await executeAtomicBatchIfSupported(this.db, queries);
 			if (batched) {
-				if (batched[0]?.rows.length !== 1 || batched.at(-1)?.rows.length !== 1)
+				if (batched[0]?.rows.length !== 1 || batched[contentQueryIndex]?.rows.length !== 1)
 					throw new ContentMutationConflictError();
 			} else {
 				await withTransaction(this.db, async (trx) => {
 					for (const [index, query] of queries.entries()) {
 						const result = await query.execute(trx);
-						if ((index === 0 || index === queries.length - 1) && result.rows.length !== 1)
+						if ((index === 0 || index === contentQueryIndex) && result.rows.length !== 1)
 							throw new ContentMutationConflictError();
 					}
+				});
+			}
+		} else if (needsVisibilityBump) {
+			const updateQuery = this.db
+				.updateTable(tableName as keyof Database)
+				.set(updates)
+				.where("id", "=", id)
+				.where("deleted_at" as never, "is", null);
+			const visBump = prepareVisibilityRevBump();
+			const batched = await executeAtomicBatchIfSupported(this.db, [updateQuery, visBump]);
+			if (!batched) {
+				await withTransaction(this.db, async (trx) => {
+					await trx
+						.updateTable(tableName as keyof Database)
+						.set(updates)
+						.where("id", "=", id)
+						.where("deleted_at" as never, "is", null)
+						.execute();
+					await visBump.execute(trx);
 				});
 			}
 		} else {
@@ -1085,9 +1106,6 @@ export class ContentRepository {
 				.execute();
 		}
 
-		if (updates.status !== undefined && updates.status !== "published") {
-			await bumpVisibilityRev(this.db);
-		}
 		if (hasColumnWrites) invalidateCollectionCache(type);
 
 		const updated = await this.findById(type, id);
@@ -1470,7 +1488,7 @@ export class ContentRepository {
 		if (liveMetadataChanged) assignments.push(sql`updated_at = ${new Date().toISOString()}`);
 		assignments.push(sql`version = version + 1`);
 
-		const result = await sql`
+		const draftUpdate = sql`
 			UPDATE ${sql.ref(tableName)}
 			SET ${sql.join(assignments, sql`, `)}
 			WHERE id = ${id}
@@ -1484,9 +1502,25 @@ export class ContentRepository {
 				AND revisions.collection = ${type}
 				AND revisions.entry_id = ${id}
 			)
-		`.execute(this.db);
+		`;
 
-		const changed = (result.numAffectedRows ?? 0n) > 0n;
+		let changed = false;
+		if (input.status !== undefined && input.status !== "published") {
+			const visBump = prepareVisibilityRevBump();
+			const batched = await executeAtomicBatchIfSupported(this.db, [draftUpdate, visBump]);
+			if (batched) {
+				changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
+			} else {
+				await withTransaction(this.db, async (trx) => {
+					const result = await draftUpdate.execute(trx);
+					changed = (result.numAffectedRows ?? 0n) > 0n;
+					if (changed) await visBump.execute(trx);
+				});
+			}
+		} else {
+			const result = await draftUpdate.execute(this.db);
+			changed = (result.numAffectedRows ?? 0n) > 0n;
+		}
 		if (changed && liveMetadataChanged) invalidateCollectionCache(type);
 		return changed;
 	}
@@ -1662,16 +1696,25 @@ export class ContentRepository {
 		const tableName = getTableName(type);
 		const now = new Date().toISOString();
 
-		const result = await sql`
+		const deleteQuery = sql`
 			UPDATE ${sql.ref(tableName)}
 			SET deleted_at = ${now}
 			WHERE id = ${id}
 			AND deleted_at IS NULL
-		`.execute(this.db);
-
-		const changed = (result.numAffectedRows ?? 0n) > 0n;
+		`;
+		const visBump = prepareVisibilityRevBump();
+		let changed = false;
+		const batched = await executeAtomicBatchIfSupported(this.db, [deleteQuery, visBump]);
+		if (batched) {
+			changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
+		} else {
+			await withTransaction(this.db, async (trx) => {
+				const result = await deleteQuery.execute(trx);
+				changed = (result.numAffectedRows ?? 0n) > 0n;
+				if (changed) await visBump.execute(trx);
+			});
+		}
 		if (changed) {
-			await bumpVisibilityRev(this.db);
 			invalidateCollectionCache(type);
 		}
 		return changed;
@@ -1733,16 +1776,25 @@ export class ContentRepository {
 	async permanentDelete(type: string, id: string): Promise<boolean> {
 		const tableName = getTableName(type);
 
-		const result = await sql`
+		const permDeleteQuery = sql`
 			DELETE FROM ${sql.ref(tableName)}
 			WHERE id = ${id}
 			AND deleted_at IS NOT NULL
-		`.execute(this.db);
-
-		const changed = (result.numAffectedRows ?? 0n) > 0n;
+		`;
+		const visBump = prepareVisibilityRevBump();
+		let changed = false;
+		const batched = await executeAtomicBatchIfSupported(this.db, [permDeleteQuery, visBump]);
+		if (batched) {
+			changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
+		} else {
+			await withTransaction(this.db, async (trx) => {
+				const result = await permDeleteQuery.execute(trx);
+				changed = (result.numAffectedRows ?? 0n) > 0n;
+				if (changed) await visBump.execute(trx);
+			});
+		}
 		if (changed) {
 			await new ProtectedContentRepository(this.db).delete(type, id);
-			await bumpVisibilityRev(this.db);
 			invalidateCollectionCache(type);
 		}
 		return changed;
@@ -2822,7 +2874,7 @@ export class ContentRepository {
 				}
 			}
 
-			const result = await sql`
+			const unpublishQuery = sql`
 				UPDATE ${sql.ref(tableName)}
 				SET live_revision_id = NULL,
 					draft_revision_id = ${draftRevisionId},
@@ -2838,10 +2890,22 @@ export class ContentRepository {
 				AND ${nullableColumnMatch("live_revision_id", existing.liveRevisionId)}
 				AND ${nullableColumnMatch("draft_revision_id", existing.draftRevisionId)}
 				AND ${nullableColumnMatch("scheduled_at", existing.scheduledAt)}
-			`.execute(this.db);
-			if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
+			`;
+			const visBump = prepareVisibilityRevBump();
+			let affected = 0n;
+			const batched = await executeAtomicBatchIfSupported(this.db, [unpublishQuery, visBump]);
+			if (batched) {
+				affected = batched[0]?.numAffectedRows ?? 0n;
+			} else {
+				await withTransaction(this.db, async (trx) => {
+					const result = await unpublishQuery.execute(trx);
+					affected = result.numAffectedRows ?? 0n;
+					if (affected === 0n) throw new ContentMutationConflictError();
+					await visBump.execute(trx);
+				});
+			}
+			if (affected === 0n) throw new ContentMutationConflictError();
 
-			await bumpVisibilityRev(this.db);
 			invalidateCollectionCache(type);
 			const updated = await this.findById(type, id);
 			if (!updated) throw new Error("Content not found");

@@ -6,7 +6,9 @@ import {
 	type ContentProtection,
 } from "../../content/protection.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
-import { bumpVisibilityRev } from "../../page-cache/state.js";
+import { prepareVisibilityRevBump } from "../../page-cache/state.js";
+import { executeAtomicBatchIfSupported } from "../dialect-helpers.js";
+import { withTransaction } from "../transaction.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import type { Database, ProtectedContentTable } from "../types.js";
 import type { ContentItem, ContentSeoInput } from "./types.js";
@@ -46,8 +48,16 @@ export class ProtectedContentRepository {
 		protection: ContentProtection,
 		data: Record<string, unknown>,
 	): Promise<void> {
-		await this.prepareCreate(collection, contentId, protection, data).execute(this.db);
-		await bumpVisibilityRev(this.db);
+		const queries = [
+			this.prepareCreate(collection, contentId, protection, data),
+			prepareVisibilityRevBump(),
+		];
+		const batched = await executeAtomicBatchIfSupported(this.db, queries);
+		if (!batched) {
+			await withTransaction(this.db, async (trx) => {
+				for (const query of queries) await query.execute(trx);
+			});
+		}
 	}
 
 	async project(

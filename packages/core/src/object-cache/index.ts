@@ -28,6 +28,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { after } from "../after.js";
+import { getPageCacheState } from "../page-cache/state.js";
 import { getRequestContext } from "../request-context.js";
 import { decode, encode } from "./codec.js";
 import type {
@@ -402,6 +403,7 @@ function epochsMatch(stored: readonly number[], current: readonly number[]): boo
  * preview, whose schema and content diverge from the configured site).
  */
 function shouldBypass(): boolean {
+	if (getPageCacheState()?.fillPrimary === true) return true;
 	const ctx = getRequestContext();
 	if (!ctx) return false;
 	return ctx.editMode === true || ctx.preview !== undefined || ctx.dbIsIsolated === true;

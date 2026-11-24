@@ -17,16 +17,36 @@ import {
 describe("page-cache state & ordered generation vector", () => {
 	it("enforces irreversible opt-out and clamped explicit positive opt-in", () => {
 		runWithPageCacheState(() => {
-			expect(getPageCacheState()).toEqual({ optedIn: false, optedOut: false, ttlSeconds: 0 });
+			expect(getPageCacheState()).toEqual({
+				optedIn: false,
+				optedOut: false,
+				ttlSeconds: 0,
+				fillPrimary: false,
+			});
 			optInPageCache(0);
 			expect(getPageCacheState()?.optedIn).toBe(false);
 			optInPageCache(9999);
-			expect(getPageCacheState()).toEqual({ optedIn: true, optedOut: false, ttlSeconds: 300 });
+			expect(getPageCacheState()).toEqual({
+				optedIn: true,
+				optedOut: false,
+				ttlSeconds: 300,
+				fillPrimary: false,
+			});
 			optOutPageCache();
-			expect(getPageCacheState()).toEqual({ optedIn: false, optedOut: true, ttlSeconds: 0 });
+			expect(getPageCacheState()).toEqual({
+				optedIn: false,
+				optedOut: true,
+				ttlSeconds: 0,
+				fillPrimary: false,
+			});
 			// Subsequent opt-in must NOT clear optedOut
 			optInPageCache(300);
-			expect(getPageCacheState()).toEqual({ optedIn: false, optedOut: true, ttlSeconds: 0 });
+			expect(getPageCacheState()).toEqual({
+				optedIn: false,
+				optedOut: true,
+				ttlSeconds: 0,
+				fillPrimary: false,
+			});
 		});
 	});
 

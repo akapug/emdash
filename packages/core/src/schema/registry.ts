@@ -22,6 +22,7 @@ import {
 	removeImportBaselineCollectionTriggers,
 } from "../database/import-baseline-triggers.js";
 import { withTransaction } from "../database/transaction.js";
+import { prepareVisibilityRevBump } from "../page-cache/state.js";
 import type { CollectionTable, Database, FieldTable } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import {
@@ -1199,6 +1200,7 @@ export class SchemaRegistry {
 
 				// Delete the collection record (fields will cascade)
 				await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();
+				await prepareVisibilityRevBump().execute(trx);
 			});
 			await deleteContentMediaUsageCollection(this.db, slug);
 		} catch (error) {

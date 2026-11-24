@@ -11,6 +11,7 @@
 import { env } from "cloudflare:workers";
 import {
 	EmDashConfigurationError,
+	getPageCacheState,
 	type CollectionDeletionGuardInput,
 	type CollectionDeletionGuardResult,
 } from "emdash";
@@ -415,7 +416,7 @@ export function createRequestScopedDb(opts: RequestScopedDbOpts): RequestScopedD
 	// read replicas) uses the config default, typically "first-unconstrained"
 	// for nearest-replica routing.
 	let constraint: string = configConstraint;
-	if (opts.isWrite) {
+	if (opts.isWrite || getPageCacheState()?.fillPrimary === true) {
 		constraint = "first-primary";
 	} else if (opts.isAuthenticated) {
 		const bookmark = opts.cookies.get(cookieName)?.value;

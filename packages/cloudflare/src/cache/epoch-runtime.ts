@@ -10,21 +10,29 @@
  * - Exact cookie-name allowlist (`__em_d1_bookmark`, `theme`); unknown or
  *   malformed cookies bypass.
  * - Explicit final positive opt-in (`optInPageCache(ttl)`) + irreversible
- *   per-request opt-out (`optOutPageCache()`) re-checked AFTER full stream
- *   completion so delayed nested/streamed opt-outs stay sticky.
- * - Inspects BOTH queued Astro cookies (`context.cookies.headers()`) and raw
- *   `Set-Cookie` headers; non-bookmark cookies block storage, and bookmark
- *   cookies are stripped ONLY from the cloned stored copy (MISS visitor still
- *   receives theirs untouched).
+ *   per-request opt-out (`optOutPageCache()`), with the body stream drained
+ *   INSIDE the request's ALS scope so genuinely async delayed streamed
+ *   opt-outs stay sticky.
+ * - Inspects BOTH Astro's real response cookie queue (`Symbol.for("astro.cookies")`
+ *   via `.headers()`, never `.consume()`) AND raw `Set-Cookie` headers, and
+ *   re-attaches `Symbol.for("astro.cookies")` onto any MISS/BYPASS wrapper
+ *   Response so queued cookies are never dropped or consumed.
+ * - Cache-fill renders set `fillPrimary: true` so D1 routes to `first-primary`
+ *   and `objectCache` is bypassed, coupling stored bytes to the authoritative
+ *   primary visibility revision.
  * - Separates authorization from freshness:
- *   - Authorization: authoritative D1 primary `emdash:visibility_rev` checked
- *     fail-closed on EVERY HIT (immune to KV 60s+ lag or KV outage).
+ *   - Authorization: authoritative D1 primary `emdash:visibility_rev` read
+ *     from `options(name, value, revision)` on EVERY HIT (fail-closed, immune
+ *     to KV 60s+ lag or KV outage).
  *   - Freshness: full ordered `objectCache` generation vector captured BEFORE
- *     render and re-verified AFTER render (rejects storage on uncertainty or
- *     mid-render change; no SWR in v1).
+ *     render and re-verified AFTER stream completion (rejects storage on
+ *     uncertainty or mid-render change; no SWR in v1).
+ * - Stored Cache API copy carries explicit `Cache-Control: public, max-age=<ttl>`
+ *   (so the real Cache API stores it even when origin carried `no-cache`),
+ *   while client responses carry `Cache-Control: private, no-cache`.
  */
 
-import type { APIContext, CacheProvider, CacheProviderFactory } from "astro";
+import type { CacheProvider, CacheProviderFactory } from "astro";
 import { env, waitUntil } from "cloudflare:workers";
 import {
 	CacheNamespace,
@@ -46,6 +54,8 @@ const DEFAULT_ENABLED_ENV_VAR = "EMDASH_PAGE_CACHE";
 const DEFAULT_D1_BINDING = "DB";
 const DEFAULT_BOOKMARK_COOKIE = "__em_d1_bookmark";
 const DEFAULT_VISIBILITY_TIMEOUT_MS = 2000;
+
+const ASTRO_COOKIES_SYMBOL = Symbol.for("astro.cookies");
 
 const HEADER_VECTOR = "X-EmDash-Page-Vector";
 const HEADER_VISIBILITY_REV = "X-EmDash-Visibility-Rev";
@@ -82,6 +92,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
 
 const PRIVATE_OR_NO_STORE_RE = /\b(?:private|no-store)\b/;
 const MAX_AGE_ZERO_RE = /\bmax-age=0\b/;
+const NON_ID_CHARS_RE = /[^a-zA-Z0-9_-]/g;
 
 /** Positive allowlist of public, cache-eligible pathnames in v1. */
 const ALLOWLIST_EXACT_PATHS = new Set([
@@ -161,10 +172,25 @@ function hasNontrivialVary(response: Response): boolean {
 	return tokens.some((t) => t !== "accept-encoding");
 }
 
-function readQueuedCookies(context: Pick<APIContext, "cookies">): string[] {
-	const jar = context.cookies as { headers?: () => Iterable<string> } | undefined;
+/**
+ * Inspect Astro's real response cookie queue attached via `Symbol.for("astro.cookies")`
+ * WITHOUT calling `.consume()`, so the adapter still emits every queued cookie.
+ */
+function readResponseQueuedCookies(response: Response): string[] {
+	const jar = Reflect.get(response, ASTRO_COOKIES_SYMBOL) as
+		| { headers?: () => Iterable<string> }
+		| undefined;
 	if (!jar || typeof jar.headers !== "function") return [];
 	return [...jar.headers()];
+}
+
+/** Preserve Astro's `Symbol.for("astro.cookies")` queue when wrapping a Response. */
+function preserveAstroCookies(source: Response, target: Response): Response {
+	const jar = Reflect.get(source, ASTRO_COOKIES_SYMBOL);
+	if (jar !== undefined) {
+		Reflect.set(target, ASTRO_COOKIES_SYMBOL, jar);
+	}
+	return target;
 }
 
 function hasOnlyBookmarkSetCookies(cookies: readonly string[], bookmarkCookie: string): boolean {
@@ -211,24 +237,26 @@ export interface EpochCacheRuntimeDeps {
 	allowHttpForTests?: boolean;
 }
 
-async function defaultReadPrimaryVisibilityRev(
-	envObj: Record<string, unknown>,
-	d1Binding: string,
+/**
+ * Authoritative primary-database read of `emdash:visibility_rev` from the
+ * canonical `options(name, value, revision)` table (migrations/001_initial.ts).
+ */
+export async function readPrimaryVisibilityRevFromD1(
+	d1: D1Like | undefined,
 	timeoutMs: number,
 ): Promise<string | null> {
-	const d1 = envObj[d1Binding] as D1Like | undefined;
 	if (!d1 || typeof d1.prepare !== "function") return null;
 	try {
 		const target = typeof d1.withSession === "function" ? d1.withSession("first-primary") : d1;
 		const row = await withTimeout(
 			target
-				.prepare("SELECT value FROM options WHERE key = ? LIMIT 1")
+				.prepare("SELECT revision FROM options WHERE name = ? LIMIT 1")
 				.bind(VISIBILITY_REV_OPTION)
-				.first<{ value?: string }>(),
+				.first<{ revision?: string }>(),
 			timeoutMs,
 		);
-		if (!row || row.value === undefined || row.value === null) return "0";
-		return String(row.value);
+		if (!row || row.revision === undefined || row.revision === null) return "0";
+		return String(row.revision);
 	} catch {
 		return null;
 	}
@@ -238,13 +266,16 @@ export function createEpochCacheProvider(
 	config: EpochCloudflareCacheConfig = {},
 	deps: EpochCacheRuntimeDeps = {},
 ): CacheProvider {
-	const cacheName = config.cacheName ?? DEFAULT_CACHE_NAME;
+	const baseCacheName = config.cacheName ?? DEFAULT_CACHE_NAME;
+	const buildId = config.buildId ?? "";
+	const cacheName = buildId
+		? `${baseCacheName}-${buildId.replace(NON_ID_CHARS_RE, "")}`
+		: baseCacheName;
 	const enabledEnvVar = config.enabledEnvVar ?? DEFAULT_ENABLED_ENV_VAR;
 	const d1Binding = config.d1Binding ?? DEFAULT_D1_BINDING;
 	const bookmarkCookie = config.bookmarkCookie ?? DEFAULT_BOOKMARK_COOKIE;
 	const visibilityTimeoutMs = config.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
 	const disabledWhenPlayground = config.disabledWhenPlayground === true;
-	const buildId = config.buildId ?? "";
 
 	const allowedCookies = new Set<string>([bookmarkCookie, "theme"]);
 	const getEnv = deps.getEnv ?? (() => env as unknown as Record<string, unknown>);
@@ -255,7 +286,7 @@ export function createEpochCacheProvider(
 	const readVisibility =
 		deps.readVisibilityRev ??
 		((binding: string, timeoutMs: number) =>
-			defaultReadPrimaryVisibilityRev(getEnv(), binding, timeoutMs));
+			readPrimaryVisibilityRevFromD1(getEnv()[binding] as D1Like | undefined, timeoutMs));
 
 	const isEligibleRequest = (request: Request, url: URL): boolean => {
 		if (disabledWhenPlayground) return false;
@@ -299,13 +330,20 @@ export function createEpochCacheProvider(
 			const { request, url } = context;
 			if (!isEligibleRequest(request, url)) {
 				const bypass = await next();
-				const out = new Response(bypass.body, bypass);
+				const out = preserveAstroCookies(bypass, new Response(bypass.body, bypass));
 				out.headers.set(HEADER_STATUS, "BYPASS");
 				return out;
 			}
 
+			let cache: Cache | null = null;
+			try {
+				cache = await openCache(cacheName);
+			} catch {
+				// Cache API unavailable: degrade cleanly to normal render.
+				return next();
+			}
+
 			const key = buildCacheKey(url);
-			const cache = await openCache(cacheName);
 
 			// Run cache lookup, strict generation vector read, and D1-primary
 			// authoritative visibility check in parallel BEFORE rendering.
@@ -336,32 +374,45 @@ export function createEpochCacheProvider(
 				}
 			}
 
-			// MISS: render inside a fresh irreversible opt-out / explicit opt-in scope.
-			let stateAfterRender: ReturnType<typeof getPageCacheState>;
-			const response = await runWithPageCacheState(async () => {
-				const res = await next();
-				stateAfterRender = getPageCacheState();
-				return res;
-			});
+			// MISS (eligible cache fill): render AND drain the body stream INSIDE the
+			// same `fillPrimary: true` ALS scope so:
+			//  1. D1 routes reads to `first-primary` and `objectCache` is bypassed
+			//     (coupling stored bytes to the authoritative primary visibility rev).
+			//  2. Any genuinely async delayed streamed component calling
+			//     `optOutPageCache()` executes inside the live ALS scope.
+			const rendered = await runWithPageCacheState(
+				async () => {
+					const response = await next();
+					const state = getPageCacheState();
+					const basicChecksOk =
+						preVec.certain &&
+						preVis !== null &&
+						response.status === 200 &&
+						isAllowedContentType(response.headers.get("content-type")) &&
+						!hasDisallowedCacheControl(response) &&
+						!hasNontrivialVary(response);
 
-			// If pre-render state was already uncertain or response failed basic
-			// checks, return untouched without buffering.
-			const basicChecksOk =
-				preVec.certain &&
-				preVis !== null &&
-				response.status === 200 &&
-				isAllowedContentType(response.headers.get("content-type")) &&
-				!hasDisallowedCacheControl(response) &&
-				!hasNontrivialVary(response);
+					const rawSetCookies = response.headers.getSetCookie();
+					const queuedCookies = readResponseQueuedCookies(response);
+					const cookiesSafe =
+						hasOnlyBookmarkSetCookies(rawSetCookies, bookmarkCookie) &&
+						hasOnlyBookmarkSetCookies(queuedCookies, bookmarkCookie);
 
-			const rawSetCookies = response.headers.getSetCookie();
-			const queuedCookies = readQueuedCookies(context);
-			const cookiesSafe =
-				hasOnlyBookmarkSetCookies(rawSetCookies, bookmarkCookie) &&
-				hasOnlyBookmarkSetCookies(queuedCookies, bookmarkCookie);
+					if (!basicChecksOk || !cookiesSafe || !state || state.optedOut) {
+						return { response, bodyBytes: null as ArrayBuffer | null, state };
+					}
 
-			if (!basicChecksOk || !cookiesSafe || !stateAfterRender || stateAfterRender.optedOut) {
-				const miss = new Response(response.body, response);
+					// Drain body stream while STILL inside the ALS scope!
+					const bodyBytes = await response.arrayBuffer();
+					return { response, bodyBytes, state };
+				},
+				{ fillPrimary: true },
+			);
+
+			const { response, bodyBytes, state } = rendered;
+
+			if (bodyBytes === null) {
+				const miss = preserveAstroCookies(response, new Response(response.body, response));
 				if (!hasDisallowedCacheControl(response)) {
 					miss.headers.delete("cdn-cache-control");
 					miss.headers.delete("cloudflare-cdn-cache-control");
@@ -370,20 +421,16 @@ export function createEpochCacheProvider(
 				return miss;
 			}
 
-			// Materialize the body stream so any delayed nested/streamed component
-			// calling `optOutPageCache()` runs BEFORE we decide whether to store.
-			const bodyBytes = await response.arrayBuffer();
-
-			// Re-check irreversible opt-out, queued cookies, and post-render
-			// generation vector + visibility rev AFTER the stream has finished.
-			const finalQueuedCookies = readQueuedCookies(context);
+			// Re-check irreversible opt-out, real response cookie queue, and
+			// post-render generation vector + visibility rev AFTER stream drain.
+			const finalQueuedCookies = readResponseQueuedCookies(response);
 			const finalCookiesSafe = hasOnlyBookmarkSetCookies(finalQueuedCookies, bookmarkCookie);
-			const finalState = stateAfterRender;
 			const finalEligible =
 				finalCookiesSafe &&
-				finalState.optedIn &&
-				!finalState.optedOut &&
-				finalState.ttlSeconds >= PAGE_CACHE_MIN_TTL_SECONDS;
+				state !== undefined &&
+				state.optedIn &&
+				!state.optedOut &&
+				state.ttlSeconds >= PAGE_CACHE_MIN_TTL_SECONDS;
 
 			if (finalEligible) {
 				const [postVec, postVis] = await Promise.all([
@@ -399,13 +446,16 @@ export function createEpochCacheProvider(
 				) {
 					const ttl = Math.min(
 						PAGE_CACHE_MAX_TTL_SECONDS,
-						Math.max(PAGE_CACHE_MIN_TTL_SECONDS, finalState.ttlSeconds),
+						Math.max(PAGE_CACHE_MIN_TTL_SECONDS, state.ttlSeconds),
 					);
 					const storeHeaders = new Headers(response.headers);
 					// Strip Set-Cookie ONLY on the stored copy (never on the MISS response).
 					storeHeaders.delete("set-cookie");
 					storeHeaders.delete("cdn-cache-control");
 					storeHeaders.delete("cloudflare-cdn-cache-control");
+					// Explicit max-age on the stored Cache API copy ONLY so Cloudflare
+					// Cache API stores it even when the origin response had `no-cache`.
+					storeHeaders.set("cache-control", `public, max-age=${ttl}`);
 					storeHeaders.set(HEADER_VECTOR, preVec.vector);
 					storeHeaders.set(HEADER_VISIBILITY_REV, preVis);
 					storeHeaders.set(HEADER_STORED_AT, String(now()));
@@ -420,17 +470,21 @@ export function createEpochCacheProvider(
 				}
 			}
 
-			// Return the MISS response with all original Set-Cookie headers intact.
+			// Return the MISS response with all raw Set-Cookie headers AND Astro's
+			// Symbol.for("astro.cookies") queue intact.
 			const missHeaders = new Headers(response.headers);
 			missHeaders.delete("cdn-cache-control");
 			missHeaders.delete("cloudflare-cdn-cache-control");
 			missHeaders.set("cache-control", "private, no-cache");
 			missHeaders.set(HEADER_STATUS, "MISS");
-			return new Response(bodyBytes, {
-				status: response.status,
-				statusText: response.statusText,
-				headers: missHeaders,
-			});
+			return preserveAstroCookies(
+				response,
+				new Response(bodyBytes, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: missHeaders,
+				}),
+			);
 		},
 
 		async invalidate(options) {

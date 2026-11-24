@@ -1,5 +1,5 @@
 import type { APIContext } from "astro";
-import { optInPageCache, optOutPageCache } from "emdash";
+import { getPageCacheState, optInPageCache, optOutPageCache } from "emdash";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({
@@ -44,22 +44,33 @@ function makeFakeCache(): { cache: Cache; store: Map<string, Response>; putCalls
 	};
 }
 
-function makeContext(
-	urlStr: string,
-	init: RequestInit = {},
-	queuedCookies: string[] = [],
-): APIContext {
+function makeContext(urlStr: string, init: RequestInit = {}): APIContext {
 	const url = new URL(urlStr);
 	const request = new Request(url, init);
+	// Match Astro 7.3.2 core/cache/handler.js:51-67: provider receives NO cookies jar!
 	return {
 		request,
 		url,
-		cookies: {
-			headers: function* () {
-				for (const c of queuedCookies) yield c;
-			},
-		},
 	} as unknown as APIContext;
+}
+
+/** Attach Astro's real Symbol.for("astro.cookies") queue onto a Response. */
+function attachAstroCookies(res: Response, cookieHeaders: string[]): Response {
+	let consumed = false;
+	const jar = {
+		*headers() {
+			for (const c of cookieHeaders) yield c;
+		},
+		*consume() {
+			consumed = true;
+			for (const c of cookieHeaders) yield c;
+		},
+		get wasConsumed() {
+			return consumed;
+		},
+	};
+	Reflect.set(res, Symbol.for("astro.cookies"), jar);
+	return res;
 }
 
 describe("Item 124: epochCloudflareCache full-page cache", () => {
@@ -113,6 +124,8 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 
 		const render = (label: string) => async () => {
 			renders++;
+			// Eligible cache-fill render MUST run with fillPrimary: true so D1 uses primary and objectCache is bypassed
+			expect(getPageCacheState()?.fillPrimary).toBe(true);
 			optInPageCache(300);
 			return new Response(`<h1>${label}</h1>`, {
 				status: 200,
@@ -235,10 +248,16 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			async () => {
 				// Outer page opts in before streaming starts
 				optInPageCache(300);
+				let step = 0;
 				const stream = new ReadableStream({
-					start(controller) {
-						controller.enqueue(new TextEncoder().encode("<h1>Upcoming</h1>"));
-						// Delayed nested component (e.g. EventEmbed) opts out mid-stream
+					async pull(controller) {
+						if (step === 0) {
+							step = 1;
+							controller.enqueue(new TextEncoder().encode("<h1>Upcoming</h1>"));
+							return;
+						}
+						// Genuinely async delayed nested component opt-out AFTER Response is returned
+						await new Promise((r) => setTimeout(r, 15));
 						optOutPageCache();
 						// Later component tries to re-enable — must stay opted out
 						optInPageCache(300);
@@ -257,7 +276,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(fake.putCalls).toBe(0);
 	});
 
-	it("blocks storage on queued non-bookmark Astro cookies, and strips __em_d1_bookmark ONLY from stored copy while preserving it on MISS", async () => {
+	it("blocks storage on real Astro Symbol.for('astro.cookies') queued non-bookmark cookies without consuming/dropping them, sets max-age on stored copy, and degrades cleanly if openCache throws", async () => {
 		const fake = makeFakeCache();
 		const pending: Promise<unknown>[] = [];
 		const provider = createEpochCacheProvider(
@@ -272,19 +291,29 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			},
 		);
 
-		// Queued non-bookmark Astro cookie blocks storage
+		// Queued non-bookmark Astro cookie attached via Symbol.for("astro.cookies") blocks storage
+		// and MUST remain attached and unconsumed on the returned MISS response!
 		const rBlocked = await provider.onRequest!(
-			makeContext("https://acme.sites.embarkeasy.com/pages/queued", {}, ["astro-session=secret; Path=/"]),
+			makeContext("https://acme.sites.embarkeasy.com/pages/queued"),
 			async () => {
 				optInPageCache(300);
-				return new Response("secret", { status: 200, headers: { "content-type": "text/html" } });
+				return attachAstroCookies(
+					new Response("secret", { status: 200, headers: { "content-type": "text/html" } }),
+					["astro-session=secret; Path=/"],
+				);
 			},
 		);
 		await Promise.all(pending);
 		expect(rBlocked.headers.get("x-embark-page-cache")).toBe("MISS");
 		expect(fake.putCalls).toBe(0);
+		const returnedJar = Reflect.get(rBlocked, Symbol.for("astro.cookies")) as
+			| { headers: () => Iterable<string>; wasConsumed: boolean }
+			| undefined;
+		expect(returnedJar).toBeDefined();
+		expect(returnedJar?.wasConsumed).toBe(false);
+		expect([...(returnedJar?.headers() ?? [])]).toEqual(["astro-session=secret; Path=/"]);
 
-		// Bookmark-only Set-Cookie reaches MISS visitor, stripped from stored copy & HIT
+		// Stored copy MUST carry explicit Cache-Control: public, max-age=300 even when origin had no-cache
 		const rMiss = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/bookmark"),
 			async () => {
@@ -293,6 +322,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 					status: 200,
 					headers: {
 						"content-type": "text/html",
+						"cache-control": "no-cache",
 						"set-cookie": "__em_d1_bookmark=bk-1; Path=/; HttpOnly",
 					},
 				});
@@ -300,8 +330,12 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		);
 		await Promise.all(pending);
 		expect(rMiss.headers.get("x-embark-page-cache")).toBe("MISS");
+		expect(rMiss.headers.get("cache-control")).toBe("private, no-cache");
 		expect(rMiss.headers.getSetCookie()).toEqual(["__em_d1_bookmark=bk-1; Path=/; HttpOnly"]);
 		expect(fake.putCalls).toBe(1);
+		const storedEntry = [...fake.store.values()][0]!;
+		expect(storedEntry.headers.get("cache-control")).toBe("public, max-age=300");
+		expect(storedEntry.headers.getSetCookie()).toEqual([]);
 
 		const rHit = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/bookmark"),
@@ -309,6 +343,25 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		);
 		expect(rHit.headers.get("x-embark-page-cache")).toBe("HIT");
 		expect(rHit.headers.getSetCookie()).toEqual([]);
+
+		// openCache throwing degrades cleanly to normal render
+		const brokenCacheProvider = createEpochCacheProvider(
+			{ buildId: "b1" },
+			{
+				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				openCache: async () => {
+					throw new Error("cache api unavailable");
+				},
+				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVisibilityRev: async () => "1",
+			},
+		);
+		const rFallback = await brokenCacheProvider.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/bookmark"),
+			async () => new Response("rendered-live", { status: 200, headers: { "content-type": "text/html" } }),
+		);
+		expect(rFallback.status).toBe(200);
+		expect(await rFallback.text()).toBe("rendered-live");
 	});
 
 	it("revokes cached public page immediately on public->private transition even while KV is stale or failing", async () => {
