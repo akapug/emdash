@@ -1,0 +1,460 @@
+/**
+ * Epoch-validated Cloudflare Cache API full-page cache provider — RUNTIME ENTRY.
+ *
+ * Security & correctness invariants:
+ * - OFF by default per tenant unless `env[enabledEnvVar]` is `"1"` or `"true"`.
+ * - Distinct provider name `"emdash-epoch-cache"` (never `"cloudflare"`) so
+ *   `@astrojs/cloudflare` does not auto-enable native Workers Caching.
+ * - Positive public-route allowlist, exact HTTPS host + pathname key, ALL
+ *   query strings and conditional/range requests bypassed in v1.
+ * - Exact cookie-name allowlist (`__em_d1_bookmark`, `theme`); unknown or
+ *   malformed cookies bypass.
+ * - Explicit final positive opt-in (`optInPageCache(ttl)`) + irreversible
+ *   per-request opt-out (`optOutPageCache()`) re-checked AFTER full stream
+ *   completion so delayed nested/streamed opt-outs stay sticky.
+ * - Inspects BOTH queued Astro cookies (`context.cookies.headers()`) and raw
+ *   `Set-Cookie` headers; non-bookmark cookies block storage, and bookmark
+ *   cookies are stripped ONLY from the cloned stored copy (MISS visitor still
+ *   receives theirs untouched).
+ * - Separates authorization from freshness:
+ *   - Authorization: authoritative D1 primary `emdash:visibility_rev` checked
+ *     fail-closed on EVERY HIT (immune to KV 60s+ lag or KV outage).
+ *   - Freshness: full ordered `objectCache` generation vector captured BEFORE
+ *     render and re-verified AFTER render (rejects storage on uncertainty or
+ *     mid-render change; no SWR in v1).
+ */
+
+import type { APIContext, CacheProvider, CacheProviderFactory } from "astro";
+import { env, waitUntil } from "cloudflare:workers";
+import {
+	CacheNamespace,
+	getPageCacheState,
+	invalidateObjectCache,
+	invalidateWidgetObjectCache,
+	PAGE_CACHE_MAX_TTL_SECONDS,
+	PAGE_CACHE_MIN_TTL_SECONDS,
+	readPageGenerationVector,
+	runWithPageCacheState,
+	VISIBILITY_REV_OPTION,
+	type PageGenerationVectorResult,
+} from "emdash";
+
+import type { EpochCloudflareCacheConfig } from "./epoch-config.js";
+
+const DEFAULT_CACHE_NAME = "emdash-page-v1";
+const DEFAULT_ENABLED_ENV_VAR = "EMDASH_PAGE_CACHE";
+const DEFAULT_D1_BINDING = "DB";
+const DEFAULT_BOOKMARK_COOKIE = "__em_d1_bookmark";
+const DEFAULT_VISIBILITY_TIMEOUT_MS = 2000;
+
+const HEADER_VECTOR = "X-EmDash-Page-Vector";
+const HEADER_VISIBILITY_REV = "X-EmDash-Visibility-Rev";
+const HEADER_STORED_AT = "X-EmDash-Stored-At";
+const HEADER_TTL = "X-EmDash-Page-TTL";
+const HEADER_STATUS = "X-Embark-Page-Cache";
+
+const INTERNAL_HEADERS = [HEADER_VECTOR, HEADER_VISIBILITY_REV, HEADER_STORED_AT, HEADER_TTL];
+
+const CREDENTIAL_HEADERS = [
+	"authorization",
+	"proxy-authorization",
+	"cf-access-jwt-assertion",
+	"cf-access-authenticated-user-email",
+	"cookie2",
+];
+
+const CONDITIONAL_OR_RANGE_HEADERS = [
+	"if-none-match",
+	"if-modified-since",
+	"if-match",
+	"if-unmodified-since",
+	"if-range",
+	"range",
+];
+
+const ALLOWED_CONTENT_TYPES = new Set([
+	"text/html",
+	"application/xml",
+	"text/xml",
+	"application/rss+xml",
+	"text/plain",
+]);
+
+const PRIVATE_OR_NO_STORE_RE = /\b(?:private|no-store)\b/;
+const MAX_AGE_ZERO_RE = /\bmax-age=0\b/;
+
+/** Positive allowlist of public, cache-eligible pathnames in v1. */
+const ALLOWLIST_EXACT_PATHS = new Set([
+	"/",
+	"/posts",
+	"/posts/",
+	"/sitemap.xml",
+	"/robots.txt",
+	"/rss.xml",
+]);
+
+const ALLOWLIST_PATH_PATTERNS = [
+	/^\/posts\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
+	/^\/pages\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
+	/^\/category\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
+	/^\/tag\/[a-z0-9][a-z0-9-]{0,199}\/?$/,
+	/^\/sitemap-[a-z][a-z0-9_]*\.xml$/,
+];
+
+export function isAllowlistedPublicPath(pathname: string): boolean {
+	if (ALLOWLIST_EXACT_PATHS.has(pathname)) return true;
+	return ALLOWLIST_PATH_PATTERNS.some((re) => re.test(pathname));
+}
+
+/**
+ * Strict cookie-name allowlist check.
+ * Returns `true` only when the Cookie header is empty/absent OR every pair is
+ * well-formed (`name=value`) and its trimmed name is in `allowedNames`.
+ */
+export function hasOnlyAllowedCookies(
+	cookieHeader: string | null,
+	allowedNames: ReadonlySet<string>,
+): boolean {
+	if (!cookieHeader || cookieHeader.trim() === "") return true;
+	const parts = cookieHeader.split(";");
+	for (const part of parts) {
+		const trimmed = part.trim();
+		if (trimmed === "") return false;
+		const eq = trimmed.indexOf("=");
+		if (eq <= 0) return false;
+		const name = trimmed.slice(0, eq).trim();
+		if (!name || !allowedNames.has(name)) return false;
+	}
+	return true;
+}
+
+export function isCacheEnabledFlag(value: unknown): boolean {
+	if (typeof value !== "string") return false;
+	const normalized = value.trim().toLowerCase();
+	return normalized === "1" || normalized === "true";
+}
+
+function isAllowedContentType(header: string | null): boolean {
+	if (!header) return false;
+	const mime = header.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+	return ALLOWED_CONTENT_TYPES.has(mime);
+}
+
+function hasDisallowedCacheControl(response: Response): boolean {
+	const cc = (response.headers.get("cache-control") ?? "").toLowerCase();
+	if (PRIVATE_OR_NO_STORE_RE.test(cc)) return true;
+	for (const hdr of ["cdn-cache-control", "cloudflare-cdn-cache-control"]) {
+		const val = (response.headers.get(hdr) ?? "").toLowerCase();
+		if (!val) continue;
+		if (PRIVATE_OR_NO_STORE_RE.test(val) || MAX_AGE_ZERO_RE.test(val)) return true;
+	}
+	return false;
+}
+
+function hasNontrivialVary(response: Response): boolean {
+	const vary = response.headers.get("vary");
+	if (!vary) return false;
+	const tokens = vary
+		.split(",")
+		.map((t) => t.trim().toLowerCase())
+		.filter(Boolean);
+	return tokens.some((t) => t !== "accept-encoding");
+}
+
+function readQueuedCookies(context: Pick<APIContext, "cookies">): string[] {
+	const jar = context.cookies as { headers?: () => Iterable<string> } | undefined;
+	if (!jar || typeof jar.headers !== "function") return [];
+	return [...jar.headers()];
+}
+
+function hasOnlyBookmarkSetCookies(cookies: readonly string[], bookmarkCookie: string): boolean {
+	if (cookies.length === 0) return true;
+	const prefix = `${bookmarkCookie}=`;
+	return cookies.every((c) => c.trimStart().startsWith(prefix));
+}
+
+function stripInternalAndCdnHeaders(headers: Headers): void {
+	for (const h of INTERNAL_HEADERS) headers.delete(h);
+	headers.delete("cdn-cache-control");
+	headers.delete("cloudflare-cdn-cache-control");
+	headers.set("cache-control", "private, no-cache");
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+	if (!(ms > 0)) return promise;
+	let timer: ReturnType<typeof setTimeout>;
+	const timeout = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => reject(new Error(`visibility check timed out after ${ms}ms`)), ms);
+	});
+	return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+interface D1Like {
+	prepare(sql: string): {
+		bind(...values: unknown[]): { first<T = Record<string, unknown>>(): Promise<T | null> };
+	};
+	withSession?(constraint: string): {
+		prepare(sql: string): {
+			bind(...values: unknown[]): { first<T = Record<string, unknown>>(): Promise<T | null> };
+		};
+	};
+}
+
+export interface EpochCacheRuntimeDeps {
+	getEnv?: () => Record<string, unknown>;
+	openCache?: (name: string) => Promise<Cache>;
+	schedule?: (p: Promise<unknown>) => void;
+	readVector?: (buildId?: string) => Promise<PageGenerationVectorResult>;
+	readVisibilityRev?: (d1Binding: string, timeoutMs: number) => Promise<string | null>;
+	now?: () => number;
+	/** Only for unit tests running against http:// URLs. */
+	allowHttpForTests?: boolean;
+}
+
+async function defaultReadPrimaryVisibilityRev(
+	envObj: Record<string, unknown>,
+	d1Binding: string,
+	timeoutMs: number,
+): Promise<string | null> {
+	const d1 = envObj[d1Binding] as D1Like | undefined;
+	if (!d1 || typeof d1.prepare !== "function") return null;
+	try {
+		const target = typeof d1.withSession === "function" ? d1.withSession("first-primary") : d1;
+		const row = await withTimeout(
+			target
+				.prepare("SELECT value FROM options WHERE key = ? LIMIT 1")
+				.bind(VISIBILITY_REV_OPTION)
+				.first<{ value?: string }>(),
+			timeoutMs,
+		);
+		if (!row || row.value === undefined || row.value === null) return "0";
+		return String(row.value);
+	} catch {
+		return null;
+	}
+}
+
+export function createEpochCacheProvider(
+	config: EpochCloudflareCacheConfig = {},
+	deps: EpochCacheRuntimeDeps = {},
+): CacheProvider {
+	const cacheName = config.cacheName ?? DEFAULT_CACHE_NAME;
+	const enabledEnvVar = config.enabledEnvVar ?? DEFAULT_ENABLED_ENV_VAR;
+	const d1Binding = config.d1Binding ?? DEFAULT_D1_BINDING;
+	const bookmarkCookie = config.bookmarkCookie ?? DEFAULT_BOOKMARK_COOKIE;
+	const visibilityTimeoutMs = config.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
+	const disabledWhenPlayground = config.disabledWhenPlayground === true;
+	const buildId = config.buildId ?? "";
+
+	const allowedCookies = new Set<string>([bookmarkCookie, "theme"]);
+	const getEnv = deps.getEnv ?? (() => env as unknown as Record<string, unknown>);
+	const openCache = deps.openCache ?? ((name: string) => caches.open(name));
+	const schedule = deps.schedule ?? ((p: Promise<unknown>) => waitUntil(p));
+	const readVector = deps.readVector ?? ((b?: string) => readPageGenerationVector(b));
+	const now = deps.now ?? (() => Date.now());
+	const readVisibility =
+		deps.readVisibilityRev ??
+		((binding: string, timeoutMs: number) =>
+			defaultReadPrimaryVisibilityRev(getEnv(), binding, timeoutMs));
+
+	const isEligibleRequest = (request: Request, url: URL): boolean => {
+		if (disabledWhenPlayground) return false;
+		if (request.method !== "GET") return false;
+		if (url.protocol !== "https:" && !(deps.allowHttpForTests && url.protocol === "http:")) {
+			return false;
+		}
+		const host = url.host.toLowerCase();
+		if (host.endsWith(".workers.dev") || host === "workers.dev") return false;
+		if (url.search !== "") return false;
+		if (!isAllowlistedPublicPath(url.pathname)) return false;
+
+		for (const h of CREDENTIAL_HEADERS) {
+			const val = request.headers.get(h);
+			if (val !== null && val.trim() !== "") return false;
+		}
+		for (const h of CONDITIONAL_OR_RANGE_HEADERS) {
+			if (request.headers.has(h)) return false;
+		}
+		if (!hasOnlyAllowedCookies(request.headers.get("cookie"), allowedCookies)) {
+			return false;
+		}
+		return true;
+	};
+
+	const buildCacheKey = (url: URL): Request => {
+		const scheme = deps.allowHttpForTests && url.protocol === "http:" ? "http" : "https";
+		return new Request(`${scheme}://${url.host.toLowerCase()}${url.pathname}`, { method: "GET" });
+	};
+
+	return {
+		// Distinct name: never "cloudflare" (which auto-enables native Workers Caching).
+		name: "emdash-epoch-cache",
+
+		async onRequest(context, next) {
+			const envObj = getEnv();
+			if (!isCacheEnabledFlag(envObj[enabledEnvVar])) {
+				return next();
+			}
+
+			const { request, url } = context;
+			if (!isEligibleRequest(request, url)) {
+				const bypass = await next();
+				const out = new Response(bypass.body, bypass);
+				out.headers.set(HEADER_STATUS, "BYPASS");
+				return out;
+			}
+
+			const key = buildCacheKey(url);
+			const cache = await openCache(cacheName);
+
+			// Run cache lookup, strict generation vector read, and D1-primary
+			// authoritative visibility check in parallel BEFORE rendering.
+			const [cached, preVec, preVis] = await Promise.all([
+				cache.match(key).catch(() => undefined),
+				readVector(buildId),
+				readVisibility(d1Binding, visibilityTimeoutMs),
+			]);
+
+			if (cached && preVec.certain && preVis !== null) {
+				const storedVec = cached.headers.get(HEADER_VECTOR);
+				const storedVis = cached.headers.get(HEADER_VISIBILITY_REV);
+				const storedAt = Number.parseInt(cached.headers.get(HEADER_STORED_AT) ?? "0", 10);
+				const storedTtl = Number.parseInt(cached.headers.get(HEADER_TTL) ?? "0", 10);
+				const ageSeconds = (now() - storedAt) / 1000;
+
+				if (
+					storedVec === preVec.vector &&
+					storedVis === preVis &&
+					storedTtl > 0 &&
+					ageSeconds >= 0 &&
+					ageSeconds < storedTtl
+				) {
+					const hit = new Response(cached.body, cached);
+					stripInternalAndCdnHeaders(hit.headers);
+					hit.headers.set(HEADER_STATUS, "HIT");
+					return hit;
+				}
+			}
+
+			// MISS: render inside a fresh irreversible opt-out / explicit opt-in scope.
+			let stateAfterRender: ReturnType<typeof getPageCacheState>;
+			const response = await runWithPageCacheState(async () => {
+				const res = await next();
+				stateAfterRender = getPageCacheState();
+				return res;
+			});
+
+			// If pre-render state was already uncertain or response failed basic
+			// checks, return untouched without buffering.
+			const basicChecksOk =
+				preVec.certain &&
+				preVis !== null &&
+				response.status === 200 &&
+				isAllowedContentType(response.headers.get("content-type")) &&
+				!hasDisallowedCacheControl(response) &&
+				!hasNontrivialVary(response);
+
+			const rawSetCookies = response.headers.getSetCookie();
+			const queuedCookies = readQueuedCookies(context);
+			const cookiesSafe =
+				hasOnlyBookmarkSetCookies(rawSetCookies, bookmarkCookie) &&
+				hasOnlyBookmarkSetCookies(queuedCookies, bookmarkCookie);
+
+			if (!basicChecksOk || !cookiesSafe || !stateAfterRender || stateAfterRender.optedOut) {
+				const miss = new Response(response.body, response);
+				if (!hasDisallowedCacheControl(response)) {
+					miss.headers.delete("cdn-cache-control");
+					miss.headers.delete("cloudflare-cdn-cache-control");
+				}
+				miss.headers.set(HEADER_STATUS, "MISS");
+				return miss;
+			}
+
+			// Materialize the body stream so any delayed nested/streamed component
+			// calling `optOutPageCache()` runs BEFORE we decide whether to store.
+			const bodyBytes = await response.arrayBuffer();
+
+			// Re-check irreversible opt-out, queued cookies, and post-render
+			// generation vector + visibility rev AFTER the stream has finished.
+			const finalQueuedCookies = readQueuedCookies(context);
+			const finalCookiesSafe = hasOnlyBookmarkSetCookies(finalQueuedCookies, bookmarkCookie);
+			const finalState = stateAfterRender;
+			const finalEligible =
+				finalCookiesSafe &&
+				finalState.optedIn &&
+				!finalState.optedOut &&
+				finalState.ttlSeconds >= PAGE_CACHE_MIN_TTL_SECONDS;
+
+			if (finalEligible) {
+				const [postVec, postVis] = await Promise.all([
+					readVector(buildId),
+					readVisibility(d1Binding, visibilityTimeoutMs),
+				]);
+
+				if (
+					postVec.certain &&
+					postVis !== null &&
+					postVec.vector === preVec.vector &&
+					postVis === preVis
+				) {
+					const ttl = Math.min(
+						PAGE_CACHE_MAX_TTL_SECONDS,
+						Math.max(PAGE_CACHE_MIN_TTL_SECONDS, finalState.ttlSeconds),
+					);
+					const storeHeaders = new Headers(response.headers);
+					// Strip Set-Cookie ONLY on the stored copy (never on the MISS response).
+					storeHeaders.delete("set-cookie");
+					storeHeaders.delete("cdn-cache-control");
+					storeHeaders.delete("cloudflare-cdn-cache-control");
+					storeHeaders.set(HEADER_VECTOR, preVec.vector);
+					storeHeaders.set(HEADER_VISIBILITY_REV, preVis);
+					storeHeaders.set(HEADER_STORED_AT, String(now()));
+					storeHeaders.set(HEADER_TTL, String(ttl));
+
+					const toStore = new Response(bodyBytes, {
+						status: response.status,
+						statusText: response.statusText,
+						headers: storeHeaders,
+					});
+					schedule(cache.put(key, toStore).catch(() => undefined));
+				}
+			}
+
+			// Return the MISS response with all original Set-Cookie headers intact.
+			const missHeaders = new Headers(response.headers);
+			missHeaders.delete("cdn-cache-control");
+			missHeaders.delete("cloudflare-cdn-cache-control");
+			missHeaders.set("cache-control", "private, no-cache");
+			missHeaders.set(HEADER_STATUS, "MISS");
+			return new Response(bodyBytes, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: missHeaders,
+			});
+		},
+
+		async invalidate(options) {
+			if (options.tags) {
+				const tags = Array.isArray(options.tags) ? options.tags : [options.tags];
+				for (const tag of tags) {
+					if (tag.startsWith("widget-area:")) invalidateWidgetObjectCache();
+					else if (tag === "site-settings") invalidateObjectCache(CacheNamespace.SETTINGS);
+					else if (tag.startsWith("menu:")) invalidateObjectCache(CacheNamespace.MENUS);
+				}
+			}
+			if (options.path) {
+				try {
+					const cache = await openCache(cacheName);
+					await cache.delete(options.path);
+				} catch {
+					// Best-effort local delete; epoch vector handles global invalidation.
+				}
+			}
+		},
+	};
+}
+
+const factory: CacheProviderFactory<EpochCloudflareCacheConfig> = (config) =>
+	createEpochCacheProvider(config);
+
+export default factory;

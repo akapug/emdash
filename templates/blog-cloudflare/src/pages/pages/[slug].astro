@@ -5,6 +5,7 @@ import {
 	getSeoMeta,
 	decodeSlug,
 	getSiteSettings,
+	optInPageCache,
 } from "emdash";
 import Base from "../../layouts/Base.astro";
 import PageArticle from "../../components/PageArticle.astro";
@@ -32,7 +33,10 @@ if ((await loadWpShell()).shell) {
 const access = await resolveProtectedEntry(Astro, "pages", publicPage);
 if ("response" in access) return access.response;
 const page = access.entry;
-if (Astro.cache?.enabled && !access.protected) Astro.cache.set(cacheHint);
+if (Astro.cache?.enabled && !access.protected) {
+	Astro.cache.set(cacheHint);
+	optInPageCache(300);
+}
 const settings = await getSiteSettings();
 const { siteTitle } = resolveBlogSiteIdentity(settings);
 // The homepage renders this page at "/" too, so that copy is the canonical one.

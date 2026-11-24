@@ -281,11 +281,26 @@ export {
 	invalidateMenuObjectCache,
 	invalidateSchemaObjectCache,
 	invalidateCommentObjectCache,
+	invalidateWidgetObjectCache,
+	invalidatePluginObjectCache,
+	readPageGenerationVector,
 	contentNamespace,
 	contentNamespaces,
 	CacheNamespace,
 } from "./object-cache/index.js";
-export type { CachedQueryOptions } from "./object-cache/index.js";
+export type { CachedQueryOptions, PageGenerationVectorResult } from "./object-cache/index.js";
+export {
+	PAGE_CACHE_MIN_TTL_SECONDS,
+	PAGE_CACHE_MAX_TTL_SECONDS,
+	VISIBILITY_REV_OPTION,
+	runWithPageCacheState,
+	getPageCacheState,
+	optOutPageCache,
+	optInPageCache,
+	bumpVisibilityRev,
+	readVisibilityRev,
+} from "./page-cache/state.js";
+export type { PageCacheRequestState } from "./page-cache/state.js";
 export type {
 	ObjectCacheBackend,
 	ObjectCacheDescriptor,

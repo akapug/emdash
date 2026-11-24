@@ -5,6 +5,7 @@ import type { ContentFieldFilterValue, ContentFieldFilters } from "../../content
 import { keepKnownFields, staleStoredKeys } from "../../content/known-fields.js";
 import { normalizeExplicitDatetime } from "../../datetime-normalization.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { bumpVisibilityRev } from "../../page-cache/state.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
 import { buildFtsPrefixMatch, buildSlugGlobPrefix } from "../../search/match.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
@@ -461,6 +462,7 @@ export class ContentRepository {
 			await publicInsertQuery.execute(this.db);
 		}
 
+		if (privateCreateQuery) await bumpVisibilityRev(this.db);
 		invalidateCollectionCache(type);
 
 		// Fetch and return the created item
@@ -1083,6 +1085,9 @@ export class ContentRepository {
 				.execute();
 		}
 
+		if (updates.status !== undefined && updates.status !== "published") {
+			await bumpVisibilityRev(this.db);
+		}
 		if (hasColumnWrites) invalidateCollectionCache(type);
 
 		const updated = await this.findById(type, id);
@@ -1666,6 +1671,7 @@ export class ContentRepository {
 
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
+			await bumpVisibilityRev(this.db);
 			invalidateCollectionCache(type);
 		}
 		return changed;
@@ -1736,6 +1742,7 @@ export class ContentRepository {
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
 			await new ProtectedContentRepository(this.db).delete(type, id);
+			await bumpVisibilityRev(this.db);
 			invalidateCollectionCache(type);
 		}
 		return changed;
@@ -2834,6 +2841,7 @@ export class ContentRepository {
 			`.execute(this.db);
 			if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
 
+			await bumpVisibilityRev(this.db);
 			invalidateCollectionCache(type);
 			const updated = await this.findById(type, id);
 			if (!updated) throw new Error("Content not found");

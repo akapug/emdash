@@ -1,6 +1,6 @@
 import cloudflare from "@astrojs/cloudflare";
 import react from "@astrojs/react";
-import { d1, kvCache, r2 } from "@emdash-cms/cloudflare";
+import { d1, epochCloudflareCache, kvCache, r2 } from "@emdash-cms/cloudflare";
 import { cloudflareEmail } from "@emdash-cms/cloudflare/plugins";
 import { designPlugin } from "@emdash-cms/plugin-design";
 import { embarkHelperPlugin } from "@emdash-cms/plugin-embark-helper";
@@ -26,6 +26,13 @@ const emailFrom = process.env.EMDASH_EMAIL_FROM?.trim();
 export default defineConfig({
 	output: "server",
 	adapter: cloudflare(),
+	cache: {
+		provider: epochCloudflareCache({
+			d1Binding: "DB",
+			enabledEnvVar: "EMDASH_PAGE_CACHE",
+			buildId: new Date().toISOString(),
+		}),
+	},
 	image: {
 		layout: "constrained",
 		responsiveStyles: true,

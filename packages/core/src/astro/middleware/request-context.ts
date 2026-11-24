@@ -21,6 +21,7 @@ import virtualConfig from "virtual:emdash/config";
 
 import { resolveSecretsCached } from "#config/secrets.js";
 
+import { optOutPageCache } from "../../page-cache/state.js";
 import { verifyPreviewToken, parseContentId } from "../../preview/tokens.js";
 import { getRequestContext, runWithContext } from "../../request-context.js";
 import { generateVisualEditingActionToken } from "../../visual-editing/action-token.js";
@@ -60,6 +61,7 @@ async function renderEditorToolbar(
  * provider configured, or no cache handle on the request, this is a no-op.
  */
 function optOutOfRouteCache(cache: RouteCache): void {
+	optOutPageCache();
 	cache?.set(false);
 }
 

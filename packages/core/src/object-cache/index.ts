@@ -770,6 +770,10 @@ export const CacheNamespace = {
 	SCHEMA: "schema",
 	/** Public (approved) comments. */
 	COMMENTS: "comments",
+	/** Public widget areas and widgets. */
+	WIDGETS: "widgets",
+	/** Public-render plugin state (forms definitions, design CSS rules). */
+	PLUGINS: "plugins",
 } as const;
 
 /** Namespace for a content collection's cached queries. */
@@ -831,6 +835,94 @@ export function invalidateSchemaObjectCache(): void {
 /** Invalidate cached public comment reads. */
 export function invalidateCommentObjectCache(): void {
 	invalidateObjectCache(CacheNamespace.COMMENTS);
+}
+
+/** Invalidate cached public widget area reads. */
+export function invalidateWidgetObjectCache(): void {
+	invalidateObjectCache(CacheNamespace.WIDGETS);
+}
+
+/** Invalidate cached public-render plugin state (forms, design rules). */
+export function invalidatePluginObjectCache(): void {
+	invalidateObjectCache(CacheNamespace.PLUGINS);
+}
+
+const PAGE_VECTOR_NAMESPACES = [
+	CacheNamespace.SETTINGS,
+	CacheNamespace.MENUS,
+	CacheNamespace.TAXONOMIES,
+	CacheNamespace.BYLINES,
+	CacheNamespace.COMMENTS,
+	CacheNamespace.WIDGETS,
+	CacheNamespace.PLUGINS,
+] as const;
+
+export interface PageGenerationVectorResult {
+	vector: string;
+	certain: boolean;
+}
+
+/**
+ * Strictly read the full ordered generation vector for full-page caching.
+ *
+ * Unlike {@link getEpoch}, which degrades to a stale stamp on backend error,
+ * this helper tracks whether every single namespace epoch and
+ * `last-content-write-at` read succeeded cleanly. Callers must reject cache
+ * HITs and storage whenever `certain` is `false`.
+ */
+export async function readPageGenerationVector(
+	buildTime?: string,
+): Promise<PageGenerationVectorResult> {
+	const backend = await getBackend();
+	if (!backend) return { vector: "", certain: false };
+
+	const readStrict = async (
+		key: string,
+		localValue: number,
+		localAt: number,
+		onFresh: (merged: number) => void,
+	): Promise<{ value: number; ok: boolean }> => {
+		const now = Date.now();
+		if (localAt > 0 && now - localAt < holder.config.revalidate) {
+			return { value: localValue, ok: true };
+		}
+		try {
+			const raw = await withTimeout(backend.get(key), holder.config.timeout, "strict epoch read");
+			const parsed = raw === null ? 0 : Number(raw);
+			if (!Number.isFinite(parsed)) return { value: 0, ok: false };
+			const merged = Math.max(parsed, localValue);
+			onFresh(merged);
+			return { value: merged, ok: true };
+		} catch {
+			return { value: 0, ok: false };
+		}
+	};
+
+	const [nsResults, lcResult] = await Promise.all([
+		Promise.all(
+			PAGE_VECTOR_NAMESPACES.map((ns) => {
+				const cached = epochCache.get(ns);
+				return readStrict(epochKey(ns), cached?.value ?? 0, cached?.at ?? 0, (merged) => {
+					const latest = Math.max(merged, epochCache.get(ns)?.value ?? 0);
+					epochCache.set(ns, { value: latest, at: Date.now() });
+				});
+			}),
+		),
+		readStrict(lastContentWriteKey(), lastContentWrite.value, lastContentWrite.at, (merged) => {
+			lastContentWrite.value = Math.max(merged, lastContentWrite.value);
+			lastContentWrite.at = Date.now();
+		}),
+	]);
+
+	if (!lcResult.ok || nsResults.some((r) => !r.ok)) {
+		return { vector: "", certain: false };
+	}
+
+	const [s, m, t, y, c, w, p] = nsResults.map((r) => r.value);
+	return {
+		vector: `v1|b=${buildTime ?? ""}|s=${s}|m=${m}|t=${t}|y=${y}|c=${c}|w=${w}|lc=${lcResult.value}|p=${p}`,
+		certain: true,
+	};
 }
 
 export type {

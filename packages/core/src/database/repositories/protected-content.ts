@@ -6,6 +6,7 @@ import {
 	type ContentProtection,
 } from "../../content/protection.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { bumpVisibilityRev } from "../../page-cache/state.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import type { Database, ProtectedContentTable } from "../types.js";
 import type { ContentItem, ContentSeoInput } from "./types.js";
@@ -46,6 +47,7 @@ export class ProtectedContentRepository {
 		data: Record<string, unknown>,
 	): Promise<void> {
 		await this.prepareCreate(collection, contentId, protection, data).execute(this.db);
+		await bumpVisibilityRev(this.db);
 	}
 
 	async project(

@@ -7,6 +7,7 @@ import {
 	getSeoMeta,
 	decodeSlug,
 	getSiteSettings,
+	optInPageCache,
 } from "emdash";
 import { Image, WidgetArea } from "emdash/ui";
 import PortableText from "../../components/BlogPortableText.astro";
@@ -39,7 +40,10 @@ if ((await loadWpShell()).shell) {
 const access = await resolveProtectedEntry(Astro, "posts", publicPost);
 if ("response" in access) return access.response;
 const post = access.entry;
-if (Astro.cache?.enabled && !access.protected) Astro.cache.set(cacheHint);
+if (Astro.cache?.enabled && !access.protected) {
+	Astro.cache.set(cacheHint);
+	optInPageCache(300);
+}
 
 // Get featured image URL for OG fallback
 const featuredImageUrl = getFeaturedImageUrl(post.data.featured_image, Astro.url.origin);

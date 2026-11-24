@@ -6,6 +6,7 @@ import {
 	getSeoMeta,
 	getTermsForEntries,
 	getSiteSettingsWithCacheHint,
+	optInPageCache,
 	type InferCollectionData,
 } from "emdash";
 import { Image } from "emdash/ui";
@@ -67,6 +68,7 @@ if (Astro.cache?.enabled && !privateContent) {
 	Astro.cache.set(homepage.cacheHint);
 	Astro.cache.set(settingsResult.cacheHint);
 	if (postsResult) Astro.cache.set(postsResult.cacheHint);
+	optInPageCache(300);
 }
 
 const pageSeo = page

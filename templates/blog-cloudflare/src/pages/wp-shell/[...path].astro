@@ -23,6 +23,7 @@ import {
 	getHomepage,
 	getSeoMeta,
 	getSiteSettings,
+	optInPageCache,
 	type InferCollectionData,
 } from "emdash";
 import { Comments, CommentForm } from "emdash/ui/comments";
@@ -74,7 +75,10 @@ if ("response" in access) return access.response;
 // Narrowed once here: astro check does not carry the "response" in-check through the frontmatter return.
 const accessProtected = "protected" in access && access.protected;
 const entry = access.entry;
-if (Astro.cache?.enabled && cacheHint && !accessProtected) Astro.cache.set(cacheHint);
+if (Astro.cache?.enabled && cacheHint && !accessProtected) {
+	Astro.cache.set(cacheHint);
+	optInPageCache(300);
+}
 
 const isPost = route.kind === "post";
 const path = route.kind === "home" ? "/" : origin.replace(/\/$/, "");

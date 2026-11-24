@@ -5,7 +5,7 @@
  */
 
 import type { RouteContext, StorageCollection } from "emdash";
-import { PluginRouteError } from "emdash";
+import { invalidatePluginObjectCache, PluginRouteError } from "emdash";
 import { ulid } from "ulidx";
 
 import type {
@@ -85,6 +85,7 @@ export async function formsCreateHandler(ctx: RouteContext<FormCreateInput>) {
 	};
 
 	await forms(ctx).put(id, form);
+	invalidatePluginObjectCache();
 
 	// Schedule digest cron if enabled
 	if (form.settings.digestEnabled && ctx.cron) {
@@ -136,6 +137,7 @@ export async function formsUpdateHandler(ctx: RouteContext<FormUpdateInput>) {
 	if (updated.settings.webhookUrl === "") updated.settings.webhookUrl = undefined;
 
 	await forms(ctx).put(input.id, updated);
+	invalidatePluginObjectCache();
 
 	// Update digest cron if settings changed
 	if (ctx.cron) {
@@ -179,6 +181,7 @@ export async function formsDeleteHandler(ctx: RouteContext<FormDeleteInput>) {
 	}
 
 	await forms(ctx).delete(input.id);
+	invalidatePluginObjectCache();
 
 	return { deleted: true };
 }
@@ -218,6 +221,7 @@ export async function formsDuplicateHandler(ctx: RouteContext<FormDuplicateInput
 	};
 
 	await forms(ctx).put(id, duplicate);
+	invalidatePluginObjectCache();
 
 	return { id, ...duplicate };
 }

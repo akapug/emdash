@@ -12,6 +12,7 @@ import type { Database } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import { getDb } from "../loader.js";
 import { isMissingTableError } from "../utils/db-errors.js";
+import { optOutPageCache } from "../page-cache/state.js";
 import { verifyContentPassword } from "./protection.js";
 
 export const PROTECTED_RATE_LIMIT_SETTING = "protected_content:rate_limit" as const;
@@ -98,6 +99,7 @@ export async function resolveProtectedEntry<T extends { data: { id: string } }>(
 		return { entry, protected: false };
 	}
 	if (!row) return { entry, protected: false };
+	optOutPageCache();
 	if (context.cache?.enabled) context.cache.set(false);
 	for (const [name, value] of Object.entries(PRIVATE_HEADERS))
 		context.response.headers.set(name, value);

@@ -627,3 +627,4 @@ export { cloudflareStream, type CloudflareStreamConfig } from "./media/stream.js
 // cacheCloudflare() from @astrojs/cloudflare/cache with wrangler
 // "cache": { "enabled": true } for native Workers Caching.
 export { cloudflareCache, type CloudflareCacheConfig } from "./cache/config.js";
+export { epochCloudflareCache, type EpochCloudflareCacheConfig } from "./cache/epoch-config.js";

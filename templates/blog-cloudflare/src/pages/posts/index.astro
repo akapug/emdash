@@ -1,5 +1,5 @@
 ---
-import { getEmDashCollection, getSiteSettingsWithCacheHint, getTermsForEntries } from "emdash";
+import { getEmDashCollection, getSiteSettingsWithCacheHint, getTermsForEntries, optInPageCache } from "emdash";
 import Base from "../../layouts/Base.astro";
 import { getReadingTime } from "../../utils/reading-time";
 import { wpShellIndexRoute } from "../../utils/wp-shell";
@@ -32,6 +32,7 @@ const {
 if (Astro.cache?.enabled) {
 	Astro.cache.set(settingsResult.cacheHint);
 	Astro.cache.set(cacheHint);
+	optInPageCache(300);
 }
 
 // Single batched query for tags across all posts, instead of one

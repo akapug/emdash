@@ -11,7 +11,7 @@
  */
 
 import type { PluginContext, PluginDescriptor, ResolvedPlugin } from "emdash";
-import { definePlugin } from "emdash";
+import { definePlugin, invalidatePluginObjectCache } from "emdash";
 
 import { version } from "../package.json";
 import {
@@ -194,6 +194,7 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 							? rules.map((r, i) => (i === existingIdx ? nextRule : r))
 							: [...rules, nextRule];
 					await ctx.kv.set(RULES_KV_KEY, nextRules);
+					invalidatePluginObjectCache();
 
 					return {
 						ok: true,
@@ -216,6 +217,7 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 					}
 					const historyCount = await pushHistory(ctx, rules, maxHistory);
 					await ctx.kv.set(RULES_KV_KEY, nextRules);
+					invalidatePluginObjectCache();
 					return { ok: true, rules: nextRules, historyCount, css: compileDesignCss(nextRules) };
 				},
 			},
@@ -239,6 +241,7 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 					});
 					if (flagged > 0) {
 						await ctx.kv.set(RULES_KV_KEY, nextRules);
+					invalidatePluginObjectCache();
 					}
 					return { ok: true, flagged, rules: nextRules, css: compileDesignCss(nextRules) };
 				},
@@ -255,6 +258,7 @@ export function createPlugin(options: DesignPluginOptions = {}): ResolvedPlugin 
 					const nextHistory = history.slice(0, -1);
 					await ctx.kv.set(RULES_KV_KEY, previous);
 					await ctx.kv.set(HISTORY_KV_KEY, nextHistory);
+					invalidatePluginObjectCache();
 					return {
 						ok: true,
 						restored: true,

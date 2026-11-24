@@ -36,6 +36,8 @@ export default defineConfig({
 		// Cache provider (full-page response cache)
 		"src/cache/runtime.ts",
 		"src/cache/config.ts",
+		"src/cache/epoch-runtime.ts",
+		"src/cache/epoch-config.ts",
 		// Object cache backend (KV)
 		"src/cache/kv.ts",
 	],

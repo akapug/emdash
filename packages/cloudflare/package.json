@@ -106,6 +106,14 @@
       "types": "./dist/cache/config.d.mts",
       "default": "./dist/cache/config.mjs"
     },
+    "./cache/epoch": {
+      "types": "./dist/cache/epoch-runtime.d.mts",
+      "default": "./dist/cache/epoch-runtime.mjs"
+    },
+    "./cache/epoch-config": {
+      "types": "./dist/cache/epoch-config.d.mts",
+      "default": "./dist/cache/epoch-config.mjs"
+    },
     "./cache/kv": {
       "types": "./dist/cache/kv.d.mts",
       "default": "./dist/cache/kv.mjs"
