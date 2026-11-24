@@ -18,6 +18,12 @@ import type { EmDashHandlers } from "#types";
 
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../../../content/protection.js";
 
+export const EVENT_SEARCH_BAR_CAPABILITY = "emdash.event-search-bar.v1" as const;
+export const IMPORT_CAPABILITIES = [
+	PROTECTED_CONTENT_CAPABILITY,
+	EVENT_SEARCH_BAR_CAPABILITY,
+] as const;
+
 export const prerender = false;
 
 const NUMERIC_PATTERN = /^-?\d+(\.\d+)?$/;
@@ -93,6 +99,8 @@ export interface WpAuthorInfo {
 export interface WxrAnalysis {
 	/** Live-server opt-in contract, not a client assertion or version inference. */
 	protectedContentCapability: typeof PROTECTED_CONTENT_CAPABILITY;
+	/** Advertised import/render capabilities supported by this EmDash build. */
+	capabilities: readonly string[];
 	site: {
 		title: string;
 		url: string;
@@ -306,6 +314,7 @@ function analyzeWxr(
 
 	return {
 		protectedContentCapability: PROTECTED_CONTENT_CAPABILITY,
+		capabilities: [...IMPORT_CAPABILITIES],
 		site: {
 			title: wxr.site.title || "WordPress Site",
 			url: wxr.site.link || "",

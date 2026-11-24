@@ -17,3 +17,6 @@ packages/core/tests/integration/wordpress-import/wxr-scheduled.test.ts fleet-bul
 # Self-serve WXR 1.2 export generator and its unit test quote WXR XML headers; neither is a customer export.
 packages/core/src/api/handlers/site-export.ts fleet-bulk=quotes
 packages/core/tests/unit/api/site-export-zip.test.ts fleet-bulk=quotes
+
+# Minimal synthetic 1-line WXR header inline to test analyze() capabilities[] (Item 109).
+packages/core/tests/unit/import/analyze-capabilities.test.ts fleet-bulk=quotes
