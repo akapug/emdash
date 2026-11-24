@@ -54,6 +54,14 @@ export const createRedirectBody = z
 	})
 	.meta({ id: "CreateRedirectBody" });
 
+export const MAX_REDIRECT_BATCH_SIZE = 200;
+
+export const createRedirectsBatchBody = z
+	.object({
+		rules: z.array(z.unknown()).min(1).max(MAX_REDIRECT_BATCH_SIZE),
+	})
+	.meta({ id: "CreateRedirectsBatchBody" });
+
 export const updateRedirectBody = z
 	.object({
 		source: urlPath.optional(),

@@ -9,6 +9,7 @@ import {
 	isPattern,
 } from "../../redirects/patterns.js";
 import { currentTimestampValue, isPostgres } from "../dialect-helpers.js";
+import { withTransaction } from "../transaction.js";
 import type { Database, RedirectTable } from "../types.js";
 import { encodeCursor, decodeCursor, type FindManyResult } from "./types.js";
 
@@ -114,6 +115,11 @@ export interface RedirectWriteFence {
 	generation: number;
 }
 
+/**
+ * Max rows per multi-row INSERT into `_emdash_redirects` (15 columns * 6 = 90 <= 100 D1 bind-param ceiling).
+ */
+export const REDIRECT_INSERT_CHUNK_SIZE = 6;
+
 const REDIRECT_WRITE_LOCK_ID = 1;
 const REDIRECT_WRITE_LEASE_MS = 30_000;
 const REDIRECT_WRITE_LOCK_ATTEMPTS = 5;
@@ -169,6 +175,11 @@ export class RedirectRepository {
 			.where("source", "=", source)
 			.executeTakeFirst();
 		return row ? rowToRedirect(row) : null;
+	}
+
+	async findAllSources(): Promise<Set<string>> {
+		const rows = await this.db.selectFrom("_emdash_redirects").select("source").execute();
+		return new Set(rows.map((r) => r.source));
 	}
 
 	async findConfigRevision(id: string): Promise<string | null> {
@@ -336,6 +347,50 @@ export class RedirectRepository {
 			.execute();
 
 		return (await this.findById(id))!;
+	}
+
+	async createMany(
+		inputs: readonly CreateRedirectInput[],
+		fence?: RedirectWriteFence,
+	): Promise<Redirect[]> {
+		if (inputs.length === 0) return [];
+		if (!fence) {
+			return this.withWriteLock((currentFence, repository) =>
+				repository.createMany(inputs, currentFence),
+			);
+		}
+		const now = new Date().toISOString();
+		const rows = inputs.map((input) => {
+			const id = ulid();
+			const patternFlag = input.isPattern ?? isPattern(input.source);
+			const row = {
+				id,
+				source: input.source,
+				destination: input.destination,
+				type: input.type ?? 301,
+				is_pattern: patternFlag ? 1 : 0,
+				enabled: input.enabled !== false ? 1 : 0,
+				hits: 0,
+				last_hit_at: null,
+				group_name: input.groupName ?? null,
+				auto: input.auto ? 1 : 0,
+				config_revision: ulid(),
+				source_guard: 1,
+				write_generation: fence.generation,
+				created_at: now,
+				updated_at: now,
+			};
+			return { row, redirect: rowToRedirect(row) };
+		});
+
+		await withTransaction(this.db, async (trx) => {
+			for (let i = 0; i < rows.length; i += REDIRECT_INSERT_CHUNK_SIZE) {
+				const chunk = rows.slice(i, i + REDIRECT_INSERT_CHUNK_SIZE).map((r) => r.row);
+				await trx.insertInto("_emdash_redirects").values(chunk).execute();
+			}
+		});
+
+		return rows.map((r) => r.redirect);
 	}
 
 	async update(

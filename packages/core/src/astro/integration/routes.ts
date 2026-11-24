@@ -953,6 +953,11 @@ export function injectCoreRoutes(
 	});
 
 	injectRoute({
+		pattern: "/_emdash/api/redirects/batch",
+		entrypoint: resolveRoute("api/redirects/batch.ts"),
+	});
+
+	injectRoute({
 		pattern: "/_emdash/api/redirects/404s/summary",
 		entrypoint: resolveRoute("api/redirects/404s/summary.ts"),
 	});

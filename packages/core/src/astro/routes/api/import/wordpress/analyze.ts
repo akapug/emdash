@@ -13,6 +13,7 @@ import mime from "mime/lite";
 
 import { requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
+import { BATCH_REDIRECTS_CAPABILITY } from "#api/handlers/redirects.js";
 import { RESERVED_COLLECTION_SLUGS } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
@@ -43,8 +44,8 @@ export function importCapabilities(
 	embedsSchema: { safeParse: (input: unknown) => { success: boolean } } = mappedEmbedsSchema,
 ): readonly string[] {
 	return embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success
-		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY]
-		: [PROTECTED_CONTENT_CAPABILITY];
+		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY, BATCH_REDIRECTS_CAPABILITY]
+		: [PROTECTED_CONTENT_CAPABILITY, BATCH_REDIRECTS_CAPABILITY];
 }
 
 export const IMPORT_CAPABILITIES: readonly string[] = importCapabilities();

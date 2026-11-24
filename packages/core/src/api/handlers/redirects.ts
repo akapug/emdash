@@ -8,6 +8,7 @@ import { OptionsRepository } from "../../database/repositories/options.js";
 import {
 	RedirectRepository,
 	RedirectWriteBusyError,
+	type CreateRedirectInput,
 	type RedirectWriteFence,
 	type Redirect,
 	type NotFoundEntry,
@@ -20,7 +21,22 @@ import { invalidateRedirectCache } from "../../redirects/cache.js";
 import { wouldCreateLoop, detectLoops, type RedirectEdge } from "../../redirects/loops.js";
 import { validatePattern, validateDestinationParams, isPattern } from "../../redirects/patterns.js";
 import { isTerminalStatus } from "../../redirects/status.js";
+import { createRedirectBody, MAX_REDIRECT_BATCH_SIZE } from "../schemas/redirects.js";
 import type { ApiResult } from "../types.js";
+
+export const BATCH_REDIRECTS_CAPABILITY = "emdash.redirects-batch-create.v1" as const;
+
+export type RedirectBatchOutcome =
+	| { index: number; source: string; status: "created"; redirect: Redirect }
+	| { index: number; source: string; status: "already_exists"; code: "CONFLICT"; message: string }
+	| { index: number; source: string; status: "refused"; code: string; message: string };
+
+export interface RedirectBatchResult {
+	created: number;
+	alreadyExists: number;
+	refused: number;
+	results: RedirectBatchOutcome[];
+}
 
 async function withRedirectWriteLock<T>(
 	repo: RedirectRepository,
@@ -180,6 +196,199 @@ export async function handleRedirectCreate(
 		return {
 			success: false,
 			error: { code: "REDIRECT_CREATE_ERROR", message: "Failed to create redirect" },
+		};
+	}
+}
+
+function rawSourceOf(raw: unknown): string {
+	if (
+		typeof raw === "object" &&
+		raw !== null &&
+		"source" in raw &&
+		typeof raw.source === "string"
+	) {
+		return raw.source;
+	}
+	return "";
+}
+
+/**
+ * Create a batch of redirect rules under a single write lock and a single cache
+ * invalidation, applying the exact same per-rule validation, duplicate, and loop
+ * checks as `handleRedirectCreate`.
+ */
+export async function handleRedirectCreateBatch(
+	db: Kysely<Database>,
+	rawRules: readonly unknown[],
+): Promise<ApiResult<RedirectBatchResult>> {
+	if (rawRules.length === 0 || rawRules.length > MAX_REDIRECT_BATCH_SIZE) {
+		return {
+			success: false,
+			error: {
+				code: "VALIDATION_ERROR",
+				message: `rules must contain between 1 and ${MAX_REDIRECT_BATCH_SIZE} items`,
+			},
+		};
+	}
+	try {
+		const lockRepo = new RedirectRepository(db);
+		const result = await withRedirectWriteLock(lockRepo, async (fence, repo) => {
+			const [existingSources, enabledRows] = await Promise.all([
+				repo.findAllSources(),
+				repo.findAllEnabled(),
+			]);
+			const enabledEdges: RedirectEdge[] = toEdges(enabledRows);
+			const outcomes = Array.from<RedirectBatchOutcome | undefined>({ length: rawRules.length });
+			const pending: Array<{ index: number; input: CreateRedirectInput }> = [];
+			let alreadyExists = 0;
+			let refused = 0;
+
+			for (let index = 0; index < rawRules.length; index++) {
+				const rawRule = rawRules[index];
+				const parsed = createRedirectBody.safeParse(rawRule);
+				if (!parsed.success) {
+					refused++;
+					outcomes[index] = {
+						index,
+						source: rawSourceOf(rawRule),
+						status: "refused",
+						code: "VALIDATION_ERROR",
+						message: parsed.error.issues[0]?.message ?? "Invalid redirect rule",
+					};
+					continue;
+				}
+				const input = parsed.data;
+				const type = input.type ?? 301;
+				const terminal = isTerminalStatus(type);
+				const destination = terminal ? "" : (input.destination ?? "");
+
+				if (!terminal && input.source === destination) {
+					refused++;
+					outcomes[index] = {
+						index,
+						source: input.source,
+						status: "refused",
+						code: "VALIDATION_ERROR",
+						message: "Source and destination must be different",
+					};
+					continue;
+				}
+
+				const sourceIsPattern = isPattern(input.source);
+				if (sourceIsPattern) {
+					const patternError = validatePattern(input.source);
+					if (patternError) {
+						refused++;
+						outcomes[index] = {
+							index,
+							source: input.source,
+							status: "refused",
+							code: "VALIDATION_ERROR",
+							message: `Invalid source pattern: ${patternError}`,
+						};
+						continue;
+					}
+					if (!terminal) {
+						const destError = validateDestinationParams(input.source, destination);
+						if (destError) {
+							refused++;
+							outcomes[index] = {
+								index,
+								source: input.source,
+								status: "refused",
+								code: "VALIDATION_ERROR",
+								message: destError,
+							};
+							continue;
+						}
+					}
+				}
+
+				if (existingSources.has(input.source)) {
+					alreadyExists++;
+					outcomes[index] = {
+						index,
+						source: input.source,
+						status: "already_exists",
+						code: "CONFLICT",
+						message: `A redirect from "${input.source}" already exists`,
+					};
+					continue;
+				}
+
+				if (!terminal && input.enabled !== false) {
+					const loopPath = wouldCreateLoop(input.source, destination, enabledEdges);
+					if (loopPath) {
+						const err = loopError(loopPath);
+						refused++;
+						outcomes[index] = {
+							index,
+							source: input.source,
+							status: "refused",
+							code: err.success ? "VALIDATION_ERROR" : err.error.code,
+							message: err.success ? "Redirect loop detected" : err.error.message,
+						};
+						continue;
+					}
+				}
+
+				existingSources.add(input.source);
+				if (!terminal && input.enabled !== false) {
+					enabledEdges.push({
+						id: `pending_${index}`,
+						source: input.source,
+						destination,
+						enabled: true,
+						isPattern: sourceIsPattern,
+					});
+				}
+				pending.push({
+					index,
+					input: {
+						source: input.source,
+						destination,
+						type,
+						isPattern: sourceIsPattern,
+						enabled: input.enabled ?? true,
+						groupName: input.groupName ?? null,
+					},
+				});
+			}
+
+			const createdRows = await repo.createMany(
+				pending.map((p) => p.input),
+				fence,
+			);
+			for (let i = 0; i < pending.length; i++) {
+				const slot = pending[i];
+				const redirect = createdRows[i];
+				if (slot && redirect) {
+					outcomes[slot.index] = {
+						index: slot.index,
+						source: redirect.source,
+						status: "created",
+						redirect,
+					};
+				}
+			}
+
+			const results = outcomes.filter((o): o is RedirectBatchOutcome => o !== undefined);
+			return {
+				success: true as const,
+				data: {
+					created: createdRows.length,
+					alreadyExists,
+					refused,
+					results,
+				},
+			};
+		});
+		if (result.success && result.data.created > 0) invalidateRedirectCache();
+		return result;
+	} catch {
+		return {
+			success: false,
+			error: { code: "REDIRECT_CREATE_ERROR", message: "Failed to create redirects" },
 		};
 	}
 }
