@@ -816,7 +816,24 @@ export interface ProtectedRevisionTable {
 	data: string;
 }
 
+/**
+ * A stored size of an imported image. See `media/variants.ts` for the rules that
+ * make `(media_id, parent_generation, width)` the identity rather than a width.
+ */
+export interface MediaVariantTable {
+	media_id: string;
+	size_name: string;
+	width: number;
+	height: number;
+	storage_key: string;
+	bytes: number;
+	content_hash: string;
+	parent_generation: number;
+	created_at: string;
+}
+
 export interface Database {
+	_emdash_media_variants: MediaVariantTable;
 	_emdash_protected_content: ProtectedContentTable;
 	_emdash_protected_revisions: ProtectedRevisionTable;
 	revisions: RevisionTable;
