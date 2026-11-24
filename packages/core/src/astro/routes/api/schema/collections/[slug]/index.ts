@@ -3,6 +3,7 @@
  *
  * GET    /_emdash/api/schema/collections/{slug} - Get collection
  * PUT    /_emdash/api/schema/collections/{slug} - Update collection
+ * PATCH  /_emdash/api/schema/collections/{slug} - Conditionally update collection labels
  * DELETE /_emdash/api/schema/collections/{slug} - Delete collection
  */
 
@@ -10,13 +11,18 @@ import type { APIRoute } from "astro";
 
 import { requirePerm } from "#api/authorize.js";
 import { requireDb, unwrapResult } from "#api/error.js";
+import { handleSchemaCollectionLabelsCompareAndSet } from "#api/handlers/schema.js";
 import {
 	handleSchemaCollectionGet,
 	handleSchemaCollectionUpdate,
 	handleSchemaCollectionDelete,
 } from "#api/index.js";
 import { parseBody, parseQuery, isParseError } from "#api/parse.js";
-import { collectionGetQuery, updateCollectionBody } from "#api/schemas.js";
+import {
+	collectionGetQuery,
+	compareAndSetCollectionLabelsBody,
+	updateCollectionBody,
+} from "#api/schemas.js";
 
 export const prerender = false;
 
@@ -54,6 +60,24 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 
 	const result = await handleSchemaCollectionUpdate(emdash.db, slug, body);
 	emdash.invalidateUrlPatternCache();
+	return unwrapResult(result);
+};
+
+export const PATCH: APIRoute = async ({ params, request, locals }) => {
+	const { emdash, user } = locals;
+	const slug = params.slug!;
+
+	const dbErr = requireDb(emdash?.db);
+	if (dbErr) return dbErr;
+
+	const denied = requirePerm(user, "schema:manage");
+	if (denied) return denied;
+
+	const body = await parseBody(request, compareAndSetCollectionLabelsBody);
+	if (isParseError(body)) return body;
+
+	const result = await handleSchemaCollectionLabelsCompareAndSet(emdash.db, slug, body);
+	if (result.success) emdash.invalidateUrlPatternCache();
 	return unwrapResult(result);
 };
 

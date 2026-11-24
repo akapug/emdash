@@ -205,6 +205,19 @@ export const updateCollectionBody = z
 	})
 	.meta({ id: "UpdateCollectionBody" });
 
+export const compareAndSetCollectionLabelsBody = z.strictObject({
+	expected: z.strictObject({
+		id: z.string(),
+		label: z.string(),
+		labelSingular: z.string().nullable(),
+		description: z.string().nullable(),
+		urlPattern: z.string().nullable(),
+		updatedAt: z.string(),
+	}),
+	label: z.string().min(1),
+	labelSingular: z.string(),
+});
+
 export const createFieldBody = z
 	.object({
 		slug: z.string().min(1).max(63).regex(slugPattern, "Invalid slug format"),

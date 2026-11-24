@@ -25,6 +25,7 @@ import {
 	type CollectionWithFields,
 	expandCollectionBlockFields,
 } from "../../schema/index.js";
+import type { CompareAndSetCollectionLabelsInput } from "../../schema/types.js";
 import type { ApiResult } from "../types.js";
 import { fieldsBoundToRelation, handleRelationDelete } from "./relations.js";
 
@@ -334,6 +335,28 @@ export async function handleSchemaCollectionUpdate(
 				code: "SCHEMA_UPDATE_ERROR",
 				message: "Failed to update collection",
 			},
+		};
+	}
+}
+
+export async function handleSchemaCollectionLabelsCompareAndSet(
+	db: Kysely<Database>,
+	slug: string,
+	input: CompareAndSetCollectionLabelsInput,
+): Promise<ApiResult<CollectionResponse>> {
+	try {
+		const item = await new SchemaRegistry(db).compareAndSetCollectionLabels(slug, input);
+		if (!item) {
+			return {
+				success: false,
+				error: { code: "CONFLICT", message: "Collection changed since it was read" },
+			};
+		}
+		return { success: true, data: { item } };
+	} catch {
+		return {
+			success: false,
+			error: { code: "SCHEMA_UPDATE_ERROR", message: "Failed to update collection labels" },
 		};
 	}
 }

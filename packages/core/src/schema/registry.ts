@@ -65,6 +65,7 @@ import {
 	type UnsupportedFieldType,
 	type CreateCollectionInput,
 	type UpdateCollectionInput,
+	type CompareAndSetCollectionLabelsInput,
 	type CreateFieldInput,
 	type UpdateFieldInput,
 	type CollectionWithFields,
@@ -1129,6 +1130,28 @@ export class SchemaRegistry {
 		});
 		this.notifyTypegen();
 		return updated;
+	}
+
+	async compareAndSetCollectionLabels(
+		slug: string,
+		{ expected, label, labelSingular }: CompareAndSetCollectionLabelsInput,
+	): Promise<Collection | null> {
+		const row = await this.db
+			.updateTable("_emdash_collections")
+			.set({ label, label_singular: labelSingular, updated_at: new Date().toISOString() })
+			.where("slug", "=", slug)
+			.where("id", "=", expected.id)
+			.where("label", "=", expected.label)
+			.where("label_singular", expected.labelSingular === null ? "is" : "=", expected.labelSingular)
+			.where("description", expected.description === null ? "is" : "=", expected.description)
+			.where("url_pattern", expected.urlPattern === null ? "is" : "=", expected.urlPattern)
+			.where("updated_at", "=", expected.updatedAt)
+			.returningAll()
+			.executeTakeFirst();
+		if (!row) return null;
+
+		this.notifyTypegen();
+		return this.mapCollectionRow(row);
 	}
 
 	/**

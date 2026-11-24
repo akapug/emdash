@@ -395,6 +395,19 @@ export interface UpdateCollectionInput {
 	dateField?: string | null;
 }
 
+export interface CompareAndSetCollectionLabelsInput {
+	expected: {
+		id: string;
+		label: string;
+		labelSingular: string | null;
+		description: string | null;
+		urlPattern: string | null;
+		updatedAt: string;
+	};
+	label: string;
+	labelSingular: string;
+}
+
 /**
  * Input for creating a field
  */
