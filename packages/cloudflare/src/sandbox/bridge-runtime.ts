@@ -22,3 +22,4 @@ export {
 } from "emdash/plugins/host";
 export { Kysely } from "kysely";
 export { D1Dialect } from "kysely-d1";
+export { RawBindingD1Dialect } from "../db/d1-dialect.js";

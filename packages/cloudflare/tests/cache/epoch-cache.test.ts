@@ -73,24 +73,34 @@ function attachAstroCookies(res: Response, cookieHeaders: string[]): Response {
 	return res;
 }
 
+const ENABLED_ENV = { EMDASH_PAGE_CACHE: "1", EMDASH_PAGE_CACHE_SCOPE: "d1-acme-1:inc-0001" };
+
 describe("Item 124: epochCloudflareCache full-page cache", () => {
-	it("is OFF by default when EMDASH_PAGE_CACHE is unset and uses a distinct provider name", async () => {
-		const fake = makeFakeCache();
+	it("is OFF by default when EMDASH_PAGE_CACHE or EMDASH_PAGE_CACHE_SCOPE is unset, uses a distinct provider name, and isolates incarnations on the same host/build", async () => {
+		const cachesByName = new Map<string, ReturnType<typeof makeFakeCache>>();
+		const openNamed = async (name: string) => {
+			let entry = cachesByName.get(name);
+			if (!entry) {
+				entry = makeFakeCache();
+				cachesByName.set(name, entry);
+			}
+			return entry.cache;
+		};
 		let renders = 0;
-		const provider = createEpochCacheProvider(
+		const providerOff = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
 				getEnv: () => ({}),
-				openCache: async () => fake.cache,
+				openCache: openNamed,
 				schedule: (p) => void p,
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
 				readVisibilityRev: async () => "1",
 			},
 		);
-		expect(provider.name).toBe("emdash-epoch-cache");
-		expect(provider.name).not.toBe("cloudflare");
+		expect(providerOff.name).toBe("emdash-epoch-cache");
+		expect(providerOff.name).not.toBe("cloudflare");
 
-		const res = await provider.onRequest!(
+		const resOff = await providerOff.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
 			async () => {
 				renders++;
@@ -102,8 +112,63 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			},
 		);
 		expect(renders).toBe(1);
-		expect(res.headers.get("x-embark-page-cache")).toBeNull();
-		expect(fake.putCalls).toBe(0);
+		expect(resOff.headers.get("x-embark-page-cache")).toBeNull();
+		expect(cachesByName.size).toBe(0);
+
+		// Flag ON without scope MUST fail closed (OFF)
+		const providerNoScope = createEpochCacheProvider(
+			{ buildId: "b1" },
+			{
+				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				openCache: openNamed,
+				schedule: (p) => void p,
+				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVisibilityRev: async () => "1",
+			},
+		);
+		const resNoScope = await providerNoScope.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
+			async () => new Response("no-scope", { status: 200, headers: { "content-type": "text/html" } }),
+		);
+		expect(resNoScope.headers.get("x-embark-page-cache")).toBeNull();
+		expect(cachesByName.size).toBe(0);
+
+		// Two incarnations on the exact same host, path, and buildId MUST NOT collide
+		const pending: Promise<unknown>[] = [];
+		let currentScope = "d1-tenant-a:inc-0001";
+		const providerScoped = createEpochCacheProvider(
+			{ buildId: "b1" },
+			{
+				getEnv: () => ({ EMDASH_PAGE_CACHE: "1", EMDASH_PAGE_CACHE_SCOPE: currentScope }),
+				openCache: openNamed,
+				schedule: (p) => pending.push(p),
+				readVector: async () => ({ vector: "v1|b=b1|s=0|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readVisibilityRev: async () => "0",
+				now: () => 10_000,
+			},
+		);
+		const rInc1 = await providerScoped.onRequest!(
+			makeContext("https://shared.example.org/pages/about"),
+			async () => {
+				optInPageCache(300);
+				return new Response("incarnation-1", { status: 200, headers: { "content-type": "text/html" } });
+			},
+		);
+		await Promise.all(pending);
+		expect(rInc1.headers.get("x-embark-page-cache")).toBe("MISS");
+
+		// Switch incarnation (e.g. OFF->ON toggle or host reassignment to another D1)
+		currentScope = "d1-tenant-b:inc-0002";
+		const rInc2 = await providerScoped.onRequest!(
+			makeContext("https://shared.example.org/pages/about"),
+			async () => {
+				optInPageCache(300);
+				return new Response("incarnation-2", { status: 200, headers: { "content-type": "text/html" } });
+			},
+		);
+		expect(rInc2.headers.get("x-embark-page-cache")).toBe("MISS");
+		expect(await rInc2.text()).toBe("incarnation-2");
+		expect(cachesByName.size).toBe(2);
 	});
 
 	it("serves MISS -> HIT on allowlisted public routes, strips internal/CDN headers, and isolates distinct hosts", async () => {
@@ -113,7 +178,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const provider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
@@ -175,7 +240,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const provider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
@@ -215,7 +280,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const pgProvider = createEpochCacheProvider(
 			{ buildId: "b1", disabledWhenPlayground: true },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache,
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
 				readVisibilityRev: async () => "1",
@@ -235,7 +300,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const provider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
@@ -282,7 +347,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const provider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
@@ -348,7 +413,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const brokenCacheProvider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache: async () => {
 					throw new Error("cache api unavailable");
 				},
@@ -374,7 +439,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const provider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				// KV stays completely stale at the exact same vector!
@@ -441,7 +506,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		const provider = createEpochCacheProvider(
 			{ buildId: "b1" },
 			{
-				getEnv: () => ({ EMDASH_PAGE_CACHE: "1" }),
+				getEnv: () => ENABLED_ENV,
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector, certain: true }),

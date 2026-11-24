@@ -15,7 +15,7 @@ import type {
 	CollectionDeletionGuardResult,
 } from "../../db/adapters.js";
 import { FTSManager } from "../../search/fts-manager.js";
-import { bumpVisibilityRev } from "../../page-cache/state.js";
+import { bumpVisibilityRev, isPageCacheActive } from "../../page-cache/state.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { verifyMediaUsageCaptureTriggers } from "./capture-triggers.js";
 
@@ -539,7 +539,6 @@ export async function deleteActivatedMediaUsageCollection(
 		) {
 			throw new Error("Collection deletion lost its registry checkpoint");
 		}
-		await bumpVisibilityRev(db);
 		phase = "table";
 		processedFrontPhases++;
 		if (processedFrontPhases >= frontPhaseLimit) {
@@ -557,6 +556,7 @@ export async function deleteActivatedMediaUsageCollection(
 			leaseToken: claim.leaseToken,
 		});
 		if (result.outcome !== "dropped") throw new Error("Collection deletion lost its table fence");
+		if (isPageCacheActive()) await bumpVisibilityRev(db);
 		if (
 			!(await repository.checkpoint({
 				...lease,

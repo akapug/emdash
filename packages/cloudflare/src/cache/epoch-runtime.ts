@@ -43,6 +43,7 @@ import {
 	PAGE_CACHE_MIN_TTL_SECONDS,
 	readPageGenerationVector,
 	runWithPageCacheState,
+	setPageCacheActive,
 	VISIBILITY_REV_OPTION,
 	type PageGenerationVectorResult,
 } from "emdash";
@@ -51,9 +52,11 @@ import type { EpochCloudflareCacheConfig } from "./epoch-config.js";
 
 const DEFAULT_CACHE_NAME = "emdash-page-v1";
 const DEFAULT_ENABLED_ENV_VAR = "EMDASH_PAGE_CACHE";
+const DEFAULT_SCOPE_ENV_VAR = "EMDASH_PAGE_CACHE_SCOPE";
 const DEFAULT_D1_BINDING = "DB";
 const DEFAULT_BOOKMARK_COOKIE = "__em_d1_bookmark";
 const DEFAULT_VISIBILITY_TIMEOUT_MS = 2000;
+const VALID_SCOPE_RE = /^[a-zA-Z0-9:_-]{8,128}$/;
 
 const ASTRO_COOKIES_SYMBOL = Symbol.for("astro.cookies");
 
@@ -262,16 +265,21 @@ export async function readPrimaryVisibilityRevFromD1(
 	}
 }
 
+export function resolvePageCacheScope(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return VALID_SCOPE_RE.test(trimmed) ? trimmed : null;
+}
+
 export function createEpochCacheProvider(
 	config: EpochCloudflareCacheConfig = {},
 	deps: EpochCacheRuntimeDeps = {},
 ): CacheProvider {
 	const baseCacheName = config.cacheName ?? DEFAULT_CACHE_NAME;
 	const buildId = config.buildId ?? "";
-	const cacheName = buildId
-		? `${baseCacheName}-${buildId.replace(NON_ID_CHARS_RE, "")}`
-		: baseCacheName;
+	const sanitizedBuild = buildId ? buildId.replace(NON_ID_CHARS_RE, "") : "";
 	const enabledEnvVar = config.enabledEnvVar ?? DEFAULT_ENABLED_ENV_VAR;
+	const scopeEnvVar = config.scopeEnvVar ?? DEFAULT_SCOPE_ENV_VAR;
 	const d1Binding = config.d1Binding ?? DEFAULT_D1_BINDING;
 	const bookmarkCookie = config.bookmarkCookie ?? DEFAULT_BOOKMARK_COOKIE;
 	const visibilityTimeoutMs = config.visibilityTimeoutMs ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
@@ -287,6 +295,13 @@ export function createEpochCacheProvider(
 		deps.readVisibilityRev ??
 		((binding: string, timeoutMs: number) =>
 			readPrimaryVisibilityRevFromD1(getEnv()[binding] as D1Like | undefined, timeoutMs));
+
+	const cacheNameForScope = (scope: string): string => {
+		const safeScope = scope.replace(NON_ID_CHARS_RE, "");
+		return sanitizedBuild
+			? `${baseCacheName}-${safeScope}-${sanitizedBuild}`
+			: `${baseCacheName}-${safeScope}`;
+	};
 
 	const isEligibleRequest = (request: Request, url: URL): boolean => {
 		if (disabledWhenPlayground) return false;
@@ -323,7 +338,10 @@ export function createEpochCacheProvider(
 
 		async onRequest(context, next) {
 			const envObj = getEnv();
-			if (!isCacheEnabledFlag(envObj[enabledEnvVar])) {
+			const scope = resolvePageCacheScope(envObj[scopeEnvVar]);
+			const active = isCacheEnabledFlag(envObj[enabledEnvVar]) && scope !== null;
+			setPageCacheActive(active);
+			if (!active) {
 				return next();
 			}
 
@@ -335,6 +353,7 @@ export function createEpochCacheProvider(
 				return out;
 			}
 
+			const cacheName = cacheNameForScope(scope);
 			let cache: Cache | null = null;
 			try {
 				cache = await openCache(cacheName);
@@ -421,11 +440,21 @@ export function createEpochCacheProvider(
 				return miss;
 			}
 
-			// Re-check irreversible opt-out, real response cookie queue, and
-			// post-render generation vector + visibility rev AFTER stream drain.
+			// Re-check complete final header policy, irreversible opt-out, real
+			// response cookie queue, and post-render generation vector + visibility
+			// rev AFTER stream drain (defense-in-depth).
+			const finalRawSetCookies = response.headers.getSetCookie();
 			const finalQueuedCookies = readResponseQueuedCookies(response);
-			const finalCookiesSafe = hasOnlyBookmarkSetCookies(finalQueuedCookies, bookmarkCookie);
+			const finalHeadersOk =
+				response.status === 200 &&
+				isAllowedContentType(response.headers.get("content-type")) &&
+				!hasDisallowedCacheControl(response) &&
+				!hasNontrivialVary(response);
+			const finalCookiesSafe =
+				hasOnlyBookmarkSetCookies(finalRawSetCookies, bookmarkCookie) &&
+				hasOnlyBookmarkSetCookies(finalQueuedCookies, bookmarkCookie);
 			const finalEligible =
+				finalHeadersOk &&
 				finalCookiesSafe &&
 				state !== undefined &&
 				state.optedIn &&
@@ -497,8 +526,10 @@ export function createEpochCacheProvider(
 				}
 			}
 			if (options.path) {
+				const scope = resolvePageCacheScope(getEnv()[scopeEnvVar]);
+				if (!scope) return;
 				try {
-					const cache = await openCache(cacheName);
+					const cache = await openCache(cacheNameForScope(scope));
 					await cache.delete(options.path);
 				} catch {
 					// Best-effort local delete; epoch vector handles global invalidation.

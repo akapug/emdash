@@ -1156,9 +1156,9 @@ export class PluginBridge extends WorkerEntrypoint<PluginBridgeEnv, PluginBridge
 		if (!COLLECTION_NAME_REGEX.test(collection)) {
 			throw new Error(`Invalid collection name: ${collection}`);
 		}
-		const { ContentRepository, D1Dialect, Kysely } = await loadBridgeRuntime();
+		const { ContentRepository, Kysely, RawBindingD1Dialect } = await loadBridgeRuntime();
 		const db = new Kysely<Database>({
-			dialect: new D1Dialect({ database: this.env.DB }),
+			dialect: new RawBindingD1Dialect({ database: this.env.DB }),
 		});
 		await this.assertSiteWriteAllowed();
 		const updated = await new ContentRepository(db).updateDraftAware(collection, id, {

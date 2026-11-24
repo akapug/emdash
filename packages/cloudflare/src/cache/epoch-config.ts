@@ -28,6 +28,15 @@ export interface EpochCloudflareCacheConfig {
 	enabledEnvVar?: string;
 
 	/**
+	 * Worker environment variable name carrying the operator-provisioned
+	 * non-secret tenant/database-incarnation scope (e.g. `<d1Id>:<incarnationUuid>`).
+	 * Required to activate caching so host reassignment, D1 replacement, or an
+	 * OFF->ON toggle starts a fresh isolated Cache API namespace.
+	 * @default "EMDASH_PAGE_CACHE_SCOPE"
+	 */
+	scopeEnvVar?: string;
+
+	/**
 	 * D1 binding name used for the authoritative primary-database visibility
 	 * revision check on every HIT.
 	 * @default "DB"

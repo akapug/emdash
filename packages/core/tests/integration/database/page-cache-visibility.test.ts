@@ -7,6 +7,7 @@ import { ProtectedContentRepository } from "../../../src/database/repositories/p
 import {
 	bumpVisibilityRev,
 	readVisibilityRev,
+	setPageCacheActive,
 	VISIBILITY_REV_OPTION,
 } from "../../../src/page-cache/state.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
@@ -22,7 +23,26 @@ describe("page-cache visibility revision on real migrated schema", () => {
 	});
 
 	afterEach(async () => {
+		setPageCacheActive(false);
 		await teardownForDialect(ctx);
+	});
+
+	it("writes ZERO visibility_rev rows when page cache is OFF", async () => {
+		setPageCacheActive(false);
+		const content = new ContentRepository(ctx.db);
+		const created = await content.create({
+			type: "pages",
+			data: {},
+			status: "published",
+			slug: "off-mode-page",
+		});
+		await content.unpublish("pages", created.id);
+		await content.delete("pages", created.id);
+		await content.permanentDelete("pages", created.id);
+		const registry = new SchemaRegistry(ctx.db);
+		await registry.deleteCollection("pages", { force: true });
+		expect(await readVisibilityRev(ctx.db)).toBe("0");
+		expect(await new OptionsRepository(ctx.db).getVersioned(VISIBILITY_REV_OPTION)).toBeNull();
 	});
 
 	it("reads and bumps emdash:visibility_rev against real migrated options(name,value,revision)", async () => {
@@ -42,6 +62,7 @@ describe("page-cache visibility revision on real migrated schema", () => {
 	});
 
 	it("advances visibility_rev atomically on unpublish, soft-delete, status->draft update, and forced collection delete", async () => {
+		setPageCacheActive(true);
 		const content = new ContentRepository(ctx.db);
 		const created = await content.create({
 			type: "pages",
@@ -108,6 +129,7 @@ describe("page-cache visibility revision on real migrated schema", () => {
 	});
 
 	it("rolls back content unpublish atomically if the visibility revision write fails, and succeeds cleanly on retry", async () => {
+		setPageCacheActive(true);
 		const content = new ContentRepository(ctx.db);
 		const created = await content.create({
 			type: "pages",

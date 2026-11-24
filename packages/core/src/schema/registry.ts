@@ -13,6 +13,7 @@ import { refreshDevTypes } from "../astro/dev-typegen.js";
 import {
 	columnExists,
 	currentTimestamp,
+	executeAtomicBatchIfSupported,
 	isPostgres,
 	listTablesLike,
 	tableExists,
@@ -22,7 +23,7 @@ import {
 	removeImportBaselineCollectionTriggers,
 } from "../database/import-baseline-triggers.js";
 import { withTransaction } from "../database/transaction.js";
-import { prepareVisibilityRevBump } from "../page-cache/state.js";
+import { isPageCacheActive, prepareVisibilityRevBump } from "../page-cache/state.js";
 import type { CollectionTable, Database, FieldTable } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import {
@@ -1188,20 +1189,38 @@ export class SchemaRegistry {
 
 		let contentTableDropped = false;
 		try {
-			await withTransaction(this.db, async (trx) => {
-				// Drop FTS table and triggers before dropping the content table
-				const ftsManager = new FTSManager(trx);
+			const tableName = this.getTableName(slug);
+			const ftsManager = new FTSManager(this.db);
+			const bumpVis = isPageCacheActive();
+			const dropTableQuery = sql`DROP TABLE IF EXISTS ${sql.ref(tableName)}`;
+			const deleteRegistryQuery = this.db
+				.deleteFrom("_emdash_collections")
+				.where("id", "=", existing.id);
+			if (bumpVis) {
+				// On D1, batch drop + registry delete + visibility bump atomically;
+				// on SQLite/Postgres, run inside a genuine SQL transaction.
 				await ftsManager.dropFtsTable(slug);
-
-				// Drop the content table
-				const tableName = this.getTableName(slug);
-				await sql`DROP TABLE IF EXISTS ${sql.ref(tableName)}`.execute(trx);
-				contentTableDropped = true;
-
-				// Delete the collection record (fields will cascade)
-				await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();
-				await prepareVisibilityRevBump().execute(trx);
-			});
+				const queries = [dropTableQuery, deleteRegistryQuery, prepareVisibilityRevBump()];
+				const batched = await executeAtomicBatchIfSupported(this.db, queries);
+				if (batched) {
+					contentTableDropped = true;
+				} else {
+					await withTransaction(this.db, async (trx) => {
+						await dropTableQuery.execute(trx);
+						contentTableDropped = true;
+						await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();
+						await prepareVisibilityRevBump().execute(trx);
+					});
+				}
+			} else {
+				await withTransaction(this.db, async (trx) => {
+					const trxFts = new FTSManager(trx);
+					await trxFts.dropFtsTable(slug);
+					await dropTableQuery.execute(trx);
+					contentTableDropped = true;
+					await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();
+				});
+			}
 			await deleteContentMediaUsageCollection(this.db, slug);
 		} catch (error) {
 			if (await tableExists(this.db, this.getTableName(slug))) {

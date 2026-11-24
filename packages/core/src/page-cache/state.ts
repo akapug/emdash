@@ -37,6 +37,21 @@ export interface PageCacheRequestState {
 }
 
 const STATE_ALS_KEY = Symbol.for("emdash.pageCacheState");
+const ACTIVE_KEY = Symbol.for("emdash.pageCacheActive");
+
+/**
+ * Whether full-page caching is active in this worker/isolate.
+ * OFF by default: when false, content/schema mutations perform ZERO
+ * visibility-revision writes so ordinary saves pay zero overhead.
+ */
+export function isPageCacheActive(): boolean {
+	return (globalThis as Record<symbol, boolean | undefined>)[ACTIVE_KEY] === true;
+}
+
+/** Enable or disable page-cache visibility-revision writes in this isolate. */
+export function setPageCacheActive(active: boolean): void {
+	(globalThis as Record<symbol, boolean | undefined>)[ACTIVE_KEY] = active === true;
+}
 
 function getPageCacheAls(): AsyncLocalStorage<PageCacheRequestState> {
 	const g = globalThis as Record<symbol, AsyncLocalStorage<PageCacheRequestState> | undefined>;

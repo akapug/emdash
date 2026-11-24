@@ -293,6 +293,8 @@ export {
 	PAGE_CACHE_MIN_TTL_SECONDS,
 	PAGE_CACHE_MAX_TTL_SECONDS,
 	VISIBILITY_REV_OPTION,
+	isPageCacheActive,
+	setPageCacheActive,
 	runWithPageCacheState,
 	getPageCacheState,
 	optOutPageCache,
