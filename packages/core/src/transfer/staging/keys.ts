@@ -68,9 +68,19 @@ export function normalizeStorageKeyForGuard(key: string): string | null {
 }
 
 /** Prefixes the public media route must never serve. */
+/**
+ * Generated image sizes live here, and the raw `/media/file/[...key]` route
+ * refuses the prefixes below. That is the whole custody story: a variant object has
+ * no public address at all, so a half-written one, a withdrawn one, or one whose
+ * parent was replaced cannot be fetched by anyone who knows or guesses its key. The
+ * public URL is the PARENT's, with `?w=`, resolved through the media route.
+ */
+export const MEDIA_VARIANT_STORAGE_PREFIX = "media-variants/";
+
 export const PRIVATE_STORAGE_PREFIXES: readonly string[] = Object.freeze([
 	"backups/",
 	TRANSFER_STORAGE_PREFIX,
+	MEDIA_VARIANT_STORAGE_PREFIX,
 ]);
 
 /**

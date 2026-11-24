@@ -5,11 +5,13 @@
 import type { Kysely } from "kysely";
 
 import { MediaRepository, type MediaItem } from "../../database/repositories/media.js";
+import { MediaVariantRepository } from "../../database/repositories/media-variants.js";
 import { InvalidCursorError } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
 import { isValidFocalPointUpdate, type FocalPointUpdate } from "../../media/focal-point.js";
 import { removeUploadAttempt } from "../../media/upload-attempts.js";
 import type { Storage } from "../../storage/types.js";
+import { MEDIA_VARIANT_STORAGE_PREFIX } from "../../transfer/staging/keys.js";
 import type { ApiResult } from "../types.js";
 
 const FOREIGN_KEY_VIOLATION_RE = /foreign key constraint failed/i;
@@ -357,6 +359,96 @@ function isForeignKeyViolation(error: unknown): boolean {
 }
 
 /** Delete a media item, then delete or queue cleanup of its stored object. */
+/**
+ * Store one of WordPress's generated sizes against a ready image (W2).
+ *
+ * The bytes are already validated by the route (raster type, decoded dimensions,
+ * aspect, size). This decides STORAGE placement and the row, which is where the
+ * lifecycle rules live:
+ *
+ *  - the OBJECT goes under the reserved private prefix, which the raw
+ *    `/media/file/[...key]` route refuses, so nothing here is publicly fetchable
+ *    by key. Only the parent's `?w=` URL resolves, through the resolver;
+ *  - a slot already holding the same bytes is a replay (an idempotent retry);
+ *    different bytes at the same slot is a conflict, never an overwrite;
+ *  - the row records the parent's generation, so a replaced parent's sizes become
+ *    invisible without depending on anyone to sweep them.
+ */
+export async function handleMediaVariantStore(
+	db: Kysely<Database>,
+	storage: Storage | null,
+	input: {
+		mediaId: string;
+		sizeName: string;
+		width: number;
+		height: number;
+		parentContentHash: string;
+		bytes: Uint8Array<ArrayBuffer>;
+		contentType: string;
+		contentHash: string;
+	},
+): Promise<ApiResult<{ outcome: "stored" | "replayed" | "conflict"; width: number; height: number; contentHash: string }>> {
+	if (!storage) {
+		return { success: false, error: { code: "NO_STORAGE", message: "Storage not configured" } };
+	}
+	const repo = new MediaVariantRepository(db);
+
+	// Re-read the parent: a Replace that landed between the route's check and here
+	// must not receive a size of the image it replaced.
+	const parent = await new MediaRepository(db).findById(input.mediaId);
+	if (!parent) return { success: false, error: { code: "NOT_FOUND", message: `Media item not found: ${input.mediaId}` } };
+	if (parent.status !== "ready") {
+		return { success: false, error: { code: "INVALID_STATE", message: "Only a ready image can receive a variant" } };
+	}
+	// `media` has no version column; `content_hash` is what a Replace rewrites, so it
+	// is the identity that actually moves when the image behind this changes.
+	const parentHash = parent.contentHash ?? null;
+	if (parentHash === null || parentHash !== input.parentContentHash) {
+		return {
+			success: false,
+			error: { code: "CONFLICT", message: "The parent changed while this variant was being stored" },
+		};
+	}
+
+	// A private key: the reserved prefix keeps it off the raw file route entirely.
+	const ext = extensionFor(input.contentType);
+	const storageKey = `${MEDIA_VARIANT_STORAGE_PREFIX}${crypto.randomUUID()}${ext}`;
+
+	// Bytes first, then the row. A cut between the two leaves an object nobody can
+	// fetch (the prefix is private and no row names it), never a row without bytes.
+	await storage.upload({ key: storageKey, body: input.bytes, contentType: input.contentType });
+
+	const outcome = await repo.store({
+		mediaId: input.mediaId,
+		sizeName: input.sizeName,
+		width: input.width,
+		height: input.height,
+		storageKey,
+		bytes: input.bytes.byteLength,
+		contentHash: input.contentHash,
+		parentContentHash: parentHash,
+	});
+
+	if (outcome === "conflict") {
+		// The slot belongs to different bytes. The object we just wrote is not named
+		// by any row, so remove it rather than leave an orphan.
+		await storage.delete(storageKey).catch(() => undefined);
+		return {
+			success: false,
+			error: { code: "CONFLICT", message: "A different variant already owns this slot" },
+		};
+	}
+	if (outcome === "replayed") {
+		// The row already had these bytes: the object we wrote duplicates it.
+		await storage.delete(storageKey).catch(() => undefined);
+	}
+
+	return {
+		success: true,
+		data: { outcome, width: input.width, height: input.height, contentHash: input.contentHash },
+	};
+}
+
 export async function handleMediaDelete(
 	db: Kysely<Database>,
 	id: string,
@@ -389,6 +481,13 @@ export async function handleMediaDelete(
 			}
 		}
 
+		// W4: a deleted parent's sizes go with it. The keys are read BEFORE the rows
+		// cascade, because a cascade cannot tell anyone what to remove from storage.
+		const variantKeys = await new MediaVariantRepository(db).retire(id);
+		for (const key of variantKeys) {
+			await storage?.delete(key).catch(() => undefined);
+		}
+
 		return {
 			success: true,
 			data: { deleted: true, storageKey, storageDeleted },
@@ -401,5 +500,21 @@ export async function handleMediaDelete(
 				message: "Failed to delete media",
 			},
 		};
+	}
+}
+
+/** The stored object's extension, from the content type we validated. */
+function extensionFor(contentType: string): string {
+	switch (contentType) {
+		case "image/png":
+			return ".png";
+		case "image/gif":
+			return ".gif";
+		case "image/webp":
+			return ".webp";
+		case "image/avif":
+			return ".avif";
+		default:
+			return ".jpg";
 	}
 }

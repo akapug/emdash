@@ -75,11 +75,14 @@ export interface StoredVariant {
 	/** sha256 of the stored bytes — the identity that makes a duplicate a replay and a mismatch a conflict. */
 	contentHash: string;
 	/**
-	 * The parent's generation at the moment this was committed. A variant whose
-	 * generation is behind the parent's is stale: the parent's bytes changed
-	 * under it, so it is no longer a size of the current image.
+	 * The parent's CONTENT HASH when this was committed.
+	 *
+	 * `media` has no generation column — MEASURED from its schema — so this is the
+	 * identity that actually changes when an image is replaced: Replace rewrites
+	 * `content_hash`. A variant whose hash differs from the parent's belongs to
+	 * bytes that no longer exist, so it is invisible without anyone sweeping it.
 	 */
-	parentGeneration: number;
+	parentContentHash: string;
 	createdAt: string;
 }
 
@@ -97,8 +100,8 @@ export interface VariantParent {
 	id: string;
 	width: number;
 	height: number;
-	/** The parent row's current generation/version. */
-	generation: number;
+	/** The parent row's current `content_hash`. */
+	contentHash: string | null;
 	status: string;
 }
 
@@ -166,7 +169,8 @@ export function chooseVariant(
 	const eligible = variants.filter(
 		(v) =>
 			v.mediaId === parent.id &&
-			v.parentGeneration === parent.generation &&
+			parent.contentHash !== null &&
+			v.parentContentHash === parent.contentHash &&
 			v.width >= hintWidth &&
 			v.width < parent.width &&
 			parentRatio !== null &&

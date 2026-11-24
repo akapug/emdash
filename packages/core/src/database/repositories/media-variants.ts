@@ -10,7 +10,7 @@ import type { Database } from "../types.js";
  * route handler:
  *
  *  - **A duplicate of the same bytes replays; different bytes at the same slot
- *    is a conflict.** The primary key is `(media_id, parent_generation, width)`,
+ *    is a conflict.** The primary key is `(media_id, parent_content_hash, width)`,
  *    so two size names at one width cannot both own the slot — and an in-place
  *    Replace deliberately keeps the parent's storage key, which is exactly why a
  *    width is not an identity on its own. The content hash decides which case a
@@ -44,13 +44,13 @@ export class MediaVariantRepository {
 		storageKey: string;
 		bytes: number;
 		contentHash: string;
-		parentGeneration: number;
+		parentContentHash: string;
 	}): Promise<VariantStoreOutcome> {
 		const existing = await this.db
 			.selectFrom("_emdash_media_variants")
 			.select(["content_hash"])
 			.where("media_id", "=", input.mediaId)
-			.where("parent_generation", "=", input.parentGeneration)
+			.where("parent_content_hash", "=", input.parentContentHash)
 			.where("width", "=", input.width)
 			.executeTakeFirst();
 		if (existing) return existing.content_hash === input.contentHash ? "replayed" : "conflict";
@@ -66,7 +66,7 @@ export class MediaVariantRepository {
 					storage_key: input.storageKey,
 					bytes: input.bytes,
 					content_hash: input.contentHash,
-					parent_generation: input.parentGeneration,
+					parent_content_hash: input.parentContentHash,
 				})
 				.execute();
 			return "stored";
@@ -77,7 +77,7 @@ export class MediaVariantRepository {
 				.selectFrom("_emdash_media_variants")
 				.select(["content_hash"])
 				.where("media_id", "=", input.mediaId)
-				.where("parent_generation", "=", input.parentGeneration)
+				.where("parent_content_hash", "=", input.parentContentHash)
 				.where("width", "=", input.width)
 				.executeTakeFirst();
 			if (raced) return raced.content_hash === input.contentHash ? "replayed" : "conflict";
@@ -86,7 +86,7 @@ export class MediaVariantRepository {
 	}
 
 	/** Every committed variant of the parent's CURRENT generation. Stale rows are not returned. */
-	async forParent(mediaId: string, parentGeneration: number): Promise<StoredVariant[]> {
+	async forParent(mediaId: string, parentContentHash: string): Promise<StoredVariant[]> {
 		const rows = await this.db
 			.selectFrom("_emdash_media_variants")
 			.select([
@@ -97,11 +97,11 @@ export class MediaVariantRepository {
 				"storage_key as storageKey",
 				"bytes",
 				"content_hash as contentHash",
-				"parent_generation as parentGeneration",
+				"parent_content_hash as parentContentHash",
 				"created_at as createdAt",
 			])
 			.where("media_id", "=", mediaId)
-			.where("parent_generation", "=", parentGeneration)
+			.where("parent_content_hash", "=", parentContentHash)
 			.execute();
 		return [...rows] as StoredVariant[];
 	}
@@ -115,17 +115,17 @@ export class MediaVariantRepository {
 	 * must do it even if this returns an empty list — an empty list is a valid answer,
 	 * not a reason to skip the cleanup record.
 	 */
-	async retire(mediaId: string, generation?: number): Promise<string[]> {
+	async retire(mediaId: string, parentContentHash?: string): Promise<string[]> {
 		let query = this.db
 			.selectFrom("_emdash_media_variants")
 			.select(["storage_key"])
 			.where("media_id", "=", mediaId);
-		if (generation !== undefined) query = query.where("parent_generation", "=", generation);
+		if (parentContentHash !== undefined) query = query.where("parent_content_hash", "=", parentContentHash);
 		const doomed = (await query.execute()).map((row) => row.storage_key);
 		if (!doomed.length) return [];
 
 		let del = this.db.deleteFrom("_emdash_media_variants").where("media_id", "=", mediaId);
-		if (generation !== undefined) del = del.where("parent_generation", "=", generation);
+		if (parentContentHash !== undefined) del = del.where("parent_content_hash", "=", parentContentHash);
 		await del.execute();
 		return doomed;
 	}

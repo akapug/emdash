@@ -828,8 +828,8 @@ export interface MediaVariantTable {
 	storage_key: string;
 	bytes: number;
 	content_hash: string;
-	parent_generation: number;
-	created_at: string;
+	parent_content_hash: string;
+	created_at: Generated<string>;
 }
 
 export interface Database {

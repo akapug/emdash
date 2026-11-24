@@ -13,15 +13,15 @@ import { tableExists } from "../dialect-helpers.js";
  * `runner.ts`; the line is in the same commit as this file.
  *
  * WHY A SEPARATE TABLE AND NOT A `media` COLUMN. One attachment has up to
- * eighteen sizes, each with its own bytes, dimensions, hash and generation. A
- * child row keeps the parent's identity intact, lets a delete cascade the rows,
- * and gives every object one owner.
+ * eighteen sizes, each with its own bytes, dimensions and hash. A child row keeps
+ * the parent's identity intact, lets a delete cascade the rows, and gives every
+ * object one owner.
  *
  * IDENTITY IS NOT THE WIDTH. Two size names can share dimensions with different
  * bytes, and an in-place Replace deliberately keeps the parent's storage key
- * (`astro/routes/api/media/[id]/replace.ts`). So the row carries a content hash
- * and the parent's generation, and the primary key is the pair that is exactly
- * unique: (parent, generation, width). A duplicate of the same bytes replays; the
+ * (`astro/routes/api/media/[id]/replace.ts`). So the row carries the variant's own
+ * content hash AND the parent's, and the key is (parent, parent's hash, width):
+ * the triple that is exactly unique. A duplicate of the same bytes replays; the
  * same slot with different bytes is a conflict the client reports.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
@@ -44,19 +44,20 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		// sha256 of the stored bytes. Same bytes at the same slot replays; different
 		// bytes at the same slot is a conflict, never an overwrite.
 		.addColumn("content_hash", "text", (column) => column.notNull())
-		// The parent's generation when this was committed. A row behind the parent's
-		// current generation is stale and must never be served.
-		.addColumn("parent_generation", "integer", (column) => column.notNull())
+		// The parent's content hash when this was committed; `media` has no version
+		// column, and Replace rewrites content_hash, so this is the identity that
+		// actually moves when the image behind a variant is replaced.
+		.addColumn("parent_content_hash", "text", (column) => column.notNull())
 		.addColumn("created_at", "text", (column) => column.notNull().defaultTo(sql`(datetime('now'))`))
-		.addPrimaryKeyConstraint("pk_emdash_media_variants", ["media_id", "parent_generation", "width"])
+		.addPrimaryKeyConstraint("pk_emdash_media_variants", ["media_id", "parent_content_hash", "width"])
 		.execute();
 
-	// Resolving `?w=` reads by parent and generation, then picks a width.
+	// Resolving `?w=` reads by parent and its content hash, then picks a width.
 	await db.schema
 		.createIndex("idx_emdash_media_variants_parent")
 		.ifNotExists()
 		.on("_emdash_media_variants")
-		.columns(["media_id", "parent_generation", "width"])
+		.columns(["media_id", "parent_content_hash", "width"])
 		.execute();
 }
 
