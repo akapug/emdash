@@ -175,6 +175,23 @@ function beforeEventCutoff(date: string, value: unknown, anchor: string, cutoff:
 	return time !== undefined && (time.length === 5 ? `${time}:00` : time) < cutoff;
 }
 
+function addCivilDays(isoDate: string, days: number): string {
+	const date = new Date(`${isoDate}T00:00:00Z`);
+	date.setUTCDate(date.getUTCDate() + days);
+	return date.toISOString().slice(0, 10);
+}
+
+function decodeEventOccurrences(raw: unknown): string[] | undefined | null {
+	if (raw === undefined || raw === null || raw === "") return undefined;
+	try {
+		const value: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
+		if (!Array.isArray(value) || !value.every(eventDate)) return null;
+		return [...new Set(value)].toSorted();
+	} catch {
+		return null;
+	}
+}
+
 export function eventSummary(
 	entry: EventEntry,
 	now = new Date(),
@@ -187,17 +204,9 @@ export function eventSummary(
 	const timezone = eventString(data.timezone);
 	const referenceTimezone = timezone ?? defaultTimezone;
 	const today = eventToday(now, referenceTimezone);
-	let dates: string[] | undefined;
-	if (data.occurrences !== undefined && data.occurrences !== null && data.occurrences !== "") {
-		try {
-			const value: unknown =
-				typeof data.occurrences === "string" ? JSON.parse(data.occurrences) : data.occurrences;
-			if (!Array.isArray(value) || !value.every(eventDate)) return null;
-			dates = [...new Set(value)].toSorted();
-		} catch {
-			return null;
-		}
-	}
+	const decodedDates = decodeEventOccurrences(data.occurrences);
+	if (decodedDates === null) return null;
+	let dates = decodedDates;
 	const preview = dates !== undefined;
 	if (month) {
 		if (dates) {
@@ -205,29 +214,44 @@ export function eventSummary(
 			if (dates.length === 0) return null;
 		} else if (!data.start_date.startsWith(`${month}-`)) return null;
 	}
-	const upcoming = dates?.find((date) => date >= today);
-	const date = upcoming ?? dates?.at(-1) ?? data.start_date;
-	const endDate =
-		eventDate(data.end_date) && data.end_date >= data.start_date ? data.end_date : undefined;
-	let past = (endDate ?? date) < today;
-	if (!preview && (endDate ?? date) === today) {
-		const cutoff = eventCurrentClock(now, referenceTimezone);
-		past =
-			beforeEventCutoff(date, data.start_time, today, cutoff) &&
-			beforeEventCutoff(endDate ?? date, data.end_time, today, cutoff);
-	}
 	const allDay =
 		data.all_day === true || data.all_day === 1
 			? true
 			: data.all_day === false || data.all_day === 0
 				? false
 				: undefined;
+	const startClock = clock(data.start_time);
+	const endClock = clock(data.end_time);
+	const crossesMidnight =
+		!allDay &&
+		startClock !== undefined &&
+		endClock !== undefined &&
+		civilClock(endClock).getTime() < civilClock(startClock).getTime();
+	const occurrenceEndDate = (startDay: string): string =>
+		crossesMidnight ? addCivilDays(startDay, 1) : startDay;
+	const cutoff = eventCurrentClock(now, referenceTimezone);
+	const hasOccurrenceEnded = (startDay: string, endDay: string): boolean => {
+		if (endDay < today) return true;
+		if (endDay > today) return false;
+		if (allDay) return false;
+		if (startDay < today) return beforeEventCutoff(endDay, data.end_time, today, cutoff);
+		return (
+			beforeEventCutoff(startDay, data.start_time, today, cutoff) &&
+			beforeEventCutoff(endDay, data.end_time, today, cutoff)
+		);
+	};
+	const upcoming = dates?.find((d) => !hasOccurrenceEnded(d, occurrenceEndDate(d)));
+	const date = upcoming ?? dates?.at(-1) ?? data.start_date;
+	const endDate =
+		eventDate(data.end_date) && data.end_date >= data.start_date ? data.end_date : undefined;
+	const effectiveEndDate = endDate ?? occurrenceEndDate(date);
+	const past = !preview && hasOccurrenceEnded(date, effectiveEndDate);
 	return {
 		entry,
 		date,
 		endDate: preview ? undefined : endDate,
-		startTime: allDay ? undefined : clock(data.start_time),
-		endTime: allDay ? undefined : clock(data.end_time),
+		startTime: allDay ? undefined : startClock,
+		endTime: allDay ? undefined : endClock,
 		timezone,
 		referenceTimezone,
 		allDay,
@@ -512,4 +536,136 @@ export function selectEventView(
 	});
 	const sorted = sortEvents(selected, view.order);
 	return view.limit === undefined ? sorted : sorted.slice(0, view.limit);
+}
+
+/** Plain-text excerpt (~55 words ending in `[…]`) for MEC list-skin event cards. */
+export function eventExcerpt(entry: EventEntry, maxWords = 55): string | undefined {
+	const raw = eventString(entry.data.excerpt) ?? portableTextPlain(entry.data.content);
+	const normalized = raw.replace(/\s+/gu, " ").trim();
+	if (!normalized) return undefined;
+	const words = normalized.split(" ");
+	if (words.length <= maxWords) return normalized;
+	return `${words.slice(0, maxWords).join(" ")} […]`;
+}
+
+/** Group already-sorted events into consecutive YYYY-MM buckets for month headings. */
+export function groupEventsByMonth(
+	events: EventSummary[],
+): Array<{ month: string; events: EventSummary[] }> {
+	const groups: Array<{ month: string; events: EventSummary[] }> = [];
+	for (const event of events) {
+		const month = event.date.slice(0, 7);
+		const last = groups.at(-1);
+		if (last && last.month === month) last.events.push(event);
+		else groups.push({ month, events: [event] });
+	}
+	return groups;
+}
+
+export type EventDisplayMode = "list" | "monthly";
+
+export function eventViewDisplayMode(view: EventView, url: URL): EventDisplayMode {
+	const raw = (url.searchParams.get(`events-view[${view.viewSlug}]`) ?? "").trim().toLowerCase();
+	return raw === "monthly" ? "monthly" : "list";
+}
+
+export function eventViewTabUrls(view: EventView, url: URL): { list: string; monthly: string } {
+	const key = `events-view[${view.viewSlug}]`;
+	const pageKey = `events-page[${view.viewSlug}]`;
+	const monthKey = `events-month[${view.viewSlug}]`;
+	const listUrl = new URL(url);
+	listUrl.searchParams.delete(key);
+	listUrl.searchParams.delete(monthKey);
+	listUrl.searchParams.delete(pageKey);
+	const monthlyUrl = new URL(url);
+	monthlyUrl.searchParams.set(key, "monthly");
+	monthlyUrl.searchParams.delete(pageKey);
+	const monthValues = monthlyUrl.searchParams.getAll(monthKey);
+	if (
+		monthValues.length > 1 ||
+		(monthValues.length === 1 && !EVENT_MONTH_PATTERN.test(monthValues[0] ?? ""))
+	) {
+		monthlyUrl.searchParams.delete(monthKey);
+	}
+	return {
+		list: `${listUrl.pathname}${listUrl.search}${listUrl.hash}`,
+		monthly: `${monthlyUrl.pathname}${monthlyUrl.search}${monthlyUrl.hash}`,
+	};
+}
+
+export interface CalendarDayCell {
+	date: string;
+	day: number;
+	inMonth: boolean;
+	events: EventSummary[];
+}
+
+/**
+ * Build a 7-column (Sun–Sat) calendar grid for `month` (`YYYY-MM`), expanding
+ * every occurrence of recurring events that falls inside `month`.
+ */
+export function eventCalendarGrid(
+	entries: EventEntry[],
+	view: EventView,
+	month: string,
+	now = new Date(),
+	defaultTimezone?: string,
+	searchQuery?: EventSearchQuery | null,
+): CalendarDayCell[][] {
+	if (!EVENT_MONTH_PATTERN.test(month)) return [];
+	const year = Number(month.slice(0, 4));
+	const mon = Number(month.slice(5, 7));
+	const firstDay = new Date(Date.UTC(year, mon - 1, 1));
+	const startDow = firstDay.getUTCDay();
+	const daysInMonth = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+
+	const byDay = new Map<string, EventSummary[]>();
+	const pushDay = (d: string, summary: EventSummary) => {
+		if (!d.startsWith(`${month}-`)) return;
+		const list = byDay.get(d);
+		if (list) list.push(summary);
+		else byDay.set(d, [summary]);
+	};
+
+	const candidates: EventSummary[] = [];
+	for (const entry of entries) {
+		const base = eventSummary(entry, now, undefined, defaultTimezone);
+		if (!base) continue;
+		const filterMatch = Object.entries(view.filters ?? {}).every(([field, terms]) =>
+			terms.some((term) => names(entry, field).includes(term)),
+		);
+		if (!filterMatch) continue;
+		const occurrences = decodeEventOccurrences(entry.data.occurrences);
+		if (base.preview && occurrences) {
+			for (const occ of occurrences) {
+				if (occ.startsWith(`${month}-`)) {
+					candidates.push({ ...base, date: occ });
+				}
+			}
+		} else if (base.date.startsWith(`${month}-`)) {
+			candidates.push(base);
+		}
+	}
+	const filtered = searchQuery ? filterEventsBySearch(candidates, searchQuery) : candidates;
+	for (const summary of filtered) {
+		pushDay(summary.date, summary);
+	}
+	for (const [k, list] of byDay) byDay.set(k, sortEvents(list, "asc"));
+
+	const cells: CalendarDayCell[] = [];
+	const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+	for (let idx = 0; idx < totalCells; idx++) {
+		const cellDate = new Date(Date.UTC(year, mon - 1, 1 - startDow + idx));
+		const isoDate = cellDate.toISOString().slice(0, 10);
+		const inMonth = isoDate.startsWith(`${month}-`);
+		cells.push({
+			date: isoDate,
+			day: cellDate.getUTCDate(),
+			inMonth,
+			events: inMonth ? (byDay.get(isoDate) ?? []) : [],
+		});
+	}
+	const weeks: CalendarDayCell[][] = [];
+	for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+	return weeks;
 }
