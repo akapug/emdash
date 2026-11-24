@@ -184,6 +184,17 @@ describe("MEC upcoming list skin, timezone today-occurrence rule, and Monthly ca
 		expect(at0115?.period).toBe("upcoming");
 	});
 
+	it("does not read a same-time end written at a different precision as overnight (10:00:00 to 10:00)", () => {
+		const mixed = makeEvent("mixed-precision", "Mixed Precision", "2026-11-23", {
+			start_time: "10:00:00",
+			end_time: "10:00",
+			occurrences: ["2026-11-23", "2026-11-30"],
+		});
+		// 2026-11-23 12:00 EST (= 17:00 UTC): the Monday occurrence ended at 10:00, so it advances to Nov 30
+		const noon = eventSummary(mixed, new Date("2026-11-23T17:00:00Z"), undefined, "America/New_York");
+		expect(noon?.date).toBe("2026-11-30");
+	});
+
 	it("expands JSON-string occurrences in Monthly calendar grid using the same decoder as List", async () => {
 		const jsonOccYoga = makeEvent("yoga-json-occ", "Yoga JSON Occurrences", "2026-01-05", {
 			start_time: "17:30",
