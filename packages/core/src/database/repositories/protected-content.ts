@@ -6,7 +6,7 @@ import {
 	type ContentProtection,
 } from "../../content/protection.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
-import { isPageCacheActive, prepareVisibilityRevBump } from "../../page-cache/state.js";
+import { prepareVisibilityRevBump } from "../../page-cache/state.js";
 import { executeAtomicBatchIfSupported } from "../dialect-helpers.js";
 import { withTransaction } from "../transaction.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
@@ -48,10 +48,6 @@ export class ProtectedContentRepository {
 		protection: ContentProtection,
 		data: Record<string, unknown>,
 	): Promise<void> {
-		if (!isPageCacheActive()) {
-			await this.prepareCreate(collection, contentId, protection, data).execute(this.db);
-			return;
-		}
 		const queries = [
 			this.prepareCreate(collection, contentId, protection, data),
 			prepareVisibilityRevBump(),

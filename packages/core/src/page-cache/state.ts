@@ -22,12 +22,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { sql, type Kysely, type RawBuilder } from "kysely";
 
-import { OptionsRepository } from "../database/repositories/options.js";
 import type { Database } from "../database/types.js";
 
 export const PAGE_CACHE_MIN_TTL_SECONDS = 30;
 export const PAGE_CACHE_MAX_TTL_SECONDS = 300;
 export const VISIBILITY_REV_OPTION = "emdash:visibility_rev";
+
+export interface PageCacheAuthority {
+	activeIncarnation: string;
+	visibilityRev: string;
+}
 
 export interface PageCacheRequestState {
 	optedIn: boolean;
@@ -37,21 +41,6 @@ export interface PageCacheRequestState {
 }
 
 const STATE_ALS_KEY = Symbol.for("emdash.pageCacheState");
-const ACTIVE_KEY = Symbol.for("emdash.pageCacheActive");
-
-/**
- * Whether full-page caching is active in this worker/isolate.
- * OFF by default: when false, content/schema mutations perform ZERO
- * visibility-revision writes so ordinary saves pay zero overhead.
- */
-export function isPageCacheActive(): boolean {
-	return (globalThis as Record<symbol, boolean | undefined>)[ACTIVE_KEY] === true;
-}
-
-/** Enable or disable page-cache visibility-revision writes in this isolate. */
-export function setPageCacheActive(active: boolean): void {
-	(globalThis as Record<symbol, boolean | undefined>)[ACTIVE_KEY] = active === true;
-}
 
 function getPageCacheAls(): AsyncLocalStorage<PageCacheRequestState> {
 	const g = globalThis as Record<symbol, AsyncLocalStorage<PageCacheRequestState> | undefined>;
@@ -115,34 +104,93 @@ export function optInPageCache(ttlSeconds: number): void {
 }
 
 /**
- * Build a dialect-safe statement that advances `emdash:visibility_rev` in the
- * canonical `options(name, value, revision)` table. Join this statement into
- * the same D1 atomic batch or SQL transaction as the visibility mutation so
- * the two commit or roll back together.
+ * Build a dialect-safe conditional statement that advances `emdash:visibility_rev`
+ * in `options(name, value, revision)` ONLY when an active page-cache incarnation
+ * is present (`value <> ''`).
+ *
+ * Keyed on the authoritative primary database state rather than process env:
+ * - When page caching is OFF (row absent or `value = ''`), this updates 0 rows.
+ * - When page caching is ON (`value = '<incarnation>'`), even an in-flight or
+ *   OFF-era Worker commits the revision bump atomically in the same D1 batch
+ *   or SQL transaction as the public-visibility mutation.
  */
 export function prepareVisibilityRevBump(revision: string = crypto.randomUUID()): RawBuilder<unknown> {
-	const serialized = JSON.stringify(revision);
 	return sql`
-		INSERT INTO options (name, value, revision)
-		VALUES (${VISIBILITY_REV_OPTION}, ${serialized}, ${revision})
-		ON CONFLICT (name) DO UPDATE SET
-			value = ${serialized},
-			revision = ${revision}
+		UPDATE options
+		SET revision = ${revision}
+		WHERE name = ${VISIBILITY_REV_OPTION}
+			AND value <> ''
 	`;
 }
 
 /**
- * Advance the authoritative visibility revision via `OptionsRepository`
- * (`options(name, value, revision)`).
+ * Activate a fresh, never-reused page-cache incarnation on the primary database.
  */
-export async function bumpVisibilityRev(db: Kysely<Database>): Promise<string> {
-	const rev = crypto.randomUUID();
-	return new OptionsRepository(db).setVersioned(VISIBILITY_REV_OPTION, rev);
+export async function activatePageCacheIncarnation(
+	db: Kysely<Database>,
+	incarnation: string,
+	revision: string = crypto.randomUUID(),
+): Promise<PageCacheAuthority> {
+	const trimmed = incarnation.trim();
+	if (!trimmed) throw new Error("Page cache incarnation must be non-empty");
+	await sql`
+		INSERT INTO options (name, value, revision)
+		VALUES (${VISIBILITY_REV_OPTION}, ${trimmed}, ${revision})
+		ON CONFLICT (name) DO UPDATE SET
+			value = ${trimmed},
+			revision = ${revision}
+	`.execute(db);
+	return { activeIncarnation: trimmed, visibilityRev: revision };
+}
+
+/**
+ * Retire the active page-cache incarnation on the primary database (`value = ''`).
+ * Any old ON Worker reading primary authority stops serving retained copies
+ * immediately.
+ */
+export async function retirePageCacheIncarnation(
+	db: Kysely<Database>,
+	revision: string = crypto.randomUUID(),
+): Promise<void> {
+	await sql`
+		INSERT INTO options (name, value, revision)
+		VALUES (${VISIBILITY_REV_OPTION}, '', ${revision})
+		ON CONFLICT (name) DO UPDATE SET
+			value = '',
+			revision = ${revision}
+	`.execute(db);
+}
+
+/**
+ * Advance the authoritative visibility revision conditionally (no-op when OFF).
+ */
+export async function bumpVisibilityRev(
+	db: Kysely<Database>,
+	revision: string = crypto.randomUUID(),
+): Promise<string> {
+	await prepareVisibilityRevBump(revision).execute(db);
+	return revision;
+}
+
+/**
+ * Read the authoritative `(activeIncarnation, visibilityRev)` from
+ * `options(name, value, revision)`. Returns `null` when absent or retired (`value = ''`).
+ */
+export async function readPageCacheAuthority(
+	db: Kysely<Database>,
+): Promise<PageCacheAuthority | null> {
+	const row = await db
+		.selectFrom("options")
+		.select(["value", "revision"])
+		.where("name", "=", VISIBILITY_REV_OPTION)
+		.executeTakeFirst();
+	if (!row || !row.value || !row.revision) return null;
+	return { activeIncarnation: row.value, visibilityRev: row.revision };
 }
 
 /**
  * Read the authoritative visibility revision from `options(name, value, revision)`.
- * Returns `"0"` when never bumped; throws on DB errors so callers fail closed.
+ * Returns `"0"` when absent; throws on DB errors so callers fail closed.
  */
 export async function readVisibilityRev(db: Kysely<Database>): Promise<string> {
 	const row = await db

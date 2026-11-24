@@ -1,5 +1,5 @@
 import type { APIContext } from "astro";
-import { getPageCacheState, optInPageCache, optOutPageCache } from "emdash";
+import { getPageCacheState, optInPageCache, optOutPageCache, type PageCacheAuthority } from "emdash";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({
@@ -73,10 +73,12 @@ function attachAstroCookies(res: Response, cookieHeaders: string[]): Response {
 	return res;
 }
 
-const ENABLED_ENV = { EMDASH_PAGE_CACHE: "1", EMDASH_PAGE_CACHE_SCOPE: "d1-acme-1:inc-0001" };
+const DEFAULT_SCOPE = "d1-acme-1:inc-0001";
+const ENABLED_ENV = { EMDASH_PAGE_CACHE: "1", EMDASH_PAGE_CACHE_SCOPE: DEFAULT_SCOPE };
+const DEFAULT_AUTH: PageCacheAuthority = { activeIncarnation: DEFAULT_SCOPE, visibilityRev: "rev-1" };
 
 describe("Item 124: epochCloudflareCache full-page cache", () => {
-	it("is OFF by default when EMDASH_PAGE_CACHE or EMDASH_PAGE_CACHE_SCOPE is unset, uses a distinct provider name, and isolates incarnations on the same host/build", async () => {
+	it("is OFF by default when EMDASH_PAGE_CACHE or EMDASH_PAGE_CACHE_SCOPE is unset, uses a distinct provider name, and isolates incarnations/D1 replacements on the same host/build", async () => {
 		const cachesByName = new Map<string, ReturnType<typeof makeFakeCache>>();
 		const openNamed = async (name: string) => {
 			let entry = cachesByName.get(name);
@@ -94,7 +96,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: openNamed,
 				schedule: (p) => void p,
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 		expect(providerOff.name).toBe("emdash-epoch-cache");
@@ -123,7 +125,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: openNamed,
 				schedule: (p) => void p,
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 		const resNoScope = await providerNoScope.onRequest!(
@@ -133,7 +135,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(resNoScope.headers.get("x-embark-page-cache")).toBeNull();
 		expect(cachesByName.size).toBe(0);
 
-		// Two incarnations on the exact same host, path, and buildId MUST NOT collide
+		// Two incarnations (re-enable or D1 replacement) on the exact same host, path, and buildId MUST NOT collide
 		const pending: Promise<unknown>[] = [];
 		let currentScope = "d1-tenant-a:inc-0001";
 		const providerScoped = createEpochCacheProvider(
@@ -143,7 +145,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: openNamed,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=0|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "0",
+				readAuthority: async () => ({ activeIncarnation: currentScope, visibilityRev: "rev-0" }),
 				now: () => 10_000,
 			},
 		);
@@ -157,7 +159,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		await Promise.all(pending);
 		expect(rInc1.headers.get("x-embark-page-cache")).toBe("MISS");
 
-		// Switch incarnation (e.g. OFF->ON toggle or host reassignment to another D1)
+		// Switch incarnation (e.g. OFF->ON toggle or host reassignment / D1 replacement)
 		currentScope = "d1-tenant-b:inc-0002";
 		const rInc2 = await providerScoped.onRequest!(
 			makeContext("https://shared.example.org/pages/about"),
@@ -171,6 +173,79 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(cachesByName.size).toBe(2);
 	});
 
+	it("prevents an old ON reader from serving a retained copy once D1 primary retires or rotates the incarnation", async () => {
+		const fake = makeFakeCache();
+		const pending: Promise<unknown>[] = [];
+		let authority: PageCacheAuthority | null = {
+			activeIncarnation: DEFAULT_SCOPE,
+			visibilityRev: "rev-1",
+		};
+		let renders = 0;
+
+		const oldOnProvider = createEpochCacheProvider(
+			{ buildId: "b1" },
+			{
+				getEnv: () => ENABLED_ENV,
+				openCache: async () => fake.cache,
+				schedule: (p) => pending.push(p),
+				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
+				readAuthority: async () => authority,
+				now: () => 10_000,
+			},
+		);
+
+		// 1. Warm cache on old ON reader -> MISS then HIT
+		const r1 = await oldOnProvider.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
+			async () => {
+				renders++;
+				optInPageCache(300);
+				return new Response("cached-old-on", { status: 200, headers: { "content-type": "text/html" } });
+			},
+		);
+		await Promise.all(pending);
+		expect(r1.headers.get("x-embark-page-cache")).toBe("MISS");
+		expect(fake.putCalls).toBe(1);
+
+		const r2 = await oldOnProvider.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
+			async () => new Response("unexpected", { status: 200, headers: { "content-type": "text/html" } }),
+		);
+		expect(r2.headers.get("x-embark-page-cache")).toBe("HIT");
+		expect(await r2.text()).toBe("cached-old-on");
+
+		// 2. Host retires incarnation in D1 primary FIRST (OFF -> value = '' -> authority = null)
+		authority = null;
+		const rAfterOff = await oldOnProvider.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
+			async () => {
+				renders++;
+				optInPageCache(300);
+				return new Response("fresh-after-off", { status: 200, headers: { "content-type": "text/html" } });
+			},
+		);
+		await Promise.all(pending);
+		expect(rAfterOff.headers.get("x-embark-page-cache")).toBe("BYPASS");
+		expect(await rAfterOff.text()).toBe("fresh-after-off");
+		expect(renders).toBe(2);
+		expect(fake.putCalls).toBe(1); // MUST NOT store while retired
+
+		// 3. Re-enable with a newer incarnation -> old ON reader STILL cannot serve or fill
+		authority = { activeIncarnation: "d1-acme-1:inc-0002", visibilityRev: "rev-2" };
+		const rAfterRotate = await oldOnProvider.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/about"),
+			async () => {
+				renders++;
+				optInPageCache(300);
+				return new Response("fresh-after-rotate", { status: 200, headers: { "content-type": "text/html" } });
+			},
+		);
+		expect(rAfterRotate.headers.get("x-embark-page-cache")).toBe("BYPASS");
+		expect(await rAfterRotate.text()).toBe("fresh-after-rotate");
+		expect(renders).toBe(3);
+		expect(fake.putCalls).toBe(1);
+	});
+
 	it("serves MISS -> HIT on allowlisted public routes, strips internal/CDN headers, and isolates distinct hosts", async () => {
 		const fake = makeFakeCache();
 		const pending: Promise<unknown>[] = [];
@@ -182,7 +257,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 				now: () => 10_000,
 			},
 		);
@@ -217,6 +292,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 			render("ShouldNotRun"),
 		);
 		expect(r2.headers.get("x-embark-page-cache")).toBe("HIT");
+		expect(r2.headers.get("x-emdash-cache-scope")).toBeNull();
 		expect(r2.headers.get("x-emdash-page-vector")).toBeNull();
 		expect(r2.headers.get("x-emdash-visibility-rev")).toBeNull();
 		expect(r2.headers.get("cache-control")).toBe("private, no-cache");
@@ -244,7 +320,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 
@@ -283,7 +359,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				getEnv: () => ENABLED_ENV,
 				openCache,
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 		const pgRes = await pgProvider.onRequest!(
@@ -304,7 +380,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 
@@ -351,7 +427,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 				now: () => 10_000,
 			},
 		);
@@ -418,7 +494,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 					throw new Error("cache api unavailable");
 				},
 				readVector: async () => ({ vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0", certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 			},
 		);
 		const rFallback = await brokenCacheProvider.onRequest!(
@@ -429,10 +505,13 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(await rFallback.text()).toBe("rendered-live");
 	});
 
-	it("revokes cached public page immediately on public->private transition even while KV is stale or failing", async () => {
+	it("revokes cached public page immediately on public->private transition even while KV is stale, and refuses fill if an OFF-era writer bumps visibilityRev mid-render", async () => {
 		const fake = makeFakeCache();
 		const pending: Promise<unknown>[] = [];
-		let visRev: string | null = "100";
+		let authority: PageCacheAuthority | null = {
+			activeIncarnation: DEFAULT_SCOPE,
+			visibilityRev: "rev-100",
+		};
 		let kvCertain = true;
 		let version = 1;
 
@@ -447,7 +526,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 					vector: "v1|b=b1|s=1|m=0|t=0|y=0|c=0|w=0|lc=0|p=0",
 					certain: kvCertain,
 				}),
-				readVisibilityRev: async () => visRev,
+				readAuthority: async () => authority,
 				now: () => 10_000,
 			},
 		);
@@ -470,8 +549,8 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(r2.headers.get("x-embark-page-cache")).toBe("HIT");
 		expect(await r2.text()).toBe("public-v1");
 
-		// 2. Page transitions to draft/password-protected -> D1 primary bumps visRev, KV is STILL STALE!
-		visRev = "101";
+		// 2. Page transitions to draft/password-protected -> D1 primary bumps visibilityRev, KV is STILL STALE!
+		authority = { activeIncarnation: DEFAULT_SCOPE, visibilityRev: "rev-101" };
 		version = 2;
 		const r3 = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/secret"),
@@ -486,14 +565,28 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 		expect(r3.headers.get("x-embark-page-cache")).toBe("MISS");
 		expect(await r3.text()).toBe("password-challenge");
 
-		// 3. Even if D1 visibility check errors (null) or KV becomes uncertain -> fails CLOSED (never HIT)
-		visRev = null;
+		// 3. Mid-render OFF-era writer bumps D1 primary visibilityRev -> MUST NOT store
+		const putsBeforeRace = fake.putCalls;
+		const rRace = await provider.onRequest!(
+			makeContext("https://acme.sites.embarkeasy.com/pages/race"),
+			async () => {
+				optInPageCache(300);
+				authority = { activeIncarnation: DEFAULT_SCOPE, visibilityRev: "rev-102" };
+				return new Response("stale-race-body", { status: 200, headers: { "content-type": "text/html" } });
+			},
+		);
+		await Promise.all(pending);
+		expect(rRace.headers.get("x-embark-page-cache")).toBe("MISS");
+		expect(fake.putCalls).toBe(putsBeforeRace);
+
+		// 4. D1 authority check error (null) -> fails CLOSED (BYPASS, never HIT)
+		authority = null;
 		kvCertain = false;
 		const r4 = await provider.onRequest!(
 			makeContext("https://acme.sites.embarkeasy.com/pages/secret"),
 			async () => new Response("live-fallback", { status: 200, headers: { "content-type": "text/html" } }),
 		);
-		expect(r4.headers.get("x-embark-page-cache")).toBe("MISS");
+		expect(r4.headers.get("x-embark-page-cache")).toBe("BYPASS");
 		expect(await r4.text()).toBe("live-fallback");
 	});
 
@@ -510,7 +603,7 @@ describe("Item 124: epochCloudflareCache full-page cache", () => {
 				openCache: async () => fake.cache,
 				schedule: (p) => pending.push(p),
 				readVector: async () => ({ vector, certain: true }),
-				readVisibilityRev: async () => "1",
+				readAuthority: async () => DEFAULT_AUTH,
 				now: () => clock,
 			},
 		);

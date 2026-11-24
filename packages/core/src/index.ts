@@ -293,17 +293,18 @@ export {
 	PAGE_CACHE_MIN_TTL_SECONDS,
 	PAGE_CACHE_MAX_TTL_SECONDS,
 	VISIBILITY_REV_OPTION,
-	isPageCacheActive,
-	setPageCacheActive,
 	runWithPageCacheState,
 	getPageCacheState,
 	optOutPageCache,
 	optInPageCache,
 	prepareVisibilityRevBump,
+	activatePageCacheIncarnation,
+	retirePageCacheIncarnation,
+	readPageCacheAuthority,
 	bumpVisibilityRev,
 	readVisibilityRev,
 } from "./page-cache/state.js";
-export type { PageCacheRequestState } from "./page-cache/state.js";
+export type { PageCacheAuthority, PageCacheRequestState } from "./page-cache/state.js";
 export type {
 	ObjectCacheBackend,
 	ObjectCacheDescriptor,

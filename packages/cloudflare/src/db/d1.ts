@@ -12,6 +12,7 @@ import { env } from "cloudflare:workers";
 import {
 	EmDashConfigurationError,
 	getPageCacheState,
+	VISIBILITY_REV_OPTION,
 	type CollectionDeletionGuardInput,
 	type CollectionDeletionGuardResult,
 } from "emdash";
@@ -345,6 +346,9 @@ async function executeDropBatch(
 			binding.prepare(`DROP TRIGGER IF EXISTS "${ftsTable}_delete"`),
 			binding.prepare(`DROP TABLE IF EXISTS "${ftsTable}"`),
 			binding.prepare(`DROP TABLE IF EXISTS "${contentTable}"`),
+			binding
+				.prepare("UPDATE options SET revision = ? WHERE name = ? AND value <> ''")
+				.bind(crypto.randomUUID(), VISIBILITY_REV_OPTION),
 			binding
 				.prepare(
 					"DELETE FROM _emdash_media_usage_collection_deletions WHERE collection_id = ? AND collection_slug = ?",

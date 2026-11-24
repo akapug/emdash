@@ -43,8 +43,8 @@ import {
 	PAGE_CACHE_MIN_TTL_SECONDS,
 	readPageGenerationVector,
 	runWithPageCacheState,
-	setPageCacheActive,
 	VISIBILITY_REV_OPTION,
+	type PageCacheAuthority,
 	type PageGenerationVectorResult,
 } from "emdash";
 
@@ -60,13 +60,20 @@ const VALID_SCOPE_RE = /^[a-zA-Z0-9:_-]{8,128}$/;
 
 const ASTRO_COOKIES_SYMBOL = Symbol.for("astro.cookies");
 
+const HEADER_SCOPE = "X-EmDash-Cache-Scope";
 const HEADER_VECTOR = "X-EmDash-Page-Vector";
 const HEADER_VISIBILITY_REV = "X-EmDash-Visibility-Rev";
 const HEADER_STORED_AT = "X-EmDash-Stored-At";
 const HEADER_TTL = "X-EmDash-Page-TTL";
 const HEADER_STATUS = "X-Embark-Page-Cache";
 
-const INTERNAL_HEADERS = [HEADER_VECTOR, HEADER_VISIBILITY_REV, HEADER_STORED_AT, HEADER_TTL];
+const INTERNAL_HEADERS = [
+	HEADER_SCOPE,
+	HEADER_VECTOR,
+	HEADER_VISIBILITY_REV,
+	HEADER_STORED_AT,
+	HEADER_TTL,
+];
 
 const CREDENTIAL_HEADERS = [
 	"authorization",
@@ -234,32 +241,37 @@ export interface EpochCacheRuntimeDeps {
 	openCache?: (name: string) => Promise<Cache>;
 	schedule?: (p: Promise<unknown>) => void;
 	readVector?: (buildId?: string) => Promise<PageGenerationVectorResult>;
-	readVisibilityRev?: (d1Binding: string, timeoutMs: number) => Promise<string | null>;
+	readAuthority?: (d1Binding: string, timeoutMs: number) => Promise<PageCacheAuthority | null>;
 	now?: () => number;
 	/** Only for unit tests running against http:// URLs. */
 	allowHttpForTests?: boolean;
 }
 
 /**
- * Authoritative primary-database read of `emdash:visibility_rev` from the
- * canonical `options(name, value, revision)` table (migrations/001_initial.ts).
+ * Authoritative primary-database read of `(activeIncarnation, visibilityRev)`
+ * from `options(name, value, revision)` (migrations/001_initial.ts).
+ * Returns `null` when absent, retired (`value = ''`), or on any DB/timeout error
+ * so callers fail closed.
  */
-export async function readPrimaryVisibilityRevFromD1(
+export async function readPrimaryPageCacheAuthorityFromD1(
 	d1: D1Like | undefined,
 	timeoutMs: number,
-): Promise<string | null> {
+): Promise<PageCacheAuthority | null> {
 	if (!d1 || typeof d1.prepare !== "function") return null;
 	try {
 		const target = typeof d1.withSession === "function" ? d1.withSession("first-primary") : d1;
 		const row = await withTimeout(
 			target
-				.prepare("SELECT revision FROM options WHERE name = ? LIMIT 1")
+				.prepare("SELECT value, revision FROM options WHERE name = ? LIMIT 1")
 				.bind(VISIBILITY_REV_OPTION)
-				.first<{ revision?: string }>(),
+				.first<{ value?: string; revision?: string }>(),
 			timeoutMs,
 		);
-		if (!row || row.revision === undefined || row.revision === null) return "0";
-		return String(row.revision);
+		if (!row || !row.value || !row.revision) return null;
+		return {
+			activeIncarnation: String(row.value),
+			visibilityRev: String(row.revision),
+		};
 	} catch {
 		return null;
 	}
@@ -291,10 +303,10 @@ export function createEpochCacheProvider(
 	const schedule = deps.schedule ?? ((p: Promise<unknown>) => waitUntil(p));
 	const readVector = deps.readVector ?? ((b?: string) => readPageGenerationVector(b));
 	const now = deps.now ?? (() => Date.now());
-	const readVisibility =
-		deps.readVisibilityRev ??
+	const readAuthority =
+		deps.readAuthority ??
 		((binding: string, timeoutMs: number) =>
-			readPrimaryVisibilityRevFromD1(getEnv()[binding] as D1Like | undefined, timeoutMs));
+			readPrimaryPageCacheAuthorityFromD1(getEnv()[binding] as D1Like | undefined, timeoutMs));
 
 	const cacheNameForScope = (scope: string): string => {
 		const safeScope = scope.replace(NON_ID_CHARS_RE, "");
@@ -339,9 +351,7 @@ export function createEpochCacheProvider(
 		async onRequest(context, next) {
 			const envObj = getEnv();
 			const scope = resolvePageCacheScope(envObj[scopeEnvVar]);
-			const active = isCacheEnabledFlag(envObj[enabledEnvVar]) && scope !== null;
-			setPageCacheActive(active);
-			if (!active) {
+			if (!isCacheEnabledFlag(envObj[enabledEnvVar]) || scope === null) {
 				return next();
 			}
 
@@ -363,16 +373,30 @@ export function createEpochCacheProvider(
 			}
 
 			const key = buildCacheKey(url);
+			const isAuthorityActive = (auth: PageCacheAuthority | null): auth is PageCacheAuthority =>
+				auth !== null && auth.activeIncarnation === scope && auth.visibilityRev.length > 0;
 
 			// Run cache lookup, strict generation vector read, and D1-primary
-			// authoritative visibility check in parallel BEFORE rendering.
-			const [cached, preVec, preVis] = await Promise.all([
+			// authoritative `(activeIncarnation, visibilityRev)` check in parallel
+			// BEFORE rendering.
+			const [cached, preVec, preAuth] = await Promise.all([
 				cache.match(key).catch(() => undefined),
 				readVector(buildId),
-				readVisibility(d1Binding, visibilityTimeoutMs),
+				readAuthority(d1Binding, visibilityTimeoutMs),
 			]);
 
-			if (cached && preVec.certain && preVis !== null) {
+			// Fail closed if D1 primary has retired this incarnation, switched to a
+			// newer incarnation, or is unreachable: an old ON Worker MUST NOT serve
+			// retained copies or fill the cache.
+			if (!isAuthorityActive(preAuth)) {
+				const bypass = await next();
+				const out = preserveAstroCookies(bypass, new Response(bypass.body, bypass));
+				out.headers.set(HEADER_STATUS, "BYPASS");
+				return out;
+			}
+
+			if (cached && preVec.certain) {
+				const storedScope = cached.headers.get(HEADER_SCOPE);
 				const storedVec = cached.headers.get(HEADER_VECTOR);
 				const storedVis = cached.headers.get(HEADER_VISIBILITY_REV);
 				const storedAt = Number.parseInt(cached.headers.get(HEADER_STORED_AT) ?? "0", 10);
@@ -380,8 +404,9 @@ export function createEpochCacheProvider(
 				const ageSeconds = (now() - storedAt) / 1000;
 
 				if (
+					storedScope === scope &&
 					storedVec === preVec.vector &&
-					storedVis === preVis &&
+					storedVis === preAuth.visibilityRev &&
 					storedTtl > 0 &&
 					ageSeconds >= 0 &&
 					ageSeconds < storedTtl
@@ -405,7 +430,6 @@ export function createEpochCacheProvider(
 					const state = getPageCacheState();
 					const basicChecksOk =
 						preVec.certain &&
-						preVis !== null &&
 						response.status === 200 &&
 						isAllowedContentType(response.headers.get("content-type")) &&
 						!hasDisallowedCacheControl(response) &&
@@ -441,8 +465,8 @@ export function createEpochCacheProvider(
 			}
 
 			// Re-check complete final header policy, irreversible opt-out, real
-			// response cookie queue, and post-render generation vector + visibility
-			// rev AFTER stream drain (defense-in-depth).
+			// response cookie queue, and post-render generation vector + primary
+			// authority AFTER stream drain (defense-in-depth).
 			const finalRawSetCookies = response.headers.getSetCookie();
 			const finalQueuedCookies = readResponseQueuedCookies(response);
 			const finalHeadersOk =
@@ -462,16 +486,16 @@ export function createEpochCacheProvider(
 				state.ttlSeconds >= PAGE_CACHE_MIN_TTL_SECONDS;
 
 			if (finalEligible) {
-				const [postVec, postVis] = await Promise.all([
+				const [postVec, postAuth] = await Promise.all([
 					readVector(buildId),
-					readVisibility(d1Binding, visibilityTimeoutMs),
+					readAuthority(d1Binding, visibilityTimeoutMs),
 				]);
 
 				if (
 					postVec.certain &&
-					postVis !== null &&
+					isAuthorityActive(postAuth) &&
 					postVec.vector === preVec.vector &&
-					postVis === preVis
+					postAuth.visibilityRev === preAuth.visibilityRev
 				) {
 					const ttl = Math.min(
 						PAGE_CACHE_MAX_TTL_SECONDS,
@@ -485,8 +509,9 @@ export function createEpochCacheProvider(
 					// Explicit max-age on the stored Cache API copy ONLY so Cloudflare
 					// Cache API stores it even when the origin response had `no-cache`.
 					storeHeaders.set("cache-control", `public, max-age=${ttl}`);
+					storeHeaders.set(HEADER_SCOPE, scope);
 					storeHeaders.set(HEADER_VECTOR, preVec.vector);
-					storeHeaders.set(HEADER_VISIBILITY_REV, preVis);
+					storeHeaders.set(HEADER_VISIBILITY_REV, preAuth.visibilityRev);
 					storeHeaders.set(HEADER_STORED_AT, String(now()));
 					storeHeaders.set(HEADER_TTL, String(ttl));
 

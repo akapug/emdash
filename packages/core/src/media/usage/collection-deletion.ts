@@ -15,7 +15,7 @@ import type {
 	CollectionDeletionGuardResult,
 } from "../../db/adapters.js";
 import { FTSManager } from "../../search/fts-manager.js";
-import { bumpVisibilityRev, isPageCacheActive } from "../../page-cache/state.js";
+import { prepareVisibilityRevBump } from "../../page-cache/state.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { verifyMediaUsageCaptureTriggers } from "./capture-triggers.js";
 
@@ -398,6 +398,8 @@ export class MediaUsageCollectionDeletionRepository {
 				)
 				.execute();
 
+			await prepareVisibilityRevBump().execute(trx);
+
 			const checkpoint = await trx
 				.updateTable("_emdash_media_usage_collection_deletions")
 				.set({ phase: "table", updated_at: timestampOffset(trx, 0) })
@@ -556,7 +558,6 @@ export async function deleteActivatedMediaUsageCollection(
 			leaseToken: claim.leaseToken,
 		});
 		if (result.outcome !== "dropped") throw new Error("Collection deletion lost its table fence");
-		if (isPageCacheActive()) await bumpVisibilityRev(db);
 		if (
 			!(await repository.checkpoint({
 				...lease,
@@ -665,6 +666,7 @@ export async function executeLocalCollectionDeletionGuard(
 		const fts = new FTSManager(trx);
 		await fts.dropFtsTable(input.collectionSlug);
 		await sql`DROP TABLE IF EXISTS ${sql.ref(`ec_${input.collectionSlug}`)}`.execute(trx);
+		await prepareVisibilityRevBump().execute(trx);
 		return { outcome: "dropped" };
 	});
 }

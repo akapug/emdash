@@ -5,7 +5,7 @@ import type { ContentFieldFilterValue, ContentFieldFilters } from "../../content
 import { keepKnownFields, staleStoredKeys } from "../../content/known-fields.js";
 import { normalizeExplicitDatetime } from "../../datetime-normalization.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
-import { isPageCacheActive, prepareVisibilityRevBump } from "../../page-cache/state.js";
+import { prepareVisibilityRevBump } from "../../page-cache/state.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
 import { buildFtsPrefixMatch, buildSlugGlobPrefix } from "../../search/match.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
@@ -449,11 +449,7 @@ export class ContentRepository {
 			`;
 
 		if (privateCreateQuery) {
-			const queries = [
-				privateCreateQuery,
-				publicInsertQuery,
-				...(isPageCacheActive() ? [prepareVisibilityRevBump()] : []),
-			];
+			const queries = [privateCreateQuery, publicInsertQuery, prepareVisibilityRevBump()];
 			const batched = await executeAtomicBatchIfSupported(this.db, queries);
 			if (!batched) {
 				await withTransaction(this.db, async (trx) => {
@@ -1058,7 +1054,7 @@ export class ContentRepository {
 		updates.version = sql`version + 1`;
 
 		const needsVisibilityBump =
-			isPageCacheActive() && updates.status !== undefined && updates.status !== "published";
+			updates.status !== undefined && updates.status !== "published";
 		if (privateWrite) {
 			const queries = [
 				...privateWrite.queries,
@@ -1511,7 +1507,6 @@ export class ContentRepository {
 
 		let changed = false;
 		if (
-			isPageCacheActive() &&
 			expected.status === "published" &&
 			input.status !== undefined &&
 			input.status !== "published"
@@ -1713,21 +1708,16 @@ export class ContentRepository {
 			AND deleted_at IS NULL
 		`;
 		let changed = false;
-		if (isPageCacheActive()) {
-			const visBump = prepareVisibilityRevBump();
-			const batched = await executeAtomicBatchIfSupported(this.db, [deleteQuery, visBump]);
-			if (batched) {
-				changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
-			} else {
-				await withTransaction(this.db, async (trx) => {
-					const result = await deleteQuery.execute(trx);
-					changed = (result.numAffectedRows ?? 0n) > 0n;
-					if (changed) await visBump.execute(trx);
-				});
-			}
+		const visBump = prepareVisibilityRevBump();
+		const batched = await executeAtomicBatchIfSupported(this.db, [deleteQuery, visBump]);
+		if (batched) {
+			changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
 		} else {
-			const result = await deleteQuery.execute(this.db);
-			changed = (result.numAffectedRows ?? 0n) > 0n;
+			await withTransaction(this.db, async (trx) => {
+				const result = await deleteQuery.execute(trx);
+				changed = (result.numAffectedRows ?? 0n) > 0n;
+				if (changed) await visBump.execute(trx);
+			});
 		}
 		if (changed) {
 			invalidateCollectionCache(type);
@@ -1797,21 +1787,16 @@ export class ContentRepository {
 			AND deleted_at IS NOT NULL
 		`;
 		let changed = false;
-		if (isPageCacheActive()) {
-			const visBump = prepareVisibilityRevBump();
-			const batched = await executeAtomicBatchIfSupported(this.db, [permDeleteQuery, visBump]);
-			if (batched) {
-				changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
-			} else {
-				await withTransaction(this.db, async (trx) => {
-					const result = await permDeleteQuery.execute(trx);
-					changed = (result.numAffectedRows ?? 0n) > 0n;
-					if (changed) await visBump.execute(trx);
-				});
-			}
+		const visBump = prepareVisibilityRevBump();
+		const batched = await executeAtomicBatchIfSupported(this.db, [permDeleteQuery, visBump]);
+		if (batched) {
+			changed = (batched[0]?.numAffectedRows ?? 0n) > 0n;
 		} else {
-			const result = await permDeleteQuery.execute(this.db);
-			changed = (result.numAffectedRows ?? 0n) > 0n;
+			await withTransaction(this.db, async (trx) => {
+				const result = await permDeleteQuery.execute(trx);
+				changed = (result.numAffectedRows ?? 0n) > 0n;
+				if (changed) await visBump.execute(trx);
+			});
 		}
 		if (changed) {
 			await new ProtectedContentRepository(this.db).delete(type, id);
@@ -2912,22 +2897,17 @@ export class ContentRepository {
 				AND ${nullableColumnMatch("scheduled_at", existing.scheduledAt)}
 			`;
 			let affected = 0n;
-			if (isPageCacheActive()) {
-				const visBump = prepareVisibilityRevBump();
-				const batched = await executeAtomicBatchIfSupported(this.db, [unpublishQuery, visBump]);
-				if (batched) {
-					affected = batched[0]?.numAffectedRows ?? 0n;
-				} else {
-					await withTransaction(this.db, async (trx) => {
-						const result = await unpublishQuery.execute(trx);
-						affected = result.numAffectedRows ?? 0n;
-						if (affected === 0n) throw new ContentMutationConflictError();
-						await visBump.execute(trx);
-					});
-				}
+			const visBump = prepareVisibilityRevBump();
+			const batched = await executeAtomicBatchIfSupported(this.db, [unpublishQuery, visBump]);
+			if (batched) {
+				affected = batched[0]?.numAffectedRows ?? 0n;
 			} else {
-				const result = await unpublishQuery.execute(this.db);
-				affected = result.numAffectedRows ?? 0n;
+				await withTransaction(this.db, async (trx) => {
+					const result = await unpublishQuery.execute(trx);
+					affected = result.numAffectedRows ?? 0n;
+					if (affected === 0n) throw new ContentMutationConflictError();
+					await visBump.execute(trx);
+				});
 			}
 			if (affected === 0n) throw new ContentMutationConflictError();
 

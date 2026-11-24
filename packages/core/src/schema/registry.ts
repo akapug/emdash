@@ -23,7 +23,7 @@ import {
 	removeImportBaselineCollectionTriggers,
 } from "../database/import-baseline-triggers.js";
 import { withTransaction } from "../database/transaction.js";
-import { isPageCacheActive, prepareVisibilityRevBump } from "../page-cache/state.js";
+import { prepareVisibilityRevBump } from "../page-cache/state.js";
 import type { CollectionTable, Database, FieldTable } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import {
@@ -1191,34 +1191,23 @@ export class SchemaRegistry {
 		try {
 			const tableName = this.getTableName(slug);
 			const ftsManager = new FTSManager(this.db);
-			const bumpVis = isPageCacheActive();
 			const dropTableQuery = sql`DROP TABLE IF EXISTS ${sql.ref(tableName)}`;
 			const deleteRegistryQuery = this.db
 				.deleteFrom("_emdash_collections")
 				.where("id", "=", existing.id);
-			if (bumpVis) {
-				// On D1, batch drop + registry delete + visibility bump atomically;
-				// on SQLite/Postgres, run inside a genuine SQL transaction.
-				await ftsManager.dropFtsTable(slug);
-				const queries = [dropTableQuery, deleteRegistryQuery, prepareVisibilityRevBump()];
-				const batched = await executeAtomicBatchIfSupported(this.db, queries);
-				if (batched) {
-					contentTableDropped = true;
-				} else {
-					await withTransaction(this.db, async (trx) => {
-						await dropTableQuery.execute(trx);
-						contentTableDropped = true;
-						await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();
-						await prepareVisibilityRevBump().execute(trx);
-					});
-				}
+			// On D1, batch drop + registry delete + conditional visibility bump atomically;
+			// on SQLite/Postgres, run inside a genuine SQL transaction.
+			await ftsManager.dropFtsTable(slug);
+			const queries = [dropTableQuery, deleteRegistryQuery, prepareVisibilityRevBump()];
+			const batched = await executeAtomicBatchIfSupported(this.db, queries);
+			if (batched) {
+				contentTableDropped = true;
 			} else {
 				await withTransaction(this.db, async (trx) => {
-					const trxFts = new FTSManager(trx);
-					await trxFts.dropFtsTable(slug);
 					await dropTableQuery.execute(trx);
 					contentTableDropped = true;
 					await trx.deleteFrom("_emdash_collections").where("id", "=", existing.id).execute();
+					await prepareVisibilityRevBump().execute(trx);
 				});
 			}
 			await deleteContentMediaUsageCollection(this.db, slug);
