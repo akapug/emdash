@@ -33,6 +33,13 @@ const DIMENSION = /^\d+$/;
 /** An `<img …>` tag, whole; a quoted value is consumed as a unit so a `>` inside an alt does not end it. */
 const IMG_TAG = /<img\b(?:[^>"'=]|=\s*"[^"]*"|=\s*'[^']*'|=)*>/gi;
 
+/**
+ * The value as a record, or null. No assertion: the runtime check IS the narrowing — a non-null object is a
+ * record as far as this file is concerned, and every property it reads is checked for its type at the read.
+ */
+const asRecord = (value: unknown): { readonly [key: string]: unknown } | null =>
+	typeof value === "object" && value !== null ? Object(value) : null;
+
 /** A picture is a source and nothing more; the card decides how to draw it. */
 const isUsableSource = (src: string | undefined): src is string => {
 	if (!src) return false;
@@ -73,21 +80,24 @@ export function pictureInHtml(html: string | undefined): CardPicture | null {
 }
 
 /** One Portable Text node's first picture, without looking inside it. */
-function pictureInNode(node: Record<string, unknown>): CardPicture | null {
+function pictureInNode(node: { readonly [key: string]: unknown }): CardPicture | null {
 	switch (node._type) {
 		case "image": {
-			const asset = node.asset as { _ref?: string; url?: string } | undefined;
+			const asset = asRecord(node.asset);
 			const alt = typeof node.alt === "string" && node.alt ? node.alt : undefined;
+			const ref = typeof asset?._ref === "string" ? asset._ref : undefined;
+			const url = typeof asset?.url === "string" ? asset.url : undefined;
 			// A stored asset is drawn through the image component by its ref; an external one by its url.
-			if (asset?._ref) return { src: asset.url ?? "", alt, assetRef: asset._ref };
-			if (isUsableSource(asset?.url)) return { src: asset.url, alt };
+			if (ref) return { src: url ?? "", alt, assetRef: ref };
+			if (isUsableSource(url)) return { src: url, alt };
 			return null;
 		}
 		case "gallery": {
-			const images = Array.isArray(node.images) ? node.images : [];
+			const images: unknown[] = Array.isArray(node.images) ? node.images : [];
 			for (const image of images) {
-				if (!image || typeof image !== "object") continue;
-				const found = pictureInNode(image as Record<string, unknown>);
+				const record = asRecord(image);
+				if (!record) continue;
+				const found = pictureInNode(record);
 				if (found) return found;
 			}
 			return null;
@@ -114,29 +124,32 @@ function pictureInNode(node: Record<string, unknown>): CardPicture | null {
  */
 export function cardPicture(
 	post: { featuredImage?: unknown; content?: unknown },
-	options: { pick?: (node: Record<string, unknown>) => CardPicture | null } = {},
+	options: { pick?: (node: { readonly [key: string]: unknown }) => CardPicture | null } = {},
 ): CardPicture | null {
 	// The featured image wins where it is set. It is a string (a url) or an object with `url`/`asset`.
 	const featured = post.featuredImage;
 	if (typeof featured === "string" && isUsableSource(featured)) return { src: featured };
-	if (featured && typeof featured === "object") {
-		const record = featured as Record<string, unknown>;
-		const url = record.url ?? (record.asset as { url?: string } | undefined)?.url;
-		if (isUsableSource(typeof url === "string" ? url : undefined)) return { src: url as string };
+	const featuredRecord = asRecord(featured);
+	if (featuredRecord) {
+		const own = typeof featuredRecord.url === "string" ? featuredRecord.url : undefined;
+		const viaAsset = asRecord(featuredRecord.asset);
+		const assetUrl = typeof viaAsset?.url === "string" ? viaAsset.url : undefined;
+		const url = own ?? assetUrl;
+		if (isUsableSource(url)) return { src: url };
 	}
 
 	const pick = options.pick ?? pictureInNode;
-	const blocks = Array.isArray(post.content) ? post.content : [];
-	const queue = [...blocks] as Array<Record<string, unknown> | undefined>;
+	const blocks: unknown[] = Array.isArray(post.content) ? post.content : [];
+	const queue: unknown[] = [...blocks];
 	while (queue.length > 0) {
-		const node = queue.shift();
-		if (!node || typeof node !== "object") continue;
+		const node = asRecord(queue.shift());
+		if (!node) continue;
 		const found = pick(node);
 		if (found) return found;
 		// DOCUMENT ORDER means a container's own children come before the next sibling block, so they go to the
 		// FRONT of the queue.
-		const children = node.content;
-		if (Array.isArray(children)) queue.unshift(...(children as Array<Record<string, unknown>>));
+		const children: unknown[] = Array.isArray(node.content) ? node.content : [];
+		queue.unshift(...children);
 	}
 	return null;
 }

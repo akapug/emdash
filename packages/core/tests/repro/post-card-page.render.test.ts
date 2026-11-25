@@ -28,7 +28,12 @@ const imageNodePost = {
 	title: "Post with an image node",
 	content: [
 		{ _type: "block", _key: "b1", children: [{ _type: "span", _key: "s1", text: "Words." }] },
-		{ _type: "image", _key: "i1", asset: { _ref: "ref-1", url: IMAGE_URL }, alt: "An image node picture" },
+		{
+			_type: "image",
+			_key: "i1",
+			asset: { _ref: "ref-1", url: IMAGE_URL },
+			alt: "An image node picture",
+		},
 	],
 };
 const htmlBlockPost = {
@@ -46,7 +51,11 @@ const noPicturePost = {
 	slug: "no-picture-at-all",
 	title: "Post with no picture",
 	content: [
-		{ _type: "block", _key: "b1", children: [{ _type: "span", _key: "s1", text: "Only words here." }] },
+		{
+			_type: "block",
+			_key: "b1",
+			children: [{ _type: "span", _key: "s1", text: "Only words here." }],
+		},
 		{ _type: "htmlBlock", _key: "h1", html: "<p>and an htmlBlock with no image</p>" },
 	],
 };
@@ -70,7 +79,10 @@ vi.mock("emdash", async () => {
 		loadWpShell: async () => ({ shell: null }),
 	};
 });
-vi.mock("../../dist/index.mjs", async () => await vi.importActual<Record<string, unknown>>("emdash"));
+vi.mock(
+	"../../dist/index.mjs",
+	async () => await vi.importActual<Record<string, unknown>>("emdash"),
+);
 vi.mock("../../../../templates/blog-cloudflare/src/layouts/Base.astro", async () => ({
 	default: (await import("./StubBase.astro")).default,
 }));
