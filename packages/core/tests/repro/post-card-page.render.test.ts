@@ -62,6 +62,8 @@ const noPicturePost = {
 
 const state = vi.hoisted(() => ({ entries: [] as unknown[] }));
 
+// SPREAD THE REAL MODULE FIRST, as the neighbouring page arms do: `emdash`'s entry pulls the registry packages,
+// and a factory that returns a closed object fails to resolve them before any arm runs.
 vi.mock("emdash", async () => {
 	const actual = await vi.importActual<Record<string, unknown>>("emdash");
 	return {
@@ -75,8 +77,6 @@ vi.mock("emdash", async () => {
 		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
 		getTermsForEntries: async () => new Map(),
 		optInPageCache: () => {},
-		wpShellIndexRoute: () => null,
-		loadWpShell: async () => ({ shell: null }),
 	};
 });
 vi.mock(
@@ -85,6 +85,14 @@ vi.mock(
 );
 vi.mock("../../../../templates/blog-cloudflare/src/layouts/Base.astro", async () => ({
 	default: (await import("./StubBase.astro")).default,
+}));
+// THE PAGE IMPORTS THESE FROM ITS OWN TEMPLATE, not from `emdash`. Mocking them on the package put them where
+// nothing read them, so the real loader ran and the page never reached its query.
+vi.mock("../../../../templates/blog-cloudflare/src/utils/wp-shell-loader", () => ({
+	loadWpShell: async () => ({ shell: null }),
+}));
+vi.mock("../../../../templates/blog-cloudflare/src/utils/wp-shell", () => ({
+	wpShellIndexRoute: () => null,
 }));
 
 let db: Kysely<Database>;
