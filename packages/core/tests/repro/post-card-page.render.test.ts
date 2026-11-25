@@ -184,10 +184,11 @@ describe("the post card a visitor gets", () => {
 		// RENDERED ALONE. With the other two on the page a slice of the wrong card, or a stray match, could make
 		// this arm silently about something else. One post, no picture: the card must draw nothing this change
 		// added.
-		const card = articleFor(await renderIndex(noPicturePost.slug), noPicturePost.slug);
-		// COMPUTED FROM THE BASE, not from the new code: the article carries no picture element at all, so its
-		// markup is whatever the base produced. The assertion is that this change added nothing to it.
-		expect(card, `a pictureless card must be unchanged; got: ${card}`).not.toContain("<img");
-		expect(card).not.toContain("post-picture");
+		// THE WHOLE PAGE, one post on it: no slicing, so nothing this arm says can belong to another card. A page
+		// with a single pictureless post must carry the title and NOT the element this change adds.
+		const page = await renderIndex(noPicturePost.slug);
+		expect(page, "the pictureless post still renders its card").toContain(noPicturePost.title);
+		expect(page, `the change must add nothing to a pictureless card`).not.toContain("post-picture");
+		expect(page, "and no picture element").not.toContain("<img");
 	});
 });
