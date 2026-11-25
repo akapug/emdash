@@ -315,9 +315,8 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 			return apiError("INVALID_REQUEST", "A JSON object body is required", 400);
 		}
-		const obj = parsed as Record<string, unknown>;
-		mediaId = obj.mediaId;
-		rawWidths = obj.widths;
+		mediaId = Reflect.get(parsed, "mediaId");
+		rawWidths = Reflect.get(parsed, "widths");
 	} else {
 		mediaId = url.searchParams.get("mediaId");
 		const wParam = url.searchParams.get("widths");
