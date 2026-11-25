@@ -228,10 +228,15 @@ function keyOfRef(ref: VariantMediaRef): string | null {
  * `drawnWidth` is the width the caller draws the image at. Without one the bound is
  * the original's upright width, and with neither nothing is offered, since `sizes`
  * would have to guess and could draw a small image larger than it is.
+ *
+ * `offerOriginal` adds the original as the last candidate when the stored sizes fall
+ * short (see originalCandidateWidth). Only a caller that KNOWS the slot the image
+ * fills may ask for it; every other caller gets stored sizes only.
  */
 export async function storedSizesForRender(
 	ref: VariantMediaRef,
 	drawnWidth?: number,
+	{ offerOriginal = false }: StoredSizesOptions = {},
 ): Promise<{ srcset: string; bound: number; shape: number | undefined } | null> {
 	const key = keyOfRef(ref);
 	if (!key) return null;
@@ -245,13 +250,23 @@ export async function storedSizesForRender(
 	const first = committed[0];
 	const shape = first && first.height > 0 ? first.width / first.height : undefined;
 	const candidates = widths.map((w) => `${variantUrl(parentUrl, w)} ${w}w`);
-	const original = originalCandidateWidth(committed, widths, bound);
+	const original = offerOriginal ? originalCandidateWidth(committed, widths, bound) : undefined;
 	if (original) candidates.push(`${parentUrl} ${original}w`);
 	return {
 		srcset: candidates.join(", "),
 		bound,
 		shape,
 	};
+}
+
+/** What a caller tells storedSizesForRender about the slot it draws into. */
+export interface StoredSizesOptions {
+	/**
+	 * True only when the caller knows how wide the image is drawn: a cover fills the
+	 * viewport, and an image an editor gave a display width is drawn at that width.
+	 * A caller whose `sizes` value is a guess must leave it unset.
+	 */
+	offerOriginal?: boolean;
 }
 
 /**
@@ -264,23 +279,32 @@ export const ORIGINAL_CANDIDATE_MAX_WIDTH = 2560;
 /**
  * The width to offer the ORIGINAL at, as the last candidate, or undefined.
  *
- * WITHIN THE BUDGET THIS FILE KEEPS (twice the drawn width), A LIST OF STORED SIZES
- * MUST NOT DRAW AN IMAGE SOFTER THAN NO LIST DID. A browser given a srcset chooses
- * only from it; `src` is no longer a candidate. A 1000 wide original has stored sizes
- * up to 768, so a full-width cover on a 1440 screen was drawn from the 768 file and
+ * ONLY WHERE THE CALLER KNOWS THE SLOT. storedSizesForRender asks this only for a
+ * caller that passed `offerOriginal`, and that is deliberate.
+ *
+ * Why the original is offered at all: a browser given a srcset chooses only from
+ * it; `src` is no longer a candidate. A 1000 wide original has stored sizes up to
+ * 768, so a full-width cover on a 1440 screen was drawn from the 768 file and
  * stretched, where the page without stored sizes drew the 1000 wide original.
- * Measured in a browser on an imported site. Past the budget (a 3x screen on an
- * image drawn small) the list still ends at a stored size, as it always has.
+ * Measured in a browser on an imported site.
  *
- * WHAT IT COSTS. The original is the file a page with no stored sizes fetched, so no
- * screen fetches more than that page did. A camera original offered under the second
- * case below can still be several megabytes on a dense screen: that is the price of
- * a store with a hole in it, and the cure for it is filling the hole.
+ * Why only there: most callers do not know how wide the image is drawn. A card or a
+ * content image inside a column is drawn 150 to 356 px wide but declares a `sizes`
+ * such as `(min-width: 6000px) 6000px, 100vw`, so a 1440 wide browser believes it
+ * needs 1440 px, finds the stored sizes end at 768, and takes the original. Offered
+ * on every surface, the original took a home page from 6.8 MB of images to 19.0 MB
+ * and an events page from 0.75 MB to 11.5 MB; one card fetched a 9.5 MB camera file
+ * where it had fetched a 102 KB one. So a caller whose `sizes` value is a guess
+ * must not ask for the original: for it the 768 file, slightly soft, is the right
+ * price. A cover (drawn at the viewport's width, so `100vw` is true) and an image an
+ * editor gave a display width know their slot, and ask.
  *
- * So when the stored sizes run out before the caller's budget (`offered` ends below
- * twice the drawn width) and the original is wider than the last of them, the
- * original joins the list at its TRUE upright width. That is not the defect this
- * file exists to prevent, which was the original under a smaller descriptor.
+ * Within those callers, when the stored sizes run out before the budget this file
+ * keeps (`offered` ends below twice the drawn width) and the original is wider than
+ * the last of them, the original joins the list at its TRUE upright width. That is
+ * not the defect this file exists to prevent, which was the original under a
+ * smaller descriptor. Past the budget (a 3x screen on an image drawn small) the list
+ * still ends at a stored size.
  *
  * Two cases, because the original can be very large:
  *  - up to ORIGINAL_CANDIDATE_MAX_WIDTH it always joins;
