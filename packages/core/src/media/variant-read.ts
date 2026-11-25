@@ -98,13 +98,15 @@ export interface VariantMediaRef {
 }
 
 const INTERNAL_PREFIX = "/_emdash/api/media/file/";
+/** A url's query or fragment: neither is part of the key. */
+const URL_SUFFIX = /[?#]/;
 
 /** The storage key inside a public media url, or null when the url is not one. */
 function storageKeyOf(url: string | null): string | null {
 	if (!url) return null;
 	const at = url.indexOf(INTERNAL_PREFIX);
 	if (at === -1) return null;
-	const key = url.slice(at + INTERNAL_PREFIX.length).split(/[?#]/)[0];
+	const key = url.slice(at + INTERNAL_PREFIX.length).split(URL_SUFFIX)[0];
 	return key || null;
 }
 
@@ -121,7 +123,7 @@ export function srcsetWidthsFor(variants: readonly StoredVariant[], renderedWidt
 	return variants
 		.map((v) => v.width)
 		.filter((w) => Number.isInteger(w) && w > 0 && w < renderedWidth)
-		.sort((a, b) => a - b)
+		.toSorted((a, b) => a - b)
 		.filter((w, i, all) => all.indexOf(w) === i);
 }
 
