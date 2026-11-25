@@ -6,6 +6,7 @@ import {
 	EVENT_SEARCH_BAR_PROBE,
 	IMPORT_CAPABILITIES,
 	importCapabilities,
+	MEDIA_VARIANTS_CAPABILITY,
 	POST,
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
 import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
@@ -49,11 +50,30 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		expect(importCapabilities(rejecting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			MEDIA_VARIANTS_CAPABILITY,
 		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_SEARCH_BAR_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			MEDIA_VARIANTS_CAPABILITY,
 		]);
+	});
+
+	it("ADVERTISES media-variants, so the host can ask before it sends a size", async () => {
+		// The lead's grep found only the DEFINITION, because the route returns the
+		// constant rather than the literal. This arm reads the RESPONSE the host would
+		// receive, which is the only thing that makes the capability real.
+		const form = new FormData();
+		form.set("file", new File([MINIMAL_WXR], "site.wxr", { type: "text/xml" }));
+		const response = await POST({
+			request: new Request("https://example.org/_emdash/api/import/wordpress/analyze", {
+				method: "POST",
+				body: form,
+			}),
+			locals: { emdash: {} },
+		} as unknown as Parameters<typeof POST>[0]);
+		const body = (await response.json()) as { data: { capabilities: string[] } };
+		expect(body.data.capabilities).toContain(MEDIA_VARIANTS_CAPABILITY);
 	});
 });
