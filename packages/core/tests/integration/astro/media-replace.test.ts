@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import type { APIContext } from "astro";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +14,26 @@ import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js"
 
 type User = { id: string; role: 20 | 30 | 40 | 50 };
 type ReplaceMetadata = typeof handleMediaReplaceMetadata;
+
+// Solid-color fixtures: 1200×800 PNG, 1800×900 PNG, and 12×8 JPEG.
+const originalPng = new Uint8Array(
+	Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAABLAAAAMgAQAAAAAbm6avAAAAjElEQVR42u3BMQEAAADCoPVPbQdvoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4D1+8AARpxgZ8AAAAASUVORK5CYII=",
+		"base64",
+	),
+);
+const croppedPng = new Uint8Array(
+	Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAABwgAAAOEAQAAAACd1VibAAAA3ElEQVR42u3BMQEAAADCoPVPbQo/oAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvgYatQABGE7c0wAAAABJRU5ErkJggg==",
+		"base64",
+	),
+);
+const jpeg = new Uint8Array(
+	Buffer.from(
+		"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBAUEBAYFBQUGBgYHCQ4JCQgICRINDQoOFRIWFhUSFBQXGiEcFxgfGRQUHScdHyIjJSUlFhwpLCgkKyEkJST/wAALCAAIAAwBAREA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAL/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AIH/2Q==",
+		"base64",
+	),
+);
 
 function memoryStorage() {
 	const objects = new Map<string, Uint8Array>();
@@ -31,30 +53,33 @@ function memoryStorage() {
 
 function replaceRequest(
 	options: {
-		bytes?: Uint8Array;
-		type?: string;
+		file?: File;
+		extraFile?: File;
 		width?: string;
 		height?: string;
-		contentLength?: number;
+		padding?: string;
 	} = {},
 ): Request {
 	const form = new FormData();
-	form.set(
-		"file",
-		new File([options.bytes ?? new Uint8Array([9, 8, 7, 6])], "crop.png", {
-			type: options.type ?? "image/png",
-		}),
-	);
-	form.set("width", options.width ?? "600");
-	form.set("height", options.height ?? "400");
-	const headers: Record<string, string> = { "X-EmDash-Request": "1" };
-	if (options.contentLength !== undefined)
-		headers["Content-Length"] = String(options.contentLength);
+	form.set("file", options.file ?? new File([croppedPng], "crop.png", { type: "image/png" }));
+	if (options.extraFile) form.append("file", options.extraFile);
+	form.set("width", options.width ?? "1800");
+	form.set("height", options.height ?? "900");
+	if (options.padding !== undefined) form.set("padding", options.padding);
 	return new Request("http://localhost/_emdash/api/media/media-1/replace", {
 		method: "PUT",
-		headers,
+		headers: { "X-EmDash-Request": "1" },
 		body: form,
 	});
+}
+
+async function sizedMultipartRequest(bodySize: number, declareLength: boolean): Promise<Request> {
+	const baseline = await replaceRequest({ padding: "" }).arrayBuffer();
+	const request = replaceRequest({ padding: "a".repeat(bodySize - baseline.byteLength) });
+	const length = (await request.clone().arrayBuffer()).byteLength;
+	expect(length).toBe(bodySize);
+	if (declareLength) request.headers.set("Content-Length", String(length));
+	return request;
 }
 
 function buildContext(options: {
@@ -105,13 +130,13 @@ describe("PUT /media/:id/replace", () => {
 		const item = await repo.create({
 			filename: "hero.png",
 			mimeType: "image/png",
-			size: 120,
+			size: originalPng.byteLength,
 			width: 1200,
 			height: 800,
 			alt: "A mountain",
 			caption: "Homepage hero",
 			storageKey: "media/hero.png",
-			contentHash: "sha256:before",
+			contentHash: await computeContentHash(originalPng),
 			blurhash: "before-blurhash",
 			dominantColor: "#123456",
 			authorId: "author-1",
@@ -130,16 +155,10 @@ describe("PUT /media/:id/replace", () => {
 		const original = await createImage();
 		await repo.update(original.id, { folderId: folder.id, focalX: 0.25, focalY: 0.75 });
 		const storage = memoryStorage();
-		storage.objects.set(original.storageKey, new Uint8Array([1, 2, 3]));
-		const croppedBytes = new Uint8Array([9, 8, 7, 6]);
+		storage.objects.set(original.storageKey, originalPng);
 
 		const response = await putReplace(
-			buildContext({
-				db,
-				request: replaceRequest({ bytes: croppedBytes, width: "1800", height: "900" }),
-				storage,
-				user,
-			}),
+			buildContext({ db, request: replaceRequest(), storage, user }),
 		);
 
 		expect(response.status).toBe(200);
@@ -150,10 +169,10 @@ describe("PUT /media/:id/replace", () => {
 			mimeType: original.mimeType,
 			storageKey: original.storageKey,
 			url: `/_emdash/api/media/file/${original.storageKey}`,
-			size: croppedBytes.byteLength,
+			size: croppedPng.byteLength,
 			width: 1800,
 			height: 900,
-			contentHash: await computeContentHash(croppedBytes),
+			contentHash: await computeContentHash(croppedPng),
 			blurhash: null,
 			dominantColor: null,
 			focalX: null,
@@ -164,7 +183,7 @@ describe("PUT /media/:id/replace", () => {
 			folderId: folder.id,
 			createdAt: original.createdAt,
 		});
-		expect(storage.objects.get(original.storageKey)).toEqual(croppedBytes);
+		expect(storage.objects.get(original.storageKey)).toEqual(croppedPng);
 		expect(storage.upload).toHaveBeenCalledWith(
 			expect.objectContaining({
 				cacheControl: "public, max-age=0, must-revalidate",
@@ -173,12 +192,60 @@ describe("PUT /media/:id/replace", () => {
 		expect((await repo.findMany()).items).toHaveLength(1);
 	});
 
+	it("stores the image's dimensions instead of different declared dimensions", async () => {
+		const original = await createImage();
+		const storage = memoryStorage();
+		const response = await putReplace(
+			buildContext({ db, request: replaceRequest({ width: "799", height: "533" }), storage }),
+		);
+
+		expect(response.status).toBe(200);
+		expect(storage.objects.get(original.storageKey)).toEqual(croppedPng);
+		expect(await new MediaRepository(db).findById(original.id)).toMatchObject({
+			width: 1800,
+			height: 900,
+		});
+	});
+
+	it("accepts matching JPEG bytes with a generic file type", async () => {
+		const original = await createImage({
+			filename: "hero.jpg",
+			mimeType: "image/jpeg",
+			storageKey: "media/hero.jpg",
+		});
+		const storage = memoryStorage();
+		const response = await putReplace(
+			buildContext({
+				db,
+				request: replaceRequest({
+					file: new File([jpeg], "crop.bin", { type: "application/octet-stream" }),
+					width: "12",
+					height: "8",
+				}),
+				storage,
+			}),
+		);
+
+		expect(response.status).toBe(200);
+		expect(storage.upload).toHaveBeenCalledWith(
+			expect.objectContaining({ key: original.storageKey, contentType: "image/jpeg" }),
+		);
+		expect(storage.objects.get(original.storageKey)).toEqual(jpeg);
+		expect(await new MediaRepository(db).findById(original.id)).toMatchObject({
+			mimeType: "image/jpeg",
+			size: jpeg.byteLength,
+			width: 12,
+			height: 8,
+			contentHash: await computeContentHash(jpeg),
+		});
+	});
+
 	it.each([
 		{ label: "unauthenticated caller", user: null, status: 401 },
 		{ label: "contributor", user: { id: "contributor-1", role: 20 as const }, status: 403 },
 		{ label: "another author", user: { id: "author-2", role: 30 as const }, status: 403 },
 	])("rejects an $label before storage mutation", async ({ user, status }) => {
-		await createImage();
+		const original = await createImage();
 		const storage = memoryStorage();
 
 		const response = await putReplace(
@@ -187,6 +254,7 @@ describe("PUT /media/:id/replace", () => {
 
 		expect(response.status).toBe(status);
 		expect(storage.upload).not.toHaveBeenCalled();
+		expect(await new MediaRepository(db).findById(original.id)).toEqual(original);
 	});
 
 	it("rejects missing storage and media before mutation", async () => {
@@ -216,33 +284,38 @@ describe("PUT /media/:id/replace", () => {
 		{
 			label: "unsupported source type",
 			source: { mimeType: "image/gif", filename: "hero.gif", storageKey: "hero.gif" },
-			request: { type: "image/gif" },
+			request: {},
 			status: 400,
 		},
 		{
-			label: "mismatched replacement type",
+			label: "stringified object instead of JPEG bytes",
+			source: { mimeType: "image/jpeg", filename: "hero.jpg", storageKey: "hero.jpg" },
+			request: { file: new File(["[object Object]"], "crop.jpg", { type: "image/jpeg" }) },
+			status: 400,
+		},
+		{
+			label: "PNG bytes for a JPEG source",
+			source: { mimeType: "image/jpeg", filename: "hero.jpg", storageKey: "hero.jpg" },
+			request: { file: new File([croppedPng], "crop.png", { type: "image/png" }) },
+			status: 400,
+		},
+		{
+			label: "duplicate file entries",
 			source: {},
-			request: { type: "image/jpeg" },
+			request: { extraFile: new File([originalPng], "second.png", { type: "image/png" }) },
 			status: 400,
 		},
 		{
 			label: "empty file",
 			source: {},
-			request: { bytes: new Uint8Array() },
+			request: { file: new File([], "crop.png", { type: "image/png" }) },
 			status: 400,
 		},
 		{
-			label: "oversized multipart body before parsing",
-			source: {},
-			request: { contentLength: 100 },
-			maxUploadSize: 50,
-			status: 413,
-		},
-		{
-			label: "oversized file",
+			label: "file one byte over its own size limit",
 			source: {},
 			request: {},
-			maxUploadSize: 3,
+			maxUploadSize: croppedPng.byteLength - 1,
 			status: 413,
 		},
 		{
@@ -257,8 +330,8 @@ describe("PUT /media/:id/replace", () => {
 			request: { width: "9007199254740992" },
 			status: 400,
 		},
-	])("rejects $label before storage mutation", async (testCase) => {
-		await createImage(testCase.source);
+	])("rejects $label without changing storage or metadata", async (testCase) => {
+		const original = await createImage(testCase.source);
 		const storage = memoryStorage();
 
 		const response = await putReplace(
@@ -272,6 +345,36 @@ describe("PUT /media/:id/replace", () => {
 
 		expect(response.status).toBe(testCase.status);
 		expect(storage.upload).not.toHaveBeenCalled();
+		expect(await new MediaRepository(db).findById(original.id)).toEqual(original);
+	});
+
+	it("accepts a file and declared multipart body exactly at their limits", async () => {
+		const original = await createImage();
+		const storage = memoryStorage();
+		const maxUploadSize = croppedPng.byteLength;
+		const request = await sizedMultipartRequest(maxUploadSize + 64 * 1024, true);
+
+		const response = await putReplace(buildContext({ db, request, storage, maxUploadSize }));
+
+		expect(response.status).toBe(200);
+		expect(storage.objects.get(original.storageKey)).toEqual(croppedPng);
+	});
+
+	it.each([
+		{ label: "with a declared length", declareLength: true },
+		{ label: "without a declared length", declareLength: false },
+	])("rejects a multipart body one byte over the envelope $label", async ({ declareLength }) => {
+		const original = await createImage();
+		const storage = memoryStorage();
+		const maxUploadSize = croppedPng.byteLength;
+		const request = await sizedMultipartRequest(maxUploadSize + 64 * 1024 + 1, declareLength);
+
+		const response = await putReplace(buildContext({ db, request, storage, maxUploadSize }));
+
+		expect(response.status).toBe(413);
+		if (declareLength) expect(request.bodyUsed).toBe(false);
+		expect(storage.upload).not.toHaveBeenCalled();
+		expect(await new MediaRepository(db).findById(original.id)).toEqual(original);
 	});
 
 	it("preserves database metadata when storage replacement fails", async () => {
