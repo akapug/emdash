@@ -956,7 +956,7 @@ export function parseWxrString(xml: string): Promise<WxrData> {
 								title: currentItem.title,
 								url: currentItem.link,
 								postDate: currentItem.postDate,
-								meta: new Map(),
+								meta: currentItem.meta,
 							};
 						}
 						break;

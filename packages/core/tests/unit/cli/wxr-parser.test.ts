@@ -125,7 +125,12 @@ describe("parseWxr", () => {
 		expect(result.posts[0]?.postType).toBe("page");
 	});
 
-	it("parses attachments", async () => {
+	it.each([
+		["stream", (xml: string) => parseWxr(createStream(xml))],
+		["string", parseWxrString],
+	] as const)("parses attachments with postmeta from a %s", async (_kind, parse) => {
+		const url = "https://example.com/wp-content/uploads/2024/01/test.jpg";
+		const metadata = 'a:1:{s:8:"filesize";i:9437184;}';
 		const wxr = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"
   xmlns:wp="http://wordpress.org/export/1.2/">
@@ -134,18 +139,27 @@ describe("parseWxr", () => {
       <title>Test Image</title>
       <wp:post_id>10</wp:post_id>
       <wp:post_type>attachment</wp:post_type>
-      <wp:attachment_url>https://example.com/wp-content/uploads/2024/01/test.jpg</wp:attachment_url>
+      <wp:attachment_url>${url}</wp:attachment_url>
+      <wp:postmeta>
+        <wp:meta_key><![CDATA[_wp_attachment_metadata]]></wp:meta_key>
+        <wp:meta_value><![CDATA[${metadata}]]></wp:meta_value>
+      </wp:postmeta>
+    </item>
+    <item>
+      <wp:post_id>11</wp:post_id>
+      <wp:post_type>attachment</wp:post_type>
+      <wp:attachment_url>https://example.com/other.jpg</wp:attachment_url>
     </item>
   </channel>
 </rss>`;
 
-		const result = await parseWxr(createStream(wxr));
+		const result = await parse(wxr);
 
 		expect(result.posts).toHaveLength(0);
-		expect(result.attachments).toHaveLength(1);
-		expect(result.attachments[0]?.id).toBe(10);
-		expect(result.attachments[0]?.title).toBe("Test Image");
-		expect(result.attachments[0]?.url).toContain("test.jpg");
+		expect(result.attachments).toHaveLength(2);
+		expect(result.attachments[0]).toMatchObject({ id: 10, title: "Test Image", url });
+		expect(result.attachments[0]?.meta).toEqual(new Map([["_wp_attachment_metadata", metadata]]));
+		expect(result.attachments[1]?.meta.size).toBe(0);
 	});
 
 	it("parses categories", async () => {
