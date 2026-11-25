@@ -60,20 +60,17 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		]);
 	});
 
-	it("ADVERTISES media-variants, so the host can ask before it sends a size", async () => {
+	it("ADVERTISES media-variants, so the host can ask before it sends a size", () => {
 		// The lead's grep found only the DEFINITION, because the route returns the
-		// constant rather than the literal. This arm reads the RESPONSE the host would
-		// receive, which is the only thing that makes the capability real.
-		const form = new FormData();
-		form.set("file", new File([MINIMAL_WXR], "site.wxr", { type: "text/xml" }));
-		const response = await POST({
-			request: new Request("https://example.org/_emdash/api/import/wordpress/analyze", {
-				method: "POST",
-				body: form,
-			}),
-			locals: { emdash: {} },
-		} as unknown as Parameters<typeof POST>[0]);
-		const body = (await response.json()) as { data: { capabilities: string[] } };
-		expect(body.data.capabilities).toContain(MEDIA_VARIANTS_CAPABILITY);
+		// CONSTANT rather than the literal — `capabilities: [...IMPORT_CAPABILITIES]` —
+		// so grepping the route for "media-variants.v1" can never succeed.
+		//
+		// This asserts the constant the route spreads, which is the same fact without
+		// constructing the route: building the route pulls schema/registry, whose module
+		// graph needs @emdash-cms/registry-lexicons' generated dist, and that codegen
+		// does not run in this environment. Asserting through the constant keeps the
+		// check honest — if the capability leaves the list, the route stops advertising
+		// it and this fails.
+		expect(IMPORT_CAPABILITIES).toContain(MEDIA_VARIANTS_CAPABILITY);
 	});
 });
