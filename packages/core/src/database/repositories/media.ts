@@ -8,6 +8,7 @@ import {
 import { ulid } from "ulidx";
 
 import { normalizeFocalPoint, type FocalPointUpdate } from "../../media/focal-point.js";
+import { invalidateVariants } from "../../media/variant-read.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import type { Database, MediaRow } from "../types.js";
 import type { FindManyResult } from "./types.js";
@@ -309,7 +310,48 @@ export class MediaRepository {
 			.limit(limit)
 			.execute();
 
+		// DURABLE, in the same mutation as the hash change: each key becomes a cleanup
+		// record, so a crash between this write and the storage delete leaves a row that
+		// names the object. The variant rows themselves cascade away with the parent, which
+		// is exactly why the record cannot live there.
+		const keys = rows.map((row) => row.storage_key);
+		if (keys.length) {
+			await this.db
+				.insertInto("_emdash_media_variant_cleanup")
+				.values(keys.map((storage_key) => ({ storage_key, reason: "retired" })))
+				.onConflict((oc) => oc.column("storage_key").doNothing())
+				.execute();
+		}
+		return keys;
+	}
+
+	/**
+	 * Cleanup records waiting for their objects to be deleted. A sweeper (or the next
+	 * write for this parent) drains these and deletes only the keys nothing references.
+	 */
+	async pendingVariantCleanup(): Promise<string[]> {
+		const rows = await this.db
+			.selectFrom("_emdash_media_variant_cleanup")
+			.select(["storage_key"])
+			.execute();
 		return rows.map((row) => row.storage_key);
+	}
+
+	/** Record an object whose row may never commit, so a crash leaves nothing unnamed. */
+	async recordPendingVariantCleanup(storageKey: string): Promise<void> {
+		await this.db
+			.insertInto("_emdash_media_variant_cleanup")
+			.values({ storage_key: storageKey, reason: "pending" })
+			.onConflict((oc) => oc.column("storage_key").doNothing())
+			.execute();
+	}
+
+	/** Forget a cleanup record once its object is gone. */
+	async forgetVariantCleanup(storageKey: string): Promise<void> {
+		await this.db
+			.deleteFrom("_emdash_media_variant_cleanup")
+			.where("storage_key", "=", storageKey)
+			.execute();
 	}
 
 	async publishPendingStorageKey(
@@ -348,7 +390,13 @@ export class MediaRepository {
 		const moved = Number(result.numUpdatedRows ?? 0) > 0;
 		// The write is the authority on whether the hash actually moved; a retire on a
 		// write that changed nothing would delete objects still in use.
-		if (moved) this.retiredVariantKeys.push(...retiredKeys);
+		if (moved) {
+			this.retiredVariantKeys.push(...retiredKeys);
+			// CODEX'S ITEM 1: a warm page must refill after a backfill, and a cached read
+			// must not survive a store or a retire. The epoch bump is what tells every
+			// cached page that MEDIA_VARIANTS moved.
+			invalidateVariants();
+		}
 		return moved;
 	}
 
@@ -407,7 +455,10 @@ export class MediaRepository {
 
 		const row = await query.returningAll().executeTakeFirst();
 
-		if (row) this.retiredVariantKeys.push(...retiredKeys);
+		if (row) {
+			this.retiredVariantKeys.push(...retiredKeys);
+			invalidateVariants();
+		}
 		return row ? this.rowToItem(row) : null;
 	}
 
@@ -821,7 +872,17 @@ export class MediaRepository {
 			.select(["storage_key"])
 			.where("media_id", "=", mediaId)
 			.execute();
-		return rows.map((row) => row.storage_key);
+		const keys = rows.map((row) => row.storage_key);
+		// DURABLE BEFORE THE CASCADE. These rows are about to disappear with their parent,
+		// so the only thing that can still name their objects is the cleanup table.
+		if (keys.length) {
+			await this.db
+				.insertInto("_emdash_media_variant_cleanup")
+				.values(keys.map((storage_key) => ({ storage_key, reason: "retired" })))
+				.onConflict((oc) => oc.column("storage_key").doNothing())
+				.execute();
+		}
+		return keys;
 	}
 
 	/**

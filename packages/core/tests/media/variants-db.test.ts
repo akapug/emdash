@@ -132,7 +132,7 @@ describe("the variant lifecycle the schema enforces", () => {
 
 	it("the down migration refuses to drop a populated table — the objects would be orphaned", async () => {
 		await storeRow({ mediaId: "m1" });
-		const { down } = await import("../../src/database/migrations/embark_005_media_variants.js");
+		const { down } = await import("../../src/database/migrations/embark_004_media_variants.js");
 		await expect(down(db)).rejects.toThrow(/retire their objects/);
 	});
 });

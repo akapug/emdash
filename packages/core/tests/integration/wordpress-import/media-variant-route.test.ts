@@ -67,7 +67,7 @@ async function seedImage(): Promise<{ id: string; storageKey: string }> {
 	const repo = new MediaRepository(db);
 	const created = await repo.create({
 		filename: "photo.jpg",
-		mimeType: "image/jpeg",
+		mimeType: "image/png",
 		storageKey: "2024/01/photo.jpg",
 		size: ORIGINAL_BYTES.byteLength,
 		width: 1200,
@@ -200,5 +200,144 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 		expect(
 			await new MediaVariantRepository(db).forParent(image.id, "hash-from-before-the-replace"),
 		).toHaveLength(0);
+	});
+});
+
+/**
+ * CODEX'S FOUR LIFECYCLE PROBES, taken as arms. It measured these on 07349285f1 and got
+ * 3 red / 1 green; each one is a case my own W8 arm could not reach because it tested a
+ * happy path. The cleanup assertion is adapted to the durable cleanup RECORD, which is
+ * the shape the lead ruled on (a flag on the variant row would die with the cascade).
+ */
+describe("codex's lifecycle probes", () => {
+	it("a committed row whose object is missing serves the ORIGINAL, not a 5xx", async () => {
+		const storage = storageDouble();
+		const image = await seedImage();
+		await storage.upload({ key: image.storageKey, body: ORIGINAL_BYTES, contentType: "image/png" });
+		const stored = await handleMediaVariantStore(db, storage as never, {
+			mediaId: image.id,
+			sizeName: "medium",
+			width: 300,
+			height: 300,
+			parentContentHash: "hash-of-the-original",
+			bytes: VARIANT_BYTES,
+			contentType: "image/png",
+			contentHash: "probe-variant",
+		});
+		expect(stored.success).toBe(true);
+
+		const key = [...storage.objects.keys()].find((k) => k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX))!;
+		const download = storage.download;
+		storage.download = async (asked: string) => {
+			if (asked === key) throw new Error("File not found");
+			return download(asked);
+		};
+
+		const served = await fileGet(fileContext(image.storageKey, "300", storage));
+		expect(served.status, "a missing object must not be a 5xx").toBe(200);
+		expect(new Uint8Array(await served.arrayBuffer())).toEqual(ORIGINAL_BYTES);
+	});
+
+	it("a failed object delete leaves a durable cleanup RECORD naming the key", async () => {
+		const storage = storageDouble();
+		const image = await seedImage();
+		await storage.upload({ key: image.storageKey, body: ORIGINAL_BYTES, contentType: "image/png" });
+		await handleMediaVariantStore(db, storage as never, {
+			mediaId: image.id,
+			sizeName: "medium",
+			width: 300,
+			height: 300,
+			parentContentHash: "hash-of-the-original",
+			bytes: VARIANT_BYTES,
+			contentType: "image/png",
+			contentHash: "probe-variant",
+		});
+		const key = [...storage.objects.keys()].find((k) => k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX))!;
+
+		const remove = storage.delete;
+		storage.delete = async (asked: string) => {
+			if (asked === key) throw new Error("Temporary storage failure");
+			await remove(asked);
+		};
+		await handleMediaDelete(db, image.id, storage as never);
+
+		// The record survives the cascade, which is the whole point of the separate table.
+		const pending = await new MediaRepository(db).pendingVariantCleanup();
+		expect(pending, "the key must still be nameable after a failed delete").toContain(key);
+	});
+
+	it("a restored original can carry a size whose prior object was retired", async () => {
+		const storage = storageDouble();
+		const image = await seedImage();
+		await storage.upload({ key: image.storageKey, body: ORIGINAL_BYTES, contentType: "image/png" });
+		const input = {
+			mediaId: image.id,
+			sizeName: "medium",
+			width: 300,
+			height: 300,
+			parentContentHash: "hash-of-the-original",
+			bytes: VARIANT_BYTES,
+			contentType: "image/png",
+			contentHash: "probe-variant",
+		};
+		expect((await handleMediaVariantStore(db, storage as never, input)).success).toBe(true);
+
+		const repo = new MediaRepository(db);
+		await repo.replaceReadyFile(image.id, image.storageKey, {
+			size: 3,
+			width: 901,
+			height: 901,
+			contentHash: "replacement-hash",
+		});
+		for (const key of repo.drainRetiredVariantKeys()) await storage.delete(key);
+
+		// The original is restored: the size must be storable again.
+		await repo.replaceReadyFile(image.id, image.storageKey, {
+			size: 3,
+			width: 1200,
+			height: 1200,
+			contentHash: input.parentContentHash,
+		});
+		const replay = await handleMediaVariantStore(db, storage as never, input);
+		expect(replay.success, `a restored parent can take the size again: ${JSON.stringify(replay)}`).toBe(true);
+		const [variant] = await new MediaVariantRepository(db).forParent(
+			image.id,
+			input.parentContentHash,
+		);
+		expect(storage.objects.has(variant!.storageKey)).toBe(true);
+	});
+
+	it("changing the parent while storing bytes prevents the fresh slot commit", async () => {
+		const storage = storageDouble();
+		const image = await seedImage();
+		await storage.upload({ key: image.storageKey, body: ORIGINAL_BYTES, contentType: "image/png" });
+
+		const upload = storage.upload;
+		storage.upload = async (options: { key: string; body: Uint8Array; contentType: string }) => {
+			const written = await upload(options);
+			await new MediaRepository(db).replaceReadyFile(image.id, image.storageKey, {
+				size: 3,
+				width: 901,
+				height: 901,
+				contentHash: "replacement-during-write",
+			});
+			return written;
+		};
+
+		const pending = await handleMediaVariantStore(db, storage as never, {
+			mediaId: image.id,
+			sizeName: "medium",
+			width: 300,
+			height: 300,
+			parentContentHash: "hash-of-the-original",
+			bytes: VARIANT_BYTES,
+			contentType: "image/png",
+			contentHash: "probe-variant",
+		});
+		expect(pending.success, "a parent that moved mid-write must refuse").toBe(false);
+		const leaked = [...storage.objects.keys()].filter((k) =>
+			k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX),
+		);
+		expect(leaked, "and it must not leave an object behind").toEqual([]);
 	});
 });

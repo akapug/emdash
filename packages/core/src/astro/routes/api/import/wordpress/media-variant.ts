@@ -35,6 +35,50 @@ import { computeContentHash } from "#utils/hash.js";
 
 const MAX_MULTIPART_BYTES = VARIANT_BYTE_CAP + 64 * 1024;
 
+class BodyTooLarge extends Error {}
+
+/** Read at most `limit` bytes from a stream, or throw {@link BodyTooLarge}. */
+async function boundedBody(stream: ReadableStream<Uint8Array>, limit: number): Promise<ArrayBuffer> {
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.byteLength;
+		if (total > limit) {
+			await reader.cancel().catch(() => undefined);
+			throw new BodyTooLarge();
+		}
+		chunks.push(value);
+	}
+	const out = new Uint8Array(total);
+	let at = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, at);
+		at += chunk.byteLength;
+	}
+	return out.buffer;
+}
+
+/**
+ * The declared type is the CLIENT'S WORD. The bytes decide, and the parent's format is
+ * the second opinion: a variant of a JPEG must be a JPEG, so the stored MIME can never
+ * say image/jpeg over real PNG bytes.
+ */
+function contentTypeOf(bytes: Uint8Array): string | null {
+	if (bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e)
+		return "image/png";
+	if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
+	if (bytes.length > 2 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46)
+		return "image/gif";
+	if (bytes.length > 12 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42)
+		return "image/webp";
+	if (bytes.length > 12 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79)
+		return "image/avif";
+	return null;
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
 	const { emdash, user } = locals;
 
@@ -45,14 +89,26 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		return apiError("NOT_CONFIGURED", "EmDash not configured", 500);
 	}
 
-	const declared = Number(request.headers.get("content-length") ?? "0");
-	if (Number.isFinite(declared) && declared > MAX_MULTIPART_BYTES) {
-		return apiError("PAYLOAD_TOO_LARGE", "A variant is one raster image, bounded", 413);
+	// B: THE STREAM IS BOUNDED, NOT THE HEADER. Content-Length is a claim by the client;
+	// a body with no header, or a lying one, would otherwise be read whole. The reader
+	// stops at MAX_MULTIPART_BYTES and answers 413 — so the cap costs one buffer, not an
+	// unbounded read.
+	if (!request.body) return apiError("INVALID_REQUEST", "A multipart body is required", 400);
+	let body: ArrayBuffer;
+	try {
+		body = await boundedBody(request.body, MAX_MULTIPART_BYTES);
+	} catch (error) {
+		if (error instanceof BodyTooLarge) {
+			return apiError("PAYLOAD_TOO_LARGE", "A variant is one raster image, bounded", 413);
+		}
+		return apiError("INVALID_REQUEST", "A multipart body is required", 400);
 	}
 
 	let form: FormData;
 	try {
-		form = await request.formData();
+		form = await new Response(body, {
+			headers: { "content-type": request.headers.get("content-type") ?? "" },
+		}).formData();
 	} catch {
 		return apiError("INVALID_REQUEST", "A multipart body is required", 400);
 	}
@@ -61,7 +117,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	const sizeName = form.get("sizeName");
 	const width = Number(form.get("width"));
 	const height = Number(form.get("height"));
-	const fileEntry = form.get("file");
+	// EXACTLY ONE FILE. A body with two parts named `file` is ambiguous, and taking the
+	// first would store bytes the caller did not mean to send.
+	const fileEntries = form.getAll("file");
+	if (fileEntries.length !== 1) {
+		return apiError("INVALID_REQUEST", "Exactly one file is required", 400);
+	}
+	const fileEntry = fileEntries[0];
 	const file = fileEntry instanceof File ? fileEntry : null;
 
 	if (typeof mediaId !== "string" || !mediaId)
@@ -96,6 +158,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	const decoded = readDimensions(bytes);
 	if (!decoded) return apiError("INVALID_TYPE", "The bytes are not a readable raster image", 400);
 
+	// THE STORED TYPE IS THE BYTES' TYPE, and it must match the parent's: a variant is a
+	// size of the same picture, so a format change is a different file, not a size.
+	const actualType = contentTypeOf(bytes);
+	if (!actualType) return apiError("INVALID_TYPE", "The bytes are not a recognised raster image", 400);
+	if (actualType !== media.mimeType) {
+		return apiError("INVALID_TYPE", "A variant must be the parent's own format", 400);
+	}
+
 	const parent: VariantParent = {
 		id: mediaId,
 		width: media.width ?? 0,
@@ -109,7 +179,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		height,
 		decodedWidth: decoded.width,
 		decodedHeight: decoded.height,
-		contentType: file.type,
+		contentType: actualType,
 		bytes: file.size,
 	};
 	const refusal = variantRefusal(parent, offer);
@@ -134,14 +204,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		// it was made from.
 		parentContentHash: media.contentHash ?? "",
 		bytes,
-		contentType: file.type,
+		contentType: actualType,
 		contentHash,
 	});
-	if (!stored.success) return apiError("UNAVAILABLE", "The variant could not be stored", 500);
+	// A REFUSED STORE IS NOT ALWAYS A 500. The handler answers CONFLICT when the parent
+	// changed or the slot belongs to different bytes — both are the caller's situation to
+	// resolve, not a server fault, so they keep their 409. Only a genuine failure is 500.
+	if (!stored.success) {
+		if (stored.error?.code === "CONFLICT") {
+			return apiError("CONFLICT", stored.error.message, 409);
+		}
+		return apiError("UNAVAILABLE", stored.error?.message ?? "The variant could not be stored", 500);
+	}
 
 	// A duplicate of the same bytes is a replay, not an error; different bytes at
 	// the same slot is a conflict the client must report rather than swallow.
-	if (stored.data.outcome === "conflict") {
+	if (stored.data?.outcome === "conflict") {
 		return apiError("CONFLICT", "A different variant already owns this slot", 409);
 	}
 	return new Response(

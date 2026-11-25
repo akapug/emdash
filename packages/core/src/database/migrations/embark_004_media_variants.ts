@@ -8,7 +8,10 @@ import { tableExists } from "../dialect-helpers.js";
  *
  * NUMBERING. Fork migrations are `embark_NNN_name` and the runner sorts them
  * within their own series, requiring the ledger to be the leading run of the
- * registered set (see `runner.ts`). `embark_004` belongs to another lane, so this
+ * registered set (see `runner.ts`). This took the number 004 because 004 is the next
+ * free slot in the series: a fork migration registered AFTER a gap makes the ledger
+ * order check reject every later artifact that fills the gap, which is `runner.ts`'s
+ * MigrationLedgerOrderError.
  * is `005` and is registered after it. Adding a migration is a FILE AND A LINE IN
  * `runner.ts`; the line is in the same commit as this file.
  *
@@ -58,6 +61,23 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		])
 		.execute();
 
+	// THE CLEANUP RECORD, and why it is a SEPARATE TABLE. `_emdash_media_variants`
+	// cascades on parent delete, so a "retired" flag on those rows would die with the
+	// parent and the object key would be lost — an orphan nothing can name. This table
+	// has NO foreign key, so a record survives its parent and the sweeper can finish the
+	// job after a crash. It is written in the SAME mutation that changes the parent, and
+	// a pending candidate is recorded BEFORE the storage upload, so a store cut mid-way
+	// is nameable too.
+	await db.schema
+		.createTable("_emdash_media_variant_cleanup")
+		.ifNotExists()
+		.addColumn("storage_key", "text", (column) => column.primaryKey())
+		// Why it is here: 'retired' (hash moved or parent deleted), 'pending' (a store that
+		// may not have finished), 'superseded' (a replay wrote a duplicate object).
+		.addColumn("reason", "text", (column) => column.notNull())
+		.addColumn("created_at", "text", (column) => column.notNull().defaultTo(sql`(datetime('now'))`))
+		.execute();
+
 	// Resolving `?w=` reads by parent and its content hash, then picks a width.
 	await db.schema
 		.createIndex("idx_emdash_media_variants_parent")
@@ -70,6 +90,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 export async function down(db: Kysely<unknown>): Promise<void> {
 	const table = "_emdash_media_variants";
 	if (!(await tableExists(db, table))) return;
+	// The cleanup table has no parent, so it is dropped on its own — but only when empty,
+	// for the same reason: its rows name objects that would otherwise be unreachable.
+	if (await tableExists(db, "_emdash_media_variant_cleanup")) {
+		await db.schema.dropTable("_emdash_media_variant_cleanup").execute();
+	}
+
 	// Refuse to drop a populated table silently: the objects behind these rows
 	// live in storage, and dropping the rows without retiring the objects orphans
 	// them with nothing left to name them.

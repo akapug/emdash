@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 
 import type { StoredVariant } from "../../media/variants.js";
+import { invalidateVariants } from "../../media/variant-read.js";
 import type { Database } from "../types.js";
 
 /**
@@ -78,6 +79,8 @@ export class MediaVariantRepository {
 				// conflict for the caller to report, never a silent success.
 				return "conflict";
 			}
+			// Codex item 1: a store must not leave a cached "no variants" page behind.
+			invalidateVariants();
 			return "stored";
 		} catch (error) {
 			// A concurrent insert won the slot between the check and the write. Which

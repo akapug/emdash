@@ -832,8 +832,20 @@ export interface MediaVariantTable {
 	created_at: Generated<string>;
 }
 
+/**
+ * Objects waiting to be deleted from storage. Deliberately has NO foreign key: its whole
+ * job is to outlive the row or parent that named the object, so a crash between a schema
+ * write and a storage delete leaves a record, never an orphan.
+ */
+export interface MediaVariantCleanupTable {
+	storage_key: string;
+	reason: string;
+	created_at: Generated<string>;
+}
+
 export interface Database {
 	_emdash_media_variants: MediaVariantTable;
+	_emdash_media_variant_cleanup: MediaVariantCleanupTable;
 	_emdash_protected_content: ProtectedContentTable;
 	_emdash_protected_revisions: ProtectedRevisionTable;
 	revisions: RevisionTable;

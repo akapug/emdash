@@ -81,11 +81,23 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 	const variant = emdash.db
 		? await resolveVariantForRequest(emdash.db, key, url.searchParams.get("w"))
 		: null;
-	const storageKey = variant?.storageKey ?? key;
+	let storageKey = variant?.storageKey ?? key;
+
+	// A COMMITTED ROW WHOSE OBJECT IS MISSING SERVES THE ORIGINAL. The row and the object
+	// are two writes; a crash, a cleanup sweep, or a storage fault can leave the row
+	// naming bytes that are gone. Answering 5xx there would break the image on a page for
+	// a case the parent can satisfy — so the fallback is the parent, which is the same
+	// picture at full size.
+	let result: Awaited<ReturnType<typeof emdash.storage.download>>;
+	try {
+		result = await emdash.storage.download(storageKey);
+	} catch (error) {
+		if (storageKey === key) throw error;
+		storageKey = key;
+		result = await emdash.storage.download(key);
+	}
 
 	try {
-		const result = await emdash.storage.download(storageKey);
-
 		const headers: Record<string, string> = {
 			"Content-Type": variant?.contentType ?? result.contentType,
 			"Cache-Control": result.contentType.startsWith("image/")

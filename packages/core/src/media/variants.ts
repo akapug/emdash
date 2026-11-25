@@ -136,13 +136,19 @@ export function variantRefusal(parent: VariantParent, offer: VariantOffer): Vari
 	if (offer.decodedWidth !== offer.width || offer.decodedHeight !== offer.height)
 		return "dimensions-do-not-match-bytes";
 	if (!(VARIANT_LADDER as readonly number[]).includes(offer.width)) return "not-on-the-ladder";
+	// NEITHER DIMENSION MAY GROW. A size wider AND taller than the parent is an upscale;
+	// one that is wider but shorter is a crop, and the aspect rule below refuses it. This
+	// catches the first case without relying on the ratio at all.
 	if (offer.width >= parent.width && offer.height >= parent.height)
 		return "not-smaller-than-the-parent";
 	if (parent.width <= 0 || parent.height <= 0 || offer.height <= 0)
 		return "aspect-differs-from-the-parent";
+	// EXACT AND INCLUSIVE: the tolerance is a bound the offer must not exceed, so a ratio
+	// exactly at it passes. Cross-multiplication rather than two divisions, so the answer
+	// does not depend on floating-point rounding at the boundary.
 	const parentRatio = parent.width / parent.height;
 	const offerRatio = offer.width / offer.height;
-	if (Math.abs(offerRatio - parentRatio) / parentRatio > ASPECT_TOLERANCE)
+	if (Math.abs(offerRatio - parentRatio) - parentRatio * ASPECT_TOLERANCE > 0)
 		return "aspect-differs-from-the-parent";
 	return null;
 }

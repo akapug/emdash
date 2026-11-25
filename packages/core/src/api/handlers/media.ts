@@ -436,6 +436,13 @@ export async function handleMediaVariantStore(
 	const ext = extensionFor(input.contentType);
 	const storageKey = `${MEDIA_VARIANT_STORAGE_PREFIX}${crypto.randomUUID()}${ext}`;
 
+	// THE CANDIDATE KEY IS RECORDED BEFORE THE UPLOAD. A crash between the upload and the
+	// row would otherwise leave an object named by nothing; now the cleanup record names
+	// it, and the sweeper removes it. The record is dropped once the row is committed.
+	await new MediaRepository(db)
+		.recordPendingVariantCleanup(storageKey)
+		.catch(() => undefined);
+
 	// Bytes first, then the row. A cut between the two leaves an object nobody can
 	// fetch (the prefix is private and no row names it), never a row without bytes.
 	await storage.upload({ key: storageKey, body: input.bytes, contentType: input.contentType });
@@ -451,6 +458,10 @@ export async function handleMediaVariantStore(
 		parentContentHash: parentHash,
 	});
 
+	if (outcome === "stored") {
+		// The row now names the bytes, so the cleanup candidate is no longer a candidate.
+		await new MediaRepository(db).forgetVariantCleanup(storageKey).catch(() => undefined);
+	}
 	if (outcome === "conflict") {
 		// The slot belongs to different bytes. The object we just wrote is not named
 		// by any row, so remove it rather than leave an orphan.
@@ -495,7 +506,14 @@ export async function handleMediaDelete(
 		 */
 		const variantKeys = await repo.retireVariants(id);
 		for (const key of variantKeys) {
-			await storage?.delete(key).catch(() => undefined);
+			// The cleanup record was written by the retire. Forget it ONLY if the object is
+			// actually gone: a failed delete must leave the record so the sweeper can try
+			// again, which is the whole reason the record exists.
+			const removed = await storage?.delete(key).then(
+				() => true,
+				() => false,
+			);
+			if (removed !== false) await repo.forgetVariantCleanup(key).catch(() => undefined);
 		}
 
 		const storageKey = await repo.deleteWithStorageKey(id);
