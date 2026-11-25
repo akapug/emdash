@@ -14,7 +14,7 @@ import {
 	type VariantParent,
 } from "../../src/media/variants.js";
 
-const PARENT: VariantParent = { id: "m1", width: 4414, height: 6122, generation: 3, status: "ready" };
+const PARENT: VariantParent = { id: "m1", width: 4414, height: 6122, contentHash: "sha1:current", status: "ready" };
 
 function v(over: Partial<StoredVariant> = {}): StoredVariant {
 	return {
@@ -25,7 +25,7 @@ function v(over: Partial<StoredVariant> = {}): StoredVariant {
 		storageKey: "01ABC-768x1065.jpg",
 		bytes: 90_000,
 		contentHash: "sha256:aaa",
-		parentGeneration: 3,
+		parentContentHash: "sha1:current",
 		createdAt: "2026-11-24T00:00:00Z",
 		...over,
 	};
@@ -101,8 +101,12 @@ describe("chooseVariant — the ?w= resolver", () => {
 	it("falls back to the original when nothing is wide enough", () => {
 		expect(chooseVariant(PARENT, [v({ width: 300, height: 416 })], 2000)).toBeNull();
 	});
-	it("IGNORES a variant from an older parent generation — a replaced parent stops serving its old sizes", () => {
-		expect(chooseVariant({ ...PARENT, generation: 4 }, [v({ parentGeneration: 3 })], 300)).toBeNull();
+	it("IGNORES a variant from an older parent — a replaced parent stops serving its old sizes", () => {
+		// The identity is the parent's CONTENT HASH, not a generation: `media` has no
+		// version column and a Replace rewrites content_hash.
+		expect(
+			chooseVariant({ ...PARENT, contentHash: "sha1:new" }, [v({ parentContentHash: "sha1:old" })], 300),
+		).toBeNull();
 	});
 	it("serves nothing for a parent that is not ready", () => {
 		expect(chooseVariant({ ...PARENT, status: "draft" }, [v()], 300)).toBeNull();
