@@ -30,7 +30,17 @@ const IMG_TAG = /<img\b[^>]*>/gi;
  * points at OUR route would swap one picture for another — so only a path, or an absolute URL on this origin,
  * is ever touched.
  */
-export async function withStoredSizes(html: string, origin?: string): Promise<string> {
+export async function withStoredSizes(
+	html: string,
+	opts: {
+		/** The site's own origin. An absolute src on any other origin is somebody else's file. */
+		origin?: string;
+		/** INJECTED SO THE CONTRACT CAN BE TESTED. The render path passes nothing and gets the real read. */
+		lookup?: typeof storedSizesForRender;
+	} = {},
+): Promise<string> {
+	const origin = opts.origin;
+	const lookup = opts.lookup ?? storedSizesForRender;
 	if (!html.includes(MEDIA_PATH_PREFIX)) return html;
 
 	// ONE PASS OVER THE HTML, by function. A string replacement would expand `$&`, `$1`, `` $` `` and `$'`
@@ -47,7 +57,7 @@ export async function withStoredSizes(html: string, origin?: string): Promise<st
 			const key = src ? mediaKeyOf(src, origin) : null;
 			if (!key) return null;
 			const ownWidth = Number(/\bwidth\s*=\s*"(\d+)"/i.exec(tag)?.[1]);
-			const result = await storedSizesForRender(
+			const result = await lookup(
 				{ storageKey: key },
 				Number.isInteger(ownWidth) && ownWidth > 0 ? ownWidth : undefined,
 			);
@@ -68,6 +78,19 @@ export async function withStoredSizes(html: string, origin?: string): Promise<st
 }
 
 /**
+ * Is `src` on OUR origin, exactly?
+ *
+ * The check after the origin must be a path or nothing at all. `https://site.example.evil.test` merely
+ * BEGINS with `https://site.example`, and would otherwise be treated as ours and given a srcset pointing at
+ * our file route — a swapped picture, which is the failure this whole function must not cause.
+ */
+function isOnOrigin(src: string, origin: string): boolean {
+	if (!src.startsWith(origin)) return false;
+	const rest = src.slice(origin.length);
+	return rest === "" || rest.startsWith("/") || rest.startsWith("?") || rest.startsWith("#");
+}
+
+/**
  * The storage key for a src we own, or null.
  *
  * A PATH under our media route is ours. An absolute URL is ours only when it is on `origin` — otherwise the
@@ -78,7 +101,9 @@ function mediaKeyOf(src: string, origin?: string): string | null {
 	let path: string;
 	if (src.startsWith(MEDIA_PATH_PREFIX)) {
 		path = src;
-	} else if (origin && src.startsWith(origin)) {
+	} else if (origin && isOnOrigin(src, origin)) {
+		// `startsWith(origin)` ALONE MATCHES `https://site.example.evil.test` — that host merely BEGINS with
+		// ours. The authority must end here: nothing but the path may follow.
 		path = src.slice(origin.length);
 		if (!path.startsWith(MEDIA_PATH_PREFIX)) return null;
 	} else {

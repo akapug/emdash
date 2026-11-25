@@ -32,7 +32,7 @@ if (/<form\b/i.test(sanitized)) optOutPageCache();
 // raw markup and would otherwise reach the browser with no srcset: measured on rehearsal af, one such tag
 // fetched 874 KB into a 300x225 box while the tenant held four stored sizes for it. The rewrite only ADDS
 // srcset and sizes to media-file tags that have sizes to offer, and leaves every other byte alone.
-const withSizes = await withStoredSizes(sanitized);
+const withSizes = await withStoredSizes(sanitized, { origin: Astro.url.origin });
 ---
 
 <div class="emdash-html-block" set:html={withSizes} />
