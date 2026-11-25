@@ -177,9 +177,10 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		// `/media/custom.jpg`) still goes through Astro's pipeline, which existing arms pin; only the media route's
 		// files have nothing behind them that resizes, so only those must avoid a list Astro would invent.
 		const isOurs = absoluteSrc.startsWith(`${publicOrigin}/_emdash/api/media/file/`);
-		// OUR OWN MEDIA IS ALWAYS HANDLED HERE, dimensions or not: the stored read is the only thing that can offer a
-		// width list this component can back.
-		const useAstroImage = !isOurs && Boolean(finalWidth && finalHeight);
+		// UNCHANGED FROM BEFORE: a src on our origin with both dimensions goes through the stored read. A REMOTE src
+		// does NOT belong here — it has no stored widths to read, and routing it in took its existing pipeline away
+		// (four arms caught exactly that when this said `!isOurs && …`, which is true for a CDN URL).
+		const useAstroImage = finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`);
 		if (storedSizesOnly || useAstroImage || isOurs) {
 			// Offer only the widths that are stored. A fixed ladder would promise 300w over
 			// a multi-megabyte original, which is worse than no srcset because the browser
