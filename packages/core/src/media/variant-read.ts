@@ -131,6 +131,6 @@ export function srcsetWidthsFor(variants: readonly StoredVariant[], renderedWidt
  * Every path that changes variant rows must call this, or a warm page keeps
  * serving a srcset for variants that no longer exist.
  */
-export async function invalidateVariants(): Promise<void> {
-	await invalidateObjectCache(CacheNamespace.MEDIA_VARIANTS);
+export function invalidateVariants(): void {
+	invalidateObjectCache(CacheNamespace.MEDIA_VARIANTS);
 }
