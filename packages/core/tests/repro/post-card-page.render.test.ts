@@ -31,7 +31,10 @@ const imageNodePost = {
 		{
 			_type: "image",
 			_key: "i1",
-			asset: { _ref: "ref-1", url: IMAGE_URL },
+			// THE MEASURED SHAPE, taken from a real post's content (optest-dreamingstone-ac, ec_posts,
+			// 2024-annual-report): the ref is a FULL PATH to the media-file route, not a bare id, and `url` carries
+			// the same value. An invented ref here is what let a doubled-path bug through.
+			asset: { _ref: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg", url: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg" },
 			alt: "An image node picture",
 		},
 	],
@@ -61,6 +64,8 @@ const noPicturePost = {
 };
 
 const state = vi.hoisted(() => ({ entries: [] as unknown[] }));
+/** What the stored-sizes read answers for the next render: the widths this tenant holds, or none. */
+const storedSizes = vi.hoisted(() => ({ widths: [] as number[] }));
 
 // SPREAD THE REAL MODULE FIRST, as the neighbouring page arms do: `emdash`'s entry pulls the registry packages,
 // and a factory that returns a closed object fails to resolve them before any arm runs.
@@ -80,6 +85,19 @@ async function reads() {
 	};
 }
 vi.mock("emdash", reads);
+// THE VARIANT READ, stubbed at the module so an arm can say what the tenant holds. Returning null is the real
+// no-stored-sizes answer and is what the card must render honestly.
+vi.mock("../../src/media/variant-read.ts", async () => {
+	const actual = await vi.importActual<Record<string, unknown>>("../../src/media/variant-read.ts");
+	return {
+		...actual,
+		storedSizesForRender: async (_media: unknown, width: number) => {
+			const widths = storedSizes.widths.filter((w) => w <= width);
+			if (widths.length === 0) return null;
+			return { srcset: widths.map((w) => `/variants/${w}.png ${w}w`).join(", "), sizes: `(max-width: ${width}px) 100vw, ${width}px` };
+		},
+	};
+});
 // THE TEMPLATE RESOLVES `emdash` TO dist/index.mjs, so the mock must land THERE with the same reads object. This
 // used to spread the actual module, which meant the page ran the real query and ignored `state.entries` — every arm
 // then measured whatever the fixture database held, not the three posts the arm described.
@@ -154,6 +172,19 @@ async function renderIndex(only?: string): Promise<string> {
 	return response.text();
 }
 
+/**
+ * Render the index with the variant read answering as the arm needs.
+ *
+ * THE PICTURE'S WIDTH LIST IS THE SUBJECT, so the read is the one thing this helper controls: `storedWidths` empty
+ * means the tenant holds no sizes for the row, which is the case that used to emit a list of one URL at many widths.
+ */
+async function renderCard(opts: { storedWidths: number[] }): Promise<string> {
+	// THE STORED-SIZES READ IS STUBBED AT THE MODULE, not through a hook in production code: a test seam in the shipped
+	// module is a leak, and this file already stubs its reads the same way.
+	storedSizes.widths = opts.storedWidths;
+	return await renderIndex();
+}
+
 /** The `<article>` for one post, so the arms speak about one card at a time. */
 function articleFor(html: string, slug: string): string {
 	const start = html.indexOf(`href="/posts/${slug}"`);
@@ -173,9 +204,12 @@ describe("the post card a visitor gets", () => {
 		// component needs. So the card carries the media-file route for the ref, and the arm reads that.
 		// A STORED ASSET IS DRAWN BY ITS REF through the media-file route — that is what the template does, and
 		// this post's node carries `_ref: "ref-1"`. Asserting the raw url here would fail on correct output.
+		// THE REF IS DRAWN AS IT ARRIVED — a full path, exactly once. A doubled
+		// `/_emdash/api/media/file//_emdash/api/media/file/...` is what prefixing used to produce, and it 404s.
 		expect(picture, `the card must hold the picture wrapper; got: ${card}`).toContain(
-			"/_emdash/api/media/file/ref-1",
+			'src="/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg"',
 		);
+		expect(picture, `the route must not be prefixed twice; got: ${picture}`).not.toContain("file//_emdash");
 		expect(picture, "with the alt the image node carries").toContain('alt="An image node picture"');
 		// Inside the link to the post, so the picture is clickable like the title.
 		const linkOpen = card.indexOf('<a href="/posts/has-image-node"');
@@ -207,5 +241,31 @@ describe("the post card a visitor gets", () => {
 			"first.jpg",
 		);
 		expect(page, "nor the htmlBlock picture").not.toContain("real.jpg");
+	});
+});
+
+describe("a post card's picture never promises a width it cannot back", () => {
+	it("with stored sizes, the card draws DISTINCT variant URLs and a card-width sizes value", async () => {
+		// THE FAKE SRCSET: `generateSrcset` asked a provider that cannot resize for several widths and got the same
+		// URL back each time, so the markup read 640w … 5400w all pointing at one multi-megabyte original. With
+		// `sizes="100vw"` the browser believes it and fetches the whole original. This arm pins the honest shape:
+		// distinct URLs, and a `sizes` that describes a CARD rather than a viewport.
+		const page = await renderCard({ storedWidths: [300, 768] });
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
+		const srcset = /srcset="([^"]{1,400})"/.exec(picture)?.[1] ?? "";
+		expect(srcset, `the card must offer a srcset of stored sizes; got: ${picture}`).not.toBe("");
+		const urls = srcset.split(",").map((part) => part.trim().split(" ")[0]);
+		expect(new Set(urls).size, `every candidate must be a DIFFERENT url; got: ${srcset}`).toBe(urls.length);
+	});
+
+	it("with NO stored sizes, the card draws the original ONCE and claims no width list", async () => {
+		// DECISION (a): no list at all. A list of one URL pretending to be many is the failure this lane exists for,
+		// so the honest markup is one `src`, no `srcset`, and no `sizes` to tell a browser to prefer a "bigger" entry
+		// that is the same file.
+		const page = await renderCard({ storedWidths: [] });
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
+		expect(picture, "the card still draws its picture").toContain("<img");
+		expect(picture, `no srcset when nothing is stored; got: ${picture}`).not.toContain("srcset=");
+		expect(picture, `and no sizes either; got: ${picture}`).not.toContain("sizes=");
 	});
 });

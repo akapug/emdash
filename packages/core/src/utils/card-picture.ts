@@ -87,7 +87,13 @@ function pictureInNode(node: { readonly [key: string]: unknown }): CardPicture |
 			const alt = typeof node.alt === "string" && node.alt ? node.alt : undefined;
 			const ref = typeof asset?._ref === "string" ? asset._ref : undefined;
 			const url = typeof asset?.url === "string" ? asset.url : undefined;
-			// A stored asset is drawn through the image component by its ref; an external one by its url.
+			// A STORED ASSET IS DRAWN BY ITS REF, AND THE REF IS ALREADY THE ROUTE.
+			//
+			// MEASURED on a real post (optest-dreamingstone-ac, ec_posts, 2024-annual-report): an image node's
+			// asset is `{ _type: "reference", _ref: "/_emdash/api/media/file/01M883…jpeg", url: <the same> }`.
+			// The ref is a FULL PATH, not a bare id — so a caller that prefixes the route to it produces
+			// `/_emdash/api/media/file//_emdash/api/media/file/01M883…jpeg`, a doubled path that 404s every card.
+			// The ref is kept verbatim and named for what it is.
 			if (ref) return { src: url ?? "", alt, assetRef: ref };
 			if (isUsableSource(url)) return { src: url, alt };
 			return null;
