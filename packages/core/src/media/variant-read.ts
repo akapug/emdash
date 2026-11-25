@@ -31,8 +31,8 @@
 
 import type { Kysely } from "kysely";
 
-import type { Database } from "../database/types.js";
 import { MediaRepository } from "../database/repositories/media.js";
+import type { Database } from "../database/types.js";
 import { getDb } from "../loader.js";
 import { localMediaFileUrl } from "../media/url.js";
 import { variantSrcsetWidths, variantUrl, type StoredVariant } from "../media/variants.js";
@@ -161,7 +161,9 @@ export async function getCommittedVariantsForRender(
  *
  * Request-cached: a listing of twenty cards naming the same attachment asks once.
  */
-export async function storedDimensionsForRender(ref: VariantMediaRef): Promise<{ width: number; height: number } | null> {
+export async function storedDimensionsForRender(
+	ref: VariantMediaRef,
+): Promise<{ width: number; height: number } | null> {
 	const key = keyOfRef(ref);
 	if (!key) return null;
 	return requestCached(`media-dimensions:${key}`, async () => {
