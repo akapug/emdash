@@ -12,6 +12,7 @@ import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import PostCard from "../../../../templates/blog-cloudflare/src/components/PostCard.astro";
 import PostsIndex from "../../../../templates/blog-cloudflare/src/pages/posts/index.astro";
 import { ContentRepository } from "../../src/database/repositories/content.js";
 import type { Database } from "../../src/database/types.js";
@@ -349,5 +350,91 @@ describe("a post card's picture never promises a width it cannot back", () => {
 		expect(picture, "the card still draws its picture").toContain("<img");
 		expect(picture, `no srcset when nothing is stored; got: ${picture}`).not.toContain("srcset=");
 		expect(picture, `and no sizes either; got: ${picture}`).not.toContain("sizes=");
+	});
+});
+
+/**
+ * Render the REAL template component the home "Latest" grid uses.
+ *
+ * IT IS A DIFFERENT COMPONENT FROM THE POSTS LISTING. pages/posts/index.astro draws its own card and my earlier arms
+ * covered that; the home grid is components/PostCard.astro, which passes the post's `featuredImage` — a MediaValue with
+ * width and height — straight to <Image>, and that is the path that was still serving the original.
+ */
+async function renderPostCard(props: { featuredImage?: unknown }): Promise<string> {
+	const container = await AstroContainer.create();
+	const response = await runWithContext({ editMode: false, db }, () =>
+		container.renderToResponse(PostCard, {
+			props: { title: "A post", href: "/posts/a-post", featuredImage: props.featuredImage },
+			request: new Request("https://example.org/"),
+		}),
+	);
+	return await response.text();
+}
+
+describe("a post card's picture on the HOME page", () => {
+	// THE HOME "LATEST" GRID IS NOT posts/index.astro. It is components/PostCard.astro, which passes the post's
+	// `featuredImage` — a MediaValue WITH width and height from the media row — straight to <Image>. That used to take
+	// the "caller gave dimensions" branch, hand the src to Astro's <Image>, and let it build a list of the SAME
+	// original URL at 640w … 5400w, because nothing behind a local media URL resizes. Measured: 5.76 MB against a
+	// 0.48 MB source, on a site holding 801 stored sizes that were never offered on that path.
+	const mediaValue = {
+		id: "01M883SDWF1PY8YZBGF4YDDP71",
+		src: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg",
+		width: 2048,
+		height: 1365,
+	};
+
+	it("offers the STORED widths when a caller passes a media value with dimensions", async () => {
+		storedSizes.widths = [300, 768, 1024];
+		const html = await renderPostCard({ featuredImage: mediaValue });
+		const srcset = /srcset="([^"]*)"/.exec(html)?.[1] ?? "";
+		expect(srcset, "a srcset is drawn").not.toBe("");
+		// DISTINCT CANDIDATES, each a real stored width. The defect was every candidate being the same URL.
+		const urls = srcset.split(", ").map((c) => c.trim().split(" ")[0]);
+		expect(new Set(urls).size, `distinct candidates; got ${srcset}`).toBe(urls.length);
+		// THE CANDIDATES ARE THE STORED VARIANTS, whatever address the read returns for them (a `?w=` query on one
+		// origin, or a `/variants/<width>.<ext>` path): what matters is one candidate per stored width, each a
+		// different URL. Asserting a specific address shape would be asserting the fixture, not the rule.
+		expect(srcset).toMatch(/(?:\?w=300|\/variants\/300\.)/);
+		expect(srcset, "the widest stored width is offered too").toMatch(/(?:\?w=1024|\/variants\/1024\.)/);
+		// AND NO `sizes="100vw"` OVER A LIST THAT CANNOT BACK IT: the card's slot width bounds the choice.
+		expect(html).not.toContain('sizes="100vw"');
+	});
+
+	it("draws the original ONCE, and claims no width list, when nothing is stored", async () => {
+		// THE CASE THAT ACTUALLY DISTINGUISHES THE TWO BRANCHES. When stored sizes ARE found, both the old and new
+		// code use them (the old branch ran the same read whenever the caller passed dimensions), so a green arm there
+		// proved nothing — restoring the old branch left it passing. With NOTHING stored the branches diverge: the old
+		// code handed the src to Astro's <Image>, which builds a list of the SAME original at 640w…5400w because
+		// nothing behind a local media URL resizes; the new code draws the original once and claims nothing.
+		storedSizes.widths = [];
+		const html = await renderPostCard({ featuredImage: mediaValue });
+		expect(html, "no list it cannot back").not.toContain("srcset=");
+		expect(html, "and no sizes without a list").not.toContain("sizes=");
+		expect(html).toContain(mediaValue.src);
+		// AND NOT ONE ORIGINAL URL REPEATED AT MANY WIDTHS, which is what the old path produced.
+		expect(html, "no repeated-original candidates").not.toMatch(/srcset="[^"]*2048w/);
+	});
+});
+
+describe("a media value with src and dimensions and NO storageKey", () => {
+	// THE REAL HOME-PAGE SHAPE. A post's `featured_image` row is a MediaValue carrying `src` (our media route) and the
+	// row's width/height, and NO storageKey — so the stored read must find the media from the value's own src, which is
+	// the only identity it has. This is a different question from the branch arms above: those control the read's
+	// ANSWER, this one asks whether the read can be reached at all with this shape of value.
+	const noKeyMedia = {
+		id: "01M89P1D7J78GPGVXQZ0PP3QWF",
+		src: "/_emdash/api/media/file/01M89P1D7J78GPGVXQZ0PP3QWF.png",
+		width: 2700,
+		height: 1800,
+	};
+
+	it("still offers the stored widths, found from the src", async () => {
+		storedSizes.widths = [300, 768, 1024];
+		const html = await renderPostCard({ featuredImage: noKeyMedia });
+		const srcset = /srcset="([^"]*)"/.exec(html)?.[1] ?? "";
+		expect(srcset, "the value's src is enough to find the media").not.toBe("");
+		const urls = srcset.split(", ").map((c) => c.trim().split(" ")[0]);
+		expect(new Set(urls).size, `distinct candidates; got ${srcset}`).toBe(urls.length);
 	});
 });
