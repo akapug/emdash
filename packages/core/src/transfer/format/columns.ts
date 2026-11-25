@@ -547,6 +547,9 @@ export const NON_PORTABLE_TABLES: Readonly<Record<string, string>> = Object.free
 	// parent's reference and the renderer asks for a width, so a restored site
 	// rebuilds or backfills variants rather than trusting keys from another origin.
 	_emdash_media_variants: "derived",
+	// A pending object delete is DERIVED too: a restore rebuilds or re-runs the sweep
+	// rather than trusting a key from another origin.
+	_emdash_media_variant_cleanup: "derived",
 	_emdash_protected_content: "private password payload and verifier",
 	_emdash_protected_revisions: "private password revision payload",
 	_emdash_rate_limits: "runtime",
