@@ -32,6 +32,7 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../database/types.js";
+import { MediaRepository } from "../database/repositories/media.js";
 import { getDb } from "../loader.js";
 import { localMediaFileUrl } from "../media/url.js";
 import { variantSrcsetWidths, variantUrl, type StoredVariant } from "../media/variants.js";
@@ -148,6 +149,33 @@ export async function getCommittedVariantsForRender(
 		}
 		return [];
 	}
+}
+
+/**
+ * The media row's own pixel size, or null when the row is unknown or records none.
+ *
+ * A CARD HAS NO DIMENSIONS OF ITS OWN, and Astro's <Image> refuses a remote src without them — so the card path
+ * cannot reach the stored-widths branch, and its picture stays the multi-megabyte original. This gives the caller the
+ * row's dimensions WITHOUT changing the shared read above: `storedSizesForRender` is used by every component that
+ * draws a variant and several arms pin the markup they get, so it stays exactly as it was.
+ *
+ * Request-cached: a listing of twenty cards naming the same attachment asks once.
+ */
+export async function storedDimensionsForRender(ref: VariantMediaRef): Promise<{ width: number; height: number } | null> {
+	const key = keyOfRef(ref);
+	if (!key) return null;
+	return requestCached(`media-dimensions:${key}`, async () => {
+		try {
+			const db = await getDb();
+			const row = await new MediaRepository(db).findByStorageKey(key);
+			const width = Number(row?.width ?? 0);
+			const height = Number(row?.height ?? 0);
+			return width > 0 && height > 0 ? { width, height } : null;
+		} catch {
+			// No database, no row: the caller draws a plain <img>, which is the honest markup.
+			return null;
+		}
+	});
 }
 
 /** How far a variant's shape may differ from its parent's and still be the same picture. */

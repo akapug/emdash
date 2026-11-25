@@ -65,7 +65,11 @@ const noPicturePost = {
 
 const state = vi.hoisted(() => ({ entries: [] as unknown[] }));
 /** What the stored-sizes read answers for the next render: the widths this tenant holds, or none. */
-const storedSizes = vi.hoisted(() => ({ widths: [] as number[] }));
+const storedSizes = vi.hoisted(() => ({
+	widths: [] as number[],
+	/** The media row's own size, or null when the row records none. */
+	dimensions: null as { width: number; height: number } | null,
+}));
 
 // SPREAD THE REAL MODULE FIRST, as the neighbouring page arms do: `emdash`'s entry pulls the registry packages,
 // and a factory that returns a closed object fails to resolve them before any arm runs.
@@ -82,6 +86,9 @@ async function reads() {
 		getMenuWithCacheHint: async () => ({ data: null, cacheHint: {} }),
 		getTermsForEntries: async () => new Map(),
 		optInPageCache: () => {},
+		// THE TEMPLATE IMPORTS THIS FROM `emdash`, not from the media module, so the module-level stub above never
+		// reaches it — a mock has to land on the specifier the code actually uses.
+		storedDimensionsForRender: async () => storedSizes.dimensions,
 	};
 }
 vi.mock("emdash", reads);
@@ -94,6 +101,7 @@ vi.mock("../../src/media/variant-read.js", async () => {
 	const actual = await vi.importActual<Record<string, unknown>>("../../src/media/variant-read.js");
 	return {
 		...actual,
+		storedDimensionsForRender: async () => storedSizes.dimensions,
 		storedSizesForRender: async (_media: unknown, width: number) => {
 			const widths = storedSizes.widths.filter((w) => w <= width);
 			if (widths.length === 0) return null;
@@ -181,10 +189,11 @@ async function renderIndex(only?: string): Promise<string> {
  * THE PICTURE'S WIDTH LIST IS THE SUBJECT, so the read is the one thing this helper controls: `storedWidths` empty
  * means the tenant holds no sizes for the row, which is the case that used to emit a list of one URL at many widths.
  */
-async function renderCard(opts: { storedWidths: number[] }): Promise<string> {
-	// THE STORED-SIZES READ IS STUBBED AT THE MODULE, not through a hook in production code: a test seam in the shipped
-	// module is a leak, and this file already stubs its reads the same way.
+async function renderCard(opts: { storedWidths: number[]; dimensions?: { width: number; height: number } | null }): Promise<string> {
+	// THE STORED-SIZES AND DIMENSION READS ARE STUBBED AT THE MODULE, not through a hook in production code: a test
+	// seam in the shipped module is a leak, and this file already stubs its reads the same way.
 	storedSizes.widths = opts.storedWidths;
+	storedSizes.dimensions = opts.dimensions ?? null;
 	return await renderIndex();
 }
 
@@ -253,6 +262,20 @@ describe("the post card a visitor gets", () => {
 });
 
 describe("a post card's picture never promises a width it cannot back", () => {
+	it("with row dimensions and stored sizes, the card draws DISTINCT variant URLs and a card-width sizes", async () => {
+		// THE POINT OF THE DIMENSION READ: with the row's own size the component can offer the widths the tenant holds,
+		// which is the whole reason this lane exists — a card drawing a 5.6 MB original is the defect. The sizes value
+		// must describe a CARD, not a viewport.
+		const page = await renderCard({ storedWidths: [300, 768], dimensions: { width: 1200, height: 800 } });
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
+		const srcset = /srcset="([^"]{1,500})"/.exec(picture)?.[1] ?? "";
+		expect(picture.includes('width="1200"') || picture.includes("width='1200'"), `the row's size must reach the markup; got: ${picture}`).toBe(true);
+		expect(srcset, `the card must offer the stored widths it now can; got: ${picture}`).not.toBe("");
+		const urls = srcset.split(",").map((part) => part.trim().split(" ")[0]);
+		expect(new Set(urls).size, `every candidate must be a DIFFERENT url; got: ${srcset}`).toBe(urls.length);
+		expect(picture, `a card-width sizes, not 100vw; got: ${picture}`).not.toContain('sizes="100vw"');
+	});
+
 	it("with stored sizes but no dimensions of its own, the card still renders and claims NO width list", async () => {
 		// MEASURED, and it corrects the arm I first wrote: a card passes `src` and `alt` and no dimensions, and
 		// Astro's <Image> REFUSES a remote src without them ("both dimensions are required in order to avoid CLS") —
