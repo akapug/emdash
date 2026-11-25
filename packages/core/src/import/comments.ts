@@ -278,6 +278,78 @@ export async function importWxrComments(
 	return { ...result, errors: [...errors, ...result.errors], notCarried };
 }
 
+export interface PreparedAtomicComment {
+	id: string;
+	parentId: string | null;
+	authorName: string;
+	authorEmail: string;
+	body: string;
+	status: "approved";
+	createdAt: string;
+}
+
+/**
+ * Prepare a single WXR post's approved comments (filtering, texturizing, and
+ * 1-level root-parent flattening) so an atomic per-post import can commit them
+ * inside the exact same D1 `.batch()` / SQLite transaction as the post itself.
+ */
+export function prepareWxrPostComments(
+	post: WxrPost,
+	texturize: boolean,
+): {
+	comments: PreparedAtomicComment[];
+	notCarried: Record<string, number>;
+} {
+	const notCarried: Record<string, number> = {};
+	const count = (reason: string) => {
+		notCarried[reason] = (notCarried[reason] ?? 0) + 1;
+	};
+	const raw = post.comments ?? [];
+	if (raw.length === 0) return { comments: [], notCarried };
+
+	const hidden = hiddenParentReason(post);
+	if (hidden) {
+		for (let i = 0; i < raw.length; i++) count(hidden);
+		return { comments: [], notCarried };
+	}
+
+	const sorted = raw.toSorted((a, b) => a.id - b.id);
+	const rootIdByWpId = new Map<number, string>();
+	const prepared: PreparedAtomicComment[] = [];
+
+	for (const comment of sorted) {
+		const reason = notCarriedReason(comment);
+		if (reason) {
+			count(reason);
+			continue;
+		}
+		const body = wxrCommentText(comment.content, texturize);
+		if (!body) {
+			count("empty");
+			continue;
+		}
+		const date = wxrCommentDate(comment);
+		if (!date) {
+			count("undated");
+			continue;
+		}
+		const id = ulid();
+		const parentId = comment.parent > 0 ? (rootIdByWpId.get(comment.parent) ?? null) : null;
+		rootIdByWpId.set(comment.id, parentId ?? id);
+		prepared.push({
+			id,
+			parentId,
+			authorName: comment.author || "Anonymous",
+			authorEmail: comment.authorEmail,
+			body,
+			status: "approved",
+			createdAt: date.toISOString(),
+		});
+	}
+
+	return { comments: prepared, notCarried };
+}
+
 /** A date that reads as one, or none: never an Invalid Date. */
 const validDate = (d: Date | undefined) => (d && !Number.isNaN(d.getTime()) ? d : undefined);
 

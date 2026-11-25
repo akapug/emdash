@@ -843,11 +843,56 @@ export interface MediaVariantCleanupTable {
 	created_at: Generated<string>;
 }
 
+export interface WxrImportReceiptTable {
+	operation_id: string;
+	source_lineage: string;
+	source_post_id: string;
+	collection: string;
+	entry_id: string;
+	slug: string;
+	locale: string;
+	translation_group: string;
+	status: string;
+	input_fingerprint: string;
+	stored_data_hash: string;
+	committed_hash: string;
+	has_seo: number;
+	has_protected: number;
+	protected_seo_json: string | null;
+	receipt_state: string;
+	created_at: string;
+}
+
+export interface WxrGroupBaselineTable {
+	collection: string;
+	translation_group: string;
+	source_lineage: string;
+	source_group_id: string | null;
+	anchor_entry_id: string;
+	anchor_updated_at: string;
+	anchor_seo_json: string | null;
+	anchor_bylines_json: string;
+	generation: number;
+	anchor_state_hash: string;
+	terms_json: string;
+	last_operation_id: string;
+	updated_at: string;
+}
+
+export interface WxrAuthorBindingTable {
+	source_lineage: string;
+	source_author_key: string;
+	byline_id: string;
+}
+
 export interface Database {
 	_emdash_media_variants: MediaVariantTable;
 	_emdash_media_variant_cleanup: MediaVariantCleanupTable;
 	_emdash_protected_content: ProtectedContentTable;
 	_emdash_protected_revisions: ProtectedRevisionTable;
+	_emdash_wxr_import_receipts: WxrImportReceiptTable;
+	_emdash_wxr_group_baselines: WxrGroupBaselineTable;
+	_emdash_wxr_author_bindings: WxrAuthorBindingTable;
 	revisions: RevisionTable;
 	_emdash_import_baselines: ImportBaselineTable;
 	_emdash_import_operations: ImportOperationTable;

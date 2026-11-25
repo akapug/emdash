@@ -8,6 +8,10 @@ import { up as up016 } from "../../src/database/migrations/016_api_tokens.js";
 import { up as up036 } from "../../src/database/migrations/036_i18n_menus_and_taxonomies.js";
 import { up as up078 } from "../../src/database/migrations/078_menu_item_translation_groups.js";
 import {
+	down as downWxrReceipts,
+	up as upWxrReceipts,
+} from "../../src/database/migrations/embark_005_wxr_import_receipts.js";
+import {
 	MIGRATION_COUNT,
 	MIGRATION_NAMES,
 	createMigrator,
@@ -35,9 +39,15 @@ declare module "cloudflare:test" {
 }
 
 let db: Kysely<Database>;
+let queryCount = 0;
 
 beforeAll(() => {
-	db = new Kysely<Database>({ dialect: new RawBindingD1Dialect({ database: env.DB }) });
+	db = new Kysely<Database>({
+		dialect: new RawBindingD1Dialect({ database: env.DB }),
+		log: () => {
+			queryCount++;
+		},
+	});
 });
 
 beforeEach(async () => {
@@ -391,6 +401,70 @@ describe("078 menu item translation groups on D1", () => {
 			{ id: "legacy-null", translation_group: "legacy-null" },
 			{ id: "translated-item", translation_group: "shared-about" },
 		]);
+	});
+});
+
+describe("embark_005 WXR import receipt migration on D1", () => {
+	it.each(["empty", "with a receipt"])("refuses rollback without SQL (%s)", async (state) => {
+		await upWxrReceipts(db);
+		const receipt = {
+			operation_id: "op-1",
+			source_lineage: "site-1",
+			source_post_id: "42",
+			collection: "posts",
+			entry_id: "entry-1",
+			slug: "post-1",
+			locale: "en",
+			translation_group: "group-1",
+			status: "draft",
+			input_fingerprint: "input-1",
+			stored_data_hash: "data-1",
+			committed_hash: "commit-1",
+			has_seo: 0,
+			has_protected: 0,
+			protected_seo_json: null,
+			receipt_state: "finished",
+			created_at: "2026-01-01T00:00:00.000Z",
+		};
+		if (state === "with a receipt") {
+			await db.insertInto("_emdash_wxr_import_receipts").values(receipt).execute();
+		}
+		const readSchema = () =>
+			sql`
+			SELECT name, sql FROM sqlite_master
+			WHERE tbl_name GLOB '_emdash_wxr_*' ORDER BY name
+		`.execute(db);
+		const beforeSchema = queryCount;
+		const { rows: schema } = await readSchema();
+		const beforeDown = queryCount;
+		expect(schema.length).toBeGreaterThan(0);
+		expect(beforeDown).toBeGreaterThan(beforeSchema);
+
+		await expect(downWxrReceipts(db)).rejects.toThrow("forward-only");
+		expect(queryCount).toBe(beforeDown);
+		expect((await readSchema()).rows).toEqual(schema);
+		expect(await db.selectFrom("_emdash_wxr_import_receipts").selectAll().execute()).toEqual(
+			state === "with a receipt" ? [receipt] : [],
+		);
+	});
+
+	it("keeps the source author binding after the target byline is deleted", async () => {
+		await sql`CREATE TABLE _emdash_bylines (id TEXT PRIMARY KEY)`.execute(db);
+		await upWxrReceipts(db);
+		await sql`INSERT INTO _emdash_bylines (id) VALUES ('byline-1')`.execute(db);
+		const binding = {
+			source_lineage: "site-1",
+			source_author_key: "author-1",
+			byline_id: "byline-1",
+		};
+		const bindings = db.insertInto("_emdash_wxr_author_bindings");
+		await bindings.values(binding).execute();
+		await sql`DELETE FROM _emdash_bylines WHERE id = 'byline-1'`.execute(db);
+
+		const persisted = await db.selectFrom("_emdash_wxr_author_bindings").selectAll().execute();
+		expect(persisted).toEqual([binding]);
+		const duplicate = bindings.values({ ...binding, byline_id: "byline-2" });
+		await expect(duplicate.execute()).rejects.toThrow(/unique constraint/i);
 	});
 });
 

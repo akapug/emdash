@@ -1158,6 +1158,80 @@ export async function handleContentGetIncludingTrashed(
 }
 
 /**
+ * Shared pre-write validation for content creation (used by both `handleContentCreate`
+ * and atomic WXR import creation so schema/SEO/media/slug rules never drift).
+ */
+export async function validateContentCreatePreconditions(
+	db: Kysely<Database>,
+	collection: string,
+	body: {
+		data: Record<string, unknown>;
+		slug?: string | null;
+		status?: string;
+		locale?: string;
+		translationOf?: string;
+		seo?: ContentSeoInput;
+		references?: Record<string, string[]>;
+	},
+): Promise<
+	| {
+			ok: true;
+			hasSeo: boolean;
+			effectiveLocale: string | undefined;
+	  }
+	| {
+			ok: false;
+			error: { code: string; message: string; details?: Record<string, unknown> };
+	  }
+> {
+	const hasSeo = await collectionHasSeo(db, collection);
+
+	// Reject SEO input for non-SEO collections
+	if (body.seo && !hasSeo) {
+		return {
+			ok: false,
+			error: {
+				code: "VALIDATION_ERROR",
+				message: `Collection "${collection}" does not have SEO enabled. Remove the seo field or enable SEO on this collection.`,
+			},
+		};
+	}
+
+	const storagelessKeys = await storagelessDataKeys(db, collection, body.data);
+	if (storagelessKeys.length > 0) {
+		const err = storagelessDataKeyError(storagelessKeys);
+		return { ok: false, error: err.error };
+	}
+
+	const mimeCheck = await validateMediaFields(db, collection, body.data);
+	if (!mimeCheck.success) return { ok: false, error: mimeCheck.error };
+
+	const requiredReferences = await validateRequiredReferencesPresent(
+		db,
+		collection,
+		body.references,
+		body.translationOf,
+	);
+	if (!requiredReferences.success) return { ok: false, error: requiredReferences.error };
+
+	const effectiveLocale = body.locale
+		? resolveConfiguredLocale(body.locale)
+		: getI18nConfig()?.defaultLocale;
+
+	return { ok: true, hasSeo, effectiveLocale };
+}
+
+/** Validate routable publish slug requirement for callers supplying an explicit slug (e.g. atomic WXR). */
+export async function validatePublishedRoutableSlug(
+	db: Kysely<Database>,
+	collection: string,
+	slug: string | null | undefined,
+): Promise<void> {
+	const publishConfig = await getCollectionPublishConfig(db, collection);
+	requireRoutablePublishSlug(publishConfig.routable, slug);
+}
+
+/**
  * Create content item.
  *
  * Content + SEO writes are wrapped in a transaction so either both succeed
@@ -1185,32 +1259,9 @@ export async function handleContentCreate(
 	},
 ): Promise<ApiResult<ContentResponse>> {
 	try {
-		const hasSeo = await collectionHasSeo(db, collection);
-
-		// Reject SEO input for non-SEO collections
-		if (body.seo && !hasSeo) {
-			return {
-				success: false,
-				error: {
-					code: "VALIDATION_ERROR",
-					message: `Collection "${collection}" does not have SEO enabled. Remove the seo field or enable SEO on this collection.`,
-				},
-			};
-		}
-
-		const storagelessKeys = await storagelessDataKeys(db, collection, body.data);
-		if (storagelessKeys.length > 0) return storagelessDataKeyError(storagelessKeys);
-
-		const mimeCheck = await validateMediaFields(db, collection, body.data);
-		if (!mimeCheck.success) return mimeCheck;
-
-		const requiredReferences = await validateRequiredReferencesPresent(
-			db,
-			collection,
-			body.references,
-			body.translationOf,
-		);
-		if (!requiredReferences.success) return requiredReferences;
+		const pre = await validateContentCreatePreconditions(db, collection, body);
+		if (!pre.ok) return { success: false, error: pre.error };
+		const { hasSeo, effectiveLocale } = pre;
 
 		// Wrap content + SEO writes in a transaction for atomicity
 		const item = await withTransaction(db, async (trx) => {
@@ -1260,13 +1311,8 @@ export async function handleContentCreate(
 				}
 			}
 
-			// Default to the configured site locale rather than the repo's
-			// hard-coded "en" — otherwise non-English default-locale sites
-			// silently create entries in a locale the editor never chose.
-			const effectiveLocale = body.locale
-				? resolveConfiguredLocale(body.locale)
-				: getI18nConfig()?.defaultLocale;
-
+			// Allocate generated slugs INSIDE the transaction so concurrent
+			// ordinary creates serialize instead of colliding on the same free slug.
 			let slug: string | null | undefined = body.slug;
 			if (!slug) {
 				const slugSource = getSlugSource(body.data);

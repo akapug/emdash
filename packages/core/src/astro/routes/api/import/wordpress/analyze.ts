@@ -18,6 +18,10 @@ import { RESERVED_COLLECTION_SLUGS } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../../../content/protection.js";
+import {
+	supportsAtomicWxrImport,
+	WXR_ATOMIC_IMPORT_CAPABILITY,
+} from "../../../../../database/repositories/wxr-atomic-import.js";
 import { VARIANT_LADDER } from "../../../../../media/variants.js";
 import { mappedEmbedsSchema } from "./mapped-embeds.js";
 import { mecEventFieldType } from "./mapped-fields.js";
@@ -32,6 +36,7 @@ export const EVENT_DETAIL_FIELDS_CAPABILITY = "emdash.event-detail-fields.v1" as
  * meaningful rather than decorative.
  */
 export const MEDIA_VARIANTS_CAPABILITY = "emdash.media-variants.v1" as const;
+export { WXR_ATOMIC_IMPORT_CAPABILITY };
 
 export const EVENT_SEARCH_BAR_PROBE = {
 	"1": {
@@ -71,6 +76,7 @@ export const EVENT_DETAIL_FIELDS_PROBE = {
 
 export function importCapabilities(
 	embedsSchema: { safeParse: (input: unknown) => { success: boolean } } = mappedEmbedsSchema,
+	options?: { atomicSupported?: boolean },
 ): readonly string[] {
 	const caps: string[] = [PROTECTED_CONTENT_CAPABILITY];
 	if (embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success) {
@@ -87,6 +93,9 @@ export function importCapabilities(
 	// This build can store WordPress's generated sizes (item 135): the route is
 	// registered and the handler exists, so the host can send variants.
 	caps.push(MEDIA_VARIANTS_CAPABILITY);
+	if (options?.atomicSupported !== false) {
+		caps.push(WXR_ATOMIC_IMPORT_CAPABILITY);
+	}
 	return caps;
 }
 
@@ -215,8 +224,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		// Fetch existing collections from schema registry
 		const existingCollections = await fetchExistingCollections(emdash?.db);
 
+		// Only advertise atomic WXR import when the runtime has the handler AND
+		// the database adapter supports atomic batch or real transactions.
+		const atomicSupported = Boolean(
+			emdash?.handleContentCreateAtomicWxr && emdash?.db && supportsAtomicWxrImport(emdash.db),
+		);
+
 		// Analyze content with schema compatibility
-		const analysis = analyzeWxr(wxr, existingCollections);
+		const analysis = analyzeWxr(wxr, existingCollections, atomicSupported);
 
 		return apiSuccess(analysis);
 	} catch (error) {
@@ -284,6 +299,7 @@ const FEATURED_IMAGE_FIELD: ImportFieldDef = {
 function analyzeWxr(
 	wxr: WxrData,
 	existingCollections: Map<string, ExistingCollection>,
+	atomicSupported: boolean,
 ): WxrAnalysis {
 	// Count post types and track which have featured images
 	const postTypeCounts = new Map<string, number>();
@@ -384,7 +400,7 @@ function analyzeWxr(
 
 	return {
 		protectedContentCapability: PROTECTED_CONTENT_CAPABILITY,
-		capabilities: [...IMPORT_CAPABILITIES],
+		capabilities: [...importCapabilities(mappedEmbedsSchema, { atomicSupported })],
 		mediaVariantWidths: [...VARIANT_LADDER],
 		site: {
 			title: wxr.site.title || "WordPress Site",

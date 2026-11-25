@@ -1,4 +1,4 @@
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type RawBuilder } from "kysely";
 import { ulid } from "ulidx";
 
 import type { ContentFieldFilterValue, ContentFieldFilters } from "../../content-list-query.js";
@@ -24,6 +24,7 @@ import type {
 	FindManyOptions,
 	FindManyResult,
 	ContentItem,
+	ContentSeoInput,
 	ContentDateField,
 	ContentBylineFilter,
 } from "./types.js";
@@ -292,7 +293,7 @@ function writableContentData(data: Record<string, unknown>): Record<string, unkn
  * Deserialize a value from database storage
  * Attempts to parse JSON strings that look like objects/arrays
  */
-function deserializeValue(value: unknown): unknown {
+export function deserializeValue(value: unknown): unknown {
 	if (typeof value === "string") {
 		// Try to parse if it looks like JSON
 		if (value.startsWith("{") || value.startsWith("[")) {
@@ -333,11 +334,30 @@ export class ContentRepository {
 	}
 
 	/**
-	 * Create a new content item
+	 * Build the exact SQL statements for creating a content row (plus private
+	 * protected-content row + visibility bump when protected) so callers composing
+	 * atomic multi-statement D1 batches share one source of truth with `create()`.
 	 */
-	async create(input: CreateContentInput): Promise<ContentItem> {
+	async prepareCreate(
+		input: CreateContentInput & {
+			now?: string;
+			scheduledAt?: string | null;
+			protectedSeo?: ContentSeoInput | null;
+			extraWhere?: RawBuilder<boolean>;
+			copyInheritedFields?: boolean;
+		},
+	): Promise<{
+		id: string;
+		now: string;
+		locale: string;
+		status: string;
+		normalizedData: Record<string, unknown>;
+		publicInsertQuery: RawBuilder<unknown>;
+		privateCreateQuery: RawBuilder<unknown> | undefined;
+		queries: RawBuilder<unknown>[];
+	}> {
 		const id = input.id ?? ulid();
-		const now = new Date().toISOString();
+		const now = input.now ?? new Date().toISOString();
 
 		const {
 			type,
@@ -351,14 +371,24 @@ export class ContentRepository {
 			inheritFields = [],
 			publishedAt,
 			createdAt,
+			scheduledAt,
+			protectedSeo,
+			extraWhere,
 		} = input;
 		let data = await this.datetimes.normalizeData(type, inputData);
-		let privateCreateQuery: ReturnType<typeof sql> | undefined;
+		const normalizedData = data;
+		let privateCreateQuery: RawBuilder<unknown> | undefined;
 		if (input.protection) {
 			// Build the private insert so it runs atomically with the public placeholder insert.
 			data = writableContentData(data);
 			const protectedRepo = new ProtectedContentRepository(this.db);
-			privateCreateQuery = protectedRepo.prepareCreate(type, id, input.protection, data);
+			privateCreateQuery = protectedRepo.prepareCreate(
+				type,
+				id,
+				input.protection,
+				data,
+				protectedSeo,
+			);
 			data = await protectedRepo.project(type, data);
 		}
 		const normalizedCreatedAt = createdAt
@@ -367,6 +397,9 @@ export class ContentRepository {
 		const normalizedPublishedAt = publishedAt
 			? await this.datetimes.normalizeValue(type, publishedAt)
 			: null;
+		const normalizedScheduledAt = scheduledAt
+			? await this.datetimes.normalizeValue(type, scheduledAt)
+			: null;
 
 		// Validate required fields
 		if (!type) {
@@ -374,6 +407,7 @@ export class ContentRepository {
 		}
 
 		const tableName = getTableName(type);
+		const effectiveLocale = locale || "en";
 
 		// Build column names and values
 		const columns: string[] = [
@@ -399,9 +433,13 @@ export class ContentRepository {
 			now,
 			normalizedPublishedAt,
 			1,
-			locale || "en",
+			effectiveLocale,
 			id,
 		];
+		if (normalizedScheduledAt !== null) {
+			columns.push("scheduled_at");
+			values.push(normalizedScheduledAt);
+		}
 		const inherited = new Set(input.protection ? [] : inheritFields);
 		for (const field of inherited) {
 			validateIdentifier(field, "inherited content field name");
@@ -429,7 +467,7 @@ export class ContentRepository {
 			if (translationOf && column === "translation_group") {
 				return sql`COALESCE(${sql.ref("translation_source.translation_group")}, ${sql.ref("translation_source.id")})`;
 			}
-			if (translationOf && inherited.has(column)) {
+			if (translationOf && input.copyInheritedFields !== false && inherited.has(column)) {
 				return sql.ref(`translation_source.${column}`);
 			}
 			return value === null ? sql`NULL` : sql`${value}`;
@@ -442,14 +480,44 @@ export class ContentRepository {
 				FROM ${sql.ref(tableName)} AS translation_source
 				WHERE translation_source.id = ${translationOf}
 					AND translation_source.deleted_at IS NULL
+					${extraWhere ? sql`AND (${extraWhere})` : sql``}
 			`
-			: sql`
-				INSERT INTO ${sql.ref(tableName)} (${sql.join(columnRefs, sql`, `)})
-				VALUES (${sql.join(valuePlaceholders, sql`, `)})
-			`;
+			: extraWhere
+				? sql`
+					INSERT INTO ${sql.ref(tableName)} (${sql.join(columnRefs, sql`, `)})
+					SELECT ${sql.join(valuePlaceholders, sql`, `)}
+					WHERE (${extraWhere})
+				`
+				: sql`
+					INSERT INTO ${sql.ref(tableName)} (${sql.join(columnRefs, sql`, `)})
+					VALUES (${sql.join(valuePlaceholders, sql`, `)})
+				`;
+
+		const queries = privateCreateQuery
+			? [privateCreateQuery, publicInsertQuery, prepareVisibilityRevBump()]
+			: [publicInsertQuery];
+
+		return {
+			id,
+			now,
+			locale: effectiveLocale,
+			status,
+			normalizedData,
+			publicInsertQuery,
+			privateCreateQuery,
+			queries,
+		};
+	}
+
+	/**
+	 * Create a new content item
+	 */
+	async create(input: CreateContentInput): Promise<ContentItem> {
+		const prepared = await this.prepareCreate(input);
+		const { id, privateCreateQuery, publicInsertQuery, queries } = prepared;
+		const { type, translationOf } = input;
 
 		if (privateCreateQuery) {
-			const queries = [privateCreateQuery, publicInsertQuery, prepareVisibilityRevBump()];
 			const batched = await executeAtomicBatchIfSupported(this.db, queries);
 			if (!batched) {
 				await withTransaction(this.db, async (trx) => {

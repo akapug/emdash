@@ -11,6 +11,10 @@ import type { Kysely } from "kysely";
 import type { ContentFieldFilters } from "../content-list-query.js";
 import type { ContentProtection } from "../content/protection.js";
 import type {
+	ExpectedAtomicTerm,
+	WxrSourceAuthor,
+} from "../database/repositories/wxr-atomic-import.js";
+import type {
 	PluginEditorExtensionDispatch,
 	ResolvedPluginEditorExtension,
 } from "../emdash-runtime.js";
@@ -359,6 +363,11 @@ export interface EmDashHandlers {
 			status?: string;
 			authorId?: string;
 			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
 			locale?: string;
 			seo?: {
 				title?: string | null;
@@ -382,6 +391,55 @@ export interface EmDashHandlers {
 			skipMediaUsageRefresh?: boolean;
 		},
 	) => Promise<HandlerResponse>;
+
+	handleContentCreateAtomicWxr?: (
+		collection: string,
+		body: {
+			sourceLineage: string;
+			sourcePostId: string;
+			sourceGroupId?: string;
+			inputFingerprint: string;
+			data: Record<string, unknown>;
+			protection?: ContentProtection;
+			slug?: string | null;
+			status: "draft" | "published" | "scheduled";
+			authorId?: string;
+			sourceAuthor?: WxrSourceAuthor;
+			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
+			locale?: string;
+			seo?: {
+				title?: string | null;
+				description?: string | null;
+				image?: string | null;
+				canonical?: string | null;
+				noIndex?: boolean;
+			};
+			translationOf?: string;
+			terms: readonly import("../database/repositories/wxr-atomic-import.js").WxrTermPivot[];
+			pendingTerms?: readonly import("../database/repositories/wxr-atomic-import.js").PendingAtomicTerm[];
+			expectedTerms?: readonly ExpectedAtomicTerm[];
+			replaceTaxonomies?: readonly string[];
+			pendingComments?: readonly import("../import/comments.js").PreparedAtomicComment[];
+			createdAt?: string | null;
+			publishedAt?: string | null;
+			scheduledAt?: string | null;
+			migrateBlocks?: boolean;
+			replaceBlocks?: boolean;
+			actor?: { id: string; role: number };
+		},
+		options?: {
+			skipSaveHooks?: boolean;
+			excludeAfterSavePluginId?: string;
+			skipMediaUsageRefresh?: boolean;
+		},
+	) => Promise<
+		HandlerResponse<import("../database/repositories/wxr-atomic-import.js").AtomicWxrApplyResult>
+	>;
 
 	handleContentUpdate: (
 		collection: string,
