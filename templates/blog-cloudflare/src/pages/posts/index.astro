@@ -4,6 +4,7 @@ import Base from "../../layouts/Base.astro";
 import { getReadingTime } from "../../utils/reading-time";
 import { wpShellIndexRoute } from "../../utils/wp-shell";
 import { loadWpShell } from "../../utils/wp-shell-loader";
+import { cardPicture } from "emdash";
 
 // A site whose record carries a posts index (cut from its own listing page) keeps its own design here: the
 // query goes along (`?cursor=`, `?subscribe=`). Any other site, a WordPress one too, draws this template's.
@@ -44,10 +45,18 @@ const tagsByEntry = await getTermsForEntries(
 	"tag",
 );
 
+// THE CARD'S PICTURE, decided here so every card asks the same question. The listing already loads each post's
+// content (`getReadingTime(post.data.content)` below reads it), so this costs no extra query. Measured against the
+// live theme, card for card: her card draws the FIRST picture of the post's own content, and none of 45 posts
+// carried a featured image — so a card that follows this rule shows what her site shows.
 const postsWithTags = posts.map((post) => ({
 	post,
 	tags: tagsByEntry.get(post.data.id) ?? [],
 	bylines: post.data.bylines ?? [],
+	picture: cardPicture({
+		featuredImage: (post.data as { featured_image?: unknown }).featured_image,
+		content: post.data.content,
+	}),
 }));
 
 const formatDate = (date: Date) =>
@@ -73,9 +82,19 @@ const formatDate = (date: Date) =>
 				<p class="empty">No posts yet.</p>
 			) : (
 				<div class="posts-list">
-					{postsWithTags.map(({ post, tags, bylines }) => (
+					{postsWithTags.map(({ post, tags, bylines, picture }) => (
 						<article class="post-item">
 							<a href={`/posts/${post.id}`} class="post-link">
+								{picture && (
+									<span class="post-picture">
+										<img
+											src={picture.assetRef ? `/_emdash/api/media/file/${picture.assetRef}` : picture.src}
+											alt={picture.alt || post.data.title}
+											loading="lazy"
+											decoding="async"
+										/>
+									</span>
+								)}
 								<div class="post-meta">
 									{bylines.length > 0 && (
 										<>
@@ -173,6 +192,22 @@ const formatDate = (date: Date) =>
 	.posts-list {
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* MEASURED from her live card: 206x116 at a 16:9 ratio with the picture filling the box, alt = the post title.
+	   object-fit: cover rather than her effective `fill` so a picture of another ratio cannot squash. */
+	.post-picture {
+		display: block;
+		aspect-ratio: 16 / 9;
+		overflow: hidden;
+		margin-bottom: var(--spacing-4);
+	}
+
+	.post-picture img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
 	}
 
 	.post-item {
