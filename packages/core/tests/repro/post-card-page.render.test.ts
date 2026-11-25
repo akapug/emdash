@@ -129,7 +129,9 @@ afterAll(async () => {
 
 /** Render the real page with the three posts, as a visitor would. */
 async function renderIndex(only?: string): Promise<string> {
-	const chosen = only ? [imageNodePost, htmlBlockPost, noPicturePost].filter((p) => p.slug === only) : [imageNodePost, htmlBlockPost, noPicturePost];
+	const chosen = only
+		? [imageNodePost, htmlBlockPost, noPicturePost].filter((p) => p.slug === only)
+		: [imageNodePost, htmlBlockPost, noPicturePost];
 	state.entries = chosen.map((post) => ({
 		id: post.slug,
 		collection: "posts",
@@ -195,7 +197,9 @@ describe("the post card a visitor gets", () => {
 		// carry an <img> from chrome this change never touches (a byline avatar, a logo); what must be absent is the
 		// card picture wrapper and any media-file src the picker would have produced.
 		expect(page, "the change must add nothing to a pictureless card").not.toContain("post-picture");
-		expect(page, "and no media-file picture the picker would have chosen").not.toContain("first.jpg");
+		expect(page, "and no media-file picture the picker would have chosen").not.toContain(
+			"first.jpg",
+		);
 		expect(page, "nor the htmlBlock picture").not.toContain("real.jpg");
 	});
 });
