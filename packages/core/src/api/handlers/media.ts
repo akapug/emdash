@@ -4,12 +4,14 @@
 
 import type { Kysely } from "kysely";
 
+import { MediaVariantRepository } from "../../database/repositories/media-variants.js";
 import { MediaRepository, type MediaItem } from "../../database/repositories/media.js";
 import { InvalidCursorError } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
 import { isValidFocalPointUpdate, type FocalPointUpdate } from "../../media/focal-point.js";
 import { removeUploadAttempt } from "../../media/upload-attempts.js";
 import type { Storage } from "../../storage/types.js";
+import { MEDIA_VARIANT_STORAGE_PREFIX } from "../../transfer/staging/keys.js";
 import type { ApiResult } from "../types.js";
 
 const FOREIGN_KEY_VIOLATION_RE = /foreign key constraint failed/i;
@@ -323,7 +325,8 @@ export async function handleMediaReplaceMetadata(
 	input: { size: number; width: number; height: number; contentHash: string },
 ): Promise<ApiResult<MediaResponse>> {
 	try {
-		const item = await new MediaRepository(db).replaceReadyFile(id, expectedStorageKey, input);
+		const repo = new MediaRepository(db);
+		const item = await repo.replaceReadyFile(id, expectedStorageKey, input);
 		if (!item) {
 			return {
 				success: false,
@@ -356,7 +359,110 @@ function isForeignKeyViolation(error: unknown): boolean {
 	);
 }
 
-/** Delete a media item, then delete or queue cleanup of its stored object. */
+function variantConflict(message: string): ApiResult<never> {
+	return { success: false, error: { code: "CONFLICT", message } };
+}
+
+/** Store one of WordPress's validated sizes under a private, immutable key. */
+export async function handleMediaVariantStore(
+	db: Kysely<Database>,
+	storage: Storage | null,
+	input: {
+		mediaId: string;
+		sizeName: string;
+		width: number;
+		height: number;
+		parentContentHash: string;
+		bytes: Uint8Array<ArrayBuffer>;
+		contentType: string;
+		contentHash: string;
+	},
+): Promise<
+	ApiResult<{
+		outcome: "stored" | "replayed";
+		width: number;
+		height: number;
+		contentHash: string;
+	}>
+> {
+	if (!storage) {
+		return { success: false, error: { code: "NO_STORAGE", message: "Storage not configured" } };
+	}
+
+	const success = (outcome: "stored" | "replayed") => ({
+		success: true as const,
+		data: { outcome, width: input.width, height: input.height, contentHash: input.contentHash },
+	});
+	const slotConflict = "A different variant already owns this slot";
+	const changed = "The parent or variant slot changed while this variant was being stored";
+
+	try {
+		const parent = await new MediaRepository(db).findById(input.mediaId);
+		if (!parent) {
+			return {
+				success: false,
+				error: { code: "NOT_FOUND", message: `Media item not found: ${input.mediaId}` },
+			};
+		}
+		if (parent.status !== "ready") {
+			return {
+				success: false,
+				error: { code: "INVALID_STATE", message: "Only a ready image can receive a variant" },
+			};
+		}
+		if (parent.contentHash !== input.parentContentHash) return variantConflict(changed);
+
+		const repo = new MediaVariantRepository(db);
+		const slot = await repo.findSlot(input);
+		if (slot) {
+			if (slot.contentHash !== input.contentHash) return variantConflict(slotConflict);
+			if (await storage.exists(slot.storageKey)) {
+				// The parent or key can change while checking storage.
+				const current = await repo.findSlot(input);
+				return current?.storageKey === slot.storageKey
+					? success("replayed")
+					: variantConflict(changed);
+			}
+		}
+
+		const ext = extensionFor(input.contentType);
+		const storageKey = `${MEDIA_VARIANT_STORAGE_PREFIX}${crypto.randomUUID()}${ext}`;
+		// Do not start a PUT without durable custody. A rejected PUT or an uncertain
+		// publication result must not cause us to remove the object or its marker.
+		await repo.registerCandidate(storageKey);
+		await storage.upload({ key: storageKey, body: input.bytes, contentType: input.contentType });
+		const result = await repo.store(
+			{ ...input, storageKey, bytes: input.bytes.byteLength },
+			slot?.storageKey,
+		);
+		if (result.outcome !== "conflict") return success(result.outcome);
+
+		// The write definitively lost. Requeue after the PUT, even if an earlier
+		// sweep already deleted the pending key and acknowledged its first marker.
+		try {
+			await repo.retireCandidate(storageKey);
+		} catch {
+			// The candidate cannot be committed. If the queue is unavailable, deleting
+			// it now is safe; failure of both operations remains a server error.
+			await storage.delete(storageKey);
+		}
+		const winner = await repo.findSlot(input);
+		if (winner && winner.contentHash !== input.contentHash) return variantConflict(slotConflict);
+		if (winner && (await storage.exists(winner.storageKey))) {
+			const current = await repo.findSlot(input);
+			if (current?.storageKey === winner.storageKey) return success("replayed");
+		}
+		return variantConflict(changed);
+	} catch (error) {
+		console.error("[media] variant store failed:", error);
+		return {
+			success: false,
+			error: { code: "MEDIA_VARIANT_STORE_ERROR", message: "Failed to store media variant" },
+		};
+	}
+}
+
+/** Delete a media item, then delete or queue cleanup of its stored original. */
 export async function handleMediaDelete(
 	db: Kysely<Database>,
 	id: string,
@@ -401,5 +507,21 @@ export async function handleMediaDelete(
 				message: "Failed to delete media",
 			},
 		};
+	}
+}
+
+/** The stored object's extension, from the content type we validated. */
+function extensionFor(contentType: string): string {
+	switch (contentType) {
+		case "image/png":
+			return ".png";
+		case "image/gif":
+			return ".gif";
+		case "image/webp":
+			return ".webp";
+		case "image/avif":
+			return ".avif";
+		default:
+			return ".jpg";
 	}
 }

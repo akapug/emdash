@@ -14,9 +14,11 @@ import {
 	getExactMigrationStatus,
 	runMigrations,
 } from "../../src/database/migrations/runner.js";
+import { MediaRepository } from "../../src/database/repositories/media.js";
 import { OptionsRepository } from "../../src/database/repositories/options.js";
 import type { Database } from "../../src/database/types.js";
 import { SchemaRegistry } from "../../src/schema/registry.js";
+import { MEDIA_VARIANT_STORAGE_PREFIX } from "../../src/transfer/staging/keys.js";
 import { seedPreI18nSchema } from "../utils/pre-i18n-schema.js";
 import {
 	listColumns,
@@ -50,6 +52,89 @@ async function migrateThrough(name: string): Promise<void> {
 	const { error } = await createMigrator(db).migrateTo(name);
 	if (error) throw error;
 }
+
+describe("variant retirement on D1", () => {
+	it.each(["replace", "delete", "publish", "confirm"] as const)(
+		"rolls %s back when retirement cannot record the object",
+		async (action) => {
+			await runMigrations(db);
+			const repo = new MediaRepository(db);
+			const isPending = action === "publish" || action === "confirm";
+			const parent = await repo.create({
+				filename: "image.png",
+				mimeType: "image/png",
+				storageKey: "original.png",
+				size: 1024,
+				contentHash: "hash-before",
+				status: isPending ? "pending" : "ready",
+			});
+			if (action === "publish") await repo.createUploadAttempt(parent.id, "attempt.png");
+			// Seed an obsolete slot directly to exercise the write's database invariant
+			// even for pending parents that the normal variant importer cannot populate.
+			const key = `${MEDIA_VARIANT_STORAGE_PREFIX}d1-cut.png`;
+			await db
+				.insertInto("_emdash_media_variants")
+				.values({
+					media_id: parent.id,
+					size_name: "small",
+					width: 120,
+					height: 120,
+					storage_key: key,
+					bytes: 512,
+					content_hash: "variant-hash",
+					parent_content_hash: "hash-before",
+				})
+				.execute();
+			const mutate = () => {
+				switch (action) {
+					case "delete":
+						return repo.deleteWithStorageKey(parent.id);
+					case "publish":
+						return repo.publishPendingStorageKey(
+							parent.id,
+							parent.storageKey,
+							"attempt.png",
+							"hash-after",
+						);
+					case "confirm":
+						return repo.confirmUpload(parent.id, { contentHash: "hash-after" }, parent.storageKey);
+					case "replace":
+						return repo.replaceReadyFile(parent.id, parent.storageKey, {
+							width: 800,
+							height: 800,
+							size: 2048,
+							contentHash: "hash-after",
+						});
+				}
+			};
+			const slots = () => db.selectFrom("_emdash_media_variants").select("storage_key").execute();
+			const ledger = () =>
+				db.selectFrom("_emdash_media_variant_cleanup").select(["storage_key", "reason"]).execute();
+
+			await sql`CREATE TRIGGER test_refuse_variant_retirement
+			BEFORE INSERT ON _emdash_media_variant_cleanup
+			BEGIN SELECT RAISE(ABORT, 'test retirement cut'); END`.execute(db);
+			await expect(mutate()).rejects.toThrow(/test retirement cut/);
+			expect(await repo.findById(parent.id)).toMatchObject({
+				contentHash: "hash-before",
+				storageKey: parent.storageKey,
+				status: parent.status,
+			});
+			expect(await slots()).toEqual([{ storage_key: key }]);
+			expect(await ledger()).toEqual([]);
+
+			await sql`DROP TRIGGER test_refuse_variant_retirement`.execute(db);
+			expect(await mutate()).toBeTruthy();
+			expect(await slots()).toEqual([]);
+			expect(await ledger()).toEqual([{ storage_key: key, reason: "retired" }]);
+			if (action === "delete") {
+				expect(await repo.findById(parent.id)).toBeNull();
+			} else {
+				expect((await repo.findById(parent.id))?.contentHash).toBe("hash-after");
+			}
+		},
+	);
+});
 
 describe("core migrations on D1", () => {
 	it("applies every registered migration to an empty database", async () => {

@@ -55,6 +55,7 @@ export {
 export {
 	handleMediaList,
 	handleMediaGet,
+	handleMediaVariantStore,
 	handleMediaCreate,
 	handleMediaRegisterUpload,
 	handleMediaUpdate,

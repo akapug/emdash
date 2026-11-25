@@ -9,6 +9,8 @@ import type { APIRoute } from "astro";
 import { apiError, handleError } from "#api/error.js";
 import { IMMUTABLE_IMAGE_CACHE, MUTABLE_MEDIA_CACHE_CONTROL } from "#media/image-endpoint.js";
 
+import { resolveVariantForRequest } from "../../../../../media/variant-serve.js";
+import type { DownloadResult } from "../../../../../storage/types.js";
 import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 
 export const prerender = false;
@@ -55,7 +57,11 @@ const SAFE_INLINE_TYPES = new Set([
 	"audio/ogg",
 ]);
 
-export const GET: APIRoute = async ({ params, locals }) => {
+function isMissingObject(error: unknown): boolean {
+	return error instanceof Error && "code" in error && error.code === "NOT_FOUND";
+}
+
+export const GET: APIRoute = async ({ params, locals, url }) => {
 	const { key } = params;
 	const { emdash } = locals;
 
@@ -74,8 +80,36 @@ export const GET: APIRoute = async ({ params, locals }) => {
 		return apiError("NOT_CONFIGURED", "Storage not configured", 500);
 	}
 
+	const { db, storage } = emdash;
 	try {
-		const result = await emdash.storage.download(key);
+		const variant = db ? await resolveVariantForRequest(db, key, url.searchParams.get("w")) : null;
+		let result: DownloadResult | undefined;
+		if (variant && variant.storageKey !== key) {
+			try {
+				result = await storage.download(variant.storageKey);
+			} catch (error) {
+				// A stale srcset can outlive its variant object, but a storage failure is not a miss.
+				if (!isMissingObject(error)) throw error;
+			}
+		}
+		if (!result) {
+			try {
+				result = await storage.download(key);
+			} catch (error) {
+				// Older adapters may report a missing original without a storage error code.
+				if (
+					isMissingObject(error) ||
+					(error instanceof Error &&
+						!("code" in error) &&
+						(error.message === "File not found" ||
+							error.message === `File not found: ${key}` ||
+							error.message === "NOT_FOUND"))
+				) {
+					return apiError("NOT_FOUND", "File not found", 404);
+				}
+				throw error;
+			}
+		}
 
 		const headers: Record<string, string> = {
 			"Content-Type": result.contentType,
@@ -103,13 +137,6 @@ export const GET: APIRoute = async ({ params, locals }) => {
 
 		return new Response(result.body, { status: 200, headers });
 	} catch (error) {
-		// Check if it's a "not found" error
-		if (
-			error instanceof Error &&
-			(error.message.includes("not found") || error.message.includes("NOT_FOUND"))
-		) {
-			return apiError("NOT_FOUND", "File not found", 404);
-		}
 		return handleError(error, "Failed to serve file", "FILE_SERVE_ERROR");
 	}
 };

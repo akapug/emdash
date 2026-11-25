@@ -541,6 +541,21 @@ export interface EmDashHandlers {
 	) => Promise<HandlerResponse>;
 
 	handleMediaDelete: (id: string) => Promise<HandlerResponse>;
+	/** Store one of WordPress's generated sizes (item 135). */
+	handleMediaVariantStore: (input: {
+		mediaId: string;
+		sizeName: string;
+		width: number;
+		height: number;
+		parentContentHash: string;
+		bytes: Uint8Array<ArrayBuffer>;
+		contentType: string;
+		contentHash: string;
+	}) => Promise<{
+		success: boolean;
+		data?: { outcome: string };
+		error?: { code: string; message: string };
+	}>;
 
 	// Revision handlers
 	handleRevisionList: (

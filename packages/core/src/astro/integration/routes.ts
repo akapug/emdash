@@ -407,6 +407,13 @@ export function injectCoreRoutes(
 		entrypoint: resolveRoute("api/import/wordpress/execute.ts"),
 	});
 
+	// W1: the variant store. Registered HERE so the route is reachable at all — the
+	// handler existed and nothing routed to it, which no unit arm can catch.
+	injectRoute({
+		pattern: "/_emdash/api/import/wordpress/media-variant",
+		entrypoint: resolveRoute("api/import/wordpress/media-variant.ts"),
+	});
+
 	injectRoute({
 		pattern: "/_emdash/api/import/wordpress/media",
 		entrypoint: resolveRoute("api/import/wordpress/media.ts"),

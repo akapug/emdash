@@ -98,6 +98,7 @@ import * as m087 from "./087_reference_field_relations.js";
 import * as embark001 from "./embark_001_import_baselines.js";
 import * as embark002 from "./embark_002_import_sync_grants.js";
 import * as embark003 from "./embark_003_protected_content.js";
+import * as embark004 from "./embark_004_media_variants.js";
 
 const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"001_initial": m001,
@@ -189,6 +190,7 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	embark_001_import_baselines: embark001,
 	embark_002_import_sync_grants: embark002,
 	embark_003_protected_content: embark003,
+	embark_004_media_variants: embark004,
 });
 
 /** Ordered names from the statically registered migration set. */

@@ -153,11 +153,14 @@ const CONTROL_TAGS = new Set(["input", "select", "option", "textarea", "button",
 /** The newsletter providers whose forms are carried working, out of the box. */
 export const DEFAULT_NEWSLETTER_FORM_HOSTS: readonly string[] = ["list-manage.com"];
 
+/** A leading wildcard or dot on an allowlist entry (`*.mailchimp.com`). */
+const ALLOWLIST_WILDCARD = /^\*?\./;
+
 /** Whether `host` is one of `allowed`, or a subdomain of one. */
 function newsletterHostAllowed(host: string, allowed: readonly string[]): boolean {
 	const h = host.toLowerCase();
 	return allowed.some((a) => {
-		const want = a.toLowerCase().replace(/^\*?\./, "");
+		const want = a.toLowerCase().replace(ALLOWLIST_WILDCARD, "");
 		return h === want || h.endsWith(`.${want}`);
 	});
 }

@@ -816,7 +816,36 @@ export interface ProtectedRevisionTable {
 	data: string;
 }
 
+/**
+ * A stored size of an imported image. See `media/variants.ts` for the rules that
+ * make `(media_id, parent_generation, width)` the identity rather than a width.
+ */
+export interface MediaVariantTable {
+	media_id: string;
+	size_name: string;
+	width: number;
+	height: number;
+	storage_key: string;
+	bytes: number;
+	content_hash: string;
+	parent_content_hash: string;
+	created_at: Generated<string>;
+}
+
+/**
+ * Objects waiting to be deleted from storage. Deliberately has NO foreign key: its whole
+ * job is to outlive the row or parent that named the object, so a crash between a schema
+ * write and a storage delete leaves a record, never an orphan.
+ */
+export interface MediaVariantCleanupTable {
+	storage_key: string;
+	reason: string;
+	created_at: Generated<string>;
+}
+
 export interface Database {
+	_emdash_media_variants: MediaVariantTable;
+	_emdash_media_variant_cleanup: MediaVariantCleanupTable;
 	_emdash_protected_content: ProtectedContentTable;
 	_emdash_protected_revisions: ProtectedRevisionTable;
 	revisions: RevisionTable;

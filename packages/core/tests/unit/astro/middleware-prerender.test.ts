@@ -80,6 +80,7 @@ const {
 			handleMediaRegisterUpload: ok,
 			handleMediaUpdate: ok,
 			handleMediaDelete: ok,
+			handleMediaVariantStore: ok,
 			handleRevisionList: ok,
 			handleRevisionGet: ok,
 			handleRevisionRestore: ok,

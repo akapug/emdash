@@ -19,6 +19,7 @@ import { RevisionRepository } from "./database/repositories/revision.js";
 import type { Database } from "./database/types.js";
 import { removeUploadAttempt } from "./media/upload-attempts.js";
 import { cleanupMediaUsage } from "./media/usage/cleanup.js";
+import { cleanupMediaVariants } from "./media/variant-cleanup.js";
 import type { Storage } from "./storage/types.js";
 
 /**
@@ -134,6 +135,14 @@ export async function runSystemCleanup(
 		}
 	} catch (error) {
 		console.error("[cleanup] Failed to clean media upload attempts:", error);
+	}
+
+	if (storage) {
+		try {
+			await cleanupMediaVariants(db, storage);
+		} catch (error) {
+			console.error("[cleanup] Failed to clean media variants:", error);
+		}
 	}
 
 	try {

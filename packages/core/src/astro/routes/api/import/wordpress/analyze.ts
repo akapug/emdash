@@ -24,6 +24,14 @@ import { mecEventFieldType } from "./mapped-fields.js";
 export const EVENT_SEARCH_BAR_CAPABILITY = "emdash.event-search-bar.v1" as const;
 export const EVENT_DETAIL_FIELDS_CAPABILITY = "emdash.event-detail-fields.v1" as const;
 
+/**
+ * W5: this build can STORE WordPress's generated sizes. The host reads this from
+ * `analyze()` and only then carries variants, so a build without the route is never
+ * sent a request it would 404 - which is what makes the host's capability check
+ * meaningful rather than decorative.
+ */
+export const MEDIA_VARIANTS_CAPABILITY = "emdash.media-variants.v1" as const;
+
 export const EVENT_SEARCH_BAR_PROBE = {
 	"1": {
 		_type: "embed",
@@ -75,6 +83,9 @@ export function importCapabilities(
 		caps.push(EVENT_DETAIL_FIELDS_CAPABILITY);
 	}
 	caps.push(BATCH_REDIRECTS_CAPABILITY);
+	// This build can store WordPress's generated sizes (item 135): the route is
+	// registered and the handler exists, so the host can send variants.
+	caps.push(MEDIA_VARIANTS_CAPABILITY);
 	return caps;
 }
 

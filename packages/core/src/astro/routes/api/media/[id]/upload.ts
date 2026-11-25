@@ -255,6 +255,7 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 		}
 
 		await removeUploadAttempt(emdash.storage, repo, media.storageKey);
+
 		return apiSuccess({ uploaded: true, size: receivedSize });
 	} catch (error) {
 		return handleError(error, "Upload failed", "UPLOAD_ERROR");

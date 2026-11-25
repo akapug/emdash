@@ -8,6 +8,7 @@ import {
 import { ulid } from "ulidx";
 
 import { normalizeFocalPoint, type FocalPointUpdate } from "../../media/focal-point.js";
+import { invalidateVariants } from "../../media/variant-read.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import type { Database, MediaRow } from "../types.js";
 import type { FindManyResult } from "./types.js";
@@ -318,6 +319,7 @@ export class MediaRepository {
 		storageKey: string,
 		contentHash?: string,
 	): Promise<boolean> {
+		// Migration 004 queues and removes obsolete slots inside the parent write.
 		const result = await this.db
 			.updateTable("media")
 			.set({
@@ -339,7 +341,9 @@ export class MediaRepository {
 			)
 			.executeTakeFirst();
 
-		return Number(result.numUpdatedRows ?? 0) > 0;
+		const moved = Number(result.numUpdatedRows ?? 0) > 0;
+		if (moved) invalidateVariants();
+		return moved;
 	}
 
 	/**
@@ -378,6 +382,7 @@ export class MediaRepository {
 
 		const row = await query.returningAll().executeTakeFirst();
 
+		if (row) invalidateVariants();
 		return row ? this.rowToItem(row) : null;
 	}
 
@@ -391,6 +396,7 @@ export class MediaRepository {
 		}
 
 		const row = await query.returningAll().executeTakeFirst();
+		if (row) invalidateVariants();
 		return row ? this.rowToItem(row) : null;
 	}
 
@@ -632,6 +638,7 @@ export class MediaRepository {
 			.returningAll()
 			.executeTakeFirst();
 
+		if (row) invalidateVariants();
 		return row ? this.rowToItem(row) : null;
 	}
 
@@ -644,8 +651,8 @@ export class MediaRepository {
 			.where("id", "=", id)
 			.returning("storage_key")
 			.executeTakeFirst();
-		if (deleted) return deleted.storage_key;
-		return null;
+		if (deleted) invalidateVariants();
+		return deleted?.storage_key ?? null;
 	}
 
 	async isStorageKeyReferenced(storageKey: string): Promise<boolean> {

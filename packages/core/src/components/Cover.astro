@@ -4,6 +4,8 @@
  *
  * Renders an image/video with text overlay from WordPress imports.
  */
+import { variantUrl } from "../media/variants.js";
+import { getCommittedVariants, srcsetWidthsFor } from "../media/variant-read.js";
 import { nestedRenderOf } from "./portable-text-nested.js";
 
 export interface Props {
@@ -44,6 +46,24 @@ const backgroundImage = backgroundVideo ? undefined : storedImage;
 const { default: PortableText } = await import("./PortableText.astro");
 const nested = nestedRenderOf(node);
 
+// THE LADDER, from the same read the inline images use. Covers and cards were 56% of
+// one real home page's image bytes, so a cover that renders no srcset is the biggest
+// single miss on the page. Empty (no variants, no readable key, no database) means no
+// srcset and markup identical to a site with no variants.
+let coverSrcset: string | undefined;
+let coverSizes: string | undefined;
+if (backgroundImage && !backgroundVideo) {
+	const db = Astro.locals.emdash?.db;
+	const committed = db ? await getCommittedVariants(db as never, { url: backgroundImage }) : [];
+	// A cover is drawn at the viewport's width, which we cannot know at render time, so
+	// the ladder offers what is stored and lets the browser choose.
+	const widths = srcsetWidthsFor(committed, Number.MAX_SAFE_INTEGER);
+	if (widths.length) {
+		coverSrcset = widths.map((w) => `${variantUrl(backgroundImage, w)} ${w}w`).join(", ");
+		coverSizes = "100vw";
+	}
+}
+
 const hasBackground = backgroundImage || backgroundVideo;
 const overlayStyle = overlayColor
 	? `background-color: ${overlayColor}; opacity: ${overlayOpacity};`
@@ -56,7 +76,14 @@ const overlayStyle = overlayColor
 >
 	{
 		backgroundImage && !backgroundVideo && (
-			<img src={backgroundImage} alt="" class="emdash-cover__background" loading="lazy" />
+			<img
+				src={backgroundImage}
+				alt=""
+				class="emdash-cover__background"
+				loading="lazy"
+				srcset={coverSrcset}
+				sizes={coverSizes}
+			/>
 		)
 	}
 	{

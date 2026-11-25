@@ -792,6 +792,12 @@ export const CacheNamespace = {
 	WIDGETS: "widgets",
 	/** Public-render plugin state (forms definitions, design CSS rules). */
 	PLUGINS: "plugins",
+	/**
+	 * Committed image variants. The rendered `srcset` depends on these rows, so a
+	 * backfill that adds them must be able to make cached pages refill — which only
+	 * works if this namespace is in `PAGE_VECTOR_NAMESPACES` below.
+	 */
+	MEDIA_VARIANTS: "media-variants",
 } as const;
 
 /** Namespace for a content collection's cached queries. */
@@ -873,6 +879,7 @@ const PAGE_VECTOR_NAMESPACES = [
 	CacheNamespace.COMMENTS,
 	CacheNamespace.WIDGETS,
 	CacheNamespace.PLUGINS,
+	CacheNamespace.MEDIA_VARIANTS,
 ] as const;
 
 export interface PageGenerationVectorResult {
@@ -936,9 +943,9 @@ export async function readPageGenerationVector(
 		return { vector: "", certain: false };
 	}
 
-	const [s, m, t, y, c, w, p] = nsResults.map((r) => r.value);
+	const [s, m, t, y, c, w, p, mv] = nsResults.map((r) => r.value);
 	return {
-		vector: `v1|b=${buildTime ?? ""}|s=${s}|m=${m}|t=${t}|y=${y}|c=${c}|w=${w}|lc=${lcResult.value}|p=${p}`,
+		vector: `v1|b=${buildTime ?? ""}|s=${s}|m=${m}|t=${t}|y=${y}|c=${c}|w=${w}|lc=${lcResult.value}|p=${p}|mv=${mv}`,
 		certain: true,
 	};
 }

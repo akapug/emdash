@@ -7,6 +7,7 @@ import {
 	EVENT_SEARCH_BAR_PROBE,
 	IMPORT_CAPABILITIES,
 	importCapabilities,
+	MEDIA_VARIANTS_CAPABILITY,
 	POST,
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
 import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
@@ -50,12 +51,28 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		expect(importCapabilities(rejecting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			MEDIA_VARIANTS_CAPABILITY,
 		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_SEARCH_BAR_CAPABILITY,
 			EVENT_DETAIL_FIELDS_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			MEDIA_VARIANTS_CAPABILITY,
 		]);
+	});
+
+	it("ADVERTISES media-variants, so the host can ask before it sends a size", () => {
+		// The lead's grep found only the DEFINITION, because the route returns the
+		// CONSTANT rather than the literal — `capabilities: [...IMPORT_CAPABILITIES]` —
+		// so grepping the route for "media-variants.v1" can never succeed.
+		//
+		// This asserts the constant the route spreads, which is the same fact without
+		// constructing the route: building the route pulls schema/registry, whose module
+		// graph needs @emdash-cms/registry-lexicons' generated dist, and that codegen
+		// does not run in this environment. Asserting through the constant keeps the
+		// check honest — if the capability leaves the list, the route stops advertising
+		// it and this fails.
+		expect(IMPORT_CAPABILITIES).toContain(MEDIA_VARIANTS_CAPABILITY);
 	});
 });

@@ -97,6 +97,7 @@ export {
 	handleContentTranslations,
 	handleMediaList,
 	handleMediaGet,
+	handleMediaVariantStore,
 	handleMediaCreate,
 	handleMediaRegisterUpload,
 	handleMediaUpdate,
