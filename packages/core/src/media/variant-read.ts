@@ -264,11 +264,18 @@ export const ORIGINAL_CANDIDATE_MAX_WIDTH = 2560;
 /**
  * The width to offer the ORIGINAL at, as the last candidate, or undefined.
  *
- * A LIST OF STORED SIZES MUST NOT DRAW AN IMAGE SOFTER THAN NO LIST DID. A browser
- * given a srcset chooses only from it; `src` is no longer a candidate. A 1000 wide
- * original has stored sizes up to 768, so a full-width cover on a 1440 screen was
- * drawn from the 768 file and stretched, where the page without stored sizes drew
- * the 1000 wide original. Measured in a browser on an imported site.
+ * WITHIN THE BUDGET THIS FILE KEEPS (twice the drawn width), A LIST OF STORED SIZES
+ * MUST NOT DRAW AN IMAGE SOFTER THAN NO LIST DID. A browser given a srcset chooses
+ * only from it; `src` is no longer a candidate. A 1000 wide original has stored sizes
+ * up to 768, so a full-width cover on a 1440 screen was drawn from the 768 file and
+ * stretched, where the page without stored sizes drew the 1000 wide original.
+ * Measured in a browser on an imported site. Past the budget (a 3x screen on an
+ * image drawn small) the list still ends at a stored size, as it always has.
+ *
+ * WHAT IT COSTS. The original is the file a page with no stored sizes fetched, so no
+ * screen fetches more than that page did. A camera original offered under the second
+ * case below can still be several megabytes on a dense screen: that is the price of
+ * a store with a hole in it, and the cure for it is filling the hole.
  *
  * So when the stored sizes run out before the caller's budget (`offered` ends below
  * twice the drawn width) and the original is wider than the last of them, the
