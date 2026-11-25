@@ -108,6 +108,7 @@ function fileContext(
 	return {
 		params: { key },
 		url,
+		request: new Request(url),
 		locals: { emdash: { db, storage } },
 	} as unknown as FileContext;
 }

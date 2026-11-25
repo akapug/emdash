@@ -25,6 +25,8 @@ declare module "@aws-sdk/client-s3" {
 		Body?: SdkStreamMixin;
 		ContentType?: string;
 		ContentLength?: number;
+		ContentRange?: string;
+		$metadata?: { httpStatusCode?: number };
 		ETag?: string;
 		LastModified?: Date;
 	}
@@ -69,7 +71,7 @@ declare module "@aws-sdk/client-s3" {
 	}
 
 	export class GetObjectCommand {
-		constructor(input: { Bucket: string; Key: string });
+		constructor(input: { Bucket: string; Key: string; Range?: string; IfMatch?: string });
 	}
 
 	export class DeleteObjectCommand {

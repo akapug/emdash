@@ -10,7 +10,8 @@ import { apiError, handleError } from "#api/error.js";
 import { IMMUTABLE_IMAGE_CACHE, MUTABLE_MEDIA_CACHE_CONTROL } from "#media/image-endpoint.js";
 
 import { resolveVariantForRequest } from "../../../../../media/variant-serve.js";
-import type { DownloadResult } from "../../../../../storage/types.js";
+import { parseByteRange } from "../../../../../storage/byte-range.js";
+import type { DownloadResult, RangedDownloadResult } from "../../../../../storage/types.js";
 import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 
 export const prerender = false;
@@ -61,7 +62,14 @@ function isMissingObject(error: unknown): boolean {
 	return error instanceof Error && "code" in error && error.code === "NOT_FOUND";
 }
 
-export const GET: APIRoute = async ({ params, locals, url }) => {
+// Sandbox all uploads, including direct navigation to active content types.
+const MEDIA_SECURITY_HEADERS = {
+	"X-Content-Type-Options": "nosniff",
+	"Content-Security-Policy":
+		"sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+};
+
+export const GET: APIRoute = async ({ params, locals, url, request }) => {
 	const { key } = params;
 	const { emdash } = locals;
 
@@ -82,11 +90,19 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 
 	const { db, storage } = emdash;
 	try {
+		// This route doesn't provide a validator that could satisfy If-Range.
+		const range = request.headers.has("if-range")
+			? null
+			: parseByteRange(request.headers.get("range"));
+		const download = (storageKey: string) =>
+			range && storage.downloadRange
+				? storage.downloadRange(storageKey, range)
+				: storage.download(storageKey);
 		const variant = db ? await resolveVariantForRequest(db, key, url.searchParams.get("w")) : null;
-		let result: DownloadResult | undefined;
+		let result: DownloadResult | RangedDownloadResult | undefined;
 		if (variant && variant.storageKey !== key) {
 			try {
-				result = await storage.download(variant.storageKey);
+				result = await download(variant.storageKey);
 			} catch (error) {
 				// A stale srcset can outlive its variant object, but a storage failure is not a miss.
 				if (!isMissingObject(error)) throw error;
@@ -94,7 +110,7 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 		}
 		if (!result) {
 			try {
-				result = await storage.download(key);
+				result = await download(key);
 			} catch (error) {
 				// Older adapters may report a missing original without a storage error code.
 				if (
@@ -111,19 +127,24 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 			}
 		}
 
-		const headers: Record<string, string> = {
-			"Content-Type": result.contentType,
-			"Cache-Control": result.contentType.startsWith("image/")
-				? MUTABLE_MEDIA_CACHE_CONTROL
-				: IMMUTABLE_IMAGE_CACHE,
-			"X-Content-Type-Options": "nosniff",
-			// Sandbox CSP on all user-uploaded content — prevents script execution
-			// even for SVGs navigated to directly or content types that support scripting.
-			"Content-Security-Policy":
-				"sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
-		};
+		const headers: Record<string, string> = { ...MEDIA_SECURITY_HEADERS };
+		if (storage.downloadRange) headers["Accept-Ranges"] = "bytes";
+		if ("kind" in result && result.kind === "unsatisfiable") {
+			headers["Content-Range"] = `bytes */${result.size}`;
+			headers["Cache-Control"] = "no-store";
+			return new Response(null, { status: 416, headers });
+		}
 
-		if (result.size) {
+		headers["Content-Type"] = result.contentType;
+		headers["Cache-Control"] = result.contentType.startsWith("image/")
+			? MUTABLE_MEDIA_CACHE_CONTROL
+			: IMMUTABLE_IMAGE_CACHE;
+		let status = 200;
+		if ("kind" in result) {
+			status = 206;
+			headers["Content-Range"] = `bytes ${result.start}-${result.end}/${result.size}`;
+			headers["Content-Length"] = String(result.end - result.start + 1);
+		} else if (result.size) {
 			headers["Content-Length"] = String(result.size);
 		}
 
@@ -135,7 +156,7 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 			headers["Content-Disposition"] = "attachment";
 		}
 
-		return new Response(result.body, { status: 200, headers });
+		return new Response(result.body, { status, headers });
 	} catch (error) {
 		return handleError(error, "Failed to serve file", "FILE_SERVE_ERROR");
 	}

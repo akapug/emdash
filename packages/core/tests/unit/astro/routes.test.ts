@@ -36,23 +36,32 @@ function resolveSourceRouteFile(entrypoint: string): string {
 	return existsSync(`${base}.ts`) ? `${base}.ts` : `${base}.tsx`;
 }
 
-function mockMediaContext(key: string | undefined, contentType = "image/png") {
+function mockMediaContext(
+	key: string | undefined,
+	contentType = "image/png",
+	headers?: HeadersInit,
+) {
+	const url = new URL(`https://site.test/_emdash/api/media/file/${key ?? ""}`);
 	const download = vi.fn().mockResolvedValue({
-		body: new Uint8Array([1, 2, 3]),
+		body: new Blob([new Uint8Array([1, 2, 3])]).stream(),
 		contentType,
 		size: 3,
 	});
+	const downloadRange = vi.fn();
 
 	return {
 		context: {
 			params: { key },
+			url,
+			request: new Request(url, { headers }),
 			locals: {
 				emdash: {
-					storage: { download },
+					storage: { download, downloadRange },
 				},
 			},
 		} as Parameters<typeof getMediaFile>[0],
 		download,
+		downloadRange,
 	};
 }
 
@@ -300,6 +309,29 @@ describe("media file catch-all route", () => {
 		expect(response.status).toBe(200);
 		expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
 		expect(download).toHaveBeenCalledWith("nested/path/file.png");
+	});
+
+	it("passes a Range request with a slash-containing key to the ranged read", async () => {
+		const key = "nested/path/clip.mp4";
+		const { context, download, downloadRange } = mockMediaContext(key, "video/mp4", {
+			Range: "bytes=1-2",
+		});
+		const bytes = new Uint8Array([2, 3]);
+		downloadRange.mockResolvedValue({
+			kind: "partial",
+			body: new Blob([bytes]).stream(),
+			contentType: "video/mp4",
+			size: 3,
+			start: 1,
+			end: 2,
+		});
+
+		const response = await getMediaFile(context);
+		expect(response.status).toBe(206);
+		expect(response.headers.get("Content-Range")).toBe("bytes 1-2/3");
+		expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+		expect(downloadRange).toHaveBeenCalledExactlyOnceWith(key, { start: 1, end: 2 });
+		expect(download).not.toHaveBeenCalled();
 	});
 
 	it("returns not found when the catch-all key is missing", async () => {

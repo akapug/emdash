@@ -16,11 +16,14 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 	return error instanceof Error && "code" in error;
 }
 
+import { resolveByteRange } from "./byte-range.js";
 import type {
 	Storage,
 	LocalStorageConfig,
 	UploadResult,
 	DownloadResult,
+	ByteRange,
+	RangedDownloadResult,
 	ListResult,
 	ListOptions,
 	SignedUploadUrl,
@@ -138,6 +141,39 @@ export class LocalStorage implements Storage {
 			};
 		} catch (error) {
 			if (error instanceof EmDashStorageError) throw error;
+			throw new EmDashStorageError(`Failed to download file: ${key}`, "DOWNLOAD_FAILED", error);
+		}
+	}
+
+	async downloadRange(key: string, range: ByteRange): Promise<RangedDownloadResult> {
+		let file: fs.FileHandle | undefined;
+		try {
+			file = await fs.open(this.getFilePath(key), "r");
+			const stat = await file.stat();
+			if (!stat.isFile() || !Number.isSafeInteger(stat.size)) {
+				throw new Error("Invalid file metadata");
+			}
+
+			const resolved = resolveByteRange(range, stat.size);
+			if (!resolved) {
+				await file.close();
+				return { kind: "unsatisfiable", size: stat.size };
+			}
+
+			const contentType = getContentType(path.extname(key).toLowerCase());
+			const nodeStream = file.createReadStream({ ...resolved, autoClose: true });
+			// Web streams count chunks, not bytes, by default.
+			// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Node file streams produce Uint8Array chunks
+			const body = Readable.toWeb(nodeStream, {
+				strategy: { highWaterMark: 1 },
+			}) as DownloadResult["body"];
+			return { kind: "partial", body, contentType, size: stat.size, ...resolved };
+		} catch (error) {
+			await file?.close().catch(() => {});
+			if (error instanceof EmDashStorageError) throw error;
+			if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+				throw new EmDashStorageError(`File not found: ${key}`, "NOT_FOUND", error);
+			}
 			throw new EmDashStorageError(`Failed to download file: ${key}`, "DOWNLOAD_FAILED", error);
 		}
 	}

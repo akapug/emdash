@@ -1,3 +1,4 @@
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { s3Send } = vi.hoisted(() => ({
@@ -19,9 +20,9 @@ vi.mock("@aws-sdk/client-s3", () => {
 	return {
 		S3Client,
 		PutObjectCommand: Command,
-		GetObjectCommand: Command,
+		GetObjectCommand: class extends Command {},
 		DeleteObjectCommand: Command,
-		HeadObjectCommand: Command,
+		HeadObjectCommand: class extends Command {},
 		ListObjectsV2Command: Command,
 	};
 });
@@ -30,7 +31,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
 	getSignedUrl: () => Promise.resolve("https://signed.example.com/fake"),
 }));
 
-import { createStorage, resolveS3Config } from "../../../src/storage/s3.js";
+import { createStorage, resolveS3Config, S3Storage } from "../../../src/storage/s3.js";
 import { EmDashStorageError } from "../../../src/storage/types.js";
 
 const FULL_ENV = {
@@ -284,6 +285,97 @@ describe("S3Storage.getSignedUploadUrl", () => {
 		});
 
 		expect(signed.headers["Content-Length"]).toBe("0");
+	});
+});
+
+describe("S3Storage.downloadRange", () => {
+	const storage = new S3Storage({ endpoint: "https://s3.example.com", bucket: "my-bucket" });
+	const key = "hero.png";
+	const object = { Bucket: "my-bucket", Key: key };
+	const head = { ContentLength: 5, ETag: '"opaque-etag"' };
+
+	afterEach(() => s3Send.mockReset());
+
+	it("sends a resolved, conditional GET and returns its bytes and object metadata", async () => {
+		const stream = new Response(new Uint8Array([3, 4])).body;
+		s3Send.mockResolvedValueOnce(head).mockResolvedValueOnce({
+			Body: { transformToWebStream: () => stream },
+			ContentType: "image/png",
+			ContentLength: 2,
+			ContentRange: "bytes 3-4/5",
+			ETag: head.ETag,
+			$metadata: { httpStatusCode: 206 },
+		});
+
+		const result = await storage.downloadRange(key, { suffix: 2 });
+		if (result.kind !== "partial") throw new Error("Expected a partial download");
+		expect(s3Send).toHaveBeenCalledTimes(2);
+		expect(s3Send).toHaveBeenNthCalledWith(1, new HeadObjectCommand(object));
+		const input = { ...object, Range: "bytes=3-4", IfMatch: head.ETag };
+		expect(s3Send).toHaveBeenNthCalledWith(2, new GetObjectCommand(input));
+		expect(result).toMatchObject({ contentType: "image/png", size: 5, start: 3, end: 4 });
+		expect(new Uint8Array(await new Response(result.body).arrayBuffer())).toEqual(
+			new Uint8Array([3, 4]),
+		);
+	});
+
+	it("does not GET an unsatisfiable range", async () => {
+		s3Send.mockResolvedValueOnce(head);
+		await expect(storage.downloadRange(key, { start: 5 })).resolves.toEqual({
+			kind: "unsatisfiable",
+			size: 5,
+		});
+		expect(s3Send).toHaveBeenCalledExactlyOnceWith(new HeadObjectCommand(object));
+	});
+
+	it("does not GET without a usable ETag", async () => {
+		s3Send.mockResolvedValueOnce({ ContentLength: 5 });
+		await expect(storage.downloadRange(key, { start: 1 })).rejects.toMatchObject({
+			name: EmDashStorageError.name,
+			code: "DOWNLOAD_FAILED",
+		});
+		expect(s3Send).toHaveBeenCalledExactlyOnceWith(new HeadObjectCommand(object));
+	});
+
+	it.each([
+		["ignored Range", { $metadata: { httpStatusCode: 200 }, ContentRange: undefined }],
+		["different total", { ContentRange: "bytes 1-2/6" }],
+		["different length", { ContentLength: 5 }],
+		["different ETag", { ETag: '"replacement"' }],
+	])("rejects and cancels a response with %s", async (_reason, mismatch) => {
+		const cancel = vi.fn();
+		const stream = new ReadableStream<Uint8Array>({ cancel });
+		s3Send.mockResolvedValueOnce(head).mockResolvedValueOnce({
+			Body: { transformToWebStream: () => stream },
+			ContentRange: "bytes 1-2/5",
+			ContentLength: 2,
+			ETag: head.ETag,
+			...mismatch,
+		});
+
+		await expect(storage.downloadRange(key, { start: 1, end: 2 })).rejects.toMatchObject({
+			name: EmDashStorageError.name,
+			code: "DOWNLOAD_FAILED",
+		});
+		expect(cancel).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["HEAD", "NotFound", "NOT_FOUND"],
+		["GET", "NoSuchKey", "NOT_FOUND"],
+		["HEAD", "AccessDenied", "DOWNLOAD_FAILED"],
+		["GET", "PreconditionFailed", "DOWNLOAD_FAILED"],
+	])("classifies %s %s as %s", async (operation, name, code) => {
+		const cause = Object.assign(new Error(name), { name });
+		if (operation === "GET") s3Send.mockResolvedValueOnce(head);
+		s3Send.mockRejectedValueOnce(cause);
+
+		await expect(storage.downloadRange(key, { start: 0 })).rejects.toMatchObject({
+			name: EmDashStorageError.name,
+			code,
+			cause,
+		});
+		expect(s3Send).toHaveBeenCalledTimes(operation === "GET" ? 2 : 1);
 	});
 });
 

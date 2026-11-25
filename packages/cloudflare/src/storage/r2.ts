@@ -16,12 +16,14 @@ import type {
 	Storage,
 	UploadResult,
 	DownloadResult,
+	ByteRange,
+	RangedDownloadResult,
 	ListResult,
 	ListOptions,
 	SignedUploadUrl,
 	SignedUploadOptions,
 } from "emdash";
-import { EmDashStorageError } from "emdash";
+import { EmDashStorageError, resolveByteRange } from "emdash";
 
 /** Regex to remove trailing slashes from URLs */
 const TRAILING_SLASH_REGEX = /\/$/;
@@ -84,6 +86,43 @@ export class R2Storage implements Storage {
 				body: object.body,
 				contentType: object.httpMetadata?.contentType || "application/octet-stream",
 				size: object.size,
+			};
+		} catch (error) {
+			if (error instanceof EmDashStorageError) throw error;
+			throw new EmDashStorageError(`Failed to download file: ${key}`, "DOWNLOAD_FAILED", error);
+		}
+	}
+
+	async downloadRange(key: string, range: ByteRange): Promise<RangedDownloadResult> {
+		try {
+			const metadata = await this.bucket.head(key);
+			if (!metadata) {
+				throw new EmDashStorageError(`File not found: ${key}`, "NOT_FOUND");
+			}
+
+			const { size, etag } = metadata;
+			const bounds = resolveByteRange(range, size);
+			if (!bounds) return { kind: "unsatisfiable", size };
+
+			const { start, end } = bounds;
+			const object = await this.bucket.get(key, {
+				onlyIf: { etagMatches: etag },
+				range: { offset: start, length: end - start + 1 },
+			});
+			if (!object) {
+				throw new EmDashStorageError(`File not found: ${key}`, "NOT_FOUND");
+			}
+			if (!("body" in object) || !object.body) {
+				throw new EmDashStorageError(`File changed during download: ${key}`, "DOWNLOAD_FAILED");
+			}
+
+			return {
+				kind: "partial",
+				body: object.body,
+				contentType: object.httpMetadata?.contentType || "application/octet-stream",
+				size,
+				start,
+				end,
 			};
 		} catch (error) {
 			if (error instanceof EmDashStorageError) throw error;

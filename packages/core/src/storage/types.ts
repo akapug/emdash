@@ -85,6 +85,14 @@ export interface DownloadResult {
 	size: number;
 }
 
+/** A single byte range before it is clamped to the selected object's size. */
+export type ByteRange = { start: number; end?: number } | { suffix: number };
+
+/** Size describes the full object; start and end are inclusive byte offsets. */
+export type RangedDownloadResult =
+	| (DownloadResult & { kind: "partial"; start: number; end: number })
+	| { kind: "unsatisfiable"; size: number };
+
 /**
  * Signed URL for direct upload
  */
@@ -170,6 +178,9 @@ export interface Storage {
 	 * Download a file from storage
 	 */
 	download(key: string): Promise<DownloadResult>;
+
+	/** Read a single byte range without pulling the rest of the object. */
+	downloadRange?(key: string, range: ByteRange): Promise<RangedDownloadResult>;
 
 	/**
 	 * Delete a file from storage

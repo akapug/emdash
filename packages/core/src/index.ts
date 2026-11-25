@@ -262,6 +262,8 @@ export type {
 	SignedUploadOptions,
 	UploadResult,
 	DownloadResult,
+	ByteRange,
+	RangedDownloadResult,
 	ListResult,
 	ListOptions,
 	FileInfo,
@@ -271,6 +273,7 @@ export type {
 	CreateStorageFn,
 } from "./storage/types.js";
 export { EmDashStorageError } from "./storage/types.js";
+export { resolveByteRange } from "./storage/byte-range.js";
 
 // Object cache (distributed read-through query cache)
 export {

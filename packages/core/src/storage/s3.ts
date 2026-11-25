@@ -18,11 +18,14 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
 
+import { resolveByteRange } from "./byte-range.js";
 import type {
 	Storage,
 	S3StorageConfig,
 	UploadResult,
 	DownloadResult,
+	ByteRange,
+	RangedDownloadResult,
 	ListResult,
 	ListOptions,
 	SignedUploadUrl,
@@ -221,6 +224,53 @@ export class S3Storage implements Storage {
 				error instanceof EmDashStorageError ||
 				(hasErrorName(error) && error.name === "NoSuchKey")
 			) {
+				throw new EmDashStorageError(`File not found: ${key}`, "NOT_FOUND", error);
+			}
+			throw new EmDashStorageError(`Failed to download file: ${key}`, "DOWNLOAD_FAILED", error);
+		}
+	}
+
+	async downloadRange(key: string, range: ByteRange): Promise<RangedDownloadResult> {
+		try {
+			const object = { Bucket: this.bucket, Key: key };
+			const { ContentLength: size, ETag: etag } = await this.client.send(
+				new HeadObjectCommand(object),
+			);
+			if (size === undefined || !Number.isSafeInteger(size) || size < 0) {
+				throw new Error("Invalid object size from S3");
+			}
+
+			const resolved = resolveByteRange(range, size);
+			if (!resolved) return { kind: "unsatisfiable", size };
+			if (!etag || etag === "*") throw new Error("Missing usable ETag from S3");
+
+			const { start, end } = resolved;
+			const input = { ...object, Range: `bytes=${start}-${end}`, IfMatch: etag };
+			const response = await this.client.send(new GetObjectCommand(input));
+			const body = response.Body?.transformToWebStream();
+			if (!body) throw new Error("Missing ranged response body from S3");
+
+			const status = response.$metadata?.httpStatusCode;
+			if (
+				(status !== undefined && status !== 206) ||
+				response.ContentRange !== `bytes ${start}-${end}/${size}` ||
+				(response.ContentLength !== undefined && response.ContentLength !== end - start + 1) ||
+				(response.ETag !== undefined && response.ETag !== etag)
+			) {
+				await body.cancel().catch(() => {});
+				throw new Error("S3 response does not match the requested byte range");
+			}
+
+			return {
+				kind: "partial",
+				body,
+				contentType: response.ContentType || "application/octet-stream",
+				size,
+				start,
+				end,
+			};
+		} catch (error) {
+			if (hasErrorName(error) && ["NotFound", "NoSuchKey", "404"].includes(error.name)) {
 				throw new EmDashStorageError(`File not found: ${key}`, "NOT_FOUND", error);
 			}
 			throw new EmDashStorageError(`Failed to download file: ${key}`, "DOWNLOAD_FAILED", error);
