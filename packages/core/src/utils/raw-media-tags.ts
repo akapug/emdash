@@ -97,7 +97,7 @@ export async function withStoredSizes(
  * repeated name wins, as it does in a browser. Reading whole attributes is what keeps `data-src` from being
  * read as `src`, and the word "srcset" inside an alt from being read as a srcset.
  */
-function attributesOf(tag: string): Map<string, string> {
+export function attributesOf(tag: string): Map<string, string> {
 	const attributes = new Map<string, string>();
 	const end = tag.endsWith("/>") ? -2 : -1;
 	for (const m of tag.slice(4, end).matchAll(ATTRIBUTE)) {
