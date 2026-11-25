@@ -241,22 +241,34 @@ function storageKeyOf(url: string | null): string | null {
 
 /**
  * The widths to put in a `srcset` for an image whose committed variants are
- * `variants` and which renders at `renderedWidth`.
+ * `variants` and which is drawn `drawnWidth` CSS pixels wide.
  *
- * EMPTY when there is nothing to offer: no variants, or none narrower than the
- * image renders. Empty is the contract that keeps the markup identical to a site
- * with no variants, so it is a correct answer rather than a failure.
+ * EMPTY when there is nothing to offer. Empty is the contract that keeps the markup
+ * identical to a site with no variants, so it is a correct answer and not a failure.
+ *
+ * WHAT BOUNDS THE LIST IS A BYTE BUDGET, not the drawn width. `drawnWidth` is
+ * often a display width far below the original's: a block resized to 640 needs the
+ * 768 file on an ordinary screen and a file near 1280 on a dense one. Offering only
+ * widths below 640 would draw that image from a 480 file, softer than the original
+ * it replaced. So the list runs up to and including the first width that covers
+ * twice the drawn width, and stops there: a deliberate 2x budget. A candidate
+ * changes which file is fetched and never the layout, which the caller's width and
+ * height attributes or its `sizes` bound already fix.
  */
 export function srcsetWidthsFor(
 	variants: readonly StoredVariant[],
-	renderedWidth: number | undefined,
+	drawnWidth: number | undefined,
 ): number[] {
-	if (!renderedWidth || renderedWidth <= 0) return [];
-	return variants
-		.map((v) => v.width)
-		.filter((w) => Number.isInteger(w) && w > 0 && w < renderedWidth)
-		.toSorted((a, b) => a - b)
-		.filter((w, i, all) => all.indexOf(w) === i);
+	if (!drawnWidth || drawnWidth <= 0) return [];
+	const stored = [...new Set(variants.map((v) => v.width))]
+		.filter((w) => Number.isInteger(w) && w > 0)
+		.toSorted((x, y) => x - y);
+	const widths: number[] = [];
+	for (const w of stored) {
+		widths.push(w);
+		if (w >= drawnWidth * 2) break;
+	}
+	return widths;
 }
 
 /**

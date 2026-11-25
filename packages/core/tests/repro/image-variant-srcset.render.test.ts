@@ -193,34 +193,54 @@ describe("stored image sizes on a logged-out page", () => {
 
 	it("a photo stored on its side is bounded by its upright width, not its stored one", async () => {
 		const key = "2024/05/turned.jpg";
-		// The row says 800x400; the picture is 400 wide. 600 is not narrower than that.
-		await seed(
-			key,
-			[
-				[300, CURRENT],
-				[600, CURRENT],
-			],
-			[800, 400],
-			[400, 800],
-		);
+		// The row says 800x400; the picture is 400 wide.
+		await seed(key, [[300, CURRENT]], [800, 400], [400, 800]);
 		const tag = tagFor(await asVisitor(Image, block(key)), "turned.jpg");
 		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
 		expect(attr(tag, "sizes")).toBe("(min-width: 400px) 400px, 100vw");
 	});
 
-	it("a content image drawn narrower than a stored width does not offer that width", async () => {
+	it("a content image resized smaller is offered enough for a dense screen, and no more", async () => {
 		const key = "2024/05/narrow.jpg";
-		await seed(key, [
-			[300, CURRENT],
-			[768, CURRENT],
-		]);
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[480, CURRENT],
+				[768, CURRENT],
+				[1024, CURRENT],
+				[1536, CURRENT],
+				[2048, CURRENT],
+			],
+			[3200, 1800],
+		);
 		const tag = tagFor(
-			await asVisitor(Image, block(key, { displayWidth: 640, width: 1600, height: 900 })),
+			await asVisitor(Image, block(key, { displayWidth: 640, width: 3200, height: 1800 })),
 			"narrow.jpg",
 		);
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
+		// Drawn 640 wide: 768 serves an ordinary screen, 1536 a dense one (2 x 640 = 1280).
+		// 480 alone would be softer than the original; 2048 is never the right choice here.
+		const offered = (attr(tag, "srcset") ?? "").split(", ").map((c) => c.split(" ")[1]);
+		expect(offered).toEqual(["300w", "480w", "768w", "1024w", "1536w"]);
 		expect(attr(tag, "sizes")).toBe("(min-width: 640px) 640px, 100vw");
 		expect(attr(tag, "width")).toBe("640");
+	});
+
+	it("a small drawing of a large image is offered the smallest stored width, not the original", async () => {
+		const key = "2024/05/thumb.jpg";
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[768, CURRENT],
+			],
+			[3200, 1800],
+		);
+		const tag = tagFor(
+			await asVisitor(Image, block(key, { displayWidth: 100, width: 3200, height: 1800 })),
+			"thumb.jpg",
+		);
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
 	});
 
 	it("a content image served from a public bucket is still found, and its candidates stay on the file route", async () => {
