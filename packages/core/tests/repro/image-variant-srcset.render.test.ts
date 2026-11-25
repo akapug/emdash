@@ -256,17 +256,25 @@ describe("stored image sizes on a logged-out page", () => {
 		}
 	});
 
-	it("Cover offers each stored width for its background image", async () => {
+	it("Cover offers each stored width for its background image, including the wide rungs", async () => {
 		const key = "2024/05/cover.jpg";
-		await seed(key, [
-			[480, CURRENT],
-			[768, CURRENT],
-		]);
+		await seed(
+			key,
+			[
+				[480, CURRENT],
+				[768, CURRENT],
+				[1536, CURRENT],
+				[2048, CURRENT],
+			],
+			[3072, 1728],
+		);
 		const html = await asVisitor(Cover, {
 			node: { _type: "cover", _key: "c1", backgroundImage: `${FILE}${key}`, content: [] },
 		});
 		const tag = tagFor(html, "cover.jpg");
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=480 480w, ${FILE}${key}?w=768 768w`);
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=480 480w, ${FILE}${key}?w=768 768w, ${FILE}${key}?w=1536 1536w, ${FILE}${key}?w=2048 2048w`,
+		);
 		expect(attr(tag, "sizes")).toBe("100vw");
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
 	});

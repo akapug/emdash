@@ -26,8 +26,8 @@
  * {@link VARIANT_CACHE_CONTROL}.
  */
 
-/** The widths a renderer may ask for. Fixed, so the srcset and the store agree. */
-export const VARIANT_LADDER = [300, 480, 768, 1024] as const;
+/** Exact upload widths advertised by analyze; each width is one slot per parent generation. */
+export const VARIANT_LADDER = [300, 480, 768, 1024, 1536, 2048] as const;
 
 /**
  * Cache policy for a width-hinted parent URL.

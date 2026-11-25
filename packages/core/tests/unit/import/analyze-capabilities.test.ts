@@ -12,6 +12,7 @@ import {
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
 import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../src/content/protection.js";
+import { VARIANT_LADDER } from "../../../src/media/variants.js";
 
 const MINIMAL_WXR = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
@@ -19,7 +20,7 @@ const MINIMAL_WXR = `<?xml version="1.0" encoding="UTF-8"?>
 </rss>`;
 
 describe("WordPress WXR analyze capabilities (Item 109)", () => {
-	it("advertises event-search-bar iff execute's mappedEmbedsSchema accepts searchBar", async () => {
+	it("advertises the upload widths and supported import capabilities", async () => {
 		const acceptsSearchBar = mappedEmbedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success;
 		const form = new FormData();
 		form.set("file", new File([MINIMAL_WXR], "site.wxr", { type: "text/xml" }));
@@ -36,12 +37,19 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as {
 			success: boolean;
-			data: { protectedContentCapability: string; capabilities: string[] };
+			data: {
+				protectedContentCapability: string;
+				capabilities: string[];
+				mediaVariantWidths?: number[];
+			};
 		};
 		expect(body.success).toBe(true);
 		expect(body.data.protectedContentCapability).toBe(PROTECTED_CONTENT_CAPABILITY);
 		expect(body.data.capabilities).toEqual([...IMPORT_CAPABILITIES]);
 		expect(body.data.capabilities).toContain(PROTECTED_CONTENT_CAPABILITY);
+		expect(body.data.capabilities).toContain(MEDIA_VARIANTS_CAPABILITY);
+		expect(body.data.mediaVariantWidths).toEqual([300, 480, 768, 1024, 1536, 2048]);
+		expect(body.data.mediaVariantWidths).toEqual(VARIANT_LADDER);
 		expect(body.data.capabilities.includes(EVENT_SEARCH_BAR_CAPABILITY)).toBe(acceptsSearchBar);
 	});
 

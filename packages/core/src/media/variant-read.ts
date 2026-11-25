@@ -39,9 +39,6 @@ import { cachedQuery, invalidateObjectCache, CacheNamespace } from "../object-ca
 import { capPageCacheUntil } from "../page-cache/state.js";
 import { requestCached } from "../request-cache.js";
 
-/** The widths a renderer may offer, narrowest first. Must match the fork's ladder. */
-export const RENDERABLE_VARIANT_WIDTHS = [300, 480, 768, 1024] as const;
-
 /**
  * The committed variants of an image's CURRENT bytes, or `[]`.
  *

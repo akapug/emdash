@@ -18,6 +18,7 @@ import { RESERVED_COLLECTION_SLUGS } from "#schema/types.js";
 import type { EmDashHandlers } from "#types";
 
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../../../content/protection.js";
+import { VARIANT_LADDER } from "../../../../../media/variants.js";
 import { mappedEmbedsSchema } from "./mapped-embeds.js";
 import { mecEventFieldType } from "./mapped-fields.js";
 
@@ -168,6 +169,8 @@ export interface WxrAnalysis {
 	protectedContentCapability: typeof PROTECTED_CONTENT_CAPABILITY;
 	/** Advertised import/render capabilities supported by this EmDash build. */
 	capabilities: readonly string[];
+	/** Exact pixel widths the WordPress variant upload route accepts. */
+	mediaVariantWidths: readonly number[];
 	site: {
 		title: string;
 		url: string;
@@ -382,6 +385,7 @@ function analyzeWxr(
 	return {
 		protectedContentCapability: PROTECTED_CONTENT_CAPABILITY,
 		capabilities: [...IMPORT_CAPABILITIES],
+		mediaVariantWidths: [...VARIANT_LADDER],
 		site: {
 			title: wxr.site.title || "WordPress Site",
 			url: wxr.site.link || "",

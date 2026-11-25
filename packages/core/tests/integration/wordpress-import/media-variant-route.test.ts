@@ -15,7 +15,7 @@ import { Role } from "@emdash-cms/auth";
  */
 import { encode } from "jpeg-js";
 import { sql, type Kysely } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	handleMediaDelete,
@@ -50,10 +50,14 @@ function storageDouble() {
 			return { size: options.body.byteLength };
 		},
 		exists: async (key: string) => objects.has(key),
-		download: async (key: string) => {
+		download: async (key: string): Promise<DownloadResult> => {
 			const object = objects.get(key);
 			if (!object) throw new EmDashStorageError(`File not found: ${key}`, "NOT_FOUND");
-			return { body: object.body, contentType: object.contentType, size: object.body.byteLength };
+			return {
+				body: new Blob([new Uint8Array(object.body)]).stream(),
+				contentType: object.contentType,
+				size: object.body.byteLength,
+			};
 		},
 		delete: async (key: string) => {
 			objects.delete(key);
@@ -103,7 +107,7 @@ function fileContext(
 	w: string | null,
 	storage: ReturnType<typeof storageDouble>,
 ): FileContext {
-	const url = new URL(`https://site.test/media/file/${key}`);
+	const url = new URL(`https://site.test/_emdash/api/media/file/${key}`);
 	if (w !== null) url.searchParams.set("w", w);
 	return {
 		params: { key },
@@ -274,10 +278,11 @@ async function jpegVariantRequest(parentBytes: Uint8Array, width = 1000, height 
 		contentHash: await computeContentHash(parentBytes),
 		status: "ready",
 	});
+	const bucket = storageDouble();
 	const storage = {
-		...storageDouble(),
+		...bucket,
 		download: async (key: string): Promise<DownloadResult> => {
-			if (key !== parent.storageKey) throw new EmDashStorageError("Missing original", "NOT_FOUND");
+			if (key !== parent.storageKey) return bucket.download(key);
 			return {
 				body: new Blob([new Uint8Array(parentBytes)]).stream(),
 				contentType: parent.mimeType,
@@ -316,6 +321,53 @@ async function jpegVariantRequest(parentBytes: Uint8Array, width = 1000, height 
 		slots: () => new MediaVariantRepository(db).forParent(parent.id, parent.contentHash!),
 	};
 }
+
+describe("WordPress media variant width ladder", () => {
+	const parentBytes = jpeg(2560, 640);
+	const setup = () => jpegVariantRequest(parentBytes, 2560, 640);
+
+	it.each([1536, 2048])("stores and serves exact bytes for width %i", async (width) => {
+		const { parent, storage, post } = await setup();
+		const height = width / 4;
+		const bytes = jpeg(width, height);
+		const response = await post(bytes, height, width);
+		expect(response.status, await response.text()).toBe(201);
+
+		const served = await fileGet(fileContext(parent.storageKey, String(width), storage));
+		expect(served.status).toBe(200);
+		expect(new Uint8Array(await served.arrayBuffer())).toEqual(bytes);
+
+		const offLadder = await fileGet(fileContext(parent.storageKey, "1600", storage));
+		expect(offLadder.status).toBe(200);
+		expect(new Uint8Array(await offLadder.arrayBuffer())).toEqual(parentBytes);
+	});
+
+	it("refuses width 1600 without writing a variant", async () => {
+		const { storage, post, slots } = await setup();
+		const upload = vi.spyOn(storage, "upload");
+		const response = await post(jpeg(1600, 400), 400, 1600);
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({
+			error: { code: "INVALID_VARIANT", message: "not on the ladder" },
+		});
+		expect(upload).not.toHaveBeenCalled();
+		expect(await slots()).toEqual([]);
+	});
+
+	it("refuses an on-ladder file one byte over 2 MiB without writing a variant", async () => {
+		const { storage, post, slots } = await setup();
+		const upload = vi.spyOn(storage, "upload");
+		const bytes = new Uint8Array(2 * 1024 * 1024 + 1);
+		bytes.set(jpeg(1024, 256));
+		const response = await post(bytes, 256, 1024);
+
+		expect(response.status).toBe(413);
+		expect(await response.json()).toMatchObject({ error: { code: "PAYLOAD_TOO_LARGE" } });
+		expect(upload).not.toHaveBeenCalled();
+		expect(await slots()).toEqual([]);
+	});
+});
 
 describe("WordPress JPEG variant orientation", () => {
 	it.each([5, 6, 7, 8])("stores an upright derivative with parent EXIF %i", async (orientation) => {
