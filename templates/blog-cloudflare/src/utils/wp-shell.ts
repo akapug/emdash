@@ -1968,10 +1968,17 @@ export function wpShellProblem(value: unknown): string | null {
 		if (!isObject(imageAliases)) return "image aliases are not an object";
 		const aliases = Object.entries(imageAliases);
 		// The capture caps copied assets at 120; aliases cannot add renderable markup.
-		if (aliases.length > 120 || aliases.some(([key, url]) =>
-			!IMAGE_ALIAS_KEY.test(key) || typeof url !== "string" ||
-			!url.startsWith(WP_SHELL_ASSET_PATH) || !IMAGE_ALIAS_FILE.test(url.slice(WP_SHELL_ASSET_PATH.length))
-		)) return "image aliases are not exact local copy references";
+		if (
+			aliases.length > 120 ||
+			aliases.some(
+				([key, url]) =>
+					!IMAGE_ALIAS_KEY.test(key) ||
+					typeof url !== "string" ||
+					!url.startsWith(WP_SHELL_ASSET_PATH) ||
+					!IMAGE_ALIAS_FILE.test(url.slice(WP_SHELL_ASSET_PATH.length)),
+			)
+		)
+			return "image aliases are not exact local copy references";
 	}
 	if (!isObject(html) || typeof html.class !== "string" || !TOKENS.test(html.class)) {
 		return "html attributes are not tokens";
@@ -3414,7 +3421,11 @@ export function layoutDrawsImage(
 		if ("slot" in part) return part.slot === "logo" && matches(logoSource(part, logoUrl));
 		if (!part.html.includes("<img")) return false;
 		let found = false;
-		return markupProblem(part.html, (src) => { found ||= matches(src); }) === null && found;
+		return (
+			markupProblem(part.html, (src) => {
+				found ||= matches(src);
+			}) === null && found
+		);
 	});
 }
 

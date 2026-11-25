@@ -279,9 +279,20 @@ describe("stored image sizes on a logged-out page", () => {
 
 	it("a page's featured slot offers only distinct, current stored candidates at its drawn size", async () => {
 		const key = "2024/05/page-featured.jpg";
-		await seed(key, [[300, CURRENT], [480, "replaced"], [768, CURRENT]], [1600, 1600]);
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[480, "replaced"],
+				[768, CURRENT],
+			],
+			[1600, 1600],
+		);
 		const cdn = `https://cdn.example/${key}`;
-		const html = await asVisitor(PageArticle, featuredPage(key, { src: cdn, meta: { storageKey: key } }));
+		const html = await asVisitor(
+			PageArticle,
+			featuredPage(key, { src: cdn, meta: { storageKey: key } }),
+		);
 		const tag = tagFor(html, "page-featured.jpg");
 		expect(attr(tag, "src")).toBe(cdn);
 		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);

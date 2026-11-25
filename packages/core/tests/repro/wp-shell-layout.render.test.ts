@@ -484,18 +484,34 @@ describe("the imported page featured slot", () => {
 	const src = "/_emdash/api/media/file/2025/one/portrait.jpg";
 	const other = "/_emdash/api/media/file/2025/two/portrait.jpg";
 	const proof = { placement: "before-title", width: 750, height: 750, alt: "Theme portrait" };
-	const bodyText = { _type: "block", _key: "copy", children: [{ _type: "span", text: "Page body marker" }] };
-	const carried = (url: string) => ({ _type: "image", _key: "carried", asset: { _ref: "import-ref", url } });
+	const bodyText = {
+		_type: "block",
+		_key: "copy",
+		children: [{ _type: "span", text: "Page body marker" }],
+	};
+	const carried = (url: string) => ({
+		_type: "image",
+		_key: "carried",
+		asset: { _ref: "import-ref", url },
+	});
 	const slot = "wp-page-featured";
 
-	async function draw(options: {
-		home?: boolean;
-		shell?: unknown;
-		fields?: Record<string, unknown>;
-		collection?: string;
-		publicMediaUrl?: (key: string) => string;
-	} = {}) {
-		const { home = false, shell, fields, collection: collectionName = "pages", publicMediaUrl } = options;
+	async function draw(
+		options: {
+			home?: boolean;
+			shell?: unknown;
+			fields?: Record<string, unknown>;
+			collection?: string;
+			publicMediaUrl?: (key: string) => string;
+		} = {},
+	) {
+		const {
+			home = false,
+			shell,
+			fields,
+			collection: collectionName = "pages",
+			publicMediaUrl,
+		} = options;
 		reads.shell = shell;
 		reads.getEmDashCollection.mockResolvedValue({ entries: [], cacheHint: {} });
 		const entry = {
@@ -516,9 +532,7 @@ describe("the imported page featured slot", () => {
 		reads.getHomepage.mockResolvedValue({ entry, collection: collectionName, cacheHint: {} });
 		const c = await AstroContainer.create();
 		return c.renderToString(shell ? WpShellRoute : home ? HomeRoute : PageRoute, {
-			params: shell
-				? { path: home ? "home" : `${collectionName}/contact` }
-				: { slug: "contact" },
+			params: shell ? { path: home ? "home" : `${collectionName}/contact` } : { slug: "contact" },
 			request: new Request(`https://example.org${home ? "/" : `/${collectionName}/contact`}`),
 			locals: publicMediaUrl ? { emdash: { getPublicMediaUrl: publicMediaUrl } } : undefined,
 		});
@@ -545,7 +559,11 @@ describe("the imported page featured slot", () => {
 		async (placement) => {
 			for (const shell of [undefined, record()]) {
 				for (const home of [false, true]) {
-					const html = await draw({ home, shell, fields: { wp_page_featured: { ...proof, placement } } });
+					const html = await draw({
+						home,
+						shell,
+						fields: { wp_page_featured: { ...proof, placement } },
+					});
 					const image = html.indexOf(slot);
 					const title = html.indexOf(`Page title marker</${shell && home ? "h2" : "h1"}>`);
 					const body = html.indexOf("Page body marker</p>");
@@ -569,7 +587,11 @@ describe("the imported page featured slot", () => {
 		for (const duplicate of [
 			carried(`https://example.org${src}?w=300`),
 			{ _type: "htmlBlock", _key: "raw", html: `<img src="${src}" alt="Carried">` },
-			{ _type: "columns", _key: "columns", columns: [{ _type: "column", _key: "col", content: [carried(src)] }] },
+			{
+				_type: "columns",
+				_key: "columns",
+				columns: [{ _type: "column", _key: "col", content: [carried(src)] }],
+			},
 		]) {
 			const html = await draw({ fields: { ...fields, content: [bodyText, duplicate] } });
 			expect(html).toContain(src);
@@ -585,11 +607,14 @@ describe("the imported page featured slot", () => {
 	it("deduplicates a normalized local attachment drawn in the body at its public CDN URL", async () => {
 		const key = "2025/one/portrait.jpg";
 		const publicMediaUrl = (assetKey: string) => `https://cdn.example.org/${assetKey}`;
-		const html = await draw({ publicMediaUrl, fields: {
-			wp_page_featured: proof,
-			featured_image: { provider: "local", id: "attachment", meta: { storageKey: key } },
-			content: [bodyText, carried(publicMediaUrl(key))],
-		} });
+		const html = await draw({
+			publicMediaUrl,
+			fields: {
+				wp_page_featured: proof,
+				featured_image: { provider: "local", id: "attachment", meta: { storageKey: key } },
+				content: [bodyText, carried(publicMediaUrl(key))],
+			},
+		});
 		expect(html).toContain(publicMediaUrl(key));
 		expect(html).not.toContain(slot);
 	});
@@ -622,7 +647,10 @@ describe("the imported page featured slot", () => {
 		const home = await draw({ home: true, shell, fields });
 		expect(home).toContain(differentCopy);
 		expect(home).toContain(slot);
-		const otherSource = await draw({ shell, fields: { wp_page_featured: { ...proof, sourceImage: "2".repeat(64) } } });
+		const otherSource = await draw({
+			shell,
+			fields: { wp_page_featured: { ...proof, sourceImage: "2".repeat(64) } },
+		});
 		expect(otherSource).toContain(slot);
 		const noProof = await draw({ shell, fields: { wp_page_featured: { sourceImage } } });
 		expect(noProof).not.toContain(slot);

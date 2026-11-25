@@ -50,8 +50,11 @@ export function readPageFeatured(data: unknown): PageFeatured | undefined {
 	const page = record(data);
 	const proof = record(page?.wp_page_featured);
 	const fields = ["placement", "width", "height", "alt"];
-	if (!proof || !fields.every((key) => Object.hasOwn(proof, key)) ||
-		Object.keys(proof).some((key) => key !== "sourceImage" && !fields.includes(key))) {
+	if (
+		!proof ||
+		!fields.every((key) => Object.hasOwn(proof, key)) ||
+		Object.keys(proof).some((key) => key !== "sourceImage" && !fields.includes(key))
+	) {
 		return undefined;
 	}
 	const { placement, width, height, alt, sourceImage } = proof;
@@ -60,7 +63,8 @@ export function readPageFeatured(data: unknown): PageFeatured | undefined {
 		!pixels(width) ||
 		!pixels(height) ||
 		typeof alt !== "string" ||
-		(sourceImage !== undefined && (typeof sourceImage !== "string" || !SOURCE_IMAGE_KEY.test(sourceImage)))
+		(sourceImage !== undefined &&
+			(typeof sourceImage !== "string" || !SOURCE_IMAGE_KEY.test(sourceImage)))
 	) {
 		return undefined;
 	}
@@ -75,7 +79,11 @@ export function readPageFeatured(data: unknown): PageFeatured | undefined {
 	const key = local ? storageKey(asset) : undefined;
 	if (!src && !key && (!id || !LOCAL_ID.test(id))) return undefined;
 	return {
-		placement, width, height, alt, sourceImage,
+		placement,
+		width,
+		height,
+		alt,
+		sourceImage,
 		image: { id: id ?? "", src, meta: key ? { storageKey: key } : undefined },
 	};
 }
@@ -125,23 +133,32 @@ export function bodyDrawsPageFeatured(
 		const key = storageKey(asset) ?? text(asset._ref) ?? text(asset.id);
 		return !!key && matches(`${MEDIA_PATH}${key.split("/").map(encodeURIComponent).join("/")}`);
 	}
-	return Array.isArray(body) && body.some((value: unknown) => {
-		const block = record(value);
-		switch (block?._type) {
-			case "image":
-				return image(block);
-			case "gallery":
-				return Array.isArray(block.images) && block.images.some(image);
-			case "cover":
-				return (block.backgroundVideo == null && matches(block.backgroundImage)) ||
-					bodyDrawsPageFeatured(block.content, matches);
-			case "columns":
-				return Array.isArray(block.columns) && block.columns.some((column: unknown) =>
-					bodyDrawsPageFeatured(record(column)?.content, matches));
-			case "htmlBlock":
-				return typeof block.html === "string" && htmlBlockHasImage(block.html, matches);
-			default:
-				return false;
-		}
-	});
+	return (
+		Array.isArray(body) &&
+		body.some((value: unknown) => {
+			const block = record(value);
+			switch (block?._type) {
+				case "image":
+					return image(block);
+				case "gallery":
+					return Array.isArray(block.images) && block.images.some(image);
+				case "cover":
+					return (
+						(block.backgroundVideo == null && matches(block.backgroundImage)) ||
+						bodyDrawsPageFeatured(block.content, matches)
+					);
+				case "columns":
+					return (
+						Array.isArray(block.columns) &&
+						block.columns.some((column: unknown) =>
+							bodyDrawsPageFeatured(record(column)?.content, matches),
+						)
+					);
+				case "htmlBlock":
+					return typeof block.html === "string" && htmlBlockHasImage(block.html, matches);
+				default:
+					return false;
+			}
+		})
+	);
 }
