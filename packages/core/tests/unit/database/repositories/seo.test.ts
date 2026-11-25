@@ -141,26 +141,15 @@ describeEachDialect("SeoRepository.insertIfAbsent", (dialect) => {
 	});
 
 	it("writes an entry's first SEO row and reports that it did", async () => {
-		const content = await contentRepo.create({
-			type: "post",
-			slug: "first",
-			data: { title: "First" },
-		});
-		expect(
-			await seoRepo.insertIfAbsent("post", content.id, { title: "Imported", noIndex: true }),
-		).toBe(true);
-		expect(await seoRepo.get("post", content.id)).toMatchObject({
-			title: "Imported",
-			noIndex: true,
-		});
+		const content = await contentRepo.create({ type: "post", slug: "first", data: { title: "First" } });
+		expect(await seoRepo.insertIfAbsent("post", content.id, { title: "Imported", noIndex: true })).toBe(
+			true,
+		);
+		expect(await seoRepo.get("post", content.id)).toMatchObject({ title: "Imported", noIndex: true });
 	});
 
 	it("leaves an existing SEO row as it is", async () => {
-		const content = await contentRepo.create({
-			type: "post",
-			slug: "kept",
-			data: { title: "Kept" },
-		});
+		const content = await contentRepo.create({ type: "post", slug: "kept", data: { title: "Kept" } });
 		await seoRepo.upsert("post", content.id, { description: "Set by an editor" });
 		expect(await seoRepo.insertIfAbsent("post", content.id, { title: "Imported" })).toBe(false);
 		expect(await seoRepo.get("post", content.id)).toMatchObject({

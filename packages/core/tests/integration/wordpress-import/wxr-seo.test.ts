@@ -106,11 +106,7 @@ async function setup(): Promise<Harness> {
 	await registry.createCollection({ slug: "notes", label: "Notes", labelSingular: "Note" });
 	for (const collection of ["pages", "notes"]) {
 		await registry.createField(collection, { slug: "title", label: "Title", type: "string" });
-		await registry.createField(collection, {
-			slug: "content",
-			label: "Content",
-			type: "portableText",
-		});
+		await registry.createField(collection, { slug: "content", label: "Content", type: "portableText" });
 		await registry.createField(collection, { slug: "excerpt", label: "Excerpt", type: "text" });
 	}
 	const emdash = handlersFromRuntime(createTestRuntime(db));
@@ -119,16 +115,8 @@ async function setup(): Promise<Harness> {
 
 async function runImport(harness: Harness, config: ImportConfig = CONFIG) {
 	const wxr = await parseWxrString(WXR);
-	const plan = await preImportWxrTaxonomies(
-		harness.db,
-		wxr.posts,
-		wxr.categories,
-		wxr.tags,
-		wxr.terms,
-	);
-	const attachments = new Map(
-		wxr.attachments.map((a): [string, string] => [String(a.id), a.url ?? ""]),
-	);
+	const plan = await preImportWxrTaxonomies(harness.db, wxr.posts, wxr.categories, wxr.tags, wxr.terms);
+	const attachments = new Map(wxr.attachments.map((a): [string, string] => [String(a.id), a.url ?? ""]));
 	return importContent(
 		wxr.posts,
 		config,

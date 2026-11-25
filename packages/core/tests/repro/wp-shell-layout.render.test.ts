@@ -62,11 +62,9 @@ const reads = vi.hoisted(() => ({
 	getCommentCount: vi.fn(),
 	getCollectionInfo: vi.fn(),
 	getComments: vi.fn(),
-	getHomepage: vi.fn(async (): Promise<unknown> => ({
-		entry: null,
-		collection: "pages",
-		cacheHint: {},
-	})),
+	getHomepage: vi.fn(
+		async (): Promise<unknown> => ({ entry: null, collection: "pages", cacheHint: {} }),
+	),
 	// No entry drawn here is password-protected, unless a test says so: the route asks for every entry it draws.
 	resolveProtectedEntry: vi.fn(
 		async (_context: unknown, _collection: string, entry: unknown): Promise<unknown> => ({

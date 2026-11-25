@@ -13,7 +13,9 @@
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+		],
 		"parts": [
 			{
 				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -176,7 +178,9 @@
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/741a177d51a43ac254552a84c48ddc4a.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/741a177d51a43ac254552a84c48ddc4a.css"
+		],
 		"parts": [
 			{
 				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<div class=\"hostile\">\n<img class=\"x1\">\n<img class=\"x2\">\n<div class=\"x3\" style=\"color:red;\"></div>\n<div class=\"x4\"></div>\n<video class=\"x5\"></video>\n<img class=\"x6\">\n<a class=\"x7\">j</a>\n<a class=\"x8\">tab</a>\n<a class=\"x9\" title=\"&quot;&gt;&lt;img src=x onerror=alert(3)&gt;\" href=\"/ok\">t</a>\n<div class=\"x10\">clobber</div>\n\n\n\n\n<p>a<img>--&gt;</p>\n<div class=\"x11 wp-shell-form\"><span class=\"wp-shell-field wp-shell-input wp-shell-input-text\">\"&gt;&lt;script&gt;alert(12)&lt;/script&gt;</span><span style=\"--wp-shell-select-width:212px;\" class=\"wp-shell-field wp-shell-select\">&lt;img src=x onerror=alert(15)&gt;</span><span class=\"wp-shell-field wp-shell-button\">go</span></div>\n</div>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -339,7 +343,9 @@
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/8bc66e4cd701ad99ff2f357449eab657.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/8bc66e4cd701ad99ff2f357449eab657.css"
+		],
 		"parts": [
 			{
 				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<a id=\"wp-shell-menu-toggle-0\" href=\"#wp-shell-menu-0\" class=\"toggle nav-toggle mobile-nav-toggle wp-shell-control\"><span class=\"toggle-inner\"><span class=\"toggle-text\">Menu</span></span></a><div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -502,7 +508,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page wp-theme-hello-elementor elementor-default elementor-kit-8 elementor-page"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/30367dd8427c531c2759b76dd9973aea.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/30367dd8427c531c2759b76dd9973aea.css"
+		],
 		"parts": [
 			{
 				"html": "\n<header class=\"site-header\"><p class=\"site-title\"><a href=\"/\">"
@@ -529,7 +537,12 @@
 		],
 		"menus": [],
 		"titles": {
-			"hidden": ["home", "app", "faq", "landing"]
+			"hidden": [
+				"home",
+				"app",
+				"faq",
+				"landing"
+			]
 		}
 	},
 	{
@@ -546,7 +559,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page singular two-column right-sidebar"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/f0cfe9c2a7d5c6616ab8f5f1e32ace2e.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/f0cfe9c2a7d5c6616ab8f5f1e32ace2e.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle collapsed wp-shell-control wp-shell-noline\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></summary></details>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -658,7 +673,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page singular two-column right-sidebar"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/903a3b44aadb0af0f7ead02e222d7e8d.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/903a3b44aadb0af0f7ead02e222d7e8d.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -861,7 +878,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page singular two-column right-sidebar"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -980,7 +999,9 @@
 					},
 					"</p></div></div></div>"
 				],
-				"classes": ["item-wrap col-md-3"],
+				"classes": [
+					"item-wrap col-md-3"
+				],
 				"excerpt": {
 					"words": 55,
 					"more": " […]"
@@ -1005,7 +1026,9 @@
 			"body": {
 				"class": "wp-singular home page-template page-template-template-single-column page-template-template-single-column-php page singular front-page one-column"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/1fdb1cb9bb7e175698b166550bd3c6aa.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/1fdb1cb9bb7e175698b166550bd3c6aa.css"
+			],
 			"parts": [
 				{
 					"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -1067,7 +1090,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page singular two-column right-sidebar"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -1213,7 +1238,10 @@
 					},
 					"\" class=\"attachment-medium size-medium wp-post-image\"></a>"
 				],
-				"classes": ["item-wrap col-md-12", "item-wrap col-md-3 col-sm-6"],
+				"classes": [
+					"item-wrap col-md-12",
+					"item-wrap col-md-3 col-sm-6"
+				],
 				"date": "F j, Y",
 				"utcOffset": -480,
 				"excerpt": {
@@ -1240,7 +1268,9 @@
 			"body": {
 				"class": "wp-singular home page-template page-template-template-single-column page-template-template-single-column-php page singular front-page one-column"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/d79c5653c8e26fc93ceb97a6c38757fb.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/d79c5653c8e26fc93ceb97a6c38757fb.css"
+			],
 			"parts": [
 				{
 					"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -1302,7 +1332,9 @@
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+		],
 		"parts": [
 			{
 				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -1456,7 +1488,9 @@
 				"body": {
 					"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 				},
-				"styles": ["/_emdash/api/media/file/wp-shell/e97c8accf2963f27f3bb8daa1468f80a.css"],
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/e97c8accf2963f27f3bb8daa1468f80a.css"
+				],
 				"parts": [
 					{
 						"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -1723,7 +1757,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page singular two-column right-sidebar"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/f8ba0cdf7f9446a5383840186a27a912.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -1824,7 +1860,9 @@
 			"body": {
 				"class": "wp-singular post-template-default single single-post single-format-standard singular two-column right-sidebar"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/b7ca8914080bddf77f7b2705ea080916.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/b7ca8914080bddf77f7b2705ea080916.css"
+			],
 			"parts": [
 				{
 					"html": "\n<div class=\"navbar\"><div class=\"header container wide-nav\"><div class=\"navbar-header logo\">\n\t<span class=\"navbar-toggle collapsed\"><span class=\"sr-only\">Toggle navigation</span><span class=\"icon-bar\"></span></span>\n\t<h2 class=\"site-title\"><a href=\"/\">"
@@ -2136,7 +2174,9 @@
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+		],
 		"parts": [
 			{
 				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -2288,7 +2328,9 @@
 			"body": {
 				"class": "post-template-default single single-post single-format-standard wp-theme-twentytwenty singular enable-search-modal"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+			],
 			"parts": [
 				{
 					"html": "\n<a class=\"skip-link screen-reader-text\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -2480,7 +2522,9 @@
 		"body": {
 			"class": "home page-template-default page wp-theme-twentytwenty singular enable-search-modal"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+		],
 		"parts": [
 			{
 				"html": "\n<a class=\"skip-link screen-reader-text\" href=\"#site-content\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -2632,7 +2676,9 @@
 			"body": {
 				"class": "post-template-default single single-post single-format-standard wp-theme-twentytwenty singular enable-search-modal"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/abdad43c20c8262bc4acfa2d67ea55ce.css"
+			],
 			"parts": [
 				{
 					"html": "\n<a class=\"skip-link screen-reader-text\">Skip to the content</a>\n<header id=\"site-header\" class=\"header-footer-group\" role=\"banner\">\n\t<div class=\"header-inner section-inner\">\n\t\t<div class=\"header-titles-wrapper\">\n\t\t\t<a href=\"/search\" class=\"toggle search-toggle wp-shell-control\"><span class=\"toggle-inner\"><img height=\"23\" width=\"23\" class=\"svg-icon\" alt=\"\" src=\"/_emdash/api/media/file/wp-shell/321d8b9ca333c9bb61e1b6263344c264.svg\"><span class=\"toggle-text\">Search</span></span></a>\n\t\t\t<div class=\"header-titles\">\n\t\t\t\t<div class=\"site-logo faux-heading\"><a href=\"/\" class=\"custom-logo-link\">"
@@ -2983,7 +3029,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3057,7 +3105,9 @@
 			"body": {
 				"class": "wp-singular post-template-default single single-post single-format-standard wp-theme-kleo kleo-navbar-fixed"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/adf8a3130e5217c82aea365f7b974caa.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/adf8a3130e5217c82aea365f7b974caa.css"
+			],
 			"parts": [
 				{
 					"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3258,7 +3308,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/6be2a25527a1bcf7ed87fbb6ee255839.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6be2a25527a1bcf7ed87fbb6ee255839.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3340,7 +3392,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3414,7 +3468,9 @@
 			"body": {
 				"class": "wp-singular post-template-default single single-post single-format-standard wp-theme-kleo kleo-navbar-fixed"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/746ed9492621bcf0226fdc8785aed8a9.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/746ed9492621bcf0226fdc8785aed8a9.css"
+			],
 			"parts": [
 				{
 					"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3612,7 +3668,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6d4ffff406a3aad741911649491e19cb.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3686,7 +3744,9 @@
 			"body": {
 				"class": "wp-singular post-template-default single single-post single-format-standard wp-theme-kleo kleo-navbar-fixed"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/adf8a3130e5217c82aea365f7b974caa.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/adf8a3130e5217c82aea365f7b974caa.css"
+			],
 			"parts": [
 				{
 					"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -3983,7 +4043,9 @@
 		"body": {
 			"class": "wp-singular page-template-default page wp-theme-kleo wp-child-theme-kleo-child kleo-navbar-fixed navbar-resize header-overflow header-flexmenu footer-bottom wpb-js-composer"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/6be2a25527a1bcf7ed87fbb6ee255839.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/6be2a25527a1bcf7ed87fbb6ee255839.css"
+		],
 		"parts": [
 			{
 				"html": "\n<div class=\"kleo-page\">\n<div id=\"header\" class=\"header-color\">\n\t<div class=\"navbar\" role=\"navigation\">\n\t\t<div class=\"sticky-wrapper\"><div class=\"kleo-main-header header-normal\">\n\t\t\t<div class=\"container\">\n\t\t\t\t<div class=\"navbar-header\">\n\t\t\t\t\t<div class=\"kleo-mobile-switch\">\n\t\t\t\t\t\t<details class=\"wp-shell-toggle wp-shell-opens-0\"><summary class=\"navbar-toggle wp-shell-control wp-shell-noline\">\n\t\t\t\t\t\t\t<span class=\"sr-only\">Toggle navigation</span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t\t<span class=\"icon-bar\"></span>\n\t\t\t\t\t\t</summary></details>\n\t\t\t\t\t</div>\n\t\t\t\t\t<div class=\"kleo-mobile-icons\"></div>\n\t\t\t\t\t<strong class=\"logo\"><a href=\"/\"><img id=\"logo_img\" title=\"Example\" src=\"/_emdash/api/media/file/wp-shell/648bdb4bbc97eb6ff11f778857731030.png\" alt=\"Example\"></a></strong>\n\t\t\t\t</div>\n\t\t\t\t<div id=\"wp-shell-menu-0\" class=\"primary-menu collapse navbar-collapse nav-collapse\"><ul id=\"menu-our-navigation\" class=\"nav navbar-nav\">"
@@ -4050,7 +4112,9 @@
 			}
 		],
 		"titles": {
-			"shown": ["donate"]
+			"shown": [
+				"donate"
+			]
 		}
 	},
 	{
@@ -4067,7 +4131,9 @@
 		"body": {
 			"class": "page-template-default page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 		},
-		"styles": ["/_emdash/api/media/file/wp-shell/836d7a5f8e074f300294045acf653b0b.css"],
+		"styles": [
+			"/_emdash/api/media/file/wp-shell/836d7a5f8e074f300294045acf653b0b.css"
+		],
 		"parts": [
 			{
 				"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
@@ -4197,7 +4263,9 @@
 			"body": {
 				"class": "home page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/925549db5f4cc73a938cd64209deb0e2.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/925549db5f4cc73a938cd64209deb0e2.css"
+			],
 			"parts": [
 				{
 					"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
@@ -4245,11 +4313,15 @@
 		"pages": [
 			{
 				"slug": "terms",
-				"also": ["privacy"],
+				"also": [
+					"privacy"
+				],
 				"body": {
 					"class": "page-template page-template-elementor_header_footer elementor-template-full-width page wp-custom-logo wp-theme-hello-elementor elementor-default elementor-kit-3 elementor-page"
 				},
-				"styles": ["/_emdash/api/media/file/wp-shell/76ceb1491784e8dcea058a3fca4610ed.css"],
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/76ceb1491784e8dcea058a3fca4610ed.css"
+				],
 				"parts": [
 					{
 						"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
@@ -4299,7 +4371,9 @@
 			"body": {
 				"class": "single single-post single-format-standard wp-custom-logo elementor-default elementor-kit-3 elementor-page-8"
 			},
-			"styles": ["/_emdash/api/media/file/wp-shell/c243e9310af0853859b1e3045155aee9.css"],
+			"styles": [
+				"/_emdash/api/media/file/wp-shell/c243e9310af0853859b1e3045155aee9.css"
+			],
 			"parts": [
 				{
 					"html": "\n<header data-elementor-type=\"header\" data-elementor-id=\"5\" class=\"elementor elementor-5 elementor-location-header\" data-elementor-post-type=\"elementor_library\">\n<section class=\"elementor-section elementor-top-section elementor-element elementor-element-h1\" data-id=\"h1\" data-element_type=\"section\"><div class=\"elementor-container\"><div class=\"elementor-column elementor-col-50 elementor-top-column elementor-element elementor-element-h2\" data-id=\"h2\" data-element_type=\"column\"><div class=\"elementor-widget-wrap elementor-element-populated\">\n<div class=\"elementor-element elementor-element-h3 elementor-widget elementor-widget-theme-site-logo elementor-widget-image\" data-id=\"h3\" data-element_type=\"widget\" data-widget_type=\"theme-site-logo.default\"><div class=\"elementor-widget-container\"><a href=\"/\">"
@@ -4355,22 +4429,30 @@
 			},
 			{
 				"slug": "about",
-				"styles": ["/_emdash/api/media/file/wp-shell/1f38b41eb09de65f956c780ad162c0e1.css"],
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/1f38b41eb09de65f956c780ad162c0e1.css"
+				],
 				"body": "page-id-21 elementor-page-21"
 			},
 			{
 				"slug": "team",
-				"styles": ["/_emdash/api/media/file/wp-shell/36ea322367d484f1585cd831d796e525.css"],
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/36ea322367d484f1585cd831d796e525.css"
+				],
 				"body": "page-id-22 elementor-page-22"
 			},
 			{
 				"slug": "terms",
-				"styles": ["/_emdash/api/media/file/wp-shell/3252108c7685a8802367768498cf0bb8.css"],
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/3252108c7685a8802367768498cf0bb8.css"
+				],
 				"body": "page-id-30 elementor-page-30"
 			},
 			{
 				"slug": "privacy",
-				"styles": ["/_emdash/api/media/file/wp-shell/49086db4ece688676ad36cb9c824ce2a.css"],
+				"styles": [
+					"/_emdash/api/media/file/wp-shell/49086db4ece688676ad36cb9c824ce2a.css"
+				],
 				"body": "page-id-31 elementor-page-31"
 			}
 		]
