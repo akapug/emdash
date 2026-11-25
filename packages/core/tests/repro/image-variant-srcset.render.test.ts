@@ -529,4 +529,23 @@ describe("stored image sizes on a logged-out page", () => {
 			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key} 900w`,
 		);
 	});
+
+	it("an original of exactly 2560 joins a full set of stored sizes, and one of 2561 does not", async () => {
+		const ladder: Array<[number, string]> = [
+			[300, CURRENT],
+			[480, CURRENT],
+			[768, CURRENT],
+			[1024, CURRENT],
+			[1536, CURRENT],
+			[2048, CURRENT],
+		];
+		const atCap = "2024/05/at-cap.jpg";
+		const pastCap = "2024/05/past-cap.jpg";
+		await seed(atCap, ladder, [2560, 1440]);
+		await seed(pastCap, ladder, [2561, 1441]);
+		const at = tagFor(await asVisitor(Image, block(atCap)), "at-cap.jpg");
+		expect(attr(at, "srcset")?.split(", ").at(-1)).toBe(`${FILE}${atCap} 2560w`);
+		const past = tagFor(await asVisitor(Image, block(pastCap)), "past-cap.jpg");
+		expect(attr(past, "srcset")?.split(", ").at(-1)).toBe(`${FILE}${pastCap}?w=2048 2048w`);
+	});
 });
