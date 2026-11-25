@@ -255,6 +255,7 @@ import {
 	handleContentTranslations,
 	handleMediaList,
 	handleMediaGet,
+	handleMediaVariantStore,
 	handleMediaCreate,
 	handleMediaRegisterUpload,
 	handleMediaUpdate,
@@ -4915,6 +4916,14 @@ export class EmDashRuntime {
 
 	async handleMediaGet(id: string) {
 		return handleMediaGet(this.db, id);
+	}
+
+	/**
+	 * Store one of WordPress's generated sizes. The route validates the bytes and
+	 * the dimensions; this decides placement and the row.
+	 */
+	async handleMediaVariantStore(input: Parameters<typeof handleMediaVariantStore>[2]) {
+		return handleMediaVariantStore(this.db, this.storage ?? null, input);
 	}
 
 	async handleMediaUpload(input: MediaUploadInput) {

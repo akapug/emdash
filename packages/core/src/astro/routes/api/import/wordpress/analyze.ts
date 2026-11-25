@@ -22,6 +22,14 @@ import { mappedEmbedsSchema } from "./mapped-embeds.js";
 
 export const EVENT_SEARCH_BAR_CAPABILITY = "emdash.event-search-bar.v1" as const;
 
+/**
+ * W5: this build can STORE WordPress's generated sizes. The host reads this from
+ * `analyze()` and only then carries variants, so a build without the route is never
+ * sent a request it would 404 - which is what makes the host's capability check
+ * meaningful rather than decorative.
+ */
+export const MEDIA_VARIANTS_CAPABILITY = "emdash.media-variants.v1" as const;
+
 export const EVENT_SEARCH_BAR_PROBE = {
 	"1": {
 		_type: "embed",
@@ -44,8 +52,8 @@ export function importCapabilities(
 	embedsSchema: { safeParse: (input: unknown) => { success: boolean } } = mappedEmbedsSchema,
 ): readonly string[] {
 	return embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success
-		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY, BATCH_REDIRECTS_CAPABILITY]
-		: [PROTECTED_CONTENT_CAPABILITY, BATCH_REDIRECTS_CAPABILITY];
+		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY, BATCH_REDIRECTS_CAPABILITY, MEDIA_VARIANTS_CAPABILITY]
+		: [PROTECTED_CONTENT_CAPABILITY, BATCH_REDIRECTS_CAPABILITY, MEDIA_VARIANTS_CAPABILITY];
 }
 
 export const IMPORT_CAPABILITIES: readonly string[] = importCapabilities();

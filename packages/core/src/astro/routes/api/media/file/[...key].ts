@@ -10,6 +10,7 @@ import { apiError, handleError } from "#api/error.js";
 import { IMMUTABLE_IMAGE_CACHE, MUTABLE_MEDIA_CACHE_CONTROL } from "#media/image-endpoint.js";
 
 import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
+import { resolveVariantForRequest } from "../../../../../media/variant-serve.js";
 
 export const prerender = false;
 
@@ -55,7 +56,7 @@ const SAFE_INLINE_TYPES = new Set([
 	"audio/ogg",
 ]);
 
-export const GET: APIRoute = async ({ params, locals }) => {
+export const GET: APIRoute = async ({ params, locals, url }) => {
 	const { key } = params;
 	const { emdash } = locals;
 
@@ -74,11 +75,19 @@ export const GET: APIRoute = async ({ params, locals }) => {
 		return apiError("NOT_CONFIGURED", "Storage not configured", 500);
 	}
 
+	// W3: `?w=` on a parent's public URL asks for a stored size. Resolved BEFORE the
+	// download, and only to a committed variant of the CURRENT parent — a width with
+	// nothing behind it serves the original, which is what makes a stale srcset safe.
+	const variant = emdash.db
+		? await resolveVariantForRequest(emdash.db, key, url.searchParams.get("w"))
+		: null;
+	const storageKey = variant?.storageKey ?? key;
+
 	try {
-		const result = await emdash.storage.download(key);
+		const result = await emdash.storage.download(storageKey);
 
 		const headers: Record<string, string> = {
-			"Content-Type": result.contentType,
+			"Content-Type": variant?.contentType ?? result.contentType,
 			"Cache-Control": result.contentType.startsWith("image/")
 				? MUTABLE_MEDIA_CACHE_CONTROL
 				: IMMUTABLE_IMAGE_CACHE,

@@ -121,7 +121,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		sizeName,
 		width,
 		height,
-		parentGeneration: parent.generation,
+		// The parent's CONTENT HASH, not a generation: `media` has no version column, and
+		// a Replace rewrites content_hash. This is what binds the variant to the bytes
+		// it was made from.
+		parentContentHash: media.contentHash ?? "",
 		bytes,
 		contentType: file.type,
 		contentHash,

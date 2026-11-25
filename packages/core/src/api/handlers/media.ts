@@ -465,6 +465,17 @@ export async function handleMediaDelete(
 		if (!media) return notFound;
 
 		if (storage) await repo.trackStorageKeyForCleanup(media.id, media.storageKey);
+		/**
+		 * W4: the parent's sizes go with it. READ AND DELETED BEFORE THE ROWS CASCADE,
+		 * because a cascade cannot tell anyone what to remove from storage, and before
+		 * `deleteWithStorageKey` for the same reason: once the rows are gone the keys
+		 * are unrecoverable and the objects are orphans nobody can name.
+		 */
+		const variantKeys = await repo.retireVariants(id);
+		for (const key of variantKeys) {
+			await storage?.delete(key).catch(() => undefined);
+		}
+
 		const storageKey = await repo.deleteWithStorageKey(id);
 		if (!storageKey) return notFound;
 
@@ -479,13 +490,6 @@ export async function handleMediaDelete(
 					allowUntracked: true,
 				});
 			}
-		}
-
-		// W4: a deleted parent's sizes go with it. The keys are read BEFORE the rows
-		// cascade, because a cascade cannot tell anyone what to remove from storage.
-		const variantKeys = await new MediaVariantRepository(db).retire(id);
-		for (const key of variantKeys) {
-			await storage?.delete(key).catch(() => undefined);
 		}
 
 		return {

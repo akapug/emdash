@@ -56,19 +56,28 @@ export class MediaVariantRepository {
 		if (existing) return existing.content_hash === input.contentHash ? "replayed" : "conflict";
 
 		try {
-			await this.db
-				.insertInto("_emdash_media_variants")
-				.values({
-					media_id: input.mediaId,
-					size_name: input.sizeName,
-					width: input.width,
-					height: input.height,
-					storage_key: input.storageKey,
-					bytes: input.bytes,
-					content_hash: input.contentHash,
-					parent_content_hash: input.parentContentHash,
-				})
-				.execute();
+			// W6: THE PREDICATE IS IN THE INSERT, not in a read before it. A
+			// select-then-insert lets the parent's bytes change in between, and the row
+			// would then claim to be a size of an image that no longer exists. An
+			// INSERT ... SELECT gated on the parent's CURRENT content hash cannot: if the
+			// image was replaced a moment ago, the SELECT matches nothing and nothing is
+			// written.
+			const inserted = await sql<{ inserted: number }>`
+				INSERT INTO _emdash_media_variants
+					(media_id, size_name, width, height, storage_key, bytes, content_hash, parent_content_hash, created_at)
+				SELECT ${input.mediaId}, ${input.sizeName}, ${input.width}, ${input.height},
+					${input.storageKey}, ${input.bytes}, ${input.contentHash}, ${input.parentContentHash},
+					datetime('now')
+				FROM media m
+				WHERE m.id = ${input.mediaId}
+					AND m.status = 'ready'
+					AND m.content_hash = ${input.parentContentHash}
+			`.execute(this.db);
+			if (Number(inserted.numAffectedRows ?? 0) === 0) {
+				// Nothing was inserted: the parent changed, or is not ready. That is a
+				// conflict for the caller to report, never a silent success.
+				return "conflict";
+			}
 			return "stored";
 		} catch (error) {
 			// A concurrent insert won the slot between the check and the write. Which

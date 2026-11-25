@@ -770,4 +770,20 @@ export class MediaRepository {
 			folderId: row.folder_id,
 		};
 	}
+
+	/**
+	 * The storage keys of this image's generated sizes, read WITHOUT deleting them.
+	 *
+	 * The caller deletes the rows (cascade) and the objects. Reading them here, before
+	 * anything is removed, is the only moment they are knowable: a cascade leaves no
+	 * record of what it took, and an orphaned object has no way back.
+	 */
+	async retireVariants(mediaId: string): Promise<string[]> {
+		const rows = await this.db
+			.selectFrom("_emdash_media_variants")
+			.select(["storage_key"])
+			.where("media_id", "=", mediaId)
+			.execute();
+		return rows.map((row) => row.storage_key);
+	}
 }
