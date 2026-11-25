@@ -100,19 +100,36 @@ function buildLocalImageUrl(img: MediaValue): string {
 }
 
 /**
- * Generate srcset using provider's getSrc function
+ * Generate a srcset from a provider's `getSrc`, or NOTHING when the list cannot be backed.
+ *
+ * A SRCSET IS A PROMISE, AND A FALSE ONE COSTS THE MOST. This function asks the provider for the same picture at
+ * several widths. When the provider CANNOT resize — a media provider that answers the same storage URL whatever
+ * width it is asked for — every entry comes back identical, and the markup then reads `640w … 5400w` all pointing at
+ * one multi-megabyte original. With `sizes="100vw"` the browser believes it and downloads the whole original at
+ * every viewport: measured on a real site, a page whose images were 0.48 MB on the source served 5.85 MB.
+ *
+ * The same rule the stored-sizes branch already states — "a fixed ladder would promise 300w over a multi-megabyte
+ * original, which is worse than no srcset because the browser believes it" — applies wherever a srcset is built,
+ * not only where stored sizes are. So: if the entries are not DISTINCT, emit no srcset at all. One `src` and no list
+ * is the honest markup; a list of one URL pretending to be many is not.
+ *
+ * Distinctness is compared on the resolved URL only, because that is the thing the browser fetches. A provider that
+ * answers different URLs is trusted; one that answers the same URL has not resized anything.
  */
 function generateSrcset(
 	getSrc: NonNullable<ImageEmbed["getSrc"]>,
 	maxWidth: number,
 	aspectRatio?: number
-): string {
-	return RESPONSIVE_BREAKPOINTS.filter((w) => w <= maxWidth * 2) // Include up to 2x for retina
+): string | undefined {
+	const entries = RESPONSIVE_BREAKPOINTS.filter((w) => w <= maxWidth * 2) // Include up to 2x for retina
 		.map((w) => {
 			const h = aspectRatio ? Math.round(w / aspectRatio) : undefined;
-			return `${getSrc({ width: w, height: h })} ${w}w`;
-		})
-		.join(", ");
+			return { url: getSrc({ width: w, height: h }), w };
+		});
+	if (entries.length < 2) return undefined;
+	const distinct = new Set(entries.map((entry) => entry.url));
+	if (distinct.size < 2) return undefined;
+	return entries.map((entry) => `${entry.url} ${entry.w}w`).join(", ");
 }
 
 interface ResolvedImage {
@@ -149,6 +166,9 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		src = img.src || buildLocalImageUrl(img);
 		const publicOrigin = getPublicOrigin(Astro.url, Astro.locals.emdash?.config);
 		const absoluteSrc = toAbsoluteMediaUrl(src, publicOrigin);
+		// ASTRO'S <Image> THROWS MissingImageDimension ON A REMOTE SRC WITHOUT BOTH DIMENSIONS, so `useAstroImage`
+		// already requires them. A caller that passes neither — a card, before it was given the row's size — falls to
+		// a plain <img> with the original, which is the honest markup rather than a page that fails to render.
 		const useAstroImage = finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`);
 		if (storedSizesOnly || useAstroImage) {
 			// Offer only the widths that are stored. A fixed ladder would promise 300w over
@@ -166,6 +186,10 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				},
 				finalWidth,
 			);
+			// STORED WIDTHS WIN, AND THEY ARE DRAWN BY THE PLAIN <img> BRANCH: `astroImageSrc` stays empty so this
+			// component passes ITS OWN srcset through instead of letting Astro's <Image> derive one. The
+			// `else if` below is the no-stored-sizes case, where AstroImage is used only when both dimensions are
+			// known — a remote src without them throws MissingImageDimension, and a card used to pass neither.
 			if (stored) {
 				srcset = stored.srcset;
 				hasWidthSrcset = true;
@@ -205,11 +229,19 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 					if (embed.getSrc) {
 						// Use image width, or default to 1200 for responsive images
 						const maxWidth = finalWidth || 1200;
+						// `sizes` IS ONLY MEANINGFUL BESIDE A SRCSET, and it is what makes a false one expensive: with
+						// `sizes="100vw"` the browser picks the largest candidate for a full-width slot. No list, no
+						// `sizes` — the original is drawn once and the markup claims nothing it cannot back.
 						srcset = generateSrcset(embed.getSrc, maxWidth, aspectRatio);
 						hasWidthSrcset = Boolean(srcset);
-						sizes = finalWidth
-							? `(min-width: ${finalWidth}px) ${finalWidth}px, 100vw`
-							: "100vw";
+						// `sizes` IS ONLY MEANINGFUL BESIDE A SRCSET, and a false one is what makes an unbackable list
+						// expensive: with `sizes="100vw"` the browser prefers the largest candidate, and when every
+						// candidate is the same URL that is the whole original at every viewport. No list, no `sizes`.
+						sizes = srcset
+							? finalWidth
+								? `(min-width: ${finalWidth}px) ${finalWidth}px, 100vw`
+								: "100vw"
+							: undefined;
 					}
 				}
 			} else {

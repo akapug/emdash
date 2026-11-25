@@ -4,6 +4,13 @@ import Base from "../../layouts/Base.astro";
 import { getReadingTime } from "../../utils/reading-time";
 import { wpShellIndexRoute } from "../../utils/wp-shell";
 import { loadWpShell } from "../../utils/wp-shell-loader";
+import { cardPicture, storedDimensionsForRender } from "emdash";
+// THE PICTURE IS DRAWN BY THE IMAGE COMPONENT, not by a hand-built <img>.
+//
+// A raw <img> here could only ever name the original: the component is what asks the tenant for the widths it
+// actually holds and emits a srcset of DISTINCT variant URLs, with a slot width that describes a card. Hand-built
+// markup cannot do that, and an invented list would be worse than none.
+import { Image } from "emdash/ui";
 
 // A site whose record carries a posts index (cut from its own listing page) keeps its own design here: the
 // query goes along (`?cursor=`, `?subscribe=`). Any other site, a WordPress one too, draws this template's.
@@ -44,10 +51,41 @@ const tagsByEntry = await getTermsForEntries(
 	"tag",
 );
 
-const postsWithTags = posts.map((post) => ({
+// THE CARD'S PICTURE, decided here so every card asks the same question. The listing already loads each post's
+// content (`getReadingTime(post.data.content)` below reads it), so this costs no extra query. Measured against the
+// live theme, card for card: her card draws the FIRST picture of the post's own content, and none of 45 posts
+// carried a featured image — so a card that follows this rule shows what her site shows.
+//
+// AND THE CARD CARRIES THE PICTURE'S OWN DIMENSIONS, because without them the image component cannot offer the widths
+// the tenant holds: Astro's <Image> refuses a remote src with no width and height, so the picture would be drawn once
+// at its original size — the multi-megabyte file this lane exists for. A `featured_image` value that already states
+// its size wins (it is the one the editor chose); otherwise the media row's own size is read, request-cached, so a
+// listing of twenty cards naming one attachment asks once.
+const withPictures = await Promise.all(
+	posts.map(async (post) => {
+		const picture = cardPicture({
+			featuredImage: (post.data as { featured_image?: unknown }).featured_image,
+			content: post.data.content,
+		});
+		const stated = (post.data as { featured_image?: { width?: unknown; height?: unknown } }).featured_image;
+		const width = Number(stated?.width ?? 0);
+		const height = Number(stated?.height ?? 0);
+		const measured =
+			width > 0 && height > 0
+				? { width, height }
+				: picture
+					? await storedDimensionsForRender({ url: picture.assetRef ?? picture.src })
+					: null;
+		return { post, picture, dimensions: measured };
+	}),
+);
+
+const postsWithTags = withPictures.map(({ post, picture, dimensions }) => ({
 	post,
 	tags: tagsByEntry.get(post.data.id) ?? [],
 	bylines: post.data.bylines ?? [],
+	picture,
+	...(dimensions ? { dimensions } : {}),
 }));
 
 const formatDate = (date: Date) =>
@@ -73,9 +111,29 @@ const formatDate = (date: Date) =>
 				<p class="empty">No posts yet.</p>
 			) : (
 				<div class="posts-list">
-					{postsWithTags.map(({ post, tags, bylines }) => (
+					{postsWithTags.map(({ post, tags, bylines, picture, dimensions }) => (
 						<article class="post-item">
 							<a href={`/posts/${post.id}`} class="post-link">
+								{picture && (
+									<span class="post-picture">
+										{/* `src` IS THE PICTURE AS THE PICKER FOUND IT, ALREADY A PATH when it came from a
+										    stored asset's _ref (measured: "/_emdash/api/media/file/<id>.<ext>"). The component
+										    reads the widths the tenant holds; with none it draws the original once and
+										    claims no srcset, which is the honest markup. */}
+										<Image
+											{/* THE ROW'S OWN SIZE, so the component can offer the widths the tenant holds
+											    instead of drawing the original once. Absent, it draws a plain <img> — never a
+											    srcset it cannot back. */}
+											image={{
+												src: picture.assetRef ?? picture.src,
+												alt: picture.alt || post.data.title,
+												...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
+											}}
+											loading="lazy"
+											decoding="async"
+										/>
+									</span>
+								)}
 								<div class="post-meta">
 									{bylines.length > 0 && (
 										<>
@@ -173,6 +231,22 @@ const formatDate = (date: Date) =>
 	.posts-list {
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* MEASURED from her live card: 206x116 at a 16:9 ratio with the picture filling the box, alt = the post title.
+	   object-fit: cover rather than her effective `fill` so a picture of another ratio cannot squash. */
+	.post-picture {
+		display: block;
+		aspect-ratio: 16 / 9;
+		overflow: hidden;
+		margin-bottom: var(--spacing-4);
+	}
+
+	.post-picture img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
 	}
 
 	.post-item {
