@@ -159,14 +159,16 @@ export function googleCalendarUrl(
 }
 
 function escapeIcsText(value: string): string {
-	return value
-		.replaceAll("\\", "\\\\")
-		.replaceAll(";", "\\;")
-		.replaceAll(",", "\\,")
-		.replaceAll("\r\n", "\\n")
-		.replaceAll("\n", "\\n")
-		// A bare CR is not a line break in RFC 5545 but some readers treat it as one.
-		.replaceAll("\r", "");
+	return (
+		value
+			.replaceAll("\\", "\\\\")
+			.replaceAll(";", "\\;")
+			.replaceAll(",", "\\,")
+			.replaceAll("\r\n", "\\n")
+			.replaceAll("\n", "\\n")
+			// A bare CR is not a line break in RFC 5545 but some readers treat it as one.
+			.replaceAll("\r", "")
+	);
 }
 
 function deterministicDtStamp(event: EventSummary): string {
