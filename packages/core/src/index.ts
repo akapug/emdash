@@ -180,6 +180,11 @@ export {
 	DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
 } from "./utils/sanitize.js";
 export { decodeSlug, slugify } from "./utils/slugify.js";
+/** Which picture a post card draws: featured image, else the first picture in the content, else nothing. */
+export { cardPicture, pictureInHtml, type CardPicture } from "./utils/card-picture.js";
+// A card has no dimensions of its own and Astro's <Image> refuses a remote src without them; this is the read that
+// gives the card path the media row's own size, without changing the shared variant read every component uses.
+export { storedDimensionsForRender } from "./media/variant-read.js";
 
 // Live Collections query functions (loader is in emdash/runtime)
 export {
