@@ -152,7 +152,9 @@ describe("stored image sizes on a logged-out page", () => {
 			[1024, CURRENT],
 		]);
 		const tag = tagFor(await asVisitor(EmDashImage, image(key)), "visitor.jpg");
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=1024 1024w`);
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=1024 1024w, ${FILE}${key} 1600w`,
+		);
 		expect(attr(tag, "sizes")).toBe("(min-width: 1600px) 1600px, 100vw");
 		// The fallback is the original, and the layout attributes are kept.
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
@@ -169,7 +171,7 @@ describe("stored image sizes on a logged-out page", () => {
 			"elsewhere.jpg",
 		);
 		expect(attr(tag, "src")).toBe(`/media/${key}`);
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key} 1600w`);
 	});
 
 	it("EmDashImage with nothing stored renders exactly as it does with no database", async () => {
@@ -187,7 +189,10 @@ describe("stored image sizes on a logged-out page", () => {
 			[768, CURRENT],
 		]);
 		const tag = tagFor(await asVisitor(Image, block(key)), "content.jpg");
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);
+		// The 1600 wide original closes the list: 768 alone would be stretched on a wide screen.
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key} 1600w`,
+		);
 		expect(attr(tag, "sizes")).toBe("(min-width: 1600px) 1600px, 100vw");
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
 	});
@@ -197,7 +202,7 @@ describe("stored image sizes on a logged-out page", () => {
 		// The row says 800x400; the picture is 400 wide.
 		await seed(key, [[300, CURRENT]], [800, 400], [400, 800]);
 		const tag = tagFor(await asVisitor(Image, block(key)), "turned.jpg");
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key} 400w`);
 		expect(attr(tag, "sizes")).toBe("(min-width: 400px) 400px, 100vw");
 	});
 
@@ -250,7 +255,7 @@ describe("stored image sizes on a logged-out page", () => {
 		const cdn = (k: string) => `https://cdn.example/${k}`;
 		const tag = tagFor(await asVisitor(Image, block(key), cdn), "bucket.jpg");
 		expect(attr(tag, "src")).toBe(`https://cdn.example/${key}`);
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key} 1600w`);
 	});
 
 	it("a content image with nothing stored renders exactly as it does with no database", async () => {
@@ -337,7 +342,9 @@ describe("stored image sizes on a logged-out page", () => {
 				asset: { _ref: "ref", url: `${OWN}${FILE}${key}?v=2` },
 			},
 		});
-		expect(attr(tagFor(html, "own-origin.jpg"), "srcset")).toBe(`${FILE}${key}?w=300 300w`);
+		expect(attr(tagFor(html, "own-origin.jpg"), "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key} 1600w`,
+		);
 	});
 
 	const gallery = (keys: string[], extra: Record<string, unknown> = {}) => ({
@@ -365,7 +372,7 @@ describe("stored image sizes on a logged-out page", () => {
 		const html = await asVisitor(Gallery, gallery([stored, bare]));
 		const withSizes = tagFor(html, "gallery-stored.jpg");
 		expect(attr(withSizes, "srcset")).toBe(
-			`${FILE}${stored}?w=300 300w, ${FILE}${stored}?w=768 768w`,
+			`${FILE}${stored}?w=300 300w, ${FILE}${stored}?w=768 768w, ${FILE}${stored} 1600w`,
 		);
 		// The cell, widened: a square cell covered by a 16:9 picture draws it 1.78 cells wide.
 		expect(attr(withSizes, "sizes")).toBe(
@@ -388,7 +395,9 @@ describe("stored image sizes on a logged-out page", () => {
 		);
 		const html = await asVisitor(Gallery, gallery([key], { width: 1200, height: 1800 }));
 		const tag = tagFor(html, "gallery-sized.jpg");
-		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key} 1200w`,
+		);
 		// A portrait fills the cell's width and no more.
 		expect(attr(tag, "sizes")).toBe(
 			"(max-width: 640px) calc((100vw - 1rem) / 2), calc((100vw - 1rem) / 2)",
@@ -436,5 +445,88 @@ describe("stored image sizes on a logged-out page", () => {
 		);
 		expect(attr(tag, "sizes")).toBe("100vw");
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+	});
+
+	it("an original wider than every stored size is offered last, at its own width", async () => {
+		// Measured in a browser: a 1000 wide cover with sizes stored up to 768 was drawn
+		// from the 768 file on a 1440 screen, softer than the page with no stored sizes.
+		const key = "2024/05/modest-cover.jpg";
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[480, CURRENT],
+				[768, CURRENT],
+			],
+			[1000, 750],
+		);
+		const html = await asVisitor(Cover, {
+			node: { _type: "cover", _key: "c2", backgroundImage: `${FILE}${key}`, content: [] },
+		});
+		const tag = tagFor(html, "modest-cover.jpg");
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=480 480w, ${FILE}${key}?w=768 768w, ${FILE}${key} 1000w`,
+		);
+	});
+
+	it("a camera original stays out of the list when every size it could have is stored", async () => {
+		const key = "2024/05/camera.jpg";
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[480, CURRENT],
+				[768, CURRENT],
+				[1024, CURRENT],
+				[1536, CURRENT],
+				[2048, CURRENT],
+			],
+			[4032, 3024],
+		);
+		const tag = tagFor(await asVisitor(Image, block(key)), "camera.jpg");
+		const offered = (attr(tag, "srcset") ?? "").split(", ");
+		expect(offered.map((c) => c.split(" ")[1])).toEqual([
+			"300w",
+			"480w",
+			"768w",
+			"1024w",
+			"1536w",
+			"2048w",
+		]);
+		expect(offered.every((c) => /\?w=\d+ /.test(c))).toBe(true);
+	});
+
+	it("a camera original is offered when the store is missing the sizes above the last one", async () => {
+		const key = "2024/05/camera-partial.jpg";
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[768, CURRENT],
+			],
+			[4032, 3024],
+		);
+		const tag = tagFor(await asVisitor(Image, block(key)), "camera-partial.jpg");
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key} 4032w`,
+		);
+	});
+
+	it("a photo stored on its side offers its original at the upright width", async () => {
+		const key = "2024/05/turned-original.jpg";
+		// The row says 1200x900; the picture a browser draws is 900 wide.
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[768, CURRENT],
+			],
+			[1200, 900],
+			[900, 1200],
+		);
+		const tag = tagFor(await asVisitor(Image, block(key)), "turned-original.jpg");
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key} 900w`,
+		);
 	});
 });
