@@ -786,4 +786,34 @@ export class MediaRepository {
 			.execute();
 		return rows.map((row) => row.storage_key);
 	}
+
+	/**
+	 * Retire the variant OBJECTS of a parent whose identity is about to move.
+	 *
+	 * ONE HOME, called from the two writes that can change `content_hash` — the
+	 * publish and the ready-mark — rather than bolted onto each route. A replace, an
+	 * upload and a confirm all pass through them, so a new door cannot forget.
+	 *
+	 * The ROWS need nothing: they name the old hash, so they stop matching on the next
+	 * read. The OBJECTS are the leak — nothing would ever name them again — so their
+	 * keys are read and returned here, before the write, for the caller to delete.
+	 * An unchanged hash returns nothing, because those objects are still in use.
+	 */
+	async retireVariantsForNewHash(id: string, nextHash: string | null | undefined): Promise<string[]> {
+		if (!nextHash) return [];
+		const current = await this.db
+			.selectFrom("media")
+			.select(["content_hash"])
+			.where("id", "=", id)
+			.executeTakeFirst();
+		if (!current || current.content_hash === nextHash) return [];
+		const rows = await this.db
+			.selectFrom("_emdash_media_variants")
+			.select(["storage_key"])
+			.where("media_id", "=", id)
+			.where("parent_content_hash", "=", current.content_hash ?? "\u0000none")
+			.execute();
+		return rows.map((row) => row.storage_key);
+	}
+
 }
