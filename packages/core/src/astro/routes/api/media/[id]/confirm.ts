@@ -241,6 +241,14 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
 
 		await forgetUploadAttempt(repo, item.storageKey);
 
+		// Objects the write retired (a confirm that changed the hash) are deleted here,
+		// where storage is in hand. The keys were read before the write, so nothing is
+		// lost; a delete that fails leaves an object nobody can name, never a row that
+		// serves stale bytes.
+		for (const key of repo.drainRetiredVariantKeys()) {
+			await emdash.storage?.delete(key).catch(() => undefined);
+		}
+
 		// Add URL to the response (relative URL for portability)
 		const itemWithUrl = addUrlToMedia(item);
 

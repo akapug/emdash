@@ -255,6 +255,13 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 		}
 
 		await removeUploadAttempt(emdash.storage, repo, media.storageKey);
+
+		// Objects the publish retired (the hash moved) are deleted here, where storage is
+		// in hand. Read before the write, so the keys cannot be lost.
+		for (const key of repo.drainRetiredVariantKeys()) {
+			await emdash.storage.delete(key).catch(() => undefined);
+		}
+
 		return apiSuccess({ uploaded: true, size: receivedSize });
 	} catch (error) {
 		return handleError(error, "Upload failed", "UPLOAD_ERROR");

@@ -318,6 +318,12 @@ export class MediaRepository {
 		storageKey: string,
 		contentHash?: string,
 	): Promise<boolean> {
+		// RETIRE BEFORE THE HASH MOVES, in the write that moves it — one home, so a
+		// replace, an upload and a confirm cannot forget. The rows need nothing (they
+		// name the old hash and stop matching on the next read); the OBJECTS would be
+		// named by nothing again, so their keys are read while they are still reachable.
+		const retiredKeys = await this.retireVariantsForNewHash(id, contentHash);
+
 		const result = await this.db
 			.updateTable("media")
 			.set({
@@ -339,7 +345,26 @@ export class MediaRepository {
 			)
 			.executeTakeFirst();
 
-		return Number(result.numUpdatedRows ?? 0) > 0;
+		const moved = Number(result.numUpdatedRows ?? 0) > 0;
+		// The write is the authority on whether the hash actually moved; a retire on a
+		// write that changed nothing would delete objects still in use.
+		if (moved) this.retiredVariantKeys.push(...retiredKeys);
+		return moved;
+	}
+
+	/**
+	 * Keys of variant objects retired by this repository instance's writes.
+	 *
+	 * Storage is not the repository's to touch, so the keys are collected here and a
+	 * caller with a storage handle drains them. Collecting rather than returning keeps
+	 * the write signatures unchanged, which is what lets the retire live in ONE place
+	 * instead of at every call site.
+	 */
+	private readonly retiredVariantKeys: string[] = [];
+
+	/** Drain the retired keys: the caller deletes them from storage. */
+	drainRetiredVariantKeys(): string[] {
+		return this.retiredVariantKeys.splice(0, this.retiredVariantKeys.length);
 	}
 
 	/**
@@ -367,6 +392,10 @@ export class MediaRepository {
 		if (metadata?.dominantColor !== undefined) updates.dominant_color = metadata.dominantColor;
 		if (metadata?.contentHash !== undefined) updates.content_hash = metadata.contentHash;
 
+		// The same one-home retire as the publish write: this is the other door a hash
+		// can move through (confirm, and anything else that marks a row ready).
+		const retiredKeys = await this.retireVariantsForNewHash(id, metadata?.contentHash);
+
 		let query = this.db
 			.updateTable("media")
 			.set(updates)
@@ -378,6 +407,7 @@ export class MediaRepository {
 
 		const row = await query.returningAll().executeTakeFirst();
 
+		if (row) this.retiredVariantKeys.push(...retiredKeys);
 		return row ? this.rowToItem(row) : null;
 	}
 
@@ -614,6 +644,12 @@ export class MediaRepository {
 		expectedStorageKey: string,
 		input: ReplaceReadyMediaInput,
 	): Promise<MediaItem | null> {
+		// THE REPLACE DOOR, through the same one home as publish and confirm. A replace
+		// keeps the parent's storage key by design, so the ROWS would go invisible on the
+		// hash alone — but their OBJECTS would stay in the bucket forever with nothing
+		// naming them. Read before the hash moves.
+		const retiredKeys = await this.retireVariantsForNewHash(id, input.contentHash);
+
 		const row = await this.db
 			.updateTable("media")
 			.set({
@@ -632,6 +668,7 @@ export class MediaRepository {
 			.returningAll()
 			.executeTakeFirst();
 
+		if (row) this.retiredVariantKeys.push(...retiredKeys);
 		return row ? this.rowToItem(row) : null;
 	}
 

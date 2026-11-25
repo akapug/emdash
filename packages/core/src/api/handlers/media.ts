@@ -323,9 +323,14 @@ export async function handleMediaReplaceMetadata(
 	id: string,
 	expectedStorageKey: string,
 	input: { size: number; width: number; height: number; contentHash: string },
-): Promise<ApiResult<MediaResponse>> {
+): Promise<ApiResult<MediaResponse & { retiredVariantKeys?: string[] }>> {
 	try {
-		const item = await new MediaRepository(db).replaceReadyFile(id, expectedStorageKey, input);
+		const repo = new MediaRepository(db);
+		const item = await repo.replaceReadyFile(id, expectedStorageKey, input);
+		// The replace's retired objects. Storage is not the repository's to touch; this
+		// handler has a db but not a storage handle, so the keys ride out on the result
+		// for the route to delete where storage is in hand.
+		const retiredVariantKeys = repo.drainRetiredVariantKeys();
 		if (!item) {
 			return {
 				success: false,
@@ -335,7 +340,7 @@ export async function handleMediaReplaceMetadata(
 				},
 			};
 		}
-		return { success: true, data: { item } };
+		return { success: true, data: { item, retiredVariantKeys } };
 	} catch {
 		return {
 			success: false,

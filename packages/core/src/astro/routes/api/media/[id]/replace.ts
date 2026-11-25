@@ -102,6 +102,13 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 		});
 		if (!result.success) return unwrapResult(result);
 
+		// The replaced image's old sizes: their rows stopped matching on the hash, and
+		// their objects are deleted here, where storage is in hand. A failed delete
+		// leaves an object nothing names, never a row serving stale bytes.
+		for (const key of result.data.retiredVariantKeys ?? []) {
+			await emdash.storage.delete(key).catch(() => undefined);
+		}
+
 		return apiSuccess({
 			item: {
 				...result.data.item,
