@@ -24,13 +24,22 @@ export interface CardPicture {
 	assetRef?: string;
 }
 
+/** A root-relative path or an absolute http(s) url — a `data:`, `javascript:` or `blob:` source matches neither. */
+const USABLE_SOURCE = /^(https?:\/\/|\/)/i;
+
+/** A dimension attribute a browser would honour as a number. */
+const DIMENSION = /^\d+$/;
+
+/** An `<img …>` tag, whole; a quoted value is consumed as a unit so a `>` inside an alt does not end it. */
+const IMG_TAG = /<img\b(?:[^>"'=]|=\s*"[^"]*"|=\s*'[^']*'|=)*>/gi;
+
 /** A picture is a source and nothing more; the card decides how to draw it. */
 const isUsableSource = (src: string | undefined): src is string => {
 	if (!src) return false;
 	// ONE RULE COVERS THEM ALL, and an arm proved it: a data:, javascript: or blob: source matches none of these
 	// prefixes, so it is rejected here. A separate `data:` branch was written first and could never fire — removed
 	// rather than kept as a guard that does nothing.
-	return /^(https?:\/\/|\/)/i.test(src);
+	return USABLE_SOURCE.test(src);
 };
 
 /**
@@ -42,7 +51,7 @@ const isUsableSource = (src: string | undefined): src is string => {
 const looksLikeTracker = (attributes: Map<string, string>): boolean => {
 	for (const name of ["width", "height"]) {
 		const raw = attributes.get(name)?.trim();
-		if (raw && /^\d+$/.test(raw)) {
+		if (raw && DIMENSION.test(raw)) {
 			const value = Number(raw);
 			if (value <= 1) return true;
 		}
@@ -53,7 +62,7 @@ const looksLikeTracker = (attributes: Map<string, string>): boolean => {
 /** The first picture in a run of raw HTML, or null. */
 export function pictureInHtml(html: string | undefined): CardPicture | null {
 	if (!html) return null;
-	for (const match of html.matchAll(/<img\b(?:[^>"'=]|=\s*"[^"]*"|=\s*'[^']*'|=)*>/gi)) {
+	for (const match of html.matchAll(IMG_TAG)) {
 		const attributes = attributesOf(match[0]);
 		const src = attributes.get("src");
 		if (!isUsableSource(src)) continue;
