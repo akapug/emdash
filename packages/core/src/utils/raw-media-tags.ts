@@ -61,7 +61,7 @@ export async function withStoredSizes(
 			if (attributes.has("srcset")) return null;
 			const src = attributes.get("src");
 			if (!src) return null;
-			const ownWidth = /^\d+$/.test(attributes.get("width")?.trim() ?? "")
+			const ownWidth = WHOLE_NUMBER.test(attributes.get("width")?.trim() ?? "")
 				? Number(attributes.get("width"))
 				: 0;
 			const width = ownWidth > 0 ? ownWidth : undefined;
@@ -97,7 +97,7 @@ export async function withStoredSizes(
  * repeated name wins, as it does in a browser. Reading whole attributes is what keeps `data-src` from being
  * read as `src`, and the word "srcset" inside an alt from being read as a srcset.
  */
-export function attributesOf(tag: string): Map<string, string> {
+function attributesOf(tag: string): Map<string, string> {
 	const attributes = new Map<string, string>();
 	const end = tag.endsWith("/>") ? -2 : -1;
 	for (const m of tag.slice(4, end).matchAll(ATTRIBUTE)) {
@@ -109,17 +109,23 @@ export function attributesOf(tag: string): Map<string, string> {
 
 const NAMED: Record<string, string> = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">" };
 
+/** A whole number, as a width attribute holds it. */
+const WHOLE_NUMBER = /^\d+$/;
+
+/** A decimal, hexadecimal or named character reference. */
+const CHARACTER_REFERENCE = /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi;
+
+/** The end of a tag: `>` or `/>`, with any whitespace before it. */
+const TAG_END = /(\s*\/?>)$/;
+
 /** Decode the character references a serialiser writes in an attribute value; any other is kept as written. */
 function decodeReferences(value: string): string {
 	if (!value.includes("&")) return value;
-	return value.replace(
-		/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi,
-		(whole, dec?: string, hex?: string, name?: string) => {
-			if (name) return NAMED[name.toLowerCase()] ?? whole;
-			const code = dec ? Number(dec) : Number.parseInt(hex!, 16);
-			return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
-		},
-	);
+	return value.replace(CHARACTER_REFERENCE, (whole, dec?: string, hex?: string, name?: string) => {
+		if (name) return NAMED[name.toLowerCase()] ?? whole;
+		const code = dec ? Number(dec) : Number.parseInt(hex!, 16);
+		return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+	});
 }
 
 /** Insert attributes before the tag's closing `>` or `/>`, keeping everything already there. */
@@ -129,5 +135,5 @@ function addAttributes(tag: string, extra: Record<string, string>): string {
 			([name, value]) => ` ${name}="${value.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"`,
 		)
 		.join("");
-	return tag.replace(/(\s*\/?>)$/, (end) => `${additions}${end}`);
+	return tag.replace(TAG_END, (end) => `${additions}${end}`);
 }
