@@ -13,6 +13,7 @@ import { Role } from "@emdash-cms/auth";
  *  5. a raw GET of the variant's own key is 404 — the object never has an address;
  *  6. a POST after the parent's bytes changed is refused, and stores nothing.
  */
+import { encode } from "jpeg-js";
 import { sql, type Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -32,8 +33,9 @@ import {
 	__setObjectCacheBackendForTests,
 	readPageGenerationVector,
 } from "../../../src/object-cache/index.js";
-import { EmDashStorageError } from "../../../src/storage/types.js";
+import { EmDashStorageError, type DownloadResult } from "../../../src/storage/types.js";
 import { MEDIA_VARIANT_STORAGE_PREFIX } from "../../../src/transfer/staging/keys.js";
+import { computeContentHash } from "../../../src/utils/hash.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
 let db: Kysely<Database>;
@@ -219,6 +221,225 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 		expect(
 			await new MediaVariantRepository(db).forParent(image.id, "hash-from-before-the-replace"),
 		).toHaveLength(0);
+	});
+});
+
+function jpeg(width: number, height: number) {
+	return new Uint8Array(
+		encode({ width, height, data: new Uint8Array(width * height * 4) }, 50).data,
+	);
+}
+
+function withJpegSegment(bytes: Uint8Array, marker: number, payload: Uint8Array) {
+	const result = new Uint8Array(bytes.length + payload.length + 4);
+	result.set(bytes.subarray(0, 2));
+	result.set([0xff, marker, (payload.length + 2) >> 8, (payload.length + 2) & 0xff], 2);
+	result.set(payload, 6);
+	result.set(bytes.subarray(2), 6 + payload.length);
+	return result;
+}
+
+function withOrientation(
+	bytes: Uint8Array,
+	orientation: number,
+	{ littleEndian = false, marker = 0xe1, tiffMagic = 42 } = {},
+) {
+	const exif = new Uint8Array(32);
+	exif.set([0x45, 0x78, 0x69, 0x66, 0, 0]);
+	exif.fill(littleEndian ? 0x49 : 0x4d, 6, 8);
+	const tiff = new DataView(exif.buffer, 6);
+	tiff.setUint16(2, tiffMagic, littleEndian);
+	tiff.setUint32(4, 8, littleEndian);
+	tiff.setUint16(8, 1, littleEndian);
+	tiff.setUint16(10, 0x0112, littleEndian);
+	tiff.setUint16(12, 3, littleEndian);
+	tiff.setUint32(14, 1, littleEndian);
+	tiff.setUint16(18, orientation, littleEndian);
+	return withJpegSegment(bytes, marker, exif);
+}
+
+const RAW_JPEG = jpeg(1000, 600);
+const UPRIGHT_JPEG = jpeg(300, 500);
+
+async function jpegVariantRequest(parentBytes: Uint8Array, width = 1000, height = 600) {
+	const repo = new MediaRepository(db);
+	const parent = await repo.create({
+		filename: "parent.jpg",
+		mimeType: "image/jpeg",
+		storageKey: "2024/01/parent.jpg",
+		size: parentBytes.byteLength,
+		width,
+		height,
+		contentHash: await computeContentHash(parentBytes),
+		status: "ready",
+	});
+	const storage = {
+		...storageDouble(),
+		download: async (key: string): Promise<DownloadResult> => {
+			if (key !== parent.storageKey) throw new EmDashStorageError("Missing original", "NOT_FOUND");
+			return {
+				body: new Blob([new Uint8Array(parentBytes)]).stream(),
+				contentType: parent.mimeType,
+				size: parentBytes.byteLength,
+			};
+		},
+	};
+	const post = (bytes = UPRIGHT_JPEG, offerHeight = 500, offerWidth = 300) => {
+		const form = new FormData();
+		form.set("mediaId", parent.id);
+		form.set("sizeName", "medium");
+		form.set("width", String(offerWidth));
+		form.set("height", String(offerHeight));
+		form.set("orientation", "6");
+		form.set("file", new File([bytes], "medium.jpg", { type: "image/jpeg" }));
+		return variantPost({
+			request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+				method: "POST",
+				body: form,
+			}),
+			locals: {
+				emdash: {
+					storage,
+					handleMediaGet: (id: string) => handleMediaGet(db, id),
+					handleMediaVariantStore: (input: never) =>
+						handleMediaVariantStore(db, storage as never, input),
+				},
+				user: { role: Role.ADMIN },
+			},
+		} as unknown as Parameters<typeof variantPost>[0]);
+	};
+	return {
+		parent,
+		storage,
+		post,
+		slots: () => new MediaVariantRepository(db).forParent(parent.id, parent.contentHash!),
+	};
+}
+
+describe("WordPress JPEG variant orientation", () => {
+	it.each([5, 6, 7, 8])("stores an upright derivative with parent EXIF %i", async (orientation) => {
+		const { storage, post, slots } = await jpegVariantRequest(
+			withOrientation(RAW_JPEG, orientation, { littleEndian: orientation % 2 === 0 }),
+		);
+		const response = await post();
+		expect(response.status, await response.clone().text()).toBe(201);
+		const stored = await slots();
+		expect(stored).toHaveLength(1);
+		expect(stored[0]).toMatchObject({ width: 300, height: 500 });
+		expect(storage.objects.get(stored[0]!.storageKey)?.body).toEqual(UPRIGHT_JPEG);
+	});
+
+	it.each([
+		["absent EXIF", RAW_JPEG],
+		["EXIF that does not swap axes", withOrientation(RAW_JPEG, 4)],
+		["out-of-range EXIF", withOrientation(RAW_JPEG, 9)],
+		["malformed TIFF", withOrientation(RAW_JPEG, 6, { tiffMagic: 0 })],
+		["an EXIF signature outside APP1", withOrientation(RAW_JPEG, 6, { marker: 0xe2 })],
+		["contradictory EXIF", withOrientation(withOrientation(RAW_JPEG, 6), 1)],
+	] as const)("rejects a transposed shape with %s", async (_reason, parentBytes) => {
+		const { storage, post, slots } = await jpegVariantRequest(parentBytes);
+		const response = await post(withOrientation(UPRIGHT_JPEG, 6));
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ error: { code: "INVALID_VARIANT" } });
+		expect(await slots()).toEqual([]);
+		expect(storage.objects.size).toBe(0);
+	});
+
+	it("rejects proof for a raw pixel pair that does not match the parent row", async () => {
+		const { post, slots } = await jpegVariantRequest(withOrientation(RAW_JPEG, 6), 900, 540);
+		expect((await post()).status).toBe(400);
+		expect(await slots()).toEqual([]);
+	});
+
+	it("does not combine the transposed ratio with the untransposed size bound", async () => {
+		const { post, slots } = await jpegVariantRequest(withOrientation(jpeg(500, 300), 6), 500, 300);
+		expect((await post()).status).toBe(400);
+		expect(await slots()).toEqual([]);
+	});
+
+	it("keeps untransposed validation independent of parent storage", async () => {
+		const { storage, post } = await jpegVariantRequest(RAW_JPEG);
+		let downloads = 0;
+		storage.download = async () => {
+			downloads++;
+			throw new Error("Storage unavailable");
+		};
+		expect((await post(jpeg(300, 180), 180)).status).toBe(201);
+		expect(downloads).toBe(0);
+	});
+
+	it("does not inspect EXIF beyond 64 KiB and cancels the unread body", async () => {
+		const late = withJpegSegment(withOrientation(RAW_JPEG, 6), 0xe2, new Uint8Array(65533));
+		const { storage, post, slots } = await jpegVariantRequest(late);
+		let pulls = 0;
+		let cancelled = false;
+		storage.download = async () => ({
+			contentType: "image/jpeg",
+			size: late.byteLength + 1,
+			body: new ReadableStream(
+				{
+					pull(controller) {
+						pulls++;
+						if (pulls === 1) controller.enqueue(late);
+						else controller.error(new Error("Read beyond the prefix"));
+					},
+					cancel() {
+						cancelled = true;
+					},
+				},
+				{ highWaterMark: 0 },
+			),
+		});
+		expect((await post()).status).toBe(400);
+		expect(pulls).toBe(1);
+		expect(cancelled).toBe(true);
+		expect(await slots()).toEqual([]);
+	});
+
+	it("refuses a missing original without uploading a variant", async () => {
+		const { storage, post, slots } = await jpegVariantRequest(RAW_JPEG);
+		storage.download = async () => {
+			throw new EmDashStorageError("Missing original", "NOT_FOUND");
+		};
+		expect((await post()).status).toBe(400);
+		expect(await slots()).toEqual([]);
+		expect(storage.objects.size).toBe(0);
+	});
+
+	it("reports a read failure as a server error without uploading", async () => {
+		const { storage, post, slots } = await jpegVariantRequest(RAW_JPEG);
+		storage.download = async () => ({
+			contentType: "image/jpeg",
+			size: RAW_JPEG.byteLength,
+			body: new ReadableStream({
+				pull(controller) {
+					controller.error(new Error("Storage read failed"));
+				},
+			}),
+		});
+		const response = await post();
+		expect(response.status).toBe(500);
+		expect(await response.json()).toMatchObject({ error: { code: "UNAVAILABLE" } });
+		expect(await slots()).toEqual([]);
+		expect(storage.objects.size).toBe(0);
+	});
+
+	it("does not upload if the parent generation changes during the proof read", async () => {
+		const { parent, storage, post, slots } = await jpegVariantRequest(withOrientation(RAW_JPEG, 6));
+		const download = storage.download;
+		storage.download = async (key) => {
+			const original = await download(key);
+			await new MediaRepository(db).replaceReadyFile(parent.id, key, {
+				size: RAW_JPEG.byteLength,
+				width: 1000,
+				height: 600,
+				contentHash: await computeContentHash(RAW_JPEG),
+			});
+			return original;
+		};
+		expect((await post()).status).toBe(409);
+		expect(await slots()).toEqual([]);
+		expect(storage.objects.size).toBe(0);
 	});
 });
 

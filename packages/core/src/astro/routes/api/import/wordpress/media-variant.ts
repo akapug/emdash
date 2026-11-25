@@ -2,9 +2,12 @@ import type { APIRoute } from "astro";
 
 import { requireOwnerPerm, requirePerm } from "#api/authorize.js";
 import { apiError } from "#api/error.js";
+import { readAxisSwappedJpegDimensions } from "#media/jpeg-orientation.js";
 import { readDimensions } from "#media/placeholder.js";
 import { VARIANT_BYTE_CAP, variantRefusal, type VariantParent } from "#media/variants.js";
 import { computeContentHash } from "#utils/hash.js";
+
+import type { Storage } from "../../../../../storage/types.js";
 
 /**
  * `POST /_emdash/api/import/wordpress/media-variant` — store one of the source's
@@ -34,6 +37,7 @@ import { computeContentHash } from "#utils/hash.js";
  */
 
 const MAX_MULTIPART_BYTES = VARIANT_BYTE_CAP + 64 * 1024;
+const PARENT_PREFIX_BYTES = 64 * 1024;
 
 class BodyTooLarge extends Error {}
 
@@ -62,6 +66,31 @@ async function boundedBody(
 		at += chunk.byteLength;
 	}
 	return out.buffer;
+}
+
+async function readParentPrefix(storage: Storage, key: string): Promise<Uint8Array | null> {
+	const download = await storage.download(key).catch((error: unknown) => {
+		if (error instanceof Error && "code" in error && error.code === "NOT_FOUND") return null;
+		throw error;
+	});
+	if (!download) return null;
+
+	const reader = download.body.getReader();
+	const prefix = new Uint8Array(PARENT_PREFIX_BYTES);
+	let offset = 0;
+	try {
+		while (offset < prefix.length) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const chunk = value.subarray(0, prefix.length - offset);
+			prefix.set(chunk, offset);
+			offset += chunk.length;
+		}
+		return prefix.subarray(0, offset);
+	} finally {
+		await reader.cancel().catch(() => undefined);
+		reader.releaseLock();
+	}
 }
 
 /**
@@ -174,7 +203,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		id: mediaId,
 		width: media.width ?? 0,
 		height: media.height ?? 0,
-		generation: media.version ?? 1,
+		contentHash: media.contentHash,
 		status: media.status,
 	};
 	const offer = {
@@ -186,14 +215,35 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		contentType: actualType,
 		bytes: file.size,
 	};
-	const refusal = variantRefusal(parent, offer);
+	let refusal = variantRefusal(parent, offer);
+	if (
+		refusal &&
+		actualType === "image/jpeg" &&
+		parent.contentHash &&
+		!variantRefusal({ ...parent, width: parent.height, height: parent.width }, offer)
+	) {
+		// The record may already be upright. Only transpose a pair that matches the
+		// raw frame of this parent object and has an axis-swapping EXIF orientation.
+		let prefix: Uint8Array | null;
+		try {
+			prefix = await readParentPrefix(emdash.storage, media.storageKey);
+		} catch (error) {
+			console.error("[media] variant parent read failed:", error);
+			return apiError("UNAVAILABLE", "The variant's parent could not be read", 500);
+		}
+		const raw = prefix && readAxisSwappedJpegDimensions(prefix);
+		if (raw?.width === parent.width && raw.height === parent.height) refusal = null;
+	}
 	if (refusal) return apiError("INVALID_VARIANT", refusal.replaceAll("-", " "), 400);
 
-	// Re-read the parent immediately before committing: a Replace that landed while
-	// the bytes were in flight must not receive a variant of the image it replaced.
+	// The content hash is the generation. The store checks it again at publication.
 	const again = await emdash.handleMediaGet(mediaId);
 	if (!again.success) return apiError("NOT_FOUND", "No such media", 404);
-	if ((again.data.item.version ?? 1) !== parent.generation || again.data.item.status !== "ready") {
+	if (
+		again.data.item.contentHash !== parent.contentHash ||
+		again.data.item.storageKey !== media.storageKey ||
+		again.data.item.status !== "ready"
+	) {
 		return apiError("CONFLICT", "The parent changed while this variant was being stored", 409);
 	}
 
@@ -203,10 +253,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		sizeName,
 		width,
 		height,
-		// The parent's CONTENT HASH, not a generation: `media` has no version column, and
-		// a Replace rewrites content_hash. This is what binds the variant to the bytes
-		// it was made from.
-		parentContentHash: media.contentHash ?? "",
+		parentContentHash: parent.contentHash ?? "",
 		bytes,
 		contentType: actualType,
 		contentHash,
