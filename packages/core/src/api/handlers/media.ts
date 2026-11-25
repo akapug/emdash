@@ -472,7 +472,19 @@ export async function handleMediaVariantStore(
 		};
 	}
 	if (outcome === "replayed") {
-		// The row already had these bytes: the object we wrote duplicates it.
+		// THE ROW ALREADY HAD THESE BYTES, but its committed object may be GONE — a retire,
+		// a cleanup sweep or a crash removes the object while the row survives. So the
+		// bytes just written go to the key the ROW names, which repairs the row, and the
+		// duplicate is then removed. Deleting the new object without this would leave the
+		// committed row naming nothing, which is the 5xx W3's fallback exists to avoid.
+		const committed = repo.replayedStorageKey;
+		if (committed && committed !== storageKey) {
+			await storage.upload({
+				key: committed,
+				body: input.bytes,
+				contentType: input.contentType,
+			});
+		}
 		await storage.delete(storageKey).catch(() => undefined);
 	}
 

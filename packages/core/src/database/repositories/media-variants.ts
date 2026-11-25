@@ -28,6 +28,9 @@ import type { Database } from "../types.js";
 export type VariantStoreOutcome = "stored" | "replayed" | "conflict";
 
 export class MediaVariantRepository {
+	/** The committed key a `replayed` outcome refers to, for the caller to restore. */
+	replayedStorageKey: string | null = null;
+
 	constructor(private readonly db: Kysely<Database>) {}
 
 	/**
@@ -49,12 +52,20 @@ export class MediaVariantRepository {
 	}): Promise<VariantStoreOutcome> {
 		const existing = await this.db
 			.selectFrom("_emdash_media_variants")
-			.select(["content_hash"])
+			.select(["content_hash", "storage_key"])
 			.where("media_id", "=", input.mediaId)
 			.where("parent_content_hash", "=", input.parentContentHash)
 			.where("width", "=", input.width)
 			.executeTakeFirst();
-		if (existing) return existing.content_hash === input.contentHash ? "replayed" : "conflict";
+		if (existing) {
+			if (existing.content_hash !== input.contentHash) return "conflict";
+			// A REPLAY NAMES THE COMMITTED KEY, not the one we just wrote. The caller needs
+			// it because the committed object may be GONE — a retire, a cleanup sweep, or a
+			// crash can remove it while the row survives — and a replay is the moment that
+			// can be repaired by writing these bytes to the key the row already names.
+			this.replayedStorageKey = existing.storage_key;
+			return "replayed";
+		}
 
 		try {
 			// W6: THE PREDICATE IS IN THE INSERT, not in a read before it. A
