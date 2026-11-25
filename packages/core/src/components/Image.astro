@@ -169,7 +169,10 @@ if (!src) {
 	// and not by `src`, which is a CDN address when a public bucket is configured. An
 	// imported block often carries no dimensions; the bound is then the original's
 	// upright width.
-	const stored = await storedSizesForRender({ url: asset.url }, renderWidth);
+	const stored = await storedSizesForRender(
+		{ url: asset.url, origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config) },
+		renderWidth,
+	);
 	if (stored) {
 		// <AstroImage> takes `src` alone and derives a srcset of its own.
 		astroImageSrc = "";

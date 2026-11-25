@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Cover from "../../src/components/Cover.astro";
 import EmDashImage from "../../src/components/EmDashImage.astro";
+import Gallery from "../../src/components/Gallery.astro";
 import Image from "../../src/components/Image.astro";
 import { MediaRepository } from "../../src/database/repositories/media.js";
 import type { Database } from "../../src/database/types.js";
@@ -274,6 +275,144 @@ describe("stored image sizes on a logged-out page", () => {
 		} finally {
 			await unmigrated.destroy();
 		}
+	});
+
+	// The render harness serves the site at this origin.
+	const OWN = "https://example.com";
+	const ELSEWHERE = "https://elsewhere.example";
+
+	it("an image on another site is never given this site's sizes, even when its key exists here", async () => {
+		const key = "shared-key.jpg";
+		await seed(key, [
+			[300, CURRENT],
+			[768, CURRENT],
+		]);
+		const theirs = `${ELSEWHERE}${FILE}${key}`;
+		// The same key, the same path, a different site: its picture is not ours.
+		const content = await asVisitor(Image, {
+			node: { _type: "image", _key: "f1", asset: { _ref: "ref", url: theirs } },
+		});
+		expect(attr(tagFor(content, "shared-key.jpg"), "src")).toBe(theirs);
+		expect(content).not.toMatch(/\?w=\d+/);
+		const inGallery = await asVisitor(Gallery, {
+			node: {
+				_type: "gallery",
+				_key: "f2",
+				images: [{ _type: "image", _key: "f3", asset: { _ref: "ref", url: theirs } }],
+			},
+		});
+		expect(attr(tagFor(inGallery, "shared-key.jpg"), "src")).toBe(theirs);
+		expect(inGallery).not.toMatch(/\?w=\d+/);
+		const cover = await asVisitor(Cover, {
+			node: { _type: "cover", _key: "f4", backgroundImage: theirs, content: [] },
+		});
+		expect(cover).not.toMatch(/\?w=\d+/);
+		// A host that merely begins with this site's name is still another site.
+		const lookalike = await asVisitor(Image, {
+			node: {
+				_type: "image",
+				_key: "f5",
+				asset: { _ref: "ref", url: `${OWN}.evil.test${FILE}${key}` },
+			},
+		});
+		expect(lookalike).not.toMatch(/\?w=\d+/);
+		// So is a protocol-relative address.
+		const protocolRelative = await asVisitor(Image, {
+			node: {
+				_type: "image",
+				_key: "f6",
+				asset: { _ref: "ref", url: `//elsewhere.example${FILE}${key}` },
+			},
+		});
+		expect(protocolRelative).not.toMatch(/\?w=\d+/);
+	});
+
+	it("an absolute address on this site's own origin is recognised, query string and all", async () => {
+		const key = "own-origin.jpg";
+		await seed(key, [[300, CURRENT]]);
+		const html = await asVisitor(Image, {
+			node: {
+				_type: "image",
+				_key: "o1",
+				asset: { _ref: "ref", url: `${OWN}${FILE}${key}?v=2` },
+			},
+		});
+		expect(attr(tagFor(html, "own-origin.jpg"), "srcset")).toBe(`${FILE}${key}?w=300 300w`);
+	});
+
+	const gallery = (keys: string[], extra: Record<string, unknown> = {}) => ({
+		node: {
+			_type: "gallery",
+			_key: "g1",
+			columns: 2,
+			images: keys.map((key, i) => ({
+				_type: "image",
+				_key: `g${i}`,
+				asset: { _ref: `ref${i}`, url: internalUrl(key) },
+				...extra,
+			})),
+		},
+	});
+
+	it("a gallery offers each image's stored widths against its grid cell", async () => {
+		const stored = "2024/05/gallery-stored.jpg";
+		const bare = "2024/05/gallery-bare.jpg";
+		await seed(stored, [
+			[300, CURRENT],
+			[768, CURRENT],
+		]);
+		await seed(bare, []);
+		const html = await asVisitor(Gallery, gallery([stored, bare]));
+		const withSizes = tagFor(html, "gallery-stored.jpg");
+		expect(attr(withSizes, "srcset")).toBe(
+			`${FILE}${stored}?w=300 300w, ${FILE}${stored}?w=768 768w`,
+		);
+		// The cell, widened: a square cell covered by a 16:9 picture draws it 1.78 cells wide.
+		expect(attr(withSizes, "sizes")).toBe(
+			"(max-width: 640px) calc(((100vw - 1rem) / 2) * 1.78), calc(((100vw - 1rem) / 2) * 1.78)",
+		);
+		expect(attr(withSizes, "src")).toBe(`${FILE}${stored}`);
+		// Its neighbour has nothing stored and is left exactly as it was.
+		expect(tagFor(html, "gallery-bare.jpg")).not.toMatch(/\?w=\d+/);
+	});
+
+	it("a gallery image with dimensions and stored widths is drawn from them, not by the optimiser", async () => {
+		const key = "2024/05/gallery-sized.jpg";
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[768, CURRENT],
+			],
+			[1200, 1800],
+		);
+		const html = await asVisitor(Gallery, gallery([key], { width: 1200, height: 1800 }));
+		const tag = tagFor(html, "gallery-sized.jpg");
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);
+		// A portrait fills the cell's width and no more.
+		expect(attr(tag, "sizes")).toBe(
+			"(max-width: 640px) calc((100vw - 1rem) / 2), calc((100vw - 1rem) / 2)",
+		);
+		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "width")).toBe("1200");
+		// Never wider than the picture is, as before.
+		expect(attr(tag, "style")).toContain("max-width: 1200px;");
+	});
+
+	it("a gallery's own sizes value is used as given", async () => {
+		const key = "2024/05/gallery-override.jpg";
+		await seed(key, [[300, CURRENT]]);
+		const html = await asVisitor(Gallery, { ...gallery([key]), sizes: "220px" });
+		expect(attr(tagFor(html, "gallery-override.jpg"), "sizes")).toBe("220px");
+	});
+
+	it("a gallery with nothing stored renders exactly as it does with no database", async () => {
+		const key = "2024/05/gallery-plain.jpg";
+		await seed(key, []);
+		const props = gallery([key], { width: 1600, height: 900 });
+		const withDatabase = await asVisitor(Gallery, props);
+		expect(withDatabase).toBe(await withNoDatabase(Gallery, props));
+		expect(withDatabase).not.toMatch(/\?w=\d+/);
 	});
 
 	it("Cover offers each stored width for its background image, including the wide rungs", async () => {

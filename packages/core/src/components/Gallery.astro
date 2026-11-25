@@ -17,6 +17,7 @@ import {
 	GALLERY_DEFAULT_COLUMNS,
 	RESPONSIVE_BREAKPOINTS,
 } from "../media/responsive.js";
+import { storedSizesForRender } from "../media/variant-read.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { sanitizeGalleryImages } from "../content/converters/gallery.js";
 import { focalPointToObjectPosition } from "../media/focal-point.js";
@@ -95,6 +96,7 @@ const resolvedImages = await Promise.all(
 		let srcset: string | undefined;
 		let sizes: string | undefined;
 		let astroImageSrc = "";
+		let maxWidth: number | undefined;
 		const providerId = asset.provider;
 
 		if (providerId && providerId !== "local") {
@@ -140,6 +142,24 @@ const resolvedImages = await Promise.all(
 					getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
 				);
 			}
+			// Offer the widths that are stored for this image, named by what the block
+			// holds. An imported gallery image often carries no dimensions; the bound is
+			// then the original's upright width. Each image fills one grid cell.
+			const stored = await storedSizesForRender(
+				{ url: asset.url, origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config) },
+				width,
+			);
+			if (stored) {
+				// <AstroImage> takes `src` alone and derives a srcset of its own.
+				astroImageSrc = "";
+				srcset = stored.srcset;
+				// A cell is square and its image covers it, so a picture wider than it is
+				// tall is drawn wider than the cell. `sizes` says so, or the browser would
+				// fetch a file for the cell's width and stretch it.
+				sizes = sizesOverride ?? gallerySizes(columns, Math.max(1, stored.shape ?? aspectRatio ?? 1));
+				// <AstroImage> never drew an image wider than it is; keep that.
+				maxWidth = width;
+			}
 		}
 
 		// Prefer blurhash over dominant color for the LQIP placeholder, like
@@ -164,6 +184,7 @@ const resolvedImages = await Promise.all(
 			astroImageSrc,
 			placeholderStyle,
 			objectPosition,
+			maxWidth,
 		};
 	}),
 );
@@ -193,7 +214,7 @@ const resolvedImages = await Promise.all(
 						height={image.height}
 						loading="lazy"
 						decoding="async"
-						style={image.objectPosition ? `object-position: ${image.objectPosition};` : undefined}
+						style={[image.objectPosition && `object-position: ${image.objectPosition};`, image.maxWidth && `max-width: ${image.maxWidth}px;`].filter(Boolean).join(" ") || undefined}
 					/>
 				)}
 				{image.caption && <figcaption>{image.caption}</figcaption>}

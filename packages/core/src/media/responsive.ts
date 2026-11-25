@@ -43,16 +43,30 @@ export const GALLERY_DEFAULT_COLUMNS = 3;
  * a gallery inside a narrower content column still gets a larger slot than it
  * renders at; pass `sizes` to `Gallery` when the container width is known.
  */
-export function gallerySizes(columns: number | undefined): string {
+export function gallerySizes(columns: number | undefined, widen = 1): string {
 	const count =
 		typeof columns === "number" && Number.isInteger(columns) && columns > 0
 			? columns
 			: GALLERY_DEFAULT_COLUMNS;
-	return `(max-width: 640px) ${galleryCell(2)}, ${galleryCell(count)}`;
+	return `(max-width: 640px) ${galleryCell(2, widen)}, ${galleryCell(count, widen)}`;
 }
 
-function galleryCell(columns: number): string {
-	return columns === 1 ? "100vw" : `calc((100vw - ${columns - 1}rem) / ${columns})`;
+/** The widest a cell's picture is taken to be, as a multiple of the cell. */
+const GALLERY_MAX_WIDEN = 4;
+
+/**
+ * One cell's width. `widen` is how much wider than the cell its picture is drawn:
+ * a gallery cell is square and its image covers it, so a 3:2 photograph is drawn
+ * one and a half cells wide and cropped. A browser told only the cell's width
+ * would fetch a file for the cell and stretch it.
+ */
+function galleryCell(columns: number, widen: number): string {
+	const cell = columns === 1 ? "100vw" : `calc((100vw - ${columns - 1}rem) / ${columns})`;
+	if (!(widen > 1)) return cell;
+	const factor = Math.round(Math.min(widen, GALLERY_MAX_WIDEN) * 100) / 100;
+	return columns === 1
+		? `calc(100vw * ${factor})`
+		: `calc(((100vw - ${columns - 1}rem) / ${columns}) * ${factor})`;
 }
 
 /**

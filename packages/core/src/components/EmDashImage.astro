@@ -151,6 +151,7 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				{
 					storageKey: img.storageKey ?? (img.meta?.storageKey as string | undefined),
 					url: img.src ?? src,
+					origin: publicOrigin,
 				},
 				finalWidth,
 			);

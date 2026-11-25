@@ -4,6 +4,7 @@
  *
  * Renders an image/video with text overlay from WordPress imports.
  */
+import { getPublicOrigin } from "../api/public-url.js";
 import { storedSizesForRender } from "../media/variant-read.js";
 import { nestedRenderOf } from "./portable-text-nested.js";
 
@@ -54,7 +55,10 @@ let coverSizes: string | undefined;
 if (backgroundImage && !backgroundVideo) {
 	// A cover is drawn at the viewport's width, which we cannot know at render time, so
 	// the ladder offers what is stored and lets the browser choose.
-	const stored = await storedSizesForRender({ url: backgroundImage }, Number.MAX_SAFE_INTEGER);
+	const stored = await storedSizesForRender(
+		{ url: backgroundImage, origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config) },
+		Number.MAX_SAFE_INTEGER,
+	);
 	if (stored) {
 		coverSrcset = stored.srcset;
 		coverSizes = "100vw";

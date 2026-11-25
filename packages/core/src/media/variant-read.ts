@@ -63,7 +63,7 @@ export async function getCommittedVariants(
 	// holding a storage key and carries neither an id nor a hash — so the id branch and
 	// the cover/card branch asked the same question and deserved the same code. The
 	// storage key is unique on `media`, so resolving by it reaches the one row.
-	const storageKey = ref.storageKey ?? storageKeyOf(ref.url ?? null) ?? ref.url ?? null;
+	const storageKey = keyOfRef(ref);
 	if (!storageKey) return [];
 	return requestCached(`media-variants:${storageKey}`, () =>
 		cachedQuery({
@@ -177,13 +177,39 @@ export function uprightParentWidth(variants: readonly CommittedVariant[]): numbe
 	return undefined;
 }
 
-/** The storage key a content reference names, or null. */
+/**
+ * The storage key a content reference names, or null.
+ *
+ * AN ADDRESS IS OURS ONLY IF IT IS OURS. A url names a local image when it is a
+ * root-relative path under the internal file route, or an absolute url on this
+ * site's own public origin with that path. Anything else is another site's file,
+ * whatever its path looks like: `https://elsewhere.example/_emdash/api/media/file/K`
+ * holding a key that also exists here must not be given our srcset, because the
+ * browser would then draw OUR photo in place of theirs. Finding the route's prefix
+ * somewhere inside the string is not that test.
+ */
 function keyOfRef(ref: VariantMediaRef): string | null {
 	if (ref.storageKey) return ref.storageKey;
-	const fromUrl = storageKeyOf(ref.url ?? null);
-	if (!fromUrl) return null;
+	const url = ref.url;
+	if (!url) return null;
+	let pathname: string;
+	if (url.startsWith("/") && !url.startsWith("//")) {
+		pathname = url;
+	} else {
+		if (!ref.origin) return null;
+		try {
+			const parsed = new URL(url);
+			if (parsed.origin !== new URL(ref.origin).origin) return null;
+			pathname = parsed.pathname;
+		} catch {
+			return null;
+		}
+	}
+	if (!pathname.startsWith(INTERNAL_PREFIX)) return null;
+	const raw = pathname.slice(INTERNAL_PREFIX.length).split(URL_SUFFIX)[0];
+	if (!raw) return null;
 	try {
-		return decodeURIComponent(fromUrl);
+		return decodeURIComponent(raw);
 	} catch {
 		return null;
 	}
@@ -206,7 +232,7 @@ function keyOfRef(ref: VariantMediaRef): string | null {
 export async function storedSizesForRender(
 	ref: VariantMediaRef,
 	drawnWidth?: number,
-): Promise<{ srcset: string; bound: number } | null> {
+): Promise<{ srcset: string; bound: number; shape: number | undefined } | null> {
 	const key = keyOfRef(ref);
 	if (!key) return null;
 	const committed = await getCommittedVariantsForRender({ storageKey: key });
@@ -215,7 +241,14 @@ export async function storedSizesForRender(
 	const widths = srcsetWidthsFor(committed, bound);
 	if (!widths.length) return null;
 	const parentUrl = localMediaFileUrl(key);
-	return { srcset: widths.map((w) => `${variantUrl(parentUrl, w)} ${w}w`).join(", "), bound };
+	// Width over height of the picture as it is drawn: a variant is generated upright.
+	const first = committed[0];
+	const shape = first && first.height > 0 ? first.width / first.height : undefined;
+	return {
+		srcset: widths.map((w) => `${variantUrl(parentUrl, w)} ${w}w`).join(", "),
+		bound,
+		shape,
+	};
 }
 
 /** What a caller has in hand. Any one of these is enough. */
@@ -224,20 +257,16 @@ export interface VariantMediaRef {
 	storageKey?: string | null;
 	/** A public url that holds a storage key, e.g. `/_emdash/api/media/file/<key>`. */
 	url?: string | null;
+	/**
+	 * This site's public origin. A page render passes it so an absolute `url` on the
+	 * site's own origin is recognised; without it only a root-relative path is.
+	 */
+	origin?: string | null;
 }
 
 const INTERNAL_PREFIX = "/_emdash/api/media/file/";
 /** A url's query or fragment: neither is part of the key. */
 const URL_SUFFIX = /[?#]/;
-
-/** The storage key inside a public media url, or null when the url is not one. */
-function storageKeyOf(url: string | null): string | null {
-	if (!url) return null;
-	const at = url.indexOf(INTERNAL_PREFIX);
-	if (at === -1) return null;
-	const key = url.slice(at + INTERNAL_PREFIX.length).split(URL_SUFFIX)[0];
-	return key || null;
-}
 
 /**
  * The widths to put in a `srcset` for an image whose committed variants are
