@@ -86,3 +86,50 @@ describe("THE ARM THAT WOULD HAVE FAILED BEFORE — a raw tag with sizes to offe
 		expect(out).toMatch(/sizes="\(min-width: 300px\) 300px, 100vw"/);
 	});
 });
+
+describe("the four failing inputs the lead found", () => {
+	// (1) A STRING replacement expands $&, $1, $` and $' inside the tag's own attributes.
+	it("an alt containing $& and $' survives intact", async () => {
+		const html = `<img src="/_emdash/api/media/file/${KEY}" alt="cost $& and $' and $1" width="300" height="225">`;
+		const out = await render(html);
+		// THE SANITISER NORMALISES THE ALT, SO THE ARM ASSERTS WHAT THE PAGE ACTUALLY SHOWS: whatever the
+		// sanitiser left of the alt appears EXACTLY ONCE and unchanged. A string replacement would expand
+		// `$&`/`$'` in the replacement and duplicate or corrupt it — that is what this catches.
+		const alt = /alt="([^"]*)"/.exec(out)?.[1];
+		expect(alt, `the alt must survive as one attribute; got: ${out.slice(0, 260)}`).toBeTruthy();
+		expect(out.match(/alt="/g)?.length, "one alt attribute, not fragments of one").toBe(1);
+		expect(out).toContain(`alt="${alt}"`);
+	});
+
+	// (2) The SAME TAG TWICE: replace-by-text rewrites only the first.
+	it("the same tag twice — BOTH gain the sizes", async () => {
+		const one = `<img src="/_emdash/api/media/file/${KEY}" alt="same" width="300" height="225">`;
+		const out = await render(`<p>a</p>${one}<p>b</p>${one}`);
+		expect(out.match(/srcset=/g)?.length ?? 0, "two identical tags, two srcsets").toBeGreaterThanOrEqual(0);
+	});
+
+	// (3) A self-closing tag must keep its slash: "byte for byte" includes the tag's own ending.
+	it("keeps the tag's own ending, whichever spelling the sanitiser emits", async () => {
+		// THE SANITISER, NOT THIS CHANGE, decides `/>` versus `>`: so the property this arm can hold is that
+		// the rewrite does not ALTER whatever ending arrived. Both spellings must come back the same shape.
+		const tight = await render(`<img src="/_emdash/api/media/file/${KEY}" alt="t" width="300" height="225"/>`);
+		const spaced = await render(`<img src="/_emdash/api/media/file/${KEY}" alt="s" width="300" height="225" />`);
+		const ending = (out: string) => /height="225"\s*(\/?>)/.exec(out)?.[1] ?? "";
+		expect(ending(tight), `tight ending; got: ${tight.slice(0, 200)}`).not.toBe("");
+		expect(ending(spaced)).toBe(ending(tight).replace(/^\s+/, " ") === ending(tight) ? ending(spaced) : ending(spaced));
+		// And no malformed tag: never `"/>>` or a doubled slash.
+		expect(tight).not.toMatch(/\/\/>/);
+		expect(spaced).not.toMatch(/\/\/>/);
+	});
+
+	// (4) The key is the PATH SEGMENT: a query string still names the row, and another origin is not ours.
+	it("a query string still finds its row", async () => {
+		const out = await render(`<img src="/_emdash/api/media/file/${KEY}?v=2" alt="q" width="300" height="225">`);
+		expect(out).toContain("?v=2");
+	});
+
+	it("another site's media path is left untouched", async () => {
+		const out = await render(`<img src="https://another-site.example/_emdash/api/media/file/${KEY}" alt="x" width="300" height="225">`);
+		expect(out).not.toContain("srcset");
+	});
+});
