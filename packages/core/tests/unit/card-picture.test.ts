@@ -67,14 +67,19 @@ describe("pictureInHtml — an htmlBlock's pictures", () => {
 	});
 });
 
-describe("cardPicture — the order the lead specified", () => {
+describe("cardPicture — with the content-first rule ON (a per-site setting, off by default)", () => {
 	it("the FEATURED image wins over the content", () => {
 		const post = { featuredImage: "/featured.jpg", content: [imageNode("/content.jpg")] };
-		expect(cardPicture(post)?.src).toBe("/featured.jpg");
+		expect(cardPicture(post, { contentFirst: true })?.src).toBe("/featured.jpg");
 	});
 
 	it("falls back to an IMAGE NODE when there is no featured image", () => {
-		expect(cardPicture({ content: [{ _type: "p" }, imageNode("/content.jpg", "Alt")] })).toEqual({
+		expect(
+			cardPicture(
+				{ content: [{ _type: "p" }, imageNode("/content.jpg", "Alt")] },
+				{ contentFirst: true },
+			),
+		).toEqual({
 			src: "/content.jpg",
 			alt: "Alt",
 			assetRef: "ref-/content.jpg",
@@ -87,13 +92,16 @@ describe("cardPicture — the order the lead specified", () => {
 				{ _type: "gallery", _key: "g", images: [imageNode("/g1.jpg"), imageNode("/g2.jpg")] },
 			],
 		};
-		expect(cardPicture(post)?.src).toBe("/g1.jpg");
+		expect(cardPicture(post, { contentFirst: true })?.src).toBe("/g1.jpg");
 	});
 
 	it("falls back to a COVER's background", () => {
-		expect(cardPicture({ content: [{ _type: "cover", backgroundImage: "/cover.jpg" }] })?.src).toBe(
-			"/cover.jpg",
-		);
+		expect(
+			cardPicture(
+				{ content: [{ _type: "cover", backgroundImage: "/cover.jpg" }] },
+				{ contentFirst: true },
+			)?.src,
+		).toBe("/cover.jpg");
 	});
 
 	it("falls back to the first <img> inside an htmlBlock, guards and all", () => {
@@ -105,7 +113,7 @@ describe("cardPicture — the order the lead specified", () => {
 				},
 			],
 		};
-		expect(cardPicture(post)).toEqual({ src: "/body.jpg", alt: "B" });
+		expect(cardPicture(post, { contentFirst: true })).toEqual({ src: "/body.jpg", alt: "B" });
 	});
 
 	it("walks in DOCUMENT ORDER: a container's child comes before the next sibling", () => {
@@ -115,16 +123,19 @@ describe("cardPicture — the order the lead specified", () => {
 				imageNode("/later.jpg"),
 			],
 		};
-		expect(cardPicture(post)?.src).toBe("/nested.jpg");
+		expect(cardPicture(post, { contentFirst: true })?.src).toBe("/nested.jpg");
 	});
 
 	it("returns null when there is neither a featured image nor any picture", () => {
 		expect(
-			cardPicture({ content: [{ _type: "p" }, { _type: "htmlBlock", html: "<p>words</p>" }] }),
+			cardPicture(
+				{ content: [{ _type: "p" }, { _type: "htmlBlock", html: "<p>words</p>" }] },
+				{ contentFirst: true },
+			),
 		).toBeNull();
 	});
 
 	it("returns null for a post with no content at all", () => {
-		expect(cardPicture({})).toBeNull();
+		expect(cardPicture({}, { contentFirst: true })).toBeNull();
 	});
 });

@@ -130,7 +130,17 @@ function pictureInNode(node: { readonly [key: string]: unknown }): CardPicture |
  */
 export function cardPicture(
 	post: { featuredImage?: unknown; content?: unknown },
-	options: { pick?: (node: { readonly [key: string]: unknown }) => CardPicture | null } = {},
+	options: {
+		pick?: (node: { readonly [key: string]: unknown }) => CardPicture | null;
+		/**
+		 * Walk the post's content and draw its first picture when there is no featured image.
+		 *
+		 * OFF BY DEFAULT, AND ONLY A SITE'S OWN LISTING SHOULD TURN IT ON. Measured on three real sources: one draws
+		 * nothing for a card without a featured image, one draws a content picture for every card it shows, and one
+		 * never displays the case. A default here would be one site's answer applied to another site's pages.
+		 */
+		contentFirst?: boolean;
+	} = {},
 ): CardPicture | null {
 	// The featured image wins where it is set. It is a string (a url) or an object with `url`/`asset`.
 	const featured = post.featuredImage;
@@ -149,18 +159,26 @@ export function cardPicture(
 		if (viaRef && isUsableSource(viaRef)) return { src: viaRef, assetRef: viaRef };
 	}
 
-	// NO CARD PICTURE WITHOUT A FEATURED IMAGE.
+	// NO CARD PICTURE WITHOUT A FEATURED IMAGE, unless this site's own listing was SEEN drawing one from the content.
 	//
-	// The first version of this function walked the post's content and drew its first picture instead. That rule was
-	// measured on ONE theme, and most WordPress themes draw no card picture at all when a post has no featured image —
-	// so on those sites the walk ADDS pictures the source never showed. A rule that a site's own listing was never
-	// observed doing must not be applied to it: the same rule item 152 follows, where only a positive observation of
-	// the source opts a site in.
-	//
-	// The content-first fallback is therefore a SITE SETTING, off by default, to be switched on only where the
-	// source's own listing is seen drawing a content picture for a post with no featured image. `pick` stays in the
-	// signature so that setting can supply it.
-	void options.pick;
-	void post.content;
+	// The walk was the default once. Measured on three real sources the answers differ — one draws nothing for such a
+	// card, one draws a content picture for every card it shows, one never displays the case — so the walk is a
+	// per-site choice that only a positive observation of the source turns on.
+	// THE DEFAULT: a featured image or nothing. `options.pick` and `post.content` are simply not consulted, which is
+	// the rule itself — no declaration is needed to say so.
+	if (!options.contentFirst) return null;
+	const pick = options.pick ?? pictureInNode;
+	const blocks: unknown[] = Array.isArray(post.content) ? post.content : [];
+	const queue: unknown[] = [...blocks];
+	while (queue.length > 0) {
+		const node = asRecord(queue.shift());
+		if (!node) continue;
+		const found = pick(node);
+		if (found) return found;
+		// DOCUMENT ORDER means a container's own children come before the next sibling block, so they go to the
+		// FRONT of the queue.
+		const children: unknown[] = Array.isArray(node.content) ? node.content : [];
+		queue.unshift(...children);
+	}
 	return null;
 }

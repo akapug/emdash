@@ -66,6 +66,12 @@ const withPictures = await Promise.all(
 		const picture = cardPicture({
 			featuredImage: (post.data as { featured_image?: unknown }).featured_image,
 			content: post.data.content,
+		}, {
+			// THE CONTENT-FIRST WALK IS THE SITE'S CHOICE, as the SECOND argument. The import turns it on only where
+			// the source's own listing was SEEN drawing a card picture for a post with no featured image: measured
+			// across real sources the answers differ, so a default would be one site's answer on another's pages. It
+			// is read from the site settings the page already loads, the same channel the iframe allowlist uses.
+			contentFirst: settingsResult.data.cardContentFirst === true,
 		});
 		const stated = (post.data as { featured_image?: { width?: unknown; height?: unknown } }).featured_image;
 		const width = Number(stated?.width ?? 0);
@@ -79,6 +85,31 @@ const withPictures = await Promise.all(
 		return { post, picture, dimensions: measured };
 	}),
 );
+
+/**
+ * The image value the card hands the component.
+ *
+ * TYPED, because the component's `image` prop is `string | ImageValue | null | undefined` and an inline object literal
+ * with optional width/height does not narrow to it — the fork's astro check rejects the object at the call site rather
+ * than inside the component. The dimensions are the row's own, when the card could read them.
+ */
+function cardImage(
+	picture: { assetRef?: string; src: string; alt?: string },
+	dimensions: { width: number; height: number } | undefined,
+	fallbackAlt: string,
+): { id: string; src: string; alt: string; width?: number; height?: number } {
+	// `id` IS REQUIRED BY THE COMPONENT'S `ImageValue`, even though the local branch draws from `src`: the type is the
+	// media record, and the fork's own components pass the id so a provider can resolve the current file. The card's
+	// id is the media id in the stored path, or the path itself when the value carries no id of its own.
+	const src = picture.assetRef ?? picture.src;
+	const id = /\/media\/file\/([^/?#]+)/.exec(src)?.[1] ?? src;
+	return {
+		id,
+		src,
+		alt: picture.alt || fallbackAlt,
+		...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
+	};
+}
 
 const postsWithTags = withPictures.map(({ post, picture, dimensions }) => ({
 	post,
@@ -120,15 +151,11 @@ const formatDate = (date: Date) =>
 										    stored asset's _ref (measured: "/_emdash/api/media/file/<id>.<ext>"). The component
 										    reads the widths the tenant holds; with none it draws the original once and
 										    claims no srcset, which is the honest markup. */}
+										{/* THE ROW'S OWN SIZE, so the component can offer the widths the tenant holds instead of
+										    drawing the original once. Absent, it draws a plain <img> — never a srcset it cannot
+										    back. A JSX comment cannot sit between attributes, which is why this one is here. */}
 										<Image
-											{/* THE ROW'S OWN SIZE, so the component can offer the widths the tenant holds
-											    instead of drawing the original once. Absent, it draws a plain <img> — never a
-											    srcset it cannot back. */}
-											image={{
-												src: picture.assetRef ?? picture.src,
-												alt: picture.alt || post.data.title,
-												...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
-											}}
+											image={cardImage(picture, dimensions, post.data.title)}
 											loading="lazy"
 											decoding="async"
 										/>

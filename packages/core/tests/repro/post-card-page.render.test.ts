@@ -19,7 +19,6 @@ import { runWithContext } from "../../src/request-context.js";
 import { SchemaRegistry } from "../../src/schema/registry.js";
 import { setupTestDatabase, teardownTestDatabase } from "../utils/test-db.js";
 
-const IMAGE_URL = "/_emdash/api/media/file/2024/05/first.jpg";
 const REAL_URL = "/_emdash/api/media/file/2024/05/real.jpg";
 
 /** The three posts, in the order the page lists them (published_at desc). */
@@ -29,7 +28,9 @@ const imageNodePost = {
 	// A FEATURED IMAGE IS THE ONE THING A CARD DRAWS BY DEFAULT. The first version of this fixture relied on the
 	// card walking the post's content for a picture; that rule was measured on one theme and most themes draw nothing
 	// without a featured image, so it is now a site setting (off) and the card's default path is this value.
-	featuredImage: { asset: { _type: "reference", _ref: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg" } },
+	featuredImage: {
+		asset: { _type: "reference", _ref: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg" },
+	},
 	content: [
 		{ _type: "block", _key: "b1", children: [{ _type: "span", _key: "s1", text: "Words." }] },
 		{
@@ -38,7 +39,10 @@ const imageNodePost = {
 			// THE MEASURED SHAPE, taken from a real post's content (optest-dreamingstone-ac, ec_posts,
 			// 2024-annual-report): the ref is a FULL PATH to the media-file route, not a bare id, and `url` carries
 			// the same value. An invented ref here is what let a doubled-path bug through.
-			asset: { _ref: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg", url: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg" },
+			asset: {
+				_ref: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg",
+				url: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg",
+			},
 			alt: "An image node picture",
 		},
 	],
@@ -112,7 +116,10 @@ vi.mock("../../src/media/variant-read.js", async () => {
 		storedSizesForRender: async (_media: unknown, width: number) => {
 			const widths = storedSizes.widths.filter((w) => w <= width);
 			if (widths.length === 0) return null;
-			return { srcset: widths.map((w) => `/variants/${w}.png ${w}w`).join(", "), sizes: `(max-width: ${width}px) 100vw, ${width}px` };
+			return {
+				srcset: widths.map((w) => `/variants/${w}.png ${w}w`).join(", "),
+				sizes: `(max-width: ${width}px) 100vw, ${width}px`,
+			};
 		},
 	};
 });
@@ -156,7 +163,11 @@ beforeAll(async () => {
 			slug: post.slug,
 			status: "published",
 			locale: "en",
-			data: { title: post.title, content: post.content, ...(post.featuredImage ? { featured_image: post.featuredImage } : {}) },
+			data: {
+				title: post.title,
+				content: post.content,
+				...(post.featuredImage ? { featured_image: post.featuredImage } : {}),
+			},
 			publishedAt: new Date(Date.UTC(2024, 0, day++)),
 		} as never);
 	}
@@ -201,7 +212,10 @@ async function renderIndex(only?: string): Promise<string> {
  * THE PICTURE'S WIDTH LIST IS THE SUBJECT, so the read is the one thing this helper controls: `storedWidths` empty
  * means the tenant holds no sizes for the row, which is the case that used to emit a list of one URL at many widths.
  */
-async function renderCard(opts: { storedWidths: number[]; dimensions?: { width: number; height: number } | null }): Promise<string> {
+async function renderCard(opts: {
+	storedWidths: number[];
+	dimensions?: { width: number; height: number } | null;
+}): Promise<string> {
 	// THE STORED-SIZES AND DIMENSION READS ARE STUBBED AT THE MODULE, not through a hook in production code: a test
 	// seam in the shipped module is a leak, and this file already stubs its reads the same way.
 	storedSizes.widths = opts.storedWidths;
@@ -234,11 +248,16 @@ describe("the post card a visitor gets", () => {
 		// assertion — those text reaches vitest's own diff, which every reporter prints.
 		expect(picture.length, "the card must render a post-picture span at all").toBeGreaterThan(0);
 		expect(picture.includes("<img"), "and the span must hold an img").toBe(true);
-		expect(picture.includes("emdash-image-media"), "and the picture must be drawn by the image component").toBe(true);
+		expect(
+			picture.includes("emdash-image-media"),
+			"and the picture must be drawn by the image component",
+		).toBe(true);
 		expect(picture, `the card must hold the picture wrapper; got: ${card}`).toContain(
 			'src="/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg"',
 		);
-		expect(picture, `the route must not be prefixed twice; got: ${picture}`).not.toContain("file//_emdash");
+		expect(picture, `the route must not be prefixed twice; got: ${picture}`).not.toContain(
+			"file//_emdash",
+		);
 		// THE ALT COMES FROM THE FEATURED VALUE; with the content-first rule off there is no node to read one from.
 		expect(picture, "the picture must carry an alt").toMatch(/alt="[^"]*"/);
 		// Inside the link to the post, so the picture is clickable like the title.
@@ -252,7 +271,9 @@ describe("the post card a visitor gets", () => {
 		// rule was measured on ONE theme; most themes draw nothing here, so applying it everywhere would add pictures
 		// the source never showed. It is a site setting, off by default, and this arm pins the default.
 		const card = articleFor(await renderIndex(), htmlBlockPost.slug);
-		expect(card, `no picture wrapper without a featured image; got: ${card}`).not.toContain("post-picture");
+		expect(card, `no picture wrapper without a featured image; got: ${card}`).not.toContain(
+			"post-picture",
+		);
 		expect(card, "and nothing is drawn from the content").not.toContain(REAL_URL);
 		expect(card, "the card still renders its title").toContain(htmlBlockPost.title);
 	});
@@ -281,14 +302,26 @@ describe("a post card's picture never promises a width it cannot back", () => {
 		// THE POINT OF THE DIMENSION READ: with the row's own size the component can offer the widths the tenant holds,
 		// which is the whole reason this lane exists — a card drawing a 5.6 MB original is the defect. The sizes value
 		// must describe a CARD, not a viewport.
-		const page = await renderCard({ storedWidths: [300, 768], dimensions: { width: 1200, height: 800 } });
+		const page = await renderCard({
+			storedWidths: [300, 768],
+			dimensions: { width: 1200, height: 800 },
+		});
 		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
 		const srcset = /srcset="([^"]{1,500})"/.exec(picture)?.[1] ?? "";
-		expect(picture.includes('width="1200"') || picture.includes("width='1200'"), `the row's size must reach the markup; got: ${picture}`).toBe(true);
-		expect(srcset, `the card must offer the stored widths it now can; got: ${picture}`).not.toBe("");
+		expect(
+			picture.includes('width="1200"') || picture.includes("width='1200'"),
+			`the row's size must reach the markup; got: ${picture}`,
+		).toBe(true);
+		expect(srcset, `the card must offer the stored widths it now can; got: ${picture}`).not.toBe(
+			"",
+		);
 		const urls = srcset.split(",").map((part) => part.trim().split(" ")[0]);
-		expect(new Set(urls).size, `every candidate must be a DIFFERENT url; got: ${srcset}`).toBe(urls.length);
-		expect(picture, `a card-width sizes, not 100vw; got: ${picture}`).not.toContain('sizes="100vw"');
+		expect(new Set(urls).size, `every candidate must be a DIFFERENT url; got: ${srcset}`).toBe(
+			urls.length,
+		);
+		expect(picture, `a card-width sizes, not 100vw; got: ${picture}`).not.toContain(
+			'sizes="100vw"',
+		);
 	});
 
 	it("with stored sizes but no dimensions of its own, the card still renders and claims NO width list", async () => {
@@ -301,7 +334,9 @@ describe("a post card's picture never promises a width it cannot back", () => {
 		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
 		expect(picture, "the card still draws its picture").toContain("<img");
 		expect(picture, `no srcset the card cannot back; got: ${picture}`).not.toContain("srcset=");
-		expect(picture, `and no sizes to make a browser prefer it; got: ${picture}`).not.toContain("sizes=");
+		expect(picture, `and no sizes to make a browser prefer it; got: ${picture}`).not.toContain(
+			"sizes=",
+		);
 		expect(picture, "the original is what is drawn").toContain("01M883SDWF1PY8YZBGF4YDDP71.jpeg");
 	});
 

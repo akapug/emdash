@@ -92,6 +92,14 @@ export interface SiteSettings {
 	// Display
 	homepage?: HomepageReference;
 	postsPerPage: number;
+	/**
+	 * Draw a post card's picture from the post's CONTENT when it has no featured image.
+	 *
+	 * OFF WHEN ABSENT, and only a site's own listing should turn it on: measured across real sources the answer
+	 * differs — one listing draws nothing for such a card, one draws a content picture for every card it shows, and
+	 * one never displays the case. The import observes the source listing and writes this; nothing else may.
+	 */
+	cardContentFirst?: boolean;
 	dateFormat: string;
 	timezone: string;
 
