@@ -34,6 +34,9 @@ export function responsiveSizes(width: number | undefined): string {
 	return width ? `(min-width: ${width}px) ${width}px, 100vw` : "100vw";
 }
 
+const AUTO_SIZES_PREFIX = /^\s*auto\s*(?:,|$)/i;
+const SVG_SOURCE = /^(?:[^?#]*\.svgz?(?:[?#]|$)|data:image\/svg\+xml[;,])/i;
+
 /** Let a lazy image with a reserved box select by layout width, keeping its fallback. */
 export function lazyAutoSizes(
 	fallback: string | undefined,
@@ -48,14 +51,13 @@ export function lazyAutoSizes(
 	},
 ): string | undefined {
 	if (!fallback || image.loading !== "lazy" || !image.hasWidthSrcset) return fallback;
-	if (/^\s*auto\s*(?:,|$)/i.test(fallback)) return fallback;
+	if (AUTO_SIZES_PREFIX.test(fallback)) return fallback;
 	const { width, height, mimeType } = image;
 	const hasDimensions =
 		Number.isFinite(width) && (width ?? 0) >= 1 && Number.isFinite(height) && (height ?? 0) >= 1;
 	if (!image.hasReservedBox && !hasDimensions) return fallback;
 	if (typeof mimeType === "string" && normalizeMime(mimeType) === "image/svg+xml") return fallback;
-	const svgSource = /^(?:[^?#]*\.svgz?(?:[?#]|$)|data:image\/svg\+xml[;,])/i;
-	if (image.sources.some((src) => typeof src === "string" && svgSource.test(src))) return fallback;
+	if (image.sources.some((src) => typeof src === "string" && SVG_SOURCE.test(src))) return fallback;
 	return `auto, ${fallback}`;
 }
 

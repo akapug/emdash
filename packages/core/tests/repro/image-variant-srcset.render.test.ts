@@ -460,8 +460,8 @@ describe("stored image sizes on a logged-out page", () => {
 		]);
 		await seed(bare, []);
 		const { node } = gallery([stored, bare]);
-		node.images = node.images.map((image, index) =>
-			index === 0 ? { ...image, width: 1600, height: 900 } : image,
+		node.images = node.images.map((entry, index) =>
+			index === 0 ? { ...entry, width: 1600, height: 900 } : entry,
 		);
 		const html = await asVisitor(Gallery, { node });
 		const withSizes = tagFor(html, "gallery-stored.jpg");
