@@ -14,7 +14,9 @@
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-const stored = { value: null as { srcset: string; bound: number; shape: number | undefined } | null };
+const stored = {
+	value: null as { srcset: string; bound: number; shape: number | undefined } | null,
+};
 vi.mock("../../src/media/variant-read.js", () => ({
 	storedSizesForRender: async () => stored.value,
 	storedDimensionsForRender: async () => null,
@@ -31,7 +33,11 @@ const attr = (tag: string, name: string) =>
 /** An imported image block as the real page has one: a stored asset and NO dimensions. */
 const nodimensions = {
 	_type: "image",
-	asset: { _ref: "01M8A0XEB7TF21ZHS32FP04RHY", url: "01M8A0XEB7TF21ZHS32FP04RHY.png", mimeType: "image/png" },
+	asset: {
+		_ref: "01M8A0XEB7TF21ZHS32FP04RHY",
+		url: "01M8A0XEB7TF21ZHS32FP04RHY.png",
+		mimeType: "image/png",
+	},
 	alt: "",
 };
 
@@ -49,7 +55,8 @@ async function render(node: unknown) {
 describe("an image block inside columns gets a layout-driven sizes", () => {
 	beforeEach(() => {
 		stored.value = {
-			srcset: "/_emdash/api/media/file/01M8A0XEB7.png?w=300 300w, /_emdash/api/media/file/01M8A0XEB7.png?w=1024 1024w",
+			srcset:
+				"/_emdash/api/media/file/01M8A0XEB7.png?w=300 300w, /_emdash/api/media/file/01M8A0XEB7.png?w=1024 1024w",
 			bound: 1640,
 			shape: 1640 / 900,
 		};
