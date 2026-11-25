@@ -29,12 +29,13 @@ import { normalizeLegacyExternalMediaValue } from "../media/normalize.js";
 import { buildRenderMediaUrl } from "../media/url.js";
 import {
 	buildResponsiveImage,
+	responsiveSizes,
 	toAbsoluteMediaUrl,
 	RESPONSIVE_BREAKPOINTS,
 } from "../media/responsive.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { focalPointToObjectPosition } from "../media/focal-point.js";
-import { getCommittedVariants, srcsetWidthsFor } from "../media/variant-read.js";
+import { storedSizesForRender } from "../media/variant-read.js";
 
 interface Props extends Omit<
 	HTMLAttributes<"img">,
@@ -143,30 +144,22 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		const absoluteSrc = toAbsoluteMediaUrl(src, publicOrigin);
 		if (finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`)) {
 			astroImageSrc = absoluteSrc;
-			// WHAT IS COMMITTED, not what we wish existed. A fixed ladder here would
-			// promise 300w over a 9.6 MB original on every tenant alive today: worse
-			// than no srcset, because the browser believes it. Empty (no variants, no
-			// readable id) leaves the markup byte-identical to a site without variants,
-			// which is what keeps the repro arms green.
-			// The image value carries a url (holding a storage key), not a hash — MEASURED
-			// on a real tenant. The read binds the hash in SQL, so nothing here is trusted.
-			// NO DATABASE means NO READ: a component rendered outside a request (the repro
-			// render harness, a static build) must not query, and must still render.
-			const mediaDb = Astro.locals.emdash?.db;
-			const committed = mediaDb
-				? await getCommittedVariants(mediaDb as never, {
-						storageKey: img.storageKey,
-						url: img.src ?? src,
-					})
-				: [];
-			const rungs = srcsetWidthsFor(committed, finalWidth);
-			if (rungs.length) {
-				srcset = rungs
-					.map((w) => {
-						const h = Math.round((w * finalHeight) / finalWidth);
-						return `${variantUrl(src, w)} ${w}w`;
-					})
-					.join(", ");
+			// Offer only the widths that are stored. A fixed ladder would promise 300w over
+			// a multi-megabyte original, which is worse than no srcset because the browser
+			// believes it. Nothing stored leaves the markup exactly as it was.
+			const stored = await storedSizesForRender(
+				{
+					storageKey: img.storageKey ?? (img.meta?.storageKey as string | undefined),
+					url: img.src ?? src,
+				},
+				finalWidth,
+			);
+			if (stored) {
+				// <AstroImage> takes `src` alone and derives a srcset of its own, so an image
+				// with stored variants is drawn by the plain <img> branch, which passes our
+				// srcset and sizes through.
+				astroImageSrc = "";
+				srcset = stored.srcset;
 				sizes = responsiveSizes(finalWidth);
 			}
 		} else {

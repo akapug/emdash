@@ -9,7 +9,8 @@ import { Image as AstroImage } from "astro:assets";
 import type { ImageEmbed } from "../media/types.js";
 import { getMediaProvider } from "../media/provider-loader.js";
 import { buildRenderMediaUrl } from "../media/url.js";
-import { toAbsoluteMediaUrl, RESPONSIVE_BREAKPOINTS } from "../media/responsive.js";
+import { responsiveSizes, toAbsoluteMediaUrl, RESPONSIVE_BREAKPOINTS } from "../media/responsive.js";
+import { storedSizesForRender } from "../media/variant-read.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { sanitizeHref } from "../utils/url.js";
 import { normalizeImageLink } from "../content/converters/image-link.js";
@@ -163,6 +164,17 @@ if (!src) {
 	});
 	if (renderWidth && renderHeight) {
 		astroImageSrc = toAbsoluteMediaUrl(src, getPublicOrigin(Astro.url, Astro.locals.emdash?.config));
+	}
+	// Offer the widths that are stored for this image, named by what the block holds
+	// and not by `src`, which is a CDN address when a public bucket is configured. An
+	// imported block often carries no dimensions; the bound is then the original's
+	// upright width.
+	const stored = await storedSizesForRender({ url: asset.url }, renderWidth);
+	if (stored) {
+		// <AstroImage> takes `src` alone and derives a srcset of its own.
+		astroImageSrc = "";
+		srcset = stored.srcset;
+		sizes = responsiveSizes(stored.bound);
 	}
 }
 

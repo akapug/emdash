@@ -32,8 +32,11 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../database/types.js";
-import type { StoredVariant } from "../media/variants.js";
+import { getDb } from "../loader.js";
+import { localMediaFileUrl } from "../media/url.js";
+import { variantUrl, type StoredVariant } from "../media/variants.js";
 import { cachedQuery, invalidateObjectCache, CacheNamespace } from "../object-cache/index.js";
+import { capPageCacheUntil } from "../page-cache/state.js";
 import { requestCached } from "../request-cache.js";
 
 /** The widths a renderer may offer, narrowest first. Must match the fork's ladder. */
@@ -58,7 +61,7 @@ export const RENDERABLE_VARIANT_WIDTHS = [300, 480, 768, 1024] as const;
 export async function getCommittedVariants(
 	db: Kysely<Database>,
 	ref: VariantMediaRef,
-): Promise<StoredVariant[]> {
+): Promise<CommittedVariant[]> {
 	// ONE PATH FOR EVERY BRANCH. Measured on a real tenant, an image value is a url
 	// holding a storage key and carries neither an id nor a hash — so the id branch and
 	// the cover/card branch asked the same question and deserved the same code. The
@@ -68,7 +71,9 @@ export async function getCommittedVariants(
 	return requestCached(`media-variants:${storageKey}`, () =>
 		cachedQuery({
 			namespace: CacheNamespace.MEDIA_VARIANTS,
-			key: storageKey,
+			// Versioned: an entry cached before the parent's dimensions were selected
+			// lacks them, and must refill rather than be read as "unknown".
+			key: `v2:${storageKey}`,
 			load: () =>
 				db
 					.selectFrom("_emdash_media_variants as variant")
@@ -83,6 +88,8 @@ export async function getCommittedVariants(
 						"variant.content_hash as contentHash",
 						"variant.parent_content_hash as parentContentHash",
 						"variant.created_at as createdAt",
+						"parent.width as parentWidth",
+						"parent.height as parentHeight",
 					])
 					.where("parent.status", "=", "ready")
 					.whereRef("variant.parent_content_hash", "=", "parent.content_hash")
@@ -91,6 +98,127 @@ export async function getCommittedVariants(
 					.execute(),
 		}),
 	);
+}
+
+/**
+ * A committed variant, with the stored dimensions of the image it was made from.
+ * A content image can be stored with no dimensions of its own, and the parent's
+ * are then the only honest bound on how wide the image is ever drawn.
+ */
+export type CommittedVariant = StoredVariant & {
+	parentWidth: number | null;
+	parentHeight: number | null;
+};
+
+/** How long a page that could not read its variants may be cached. */
+const VARIANT_READ_RETRY_MS = 60_000;
+let lastReadFailureWarning = 0;
+
+/**
+ * The committed variants for an image a page is drawing, or `[]`.
+ *
+ * A component must not gate this read on `Astro.locals.emdash.db`. Only a
+ * logged-in request has that: the middleware's anonymous path attaches a partial
+ * handler object with no `db`, and every public read (menus, settings, content)
+ * reaches the database through `getDb()` and the request context instead. A read
+ * gated on the handler therefore never runs for a visitor, which is the request
+ * that matters.
+ *
+ * Never throws, because an image must still render when the read cannot run. The
+ * two reasons are kept apart:
+ *
+ *  - NO DATABASE (a static build, a render test) is expected and silent.
+ *  - A FAILED READ is not expected. It is logged, at most once a minute, and the
+ *    page's cache lifetime is capped so the HTML written without a srcset is not
+ *    kept after the read recovers.
+ */
+export async function getCommittedVariantsForRender(
+	ref: VariantMediaRef,
+): Promise<CommittedVariant[]> {
+	let db: Kysely<Database>;
+	try {
+		db = await getDb();
+	} catch {
+		return [];
+	}
+	try {
+		return await getCommittedVariants(db, ref);
+	} catch (error) {
+		capPageCacheUntil(Date.now() + VARIANT_READ_RETRY_MS);
+		if (Date.now() - lastReadFailureWarning >= VARIANT_READ_RETRY_MS) {
+			lastReadFailureWarning = Date.now();
+			console.warn("[emdash] stored image sizes could not be read; serving originals:", error);
+		}
+		return [];
+	}
+}
+
+/** How far a variant's shape may differ from its parent's and still be the same picture. */
+const SAME_SHAPE_TOLERANCE = 0.02;
+
+/**
+ * The width the original is drawn at when upright, or undefined when unknown.
+ *
+ * The parent row holds the stored pixel frame. A phone photo taken upright is
+ * stored on its side with an orientation flag, so its row says 4032x3024 while the
+ * picture a browser draws is 3024 wide. The variants were generated upright, so a
+ * variant's own shape says which of the parent's two sides is the width. Using the
+ * raw width there would tell the browser the image is wider than it is, and an
+ * image with no width attribute would be drawn larger than before.
+ */
+export function uprightParentWidth(variants: readonly CommittedVariant[]): number | undefined {
+	const first = variants[0];
+	if (!first?.parentWidth || !first.parentHeight || !first.width || !first.height) return undefined;
+	const { parentWidth, parentHeight } = first;
+	const shape = first.width / first.height;
+	const close = (to: number) => Math.abs(shape - to) / to <= SAME_SHAPE_TOLERANCE;
+	const asStored = close(parentWidth / parentHeight);
+	const turned = close(parentHeight / parentWidth);
+	if (asStored && turned) return Math.min(parentWidth, parentHeight);
+	if (asStored) return parentWidth;
+	if (turned) return parentHeight;
+	return undefined;
+}
+
+/** The storage key a content reference names, or null. */
+function keyOfRef(ref: VariantMediaRef): string | null {
+	if (ref.storageKey) return ref.storageKey;
+	const fromUrl = storageKeyOf(ref.url ?? null);
+	if (!fromUrl) return null;
+	try {
+		return decodeURIComponent(fromUrl);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The `srcset` for an image a page is drawing, or null when nothing stored can
+ * improve on the original.
+ *
+ * `ref` is what the CONTENT holds (a storage key, or the internal file url), never
+ * the rendered `src`: with a public bucket configured the rendered `src` is a CDN
+ * address that names no row. The candidates are always built on the internal file
+ * route, because it is the only route that resolves `?w=`; a `?w=` appended to any
+ * other address would be a promise nothing keeps.
+ *
+ * `drawnWidth` is the width the caller draws the image at. Without one the bound is
+ * the original's upright width, and with neither nothing is offered, since `sizes`
+ * would have to guess and could draw a small image larger than it is.
+ */
+export async function storedSizesForRender(
+	ref: VariantMediaRef,
+	drawnWidth?: number,
+): Promise<{ srcset: string; bound: number } | null> {
+	const key = keyOfRef(ref);
+	if (!key) return null;
+	const committed = await getCommittedVariantsForRender({ storageKey: key });
+	const bound = drawnWidth ?? uprightParentWidth(committed);
+	if (!bound) return null;
+	const widths = srcsetWidthsFor(committed, bound);
+	if (!widths.length) return null;
+	const parentUrl = localMediaFileUrl(key);
+	return { srcset: widths.map((w) => `${variantUrl(parentUrl, w)} ${w}w`).join(", "), bound };
 }
 
 /** What a caller has in hand. Any one of these is enough. */

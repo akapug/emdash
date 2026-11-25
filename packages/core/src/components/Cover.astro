@@ -4,8 +4,7 @@
  *
  * Renders an image/video with text overlay from WordPress imports.
  */
-import { variantUrl } from "../media/variants.js";
-import { getCommittedVariants, srcsetWidthsFor } from "../media/variant-read.js";
+import { storedSizesForRender } from "../media/variant-read.js";
 import { nestedRenderOf } from "./portable-text-nested.js";
 
 export interface Props {
@@ -53,13 +52,11 @@ const nested = nestedRenderOf(node);
 let coverSrcset: string | undefined;
 let coverSizes: string | undefined;
 if (backgroundImage && !backgroundVideo) {
-	const db = Astro.locals.emdash?.db;
-	const committed = db ? await getCommittedVariants(db as never, { url: backgroundImage }) : [];
 	// A cover is drawn at the viewport's width, which we cannot know at render time, so
 	// the ladder offers what is stored and lets the browser choose.
-	const widths = srcsetWidthsFor(committed, Number.MAX_SAFE_INTEGER);
-	if (widths.length) {
-		coverSrcset = widths.map((w) => `${variantUrl(backgroundImage, w)} ${w}w`).join(", ");
+	const stored = await storedSizesForRender({ url: backgroundImage }, Number.MAX_SAFE_INTEGER);
+	if (stored) {
+		coverSrcset = stored.srcset;
 		coverSizes = "100vw";
 	}
 }
