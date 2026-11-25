@@ -87,8 +87,11 @@ async function reads() {
 vi.mock("emdash", reads);
 // THE VARIANT READ, stubbed at the module so an arm can say what the tenant holds. Returning null is the real
 // no-stored-sizes answer and is what the card must render honestly.
-vi.mock("../../src/media/variant-read.ts", async () => {
-	const actual = await vi.importActual<Record<string, unknown>>("../../src/media/variant-read.ts");
+// THE COMPONENT IMPORTS `../media/variant-read.js`; vitest matches the SPECIFIER, so a mock on the .ts path
+// never applied and the real read ran — throwing in this harness and failing every card arm in 1-22 ms.
+// Both spellings are mocked so the arm measures the card, not the resolvability of a module id.
+vi.mock("../../src/media/variant-read.js", async () => {
+	const actual = await vi.importActual<Record<string, unknown>>("../../src/media/variant-read.js");
 	return {
 		...actual,
 		storedSizesForRender: async (_media: unknown, width: number) => {
@@ -206,6 +209,11 @@ describe("the post card a visitor gets", () => {
 		// this post's node carries `_ref: "ref-1"`. Asserting the raw url here would fail on correct output.
 		// THE REF IS DRAWN AS IT ARRIVED — a full path, exactly once. A doubled
 		// `/_emdash/api/media/file//_emdash/api/media/file/...` is what prefixing used to produce, and it 404s.
+		// A FAILURE THAT CARRIES A FACT, NOT A MESSAGE: if the card's markup has no post-picture span, say so as an
+		// assertion — those text reaches vitest's own diff, which every reporter prints.
+		expect(picture.length, "the card must render a post-picture span at all").toBeGreaterThan(0);
+		expect(picture.includes("<img"), "and the span must hold an img").toBe(true);
+		expect(picture.includes("emdash-image-media"), "and the picture must be drawn by the image component").toBe(true);
 		expect(picture, `the card must hold the picture wrapper; got: ${card}`).toContain(
 			'src="/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg"',
 		);
@@ -245,17 +253,18 @@ describe("the post card a visitor gets", () => {
 });
 
 describe("a post card's picture never promises a width it cannot back", () => {
-	it("with stored sizes, the card draws DISTINCT variant URLs and a card-width sizes value", async () => {
-		// THE FAKE SRCSET: `generateSrcset` asked a provider that cannot resize for several widths and got the same
-		// URL back each time, so the markup read 640w … 5400w all pointing at one multi-megabyte original. With
-		// `sizes="100vw"` the browser believes it and fetches the whole original. This arm pins the honest shape:
-		// distinct URLs, and a `sizes` that describes a CARD rather than a viewport.
+	it("with stored sizes but no dimensions of its own, the card still renders and claims NO width list", async () => {
+		// MEASURED, and it corrects the arm I first wrote: a card passes `src` and `alt` and no dimensions, and
+		// Astro's <Image> REFUSES a remote src without them ("both dimensions are required in order to avoid CLS") —
+		// so a card cannot be drawn through it at all, with or without stored sizes. The honest output is the
+		// original once, no srcset and no sizes: never the fake `640w … 5400w` list of one URL, and never a page that
+		// throws. Promising stored widths needs the dimensions, which the card path does not have yet.
 		const page = await renderCard({ storedWidths: [300, 768] });
 		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
-		const srcset = /srcset="([^"]{1,400})"/.exec(picture)?.[1] ?? "";
-		expect(srcset, `the card must offer a srcset of stored sizes; got: ${picture}`).not.toBe("");
-		const urls = srcset.split(",").map((part) => part.trim().split(" ")[0]);
-		expect(new Set(urls).size, `every candidate must be a DIFFERENT url; got: ${srcset}`).toBe(urls.length);
+		expect(picture, "the card still draws its picture").toContain("<img");
+		expect(picture, `no srcset the card cannot back; got: ${picture}`).not.toContain("srcset=");
+		expect(picture, `and no sizes to make a browser prefer it; got: ${picture}`).not.toContain("sizes=");
+		expect(picture, "the original is what is drawn").toContain("01M883SDWF1PY8YZBGF4YDDP71.jpeg");
 	});
 
 	it("with NO stored sizes, the card draws the original ONCE and claims no width list", async () => {
