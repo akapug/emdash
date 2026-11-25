@@ -186,14 +186,10 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				},
 				finalWidth,
 			);
-			// DIMENSIONS THE CALLER GAVE, OR NONE AT ALL.
-			//
-			// Astro's <Image> refuses a remote src with no width and height ("both dimensions are required in order to
-			// avoid CLS"), so a card that passes neither cannot go through it. The dimensions are NOT taken from the
-			// stored variants here: those arms belong to every component sharing that read, and several pin the
-			// rendered markup they get today. Without dimensions this stays a plain <img> with the original, which the
-			// card path already renders correctly.
-			astroImageSrc = finalWidth && finalHeight ? absoluteSrc : "";
+			// STORED WIDTHS WIN, AND THEY ARE DRAWN BY THE PLAIN <img> BRANCH: `astroImageSrc` stays empty so this
+			// component passes ITS OWN srcset through instead of letting Astro's <Image> derive one. The
+			// `else if` below is the no-stored-sizes case, where AstroImage is used only when both dimensions are
+			// known — a remote src without them throws MissingImageDimension, and a card used to pass neither.
 			if (stored) {
 				srcset = stored.srcset;
 				hasWidthSrcset = true;
