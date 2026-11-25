@@ -28,7 +28,7 @@ afterEach(async () => {
 	await db.destroy();
 });
 
-const PARENT: VariantParent = { id: "m1", width: 4414, height: 6122, generation: 1, status: "ready" };
+const PARENT: VariantParent = { id: "m1", width: 4414, height: 6122, contentHash: "sha1:original", status: "ready" };
 
 async function storeRow(over: Partial<StoredVariant> & { mediaId: string }) {
 	const row = {
@@ -38,19 +38,19 @@ async function storeRow(over: Partial<StoredVariant> & { mediaId: string }) {
 		storageKey: "01VARIANT",
 		bytes: 90_000,
 		contentHash: "sha256:aaa",
-		parentGeneration: 1,
+		parentContentHash: "sha1:original",
 		...over,
 	};
 	await sql`INSERT INTO _emdash_media_variants
-		(media_id, size_name, width, height, storage_key, bytes, content_hash, parent_generation)
+		(media_id, size_name, width, height, storage_key, bytes, content_hash, parent_content_hash)
 		VALUES (${row.mediaId}, ${row.sizeName}, ${row.width}, ${row.height},
-			${row.storageKey}, ${row.bytes}, ${row.contentHash}, ${row.parentGeneration})`.execute(db);
+			${row.storageKey}, ${row.bytes}, ${row.contentHash}, ${row.parentContentHash})`.execute(db);
 }
 
 async function storedOnDisk(): Promise<StoredVariant[]> {
 	const { rows } = await sql<StoredVariant>`SELECT media_id AS mediaId, size_name AS sizeName, width,
 		height, storage_key AS storageKey, bytes, content_hash AS contentHash,
-		parent_generation AS parentGeneration, created_at AS createdAt
+		parent_content_hash AS parentContentHash, created_at AS createdAt
 		FROM _emdash_media_variants`.execute(db);
 	return [...rows];
 }
@@ -90,13 +90,16 @@ describe("the variant lifecycle the schema enforces", () => {
 		expect(await storedOnDisk()).toHaveLength(0);
 	});
 
-	it("a REPLACED parent stops serving its old variants — the generation moves and the rows fall behind", async () => {
+	it("a REPLACED parent stops serving its old variants — its content hash moves and the rows fall behind", async () => {
 		await storeRow({ mediaId: "m1" });
 		const rows = await storedOnDisk();
-		// The parent is replaced: its generation advances.
-		const replaced: VariantParent = { ...PARENT, generation: 2 };
+		// The parent is replaced: Replace rewrites `content_hash`, which is the identity
+		// `media` actually has. The old rows still name the OLD hash, so they are
+		// invisible without anyone sweeping them.
+		const replaced: VariantParent = { ...PARENT, contentHash: "sha1:replaced" };
 		expect(chooseVariant(replaced, rows, 300)).toBeNull();
-		// The current generation still resolves whatever was stored for it.
+		// The hash they were stored under still resolves them, which is what a rollback
+		// of the replace would return to.
 		expect(chooseVariant(PARENT, rows, 300)?.width).toBe(768);
 	});
 

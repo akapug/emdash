@@ -148,8 +148,17 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 			// than no srcset, because the browser believes it. Empty (no variants, no
 			// readable id) leaves the markup byte-identical to a site without variants,
 			// which is what keeps the repro arms green.
-			const committed = img.id
-				? await getCommittedVariants(Astro.locals.emdash?.db as never, img.id, img.contentHash ?? null)
+			// The image value carries a url (holding a storage key), not a hash — MEASURED
+			// on a real tenant. The read binds the hash in SQL, so nothing here is trusted.
+			// NO DATABASE means NO READ: a component rendered outside a request (the repro
+			// render harness, a static build) must not query, and must still render.
+			const mediaDb = Astro.locals.emdash?.db;
+			const committed = mediaDb
+				? await getCommittedVariants(mediaDb as never, {
+						id: img.id,
+						storageKey: img.storageKey,
+						url: img.src ?? src,
+					})
 				: [];
 			const rungs = srcsetWidthsFor(committed, finalWidth);
 			if (rungs.length) {

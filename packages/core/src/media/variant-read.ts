@@ -42,42 +42,78 @@ export const RENDERABLE_VARIANT_WIDTHS = [300, 480, 768, 1024] as const;
 /**
  * The committed variants of an image's CURRENT bytes, or `[]`.
  *
- * `parentContentHash` is the parent's `content_hash` — what a Replace rewrites, and
- * therefore what makes an old variant stale. Passing `null` means the parent has
- * no hash, so nothing it once had can be proven current: `[]`.
+ * THE BINDING IS IN SQL, NOT IN THE IMAGE VALUE. Measured on a real tenant's stored
+ * content: an image value is a URL holding a STORAGE KEY
+ * (`/_emdash/api/media/file/01M87...jpg`) and carries NO content hash. Passing one in
+ * would have meant the read silently never matched, and a stale value handed in by a
+ * caller would have been trusted. So the caller passes what it has — an id, a storage
+ * key, or a url holding one — and the JOIN decides currency:
+ *
+ *     variants.parent_content_hash = media.content_hash
+ *
+ * A replaced parent's rows therefore stop matching on the next read, with nobody
+ * sweeping them. The cache key needs no hash either, because store, retire, delete
+ * and replace all invalidate the namespace.
  */
 export async function getCommittedVariants(
 	db: Kysely<Database>,
-	mediaId: string,
-	parentContentHash: string | null,
+	ref: VariantMediaRef,
 ): Promise<StoredVariant[]> {
-	if (!mediaId || !parentContentHash) return [];
-	return requestCached(`media-variants:${mediaId}:${parentContentHash}`, () =>
-		cachedQuery(
-			{
-				namespace: CacheNamespace.MEDIA_VARIANTS,
-				key: `${mediaId}:${parentContentHash}`,
-				load: async () => {
-				const rows = await sql<{
-					mediaId: string;
-					sizeName: string;
-					width: number;
-					height: number;
-					storageKey: string;
-					bytes: number;
-					contentHash: string;
-					parentContentHash: string;
-					createdAt: string;
-				}>`SELECT media_id AS mediaId, size_name AS sizeName, width, height,
-					storage_key AS storageKey, bytes, content_hash AS contentHash,
-					parent_content_hash AS parentContentHash, created_at AS createdAt
-					FROM _emdash_media_variants
-					WHERE media_id = ${mediaId} AND parent_content_hash = ${parentContentHash}
-					ORDER BY width ASC`.execute(db);
-				return rows.rows as StoredVariant[];
+	const id = ref.id ?? storageKeyId(ref.storageKey ?? ref.url ?? null);
+	if (!id) return [];
+	return requestCached(`media-variants:${id}`, () =>
+		cachedQuery({
+			namespace: CacheNamespace.MEDIA_VARIANTS,
+			key: id,
+			load: async () => {
+				// ONE column matches, never a mixed OR: the caller's id when it has one,
+				// otherwise the storage key the url carries. Kysely refuses to compile a
+				// mixed disjunction here, and it is also the clearer rule.
+				const rows = await sql<StoredVariant>`
+					SELECT v.media_id AS mediaId, v.size_name AS sizeName, v.width, v.height,
+						v.storage_key AS storageKey, v.bytes, v.content_hash AS contentHash,
+						v.parent_content_hash AS parentContentHash, v.created_at AS createdAt
+					FROM _emdash_media_variants v
+					JOIN media m ON m.id = v.media_id
+					WHERE m.status = 'ready'
+						AND m.content_hash IS NOT NULL
+						AND v.parent_content_hash = m.content_hash
+						AND m.id = ${id}
+					ORDER BY v.width ASC`.execute(db);
+				return [...rows.rows];
 			},
 		}),
 	);
+}
+
+/** What a caller has in hand. Any one of these is enough. */
+export interface VariantMediaRef {
+	/** The media id (a ULID), when the caller knows it. */
+	id?: string;
+	/** The storage key, e.g. `2024/01/photo.jpg`. */
+	storageKey?: string | null;
+	/** A public url that holds a storage key, e.g. `/_emdash/api/media/file/<key>`. */
+	url?: string | null;
+}
+
+const INTERNAL_PREFIX = "/_emdash/api/media/file/";
+
+/** The storage key inside a public media url, or null when the url is not one. */
+function storageKeyOf(url: string | null): string | null {
+	if (!url) return null;
+	const at = url.indexOf(INTERNAL_PREFIX);
+	if (at === -1) return null;
+	const key = url.slice(at + INTERNAL_PREFIX.length).split(/[?#]/)[0];
+	return key || null;
+}
+
+/** A media id is a storage key's basename without its extension. */
+function storageKeyId(storageKey: string | null): string | null {
+	const key = storageKeyOf(storageKey) ?? storageKey;
+	if (!key) return null;
+	const base = key.slice(key.lastIndexOf("/") + 1);
+	const dot = base.lastIndexOf(".");
+	return dot > 0 ? base.slice(0, dot) : base || null;
 }
 
 /**
