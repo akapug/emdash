@@ -127,8 +127,9 @@ afterAll(async () => {
 });
 
 /** Render the real page with the three posts, as a visitor would. */
-async function renderIndex(): Promise<string> {
-	state.entries = [imageNodePost, htmlBlockPost, noPicturePost].map((post) => ({
+async function renderIndex(only?: string): Promise<string> {
+	const chosen = only ? [imageNodePost, htmlBlockPost, noPicturePost].filter((p) => p.slug === only) : [imageNodePost, htmlBlockPost, noPicturePost];
+	state.entries = chosen.map((post) => ({
 		id: post.slug,
 		collection: "posts",
 		data: {
@@ -180,7 +181,10 @@ describe("the post card a visitor gets", () => {
 	});
 
 	it("a post with NO picture renders the same article as before this change", async () => {
-		const card = articleFor(await renderIndex(), noPicturePost.slug);
+		// RENDERED ALONE. With the other two on the page a slice of the wrong card, or a stray match, could make
+		// this arm silently about something else. One post, no picture: the card must draw nothing this change
+		// added.
+		const card = articleFor(await renderIndex(noPicturePost.slug), noPicturePost.slug);
 		// COMPUTED FROM THE BASE, not from the new code: the article carries no picture element at all, so its
 		// markup is whatever the base produced. The assertion is that this change added nothing to it.
 		expect(card, `a pictureless card must be unchanged; got: ${card}`).not.toContain("<img");
