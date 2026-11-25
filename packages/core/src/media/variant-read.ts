@@ -34,7 +34,7 @@ import type { Kysely } from "kysely";
 import type { Database } from "../database/types.js";
 import { getDb } from "../loader.js";
 import { localMediaFileUrl } from "../media/url.js";
-import { variantUrl, type StoredVariant } from "../media/variants.js";
+import { variantSrcsetWidths, variantUrl, type StoredVariant } from "../media/variants.js";
 import { cachedQuery, invalidateObjectCache, CacheNamespace } from "../object-cache/index.js";
 import { capPageCacheUntil } from "../page-cache/state.js";
 import { requestCached } from "../request-cache.js";
@@ -244,11 +244,62 @@ export async function storedSizesForRender(
 	// Width over height of the picture as it is drawn: a variant is generated upright.
 	const first = committed[0];
 	const shape = first && first.height > 0 ? first.width / first.height : undefined;
+	const candidates = widths.map((w) => `${variantUrl(parentUrl, w)} ${w}w`);
+	const original = originalCandidateWidth(committed, widths, bound);
+	if (original) candidates.push(`${parentUrl} ${original}w`);
 	return {
-		srcset: widths.map((w) => `${variantUrl(parentUrl, w)} ${w}w`).join(", "),
+		srcset: candidates.join(", "),
 		bound,
 		shape,
 	};
+}
+
+/**
+ * The widest original offered beside the stored sizes as a matter of course: the
+ * width WordPress itself scales a large upload down to, so the largest file its
+ * own markup ever names. A wider original is a camera file of several megabytes.
+ */
+export const ORIGINAL_CANDIDATE_MAX_WIDTH = 2560;
+
+/**
+ * The width to offer the ORIGINAL at, as the last candidate, or undefined.
+ *
+ * WITHIN THE BUDGET THIS FILE KEEPS (twice the drawn width), A LIST OF STORED SIZES
+ * MUST NOT DRAW AN IMAGE SOFTER THAN NO LIST DID. A browser given a srcset chooses
+ * only from it; `src` is no longer a candidate. A 1000 wide original has stored sizes
+ * up to 768, so a full-width cover on a 1440 screen was drawn from the 768 file and
+ * stretched, where the page without stored sizes drew the 1000 wide original.
+ * Measured in a browser on an imported site. Past the budget (a 3x screen on an
+ * image drawn small) the list still ends at a stored size, as it always has.
+ *
+ * WHAT IT COSTS. The original is the file a page with no stored sizes fetched, so no
+ * screen fetches more than that page did. A camera original offered under the second
+ * case below can still be several megabytes on a dense screen: that is the price of
+ * a store with a hole in it, and the cure for it is filling the hole.
+ *
+ * So when the stored sizes run out before the caller's budget (`offered` ends below
+ * twice the drawn width) and the original is wider than the last of them, the
+ * original joins the list at its TRUE upright width. That is not the defect this
+ * file exists to prevent, which was the original under a smaller descriptor.
+ *
+ * Two cases, because the original can be very large:
+ *  - up to ORIGINAL_CANDIDATE_MAX_WIDTH it always joins;
+ *  - wider than that it joins only when the stored set is missing a size it could
+ *    hold (a size the store refused, or a site stored before the ladder grew).
+ *    With the whole ladder stored, the top rung stands in for it.
+ */
+export function originalCandidateWidth(
+	variants: readonly CommittedVariant[],
+	offered: readonly number[],
+	drawnWidth: number | undefined,
+): number | undefined {
+	const last = offered.at(-1);
+	if (last === undefined || !drawnWidth || last >= drawnWidth * 2) return undefined;
+	const upright = uprightParentWidth(variants);
+	if (!upright || upright <= last) return undefined;
+	if (upright <= ORIGINAL_CANDIDATE_MAX_WIDTH) return upright;
+	const ceiling = variantSrcsetWidths(upright).at(-1);
+	return ceiling !== undefined && last < ceiling ? upright : undefined;
 }
 
 /** What a caller has in hand. Any one of these is enough. */
