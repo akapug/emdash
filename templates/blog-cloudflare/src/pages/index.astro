@@ -18,6 +18,7 @@ import { resolveBlogSiteIdentity } from "../utils/site-identity";
 import { datePath, parseDateQuery } from "../utils/wp-archive";
 import { wpShellIndexRoute } from "../utils/wp-shell";
 import { loadWpShell } from "../utils/wp-shell-loader";
+import { readPageFeatured } from "../utils/wp-page-featured.js";
 
 // WordPress's plain permalinks name a date archive by query: `/?m=202307`
 // (`&paged=2`). It is the archive its path names (pages/[...date].astro), in the
@@ -140,6 +141,7 @@ function formatDate(date: Date | null | undefined) {
 				title={page.data.title}
 				content={page.data.content}
 				edit={page.edit}
+				pageFeatured={homepage.collection === "pages" ? readPageFeatured(page.data) : undefined}
 			/>
 		) : posts.length === 0 ? (
 			<section class="empty-state">

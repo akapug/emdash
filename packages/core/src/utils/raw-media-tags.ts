@@ -15,6 +15,7 @@
  */
 import { responsiveSizes } from "../media/responsive.js";
 import { storedSizesForRender } from "../media/variant-read.js";
+import { sanitizeContent } from "./sanitize.js";
 
 /** A cheap first filter: no media route anywhere means no tag of ours. */
 const MEDIA_PATH = "/_emdash/api/media/file/";
@@ -30,6 +31,18 @@ const IMG_TAG = /<img\b(?:[^>"'=]|=\s*"[^"]*"|=\s*'[^']*'|=)*>/gi;
 const ATTRIBUTE = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 type Lookup = typeof storedSizesForRender;
+
+const HAS_IMG = /<img\b/i;
+
+/** Whether an imported HTML body block keeps an image with the given source after sanitizing. */
+export function htmlBlockHasImage(html: string, matches: (src: string) => boolean): boolean {
+	if (!HAS_IMG.test(html)) return false;
+	for (const [tag] of sanitizeContent(html).matchAll(IMG_TAG)) {
+		const src = attributesOf(tag).get("src");
+		if (src && matches(src)) return true;
+	}
+	return false;
+}
 
 /**
  * Return `html` with `srcset` and `sizes` added to each `<img>` whose src the lookup recognises as this

@@ -1,24 +1,32 @@
 ---
 import type { EditProxy, PortableTextBlock } from "emdash";
 import PortableText from "./BlogPortableText.astro";
+import WpPageFeatured from "./WpPageFeatured.astro";
+import { bodyDrawsPageFeatured, pageFeaturedMatches, type PageFeatured } from "../utils/wp-page-featured.js";
 
 interface Props {
 	title: string;
 	content?: PortableTextBlock[];
 	edit: EditProxy;
+	pageFeatured?: PageFeatured;
 }
 
-const { title, content, edit } = Astro.props;
+const { title, content, edit, pageFeatured } = Astro.props;
+const featuredMatches = pageFeatured && pageFeaturedMatches(pageFeatured, Astro.url, Astro.locals.emdash?.getPublicMediaUrl);
+const featured = featuredMatches && !bodyDrawsPageFeatured(content, featuredMatches) ? pageFeatured : undefined;
 ---
 
 <article class="page-article">
 	<header class="page-header">
+		{featured?.placement === "before-title" && <WpPageFeatured featured={featured} />}
 		<h1 class="page-title" {...edit.title}>{title}</h1>
 	</header>
 
+	{featured?.placement === "before-body" && <WpPageFeatured featured={featured} />}
 	<div class="page-content" {...edit.content}>
 		<PortableText value={content} />
 	</div>
+	{featured?.placement === "after-body" && <WpPageFeatured featured={featured} />}
 </article>
 
 <style>

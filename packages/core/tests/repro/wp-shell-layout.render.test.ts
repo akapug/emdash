@@ -31,6 +31,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import WpShellComments from "../../../../templates/blog-cloudflare/src/components/WpShellComments.astro";
 import WpShellForm from "../../../../templates/blog-cloudflare/src/components/WpShellForm.astro";
 import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.astro";
+import HomeRoute from "../../../../templates/blog-cloudflare/src/pages/index.astro";
+import PageRoute from "../../../../templates/blog-cloudflare/src/pages/pages/[slug].astro";
 import PostsIndexRoute from "../../../../templates/blog-cloudflare/src/pages/posts/index.astro";
 import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/[...path].astro";
 import WpShellListingRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/listing.astro";
@@ -475,6 +477,166 @@ describe("WpShell: the front page's listing draws the site's latest posts", () =
 			},
 		});
 		expect(reads.getEmDashCollection).not.toHaveBeenCalled();
+	});
+});
+
+describe("the imported page featured slot", () => {
+	const src = "/_emdash/api/media/file/2025/one/portrait.jpg";
+	const other = "/_emdash/api/media/file/2025/two/portrait.jpg";
+	const proof = { placement: "before-title", width: 750, height: 750, alt: "Theme portrait" };
+	const bodyText = { _type: "block", _key: "copy", children: [{ _type: "span", text: "Page body marker" }] };
+	const carried = (url: string) => ({ _type: "image", _key: "carried", asset: { _ref: "import-ref", url } });
+	const slot = "wp-page-featured";
+
+	async function draw(options: {
+		home?: boolean;
+		shell?: unknown;
+		fields?: Record<string, unknown>;
+		collection?: string;
+		publicMediaUrl?: (key: string) => string;
+	} = {}) {
+		const { home = false, shell, fields, collection: collectionName = "pages", publicMediaUrl } = options;
+		reads.shell = shell;
+		reads.getEmDashCollection.mockResolvedValue({ entries: [], cacheHint: {} });
+		const entry = {
+			id: "contact",
+			data: {
+				id: "01PAGE",
+				title: "Page title marker",
+				content: [bodyText],
+				translationGroup: "01PAGE",
+				updatedAt: new Date("2026-09-01T00:00:00Z"),
+				publishedAt: null,
+				featured_image: { provider: "local", id: "attachment", src },
+				...fields,
+			},
+			edit: { title: {}, content: {} },
+		};
+		reads.getEmDashEntry.mockResolvedValue({ entry, cacheHint: {} });
+		reads.getHomepage.mockResolvedValue({ entry, collection: collectionName, cacheHint: {} });
+		const c = await AstroContainer.create();
+		return c.renderToString(shell ? WpShellRoute : home ? HomeRoute : PageRoute, {
+			params: shell
+				? { path: home ? "home" : `${collectionName}/contact` }
+				: { slug: "contact" },
+			request: new Request(`https://example.org${home ? "/" : `/${collectionName}/contact`}`),
+			locals: publicMediaUrl ? { emdash: { getPublicMediaUrl: publicMediaUrl } } : undefined,
+		});
+	}
+
+	it("does not render without exact proof and an existing image", async () => {
+		for (const fields of [
+			{},
+			{ wp_page_featured: { ...proof, src: other } },
+			{ wp_page_featured: { ...proof, width: Number.MAX_SAFE_INTEGER + 1 } },
+			{ wp_page_featured: { ...proof, height: 0 } },
+			{ wp_page_featured: { ...proof, placement: "top" } },
+			{ wp_page_featured: proof, featured_image: undefined },
+		]) {
+			const html = await draw({ fields });
+			expect(html).toContain("Page body marker");
+			expect(html).not.toContain(slot);
+			expect(html).not.toContain(src);
+		}
+	});
+
+	it.each(["before-title", "before-body", "after-body"])(
+		"orders the slug and static homepage at %s in either layout",
+		async (placement) => {
+			for (const shell of [undefined, record()]) {
+				for (const home of [false, true]) {
+					const html = await draw({ home, shell, fields: { wp_page_featured: { ...proof, placement } } });
+					const image = html.indexOf(slot);
+					const title = html.indexOf(`Page title marker</${shell && home ? "h2" : "h1"}>`);
+					const body = html.indexOf("Page body marker</p>");
+					expect(image).toBeGreaterThan(-1);
+					expect(title).toBeGreaterThan(-1);
+					expect(body).toBeGreaterThan(title);
+					if (placement === "before-title") expect(image).toBeLessThan(title);
+					if (placement === "before-body") {
+						expect(image).toBeGreaterThan(title);
+						expect(image).toBeLessThan(body);
+					}
+					if (placement === "after-body") expect(image).toBeGreaterThan(body);
+					expect(html.match(/wp-page-featured/g)).toHaveLength(1);
+				}
+			}
+		},
+	);
+
+	it("suppresses only the same body asset, including carried HTML and nested image blocks", async () => {
+		const fields = { wp_page_featured: proof };
+		for (const duplicate of [
+			carried(`https://example.org${src}?w=300`),
+			{ _type: "htmlBlock", _key: "raw", html: `<img src="${src}" alt="Carried">` },
+			{ _type: "columns", _key: "columns", columns: [{ _type: "column", _key: "col", content: [carried(src)] }] },
+		]) {
+			const html = await draw({ fields: { ...fields, content: [bodyText, duplicate] } });
+			expect(html).toContain(src);
+			expect(html).not.toContain(slot);
+		}
+		for (const distinct of [other, `https://elsewhere.example${src}`]) {
+			const html = await draw({ fields: { ...fields, content: [carried(distinct)] } });
+			expect(html).toContain(slot);
+			expect(html).toContain(distinct);
+		}
+	});
+
+	it("deduplicates a normalized local attachment drawn in the body at its public CDN URL", async () => {
+		const key = "2025/one/portrait.jpg";
+		const publicMediaUrl = (assetKey: string) => `https://cdn.example.org/${assetKey}`;
+		const html = await draw({ publicMediaUrl, fields: {
+			wp_page_featured: proof,
+			featured_image: { provider: "local", id: "attachment", meta: { storageKey: key } },
+			content: [bodyText, carried(publicMediaUrl(key))],
+		} });
+		expect(html).toContain(publicMediaUrl(key));
+		expect(html).not.toContain(slot);
+	});
+
+	it("uses the selected shell's anchor and ignores images not in that layout", async () => {
+		const shell = record();
+		shell.parts.unshift({ html: `<img src="${src}">` });
+		shell.home.parts.unshift({ html: `<a href="${src}"><img src="${other}"></a>` });
+		const fields = { wp_page_featured: proof };
+		const home = await draw({ home: true, shell, fields });
+		expect(home).toContain(other);
+		expect(home).toContain(slot);
+		expect(home.indexOf(slot)).toBeLessThan(home.indexOf("Page title marker</h2>"));
+		const page = await draw({ shell, fields });
+		expect(page).toContain(`<img src="${src}">`);
+		expect(page).not.toContain(slot);
+	});
+
+	it("suppresses an exact rehosted copy only in the layout that draws it", async () => {
+		const sourceImage = "1".repeat(64);
+		const copy = `/_emdash/api/media/file/wp-shell/${"a".repeat(32)}.jpg`;
+		const differentCopy = `/_emdash/api/media/file/wp-shell/${"b".repeat(32)}.jpg`;
+		const shell = { ...record(), imageAliases: { [sourceImage]: copy } };
+		shell.parts.unshift({ html: `<img src="${copy}">` });
+		shell.home.parts.unshift({ html: `<img src="${differentCopy}">` });
+		const fields = { wp_page_featured: { ...proof, sourceImage } };
+		const page = await draw({ shell, fields });
+		expect(page).toContain(`<img src="${copy}">`);
+		expect(page).not.toContain(slot);
+		const home = await draw({ home: true, shell, fields });
+		expect(home).toContain(differentCopy);
+		expect(home).toContain(slot);
+		const otherSource = await draw({ shell, fields: { wp_page_featured: { ...proof, sourceImage: "2".repeat(64) } } });
+		expect(otherSource).toContain(slot);
+		const noProof = await draw({ shell, fields: { wp_page_featured: { sourceImage } } });
+		expect(noProof).not.toContain(slot);
+	});
+
+	it("does not invent a missing shell title anchor or apply page proof to posts", async () => {
+		const shell = { ...record(), titles: { hidden: ["contact"] } };
+		const fields = { wp_page_featured: proof };
+		const page = await draw({ shell, fields });
+		expect(page).toContain("Page body marker");
+		expect(page).not.toContain(slot);
+		const post = await draw({ shell: record(), fields, collection: "posts" });
+		expect(post).toContain("Page body marker");
+		expect(post).not.toContain(slot);
 	});
 });
 

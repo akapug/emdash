@@ -45,6 +45,8 @@ export const WP_SHELL_VERSION = 1;
 
 /** Where the record's stylesheets live: the site's own media bucket, under `wp-shell/`. */
 export const WP_SHELL_ASSET_PATH = "/_emdash/api/media/file/wp-shell/";
+const IMAGE_ALIAS_KEY = /^[a-f0-9]{64}$/;
+const IMAGE_ALIAS_FILE = /^[a-f0-9]{32}\.[a-z0-9]+$/;
 
 /** An element the layout opens itself, so it can carry EmDash's edit markers. */
 export interface WpShellElement {
@@ -405,6 +407,8 @@ export interface WpShell extends WpShellLayout {
 	source: { url: string; capturedAt: string };
 	html: { lang?: string; class: string };
 	menus: WpShellMenu[];
+	/** Exact source upload digests and their local shell copies; never a source of images to render. */
+	imageAliases?: Record<string, string>;
 	/** The listings the layouts' `listing` slots draw. */
 	listings?: WpShellListing[];
 	/**
@@ -776,19 +780,23 @@ function attributeProblem(tag: string, name: string, value: string): string | nu
 }
 
 /** Why `html` is not markup the writer produced, or null. */
-function markupProblem(html: string): string | null {
+function markupProblem(html: string, onImage?: (src: string) => void): string | null {
 	for (let i = html.indexOf("<"); i !== -1; i = html.indexOf("<", CANONICAL_TAG.lastIndex)) {
 		CANONICAL_TAG.lastIndex = i;
 		const m = CANONICAL_TAG.exec(html);
 		if (!m) return "the markup is not in the writer's form";
 		const tag = m[2] ?? "";
 		if (NEVER_TAGS.has(tag)) return `the markup carries a <${tag}>`;
+		let imageSrc: string | undefined;
 		for (const a of (m[3] ?? "").matchAll(ATTRIBUTE)) {
+			const name = (a[1] ?? "").toLowerCase();
 			const value = a[2] === undefined ? "" : decodeValue(a[2]);
 			if (value === null) return "an attribute value is not in the writer's form";
-			const why = attributeProblem(tag, (a[1] ?? "").toLowerCase(), value);
+			const why = attributeProblem(tag, name, value);
 			if (why) return why;
+			if (onImage && !m[1] && tag === "img" && name === "src") imageSrc ??= value;
 		}
+		if (imageSrc) onImage?.(imageSrc);
 	}
 	return null;
 }
@@ -1955,7 +1963,16 @@ export function wpShellProblem(value: unknown): string | null {
 		return `version ${String(value.version)} is not ${WP_SHELL_VERSION}`;
 	if (typeof value.id !== "string" || !RECORD_ID.test(value.id)) return "no id";
 	if (!isObject(value.source) || typeof value.source.url !== "string") return "no source";
-	const { html, body, styles, menus, parts } = value;
+	const { html, body, styles, menus, parts, imageAliases } = value;
+	if (imageAliases !== undefined) {
+		if (!isObject(imageAliases)) return "image aliases are not an object";
+		const aliases = Object.entries(imageAliases);
+		// The capture caps copied assets at 120; aliases cannot add renderable markup.
+		if (aliases.length > 120 || aliases.some(([key, url]) =>
+			!IMAGE_ALIAS_KEY.test(key) || typeof url !== "string" ||
+			!url.startsWith(WP_SHELL_ASSET_PATH) || !IMAGE_ALIAS_FILE.test(url.slice(WP_SHELL_ASSET_PATH.length))
+		)) return "image aliases are not exact local copy references";
+	}
 	if (!isObject(html) || typeof html.class !== "string" || !TOKENS.test(html.class)) {
 		return "html attributes are not tokens";
 	}
@@ -3383,11 +3400,29 @@ const element = (p: WpShellElement): WpShellElement => ({
 	...(p.id !== undefined ? { id: p.id } : {}),
 });
 
+function logoSource(p: Extract<WpShellPart, { slot: "logo" }>, url: string | null | undefined) {
+	return url && safeHref(url) !== "#" ? url : p.src;
+}
+
+/** Only the selected layout's own serialized images and logo, not another layout's donors. */
+export function layoutDrawsImage(
+	layout: WpShellLayout,
+	logoUrl: string | null | undefined,
+	matches: (src: string) => boolean,
+): boolean {
+	return layout.parts.some((part) => {
+		if ("slot" in part) return part.slot === "logo" && matches(logoSource(part, logoUrl));
+		if (!part.html.includes("<img")) return false;
+		let found = false;
+		return markupProblem(part.html, (src) => { found ||= matches(src); }) === null && found;
+	});
+}
+
 function logoHtml(
 	p: Extract<WpShellPart, { slot: "logo" }>,
 	url: string | null | undefined,
 ): string {
-	const src = url && safeHref(url) !== "#" ? url : p.src;
+	const src = logoSource(p, url);
 	const attrs = [
 		`src="${escapeAttr(src)}"`,
 		`alt="${escapeAttr(p.alt ?? "")}"`,

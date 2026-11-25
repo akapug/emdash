@@ -55,10 +55,13 @@ import WpShellEmbed from "../components/WpShellEmbed.astro";
 import WpShellForm from "../components/WpShellForm.astro";
 import PostsGrid from "../components/PostsGrid.astro";
 import WpShellSkeleton from "../components/WpShellSkeleton.astro";
+import WpPageFeatured from "../components/WpPageFeatured.astro";
 import SiteAnalytics from "../components/SiteAnalytics.astro";
+import { bodyDrawsPageFeatured, pageFeaturedMatches, type PageFeatured } from "../utils/wp-page-featured.js";
 import {
 	bodyClassFor,
 	composeWpShell,
+	layoutDrawsImage,
 	layoutFor,
 	imageRatio,
 	ownImagePath,
@@ -98,6 +101,7 @@ interface Props {
 	content?: { collection: string; id: string; slug?: string | null };
 	/** The entry: its title, body and excerpt (a subtitle slot draws the excerpt), with its edit markers. */
 	entry: { title: string; body?: PortableTextBlock[]; excerpt?: string | null; edit?: EditProxy };
+	pageFeatured?: PageFeatured;
 	/** Markup drawn in the content's place instead of the entry's body: a date archive's posts. */
 	contentHtml?: string;
 	/** A single post's own values, for the record's post layout (its meta, featured image, share links). */
@@ -124,6 +128,7 @@ const {
 	author,
 	content,
 	entry,
+	pageFeatured,
 	contentHtml,
 	post,
 	comments = true,
@@ -271,6 +276,18 @@ const pieces = composeWpShell(shell, {
 // one (a post), and after the content otherwise.
 const commentsInLayout = pieces.some((piece) => "comments" in piece);
 
+const featuredMatches = pageFeatured && pageFeaturedMatches(pageFeatured, Astro.url, Astro.locals.emdash?.getPublicMediaUrl);
+const shellCopy = pageFeatured?.sourceImage ? shell.imageAliases?.[pageFeatured.sourceImage] : undefined;
+const featured = featuredMatches && (kind === "page" || kind === "home") &&
+	contentHtml === undefined && !Astro.slots.has("content") &&
+	!bodyDrawsPageFeatured(entry.body, featuredMatches) &&
+	!layoutDrawsImage(layout, settings.logo?.url, (src) => src === shellCopy || featuredMatches(src))
+	? pageFeatured
+	: undefined;
+const featuredAnchor = featured
+	? pieces.findIndex((piece) => featured.placement === "before-title" ? "title" in piece : "content" in piece)
+	: -1;
+
 // WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
 // video embedded from a link in classic content, and a form imported from the site's form plugin,
 // in that plugin's markup (EmDash's form, its submit path). A link of a page's own layout wears the
@@ -336,7 +353,7 @@ const pageCtx = createPublicPageContext({
 	<body class={bodyClassFor(shell, kind, slug)}>
 		<EmDashBodyStart page={pageCtx} />
 		{
-			pieces.map((piece) => {
+			pieces.map((piece, index) => {
 				if ("html" in piece) return <Fragment set:html={piece.html} />;
 				if ("widgetArea" in piece) {
 					const area = widgetAreas.get(piece.widgetArea.area) ?? null;
@@ -394,14 +411,18 @@ const pageCtx = createPublicPageContext({
 				if ("title" in piece) {
 					const Title = piece.title.tag as HTMLTag;
 					return (
-						<Title class={piece.title.class} id={piece.title.id} {...entry.edit?.title}>
-							{entry.title}
-						</Title>
+						<Fragment>
+							{index === featuredAnchor && featured && <WpPageFeatured featured={featured} />}
+							<Title class={piece.title.class} id={piece.title.id} {...entry.edit?.title}>
+								{entry.title}
+							</Title>
+						</Fragment>
 					);
 				}
 				const Content = piece.content.tag as HTMLTag;
 				return (
 					<Fragment>
+						{index === featuredAnchor && featured?.placement === "before-body" && <WpPageFeatured featured={featured} />}
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit?.content}>
 							{Astro.slots.has("content") ? (
 								<slot name="content" />
@@ -414,6 +435,7 @@ const pageCtx = createPublicPageContext({
 							)}
 							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>
+						{index === featuredAnchor && featured?.placement === "after-body" && <WpPageFeatured featured={featured} />}
 						{!commentsInLayout && <slot />}
 					</Fragment>
 				);

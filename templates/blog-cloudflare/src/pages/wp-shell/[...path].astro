@@ -34,6 +34,7 @@ import { getReadingTime } from "../../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../../utils/site-identity";
 import { wpShellPostFill, wpShellRoute } from "../../utils/wp-shell";
 import { loadWpShell } from "../../utils/wp-shell-loader";
+import { readPageFeatured } from "../../utils/wp-page-featured.js";
 
 const origin = Astro.originPathname;
 const route = wpShellRoute(Astro.params.path);
@@ -193,6 +194,7 @@ const area = layoutComments && shell.post?.commentArea ? shell.post : null;
 		excerpt: "excerpt" in data && typeof data.excerpt === "string" ? data.excerpt : null,
 		edit: entry.edit,
 	}}
+	pageFeatured={!isPost && collection === "pages" ? readPageFeatured(data) : undefined}
 	post={post}
 	comments={commentsOn}
 >

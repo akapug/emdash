@@ -59,6 +59,8 @@ interface Props extends Omit<
 	priority?: boolean;
 	/** Render the LQIP placeholder as an inline background. Disable for strict CSP. */
 	placeholder?: boolean;
+	/** Use only committed variants; without them, render the source as a plain image. */
+	storedSizesOnly?: boolean;
 }
 
 const {
@@ -69,6 +71,7 @@ const {
 	height,
 	priority,
 	placeholder = true,
+	storedSizesOnly = false,
 	class: className,
 	id,
 	...attrs
@@ -142,31 +145,33 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 
 	const providerId = img.provider ?? "local";
 
-	if (providerId === "local" || img.src) {
+	if (storedSizesOnly || providerId === "local" || img.src) {
 		src = img.src || buildLocalImageUrl(img);
 		const publicOrigin = getPublicOrigin(Astro.url, Astro.locals.emdash?.config);
 		const absoluteSrc = toAbsoluteMediaUrl(src, publicOrigin);
-		if (finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`)) {
-			astroImageSrc = absoluteSrc;
+		const useAstroImage = finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`);
+		if (storedSizesOnly || useAstroImage) {
 			// Offer only the widths that are stored. A fixed ladder would promise 300w over
 			// a multi-megabyte original, which is worse than no srcset because the browser
 			// believes it. Nothing stored leaves the markup exactly as it was.
 			const stored = await storedSizesForRender(
 				{
-					storageKey: img.storageKey ?? (img.meta?.storageKey as string | undefined),
-					url: img.src ?? src,
+					storageKey: !storedSizesOnly || providerId === "local"
+						? ("storageKey" in img && typeof img.storageKey === "string"
+							? img.storageKey
+							: img.meta?.storageKey as string | undefined)
+						: undefined,
+					url: src,
 					origin: publicOrigin,
 				},
 				finalWidth,
 			);
 			if (stored) {
-				// <AstroImage> takes `src` alone and derives a srcset of its own, so an image
-				// with stored variants is drawn by the plain <img> branch, which passes our
-				// srcset and sizes through.
-				astroImageSrc = "";
 				srcset = stored.srcset;
 				hasWidthSrcset = true;
-				sizes = responsiveSizes(finalWidth);
+				sizes = responsiveSizes(storedSizesOnly ? stored.bound : finalWidth);
+			} else if (!storedSizesOnly) {
+				astroImageSrc = absoluteSrc;
 			}
 		} else {
 			const optimized = await buildResponsiveImage(getImage, {

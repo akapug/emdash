@@ -1,0 +1,19 @@
+---
+import { Image } from "emdash/ui";
+import type { PageFeatured } from "../utils/wp-page-featured.js";
+
+interface Props {
+	featured: PageFeatured;
+}
+
+const { featured } = Astro.props;
+---
+
+<Image
+	image={featured.image}
+	alt={featured.alt}
+	width={featured.width}
+	height={featured.height}
+	class="wp-page-featured"
+	storedSizesOnly
+/>

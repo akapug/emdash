@@ -18,6 +18,7 @@ import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import PageArticle from "../../../../templates/blog-cloudflare/src/components/PageArticle.astro";
 import Cover from "../../src/components/Cover.astro";
 import EmDashImage from "../../src/components/EmDashImage.astro";
 import Gallery from "../../src/components/Gallery.astro";
@@ -260,6 +261,45 @@ describe("stored image sizes on a logged-out page", () => {
 		const withDatabase = await asVisitor(EmDashImage, image(key));
 		expect(withDatabase).toBe(await withNoDatabase(EmDashImage, image(key)));
 		expect(withDatabase).not.toMatch(/\?w=\d+/);
+	});
+
+	function featuredPage(key: string, media: Record<string, unknown> = {}) {
+		return {
+			title: "Featured page",
+			edit: { title: {}, content: {} },
+			pageFeatured: {
+				placement: "before-title",
+				width: 750,
+				height: 750,
+				alt: "Theme alt",
+				image: { id: "", src: internalUrl(key), ...media },
+			},
+		};
+	}
+
+	it("a page's featured slot offers only distinct, current stored candidates at its drawn size", async () => {
+		const key = "2024/05/page-featured.jpg";
+		await seed(key, [[300, CURRENT], [480, "replaced"], [768, CURRENT]], [1600, 1600]);
+		const cdn = `https://cdn.example/${key}`;
+		const html = await asVisitor(PageArticle, featuredPage(key, { src: cdn, meta: { storageKey: key } }));
+		const tag = tagFor(html, "page-featured.jpg");
+		expect(attr(tag, "src")).toBe(cdn);
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 750px) 750px, 100vw");
+		expect(attr(tag, "width")).toBe("750");
+		expect(attr(tag, "height")).toBe("750");
+		expect(attr(tag, "alt")).toBe("Theme alt");
+	});
+
+	it("a page's featured slot with no variants draws one plain src and no manufactured candidates", async () => {
+		const key = "2024/05/plain-page-featured.jpg";
+		await seed(key, []);
+		const html = await asVisitor(PageArticle, featuredPage(key));
+		const tag = tagFor(html, "plain-page-featured.jpg");
+		expect(imgTags(html)).toHaveLength(1);
+		expect(attr(tag, "src")).toBe(internalUrl(key));
+		expect(attr(tag, "srcset")).toBeUndefined();
+		expect(attr(tag, "sizes")).toBeUndefined();
 	});
 
 	it("a content image with no dimensions offers the stored widths, bounded by the original", async () => {
