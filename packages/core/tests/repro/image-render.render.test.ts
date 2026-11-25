@@ -242,7 +242,8 @@ describe("faithful render of migrated image node", () => {
 		expect(attr(tag, "src")).toBe("https://img.example.com/original?w=600");
 		expect(attr(tag, "srcset")).toContain("https://img.example.com/render?w=640&h=427 640w");
 		expect(attr(tag, "srcset")).toContain("https://img.example.com/render?w=1080&h=720 1080w");
-		expect(attr(tag, "sizes")).toBe("(min-width: 600px) 600px, 100vw");
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 600px) 600px, 100vw");
 	});
 
 	test("missing external provider falls back without crashing", async () => {

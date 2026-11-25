@@ -29,6 +29,7 @@ import { normalizeLegacyExternalMediaValue } from "../media/normalize.js";
 import { buildRenderMediaUrl } from "../media/url.js";
 import {
 	buildResponsiveImage,
+	lazyAutoSizes,
 	responsiveSizes,
 	toAbsoluteMediaUrl,
 	RESPONSIVE_BREAKPOINTS,
@@ -115,6 +116,8 @@ interface ResolvedImage {
 	src: string;
 	srcset?: string;
 	sizes?: string;
+	hasWidthSrcset: boolean;
+	media: MediaValue;
 	astroImageSrc: string;
 	width?: number;
 	height?: number;
@@ -134,6 +137,7 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 	let src = "";
 	let srcset: string | undefined;
 	let sizes: string | undefined;
+	let hasWidthSrcset = false;
 	let astroImageSrc = "";
 
 	const providerId = img.provider ?? "local";
@@ -161,6 +165,7 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				// srcset and sizes through.
 				astroImageSrc = "";
 				srcset = stored.srcset;
+				hasWidthSrcset = true;
 				sizes = responsiveSizes(finalWidth);
 			}
 		} else {
@@ -172,6 +177,9 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 			if (optimized) {
 				src = optimized.src;
 				srcset = optimized.srcset;
+				// A configured image service can return no candidates or density descriptors.
+				hasWidthSrcset =
+					srcset?.split(", ").every((candidate) => /^\S+ [1-9]\d*w$/.test(candidate)) ?? false;
 				sizes = optimized.sizes;
 			}
 		}
@@ -193,6 +201,7 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 						// Use image width, or default to 1200 for responsive images
 						const maxWidth = finalWidth || 1200;
 						srcset = generateSrcset(embed.getSrc, maxWidth, aspectRatio);
+						hasWidthSrcset = Boolean(srcset);
 						sizes = finalWidth
 							? `(min-width: ${finalWidth}px) ${finalWidth}px, 100vw`
 							: "100vw";
@@ -242,6 +251,8 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		src,
 		srcset,
 		sizes,
+		hasWidthSrcset,
+		media: img,
 		astroImageSrc,
 		width: finalWidth,
 		height: finalHeight,
@@ -263,7 +274,7 @@ function imgProps(
 	variantClass: string | undefined,
 	elementId: string | null | undefined
 ): Record<string, unknown> {
-	return {
+	const props = {
 		id: elementId,
 		src: r.src,
 		srcset: r.srcset,
@@ -278,6 +289,32 @@ function imgProps(
 		class: ["emdash-image-media", variantClass, className].filter(Boolean).join(" "),
 		...attrs,
 	};
+	// Passthrough can override loading and the source list; only opt in our own candidates.
+	const highPriority =
+		typeof props.fetchpriority === "string" && props.fetchpriority.toLowerCase() === "high";
+	if (
+		!priority &&
+		!highPriority &&
+		!Object.hasOwn(attrs, "sizes") &&
+		!Object.hasOwn(attrs, "srcset") &&
+		!Object.hasOwn(attrs, "src")
+	) {
+		props.sizes = lazyAutoSizes(r.sizes, {
+			loading: props.loading,
+			hasWidthSrcset: r.hasWidthSrcset && Boolean(props.srcset),
+			width: props.width,
+			height: props.height,
+			sources: [
+				props.src,
+				r.media.src,
+				r.media.filename,
+				r.media.storageKey,
+				r.media.meta?.storageKey,
+			],
+			mimeType: r.media.mimeType ?? r.media.meta?.mimeType,
+		});
+	}
+	return props;
 }
 
 const lightClass = resolvedDark ? "emdash-image--light" : undefined;

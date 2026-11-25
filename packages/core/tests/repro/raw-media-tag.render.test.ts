@@ -85,16 +85,12 @@ describe("THE ARM THAT WOULD HAVE FAILED BEFORE — a raw tag with sizes to offe
 		expect(out).toContain('class="alignleft"');
 		expect(out).toContain('width="300"');
 		expect(out).toContain('height="225"');
-		expect(out).toContain('src="/_emdash/api/media/file/2024/05/body-photo.jpg"');
-		const srcset = /srcset="([^"]*)"/.exec(out)?.[1] ?? "";
-		expect(
-			srcset,
-			`a raw media tag with stored sizes must offer them; got: ${out.slice(0, 300)}`,
-		).toBeTruthy();
-		expect(srcset).toContain("300w");
-		expect(srcset).toContain("480w");
-		// sizes from the SAME bound, or the browser assumes 100vw and takes the largest rung.
-		expect(out).toMatch(/sizes="\(min-width: 300px\) 300px, 100vw"/);
+		const src = `/_emdash/api/media/file/${KEY}`;
+		expect(out).toContain(`src="${src}"`);
+		expect(out).toContain('loading="lazy"');
+		expect(out).toContain(`srcset="${src}?w=300 300w, ${src}?w=480 480w, ${src}?w=768 768w"`);
+		// A lazy tag from imported HTML keeps its existing hint rather than getting `auto`.
+		expect(out).toContain('sizes="(min-width: 300px) 300px, 100vw"');
 	});
 });
 

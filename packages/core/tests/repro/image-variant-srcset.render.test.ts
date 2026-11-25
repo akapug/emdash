@@ -34,7 +34,7 @@ const internalUrl = (key: string) => `${FILE}${key}`;
 
 const imgTags = (html: string) => html.match(/<img\b[^>]*>/g) ?? [];
 const attr = (tag: string, name: string) =>
-	tag.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1]?.replaceAll("&amp;", "&");
+	tag.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1]?.replaceAll("&amp;", "&");
 
 describe("stored image sizes on a logged-out page", () => {
 	let db: Kysely<Database>;
@@ -62,9 +62,10 @@ describe("stored image sizes on a logged-out page", () => {
 		stored: [number, number] = [1600, 900],
 		upright: [number, number] = stored,
 	) {
+		const svg = storageKey.endsWith(".svg");
 		const parent = await new MediaRepository(db).create({
-			filename: "photo.jpg",
-			mimeType: "image/jpeg",
+			filename: svg ? "graphic.svg" : "photo.jpg",
+			mimeType: svg ? "image/svg+xml" : "image/jpeg",
 			storageKey,
 			size: 4_000_000,
 			width: stored[0],
@@ -154,11 +155,91 @@ describe("stored image sizes on a logged-out page", () => {
 		const tag = tagFor(await asVisitor(EmDashImage, image(key)), "visitor.jpg");
 		// Stored sizes only: an EmDashImage does not know the slot it fills.
 		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=1024 1024w`);
-		expect(attr(tag, "sizes")).toBe("(min-width: 1600px) 1600px, 100vw");
-		// The fallback is the original, and the layout attributes are kept.
+		// The fallback source is the original, and the layout attributes are kept.
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
 		expect(attr(tag, "width")).toBe("1600");
 		expect(attr(tag, "height")).toBe("900");
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "fetchpriority")).toBeUndefined();
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 1600px) 1600px, 100vw");
+	});
+
+	it.each([
+		{
+			name: "priority",
+			attrs: { priority: true },
+			loading: "eager",
+			fetchpriority: "high",
+		},
+		{ name: "explicit eager loading", attrs: { loading: "eager" }, loading: "eager" },
+		{ name: "omitted loading", attrs: { loading: undefined }, loading: undefined },
+		{
+			name: "explicit sizes",
+			attrs: { sizes: "(max-width: 600px) 90vw,  240px" },
+			loading: "lazy",
+		},
+		{
+			name: "density descriptors",
+			attrs: { srcset: "/density.jpg 1x, /density@2x.jpg 2x" },
+			loading: "lazy",
+		},
+		{ name: "omitted srcset", attrs: { srcset: undefined }, loading: "lazy" },
+	])("EmDashImage preserves the rendered attributes with $name", async (control) => {
+		const key = "2024/05/feature.jpg";
+		await seed(key, [
+			[300, CURRENT],
+			[1024, CURRENT],
+		]);
+		const tag = tagFor(
+			await asVisitor(EmDashImage, { ...image(key), width: 480, height: 270, ...control.attrs }),
+			key,
+		);
+		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "srcset")).toBe(
+			"srcset" in control.attrs
+				? control.attrs.srcset
+				: `${FILE}${key}?w=300 300w, ${FILE}${key}?w=1024 1024w`,
+		);
+		expect(attr(tag, "sizes")).toBe(control.attrs.sizes ?? "(min-width: 480px) 480px, 100vw");
+		expect(attr(tag, "loading")).toBe(control.loading);
+		expect(attr(tag, "fetchpriority")).toBe(control.fetchpriority);
+	});
+
+	it("EmDashImage keeps the size hint for SVG even when the store offers widths", async () => {
+		const key = "2024/05/graphic.svg";
+		await seed(key, [
+			[300, CURRENT],
+			[1024, CURRENT],
+		]);
+		const tag = tagFor(
+			await asVisitor(EmDashImage, { ...image(key), width: 480, height: 270 }),
+			key,
+		);
+		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=1024 1024w`);
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "sizes")).toBe("(min-width: 480px) 480px, 100vw");
+	});
+
+	it("EventCover emits auto sizes on the event card's lazy image", async () => {
+		const { default: EventCover } =
+			await import("../../../../templates/blog-cloudflare/src/components/EventCover.astro");
+		const key = "2024/05/event.jpg";
+		await seed(key, [
+			[300, CURRENT],
+			[768, CURRENT],
+			[1024, CURRENT],
+		]);
+		const tag = tagFor(await asVisitor(EventCover, image(key, { width: 480, height: 270 })), key);
+		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key}?w=1024 1024w`,
+		);
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "fetchpriority")).toBeUndefined();
+		expect(attr(tag, "width")).toBe("480");
+		expect(attr(tag, "height")).toBe("270");
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 480px) 480px, 100vw");
 	});
 
 	it("EmDashImage builds its candidates on the file route, whatever address draws the image", async () => {
@@ -192,6 +273,9 @@ describe("stored image sizes on a logged-out page", () => {
 		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);
 		expect(attr(tag, "sizes")).toBe("(min-width: 1600px) 1600px, 100vw");
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "width")).toBeUndefined();
+		expect(attr(tag, "height")).toBeUndefined();
 	});
 
 	it("a photo stored on its side is bounded by its upright width, not its stored one", async () => {
@@ -203,31 +287,42 @@ describe("stored image sizes on a logged-out page", () => {
 		expect(attr(tag, "sizes")).toBe("(min-width: 400px) 400px, 100vw");
 	});
 
-	it("a content image resized smaller is offered enough for a dense screen, and no more", async () => {
-		const key = "2024/05/narrow.jpg";
-		await seed(
-			key,
-			[
-				[300, CURRENT],
-				[480, CURRENT],
-				[768, CURRENT],
-				[1024, CURRENT],
-				[1536, CURRENT],
-				[2048, CURRENT],
-			],
-			[3200, 1800],
-		);
-		const tag = tagFor(
-			await asVisitor(Image, block(key, { displayWidth: 640, width: 3200, height: 1800 })),
-			"narrow.jpg",
-		);
-		// Drawn 640 wide: 768 serves an ordinary screen, 1536 a dense one (2 x 640 = 1280).
-		// 480 alone would be softer than the original; 2048 is never the right choice here.
-		const offered = (attr(tag, "srcset") ?? "").split(", ").map((c) => c.split(" ")[1]);
-		expect(offered).toEqual(["300w", "480w", "768w", "1024w", "1536w"]);
-		expect(attr(tag, "sizes")).toBe("(min-width: 640px) 640px, 100vw");
-		expect(attr(tag, "width")).toBe("640");
-	});
+	it.each([
+		{ kind: "unlinked", link: undefined },
+		{ kind: "linked", link: "/photos" },
+	])(
+		"a $kind resized content image uses auto without changing its candidates",
+		async ({ link }) => {
+			const key = "2024/05/narrow.jpg";
+			await seed(
+				key,
+				[
+					[300, CURRENT],
+					[480, CURRENT],
+					[768, CURRENT],
+					[1024, CURRENT],
+					[1536, CURRENT],
+					[2048, CURRENT],
+				],
+				[3200, 1800],
+			);
+			const html = await asVisitor(
+				Image,
+				block(key, { displayWidth: 640, width: 3200, height: 1800, link }),
+			);
+			const tag = tagFor(html, "narrow.jpg");
+			if (link) expect(html).toMatch(/<a\b[^>]*\shref="\/photos"[^>]*>\s*<img\b/);
+			// Drawn 640 wide: 768 serves an ordinary screen, 1536 a dense one (2 x 640 = 1280).
+			expect(attr(tag, "srcset")).toBe(
+				[300, 480, 768, 1024, 1536].map((width) => `${FILE}${key}?w=${width} ${width}w`).join(", "),
+			);
+			expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+			expect(attr(tag, "loading")).toBe("lazy");
+			expect(attr(tag, "width")).toBe("640");
+			expect(attr(tag, "height")).toBe("360");
+			expect(attr(tag, "sizes")).toBe("auto, (min-width: 640px) 640px, 100vw");
+		},
+	);
 
 	it("a small drawing of a large image is offered the smallest stored width, not the original", async () => {
 		const key = "2024/05/thumb.jpg";
@@ -364,7 +459,11 @@ describe("stored image sizes on a logged-out page", () => {
 			[768, CURRENT],
 		]);
 		await seed(bare, []);
-		const html = await asVisitor(Gallery, gallery([stored, bare]));
+		const { node } = gallery([stored, bare]);
+		node.images = node.images.map((entry, index) =>
+			index === 0 ? { ...entry, width: 1600, height: 900 } : entry,
+		);
+		const html = await asVisitor(Gallery, { node });
 		const withSizes = tagFor(html, "gallery-stored.jpg");
 		expect(attr(withSizes, "srcset")).toBe(
 			`${FILE}${stored}?w=300 300w, ${FILE}${stored}?w=768 768w`,
@@ -374,6 +473,9 @@ describe("stored image sizes on a logged-out page", () => {
 			"(max-width: 640px) calc(((100vw - 1rem) / 2) * 1.78), calc(((100vw - 1rem) / 2) * 1.78)",
 		);
 		expect(attr(withSizes, "src")).toBe(`${FILE}${stored}`);
+		expect(attr(withSizes, "loading")).toBe("lazy");
+		expect(attr(withSizes, "width")).toBe("1600");
+		expect(attr(withSizes, "height")).toBe("900");
 		// Its neighbour has nothing stored and is left exactly as it was.
 		expect(tagFor(html, "gallery-bare.jpg")).not.toMatch(/\?w=\d+/);
 	});
@@ -398,15 +500,47 @@ describe("stored image sizes on a logged-out page", () => {
 		);
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
 		expect(attr(tag, "width")).toBe("1200");
+		expect(attr(tag, "height")).toBe("1800");
+		expect(attr(tag, "loading")).toBe("lazy");
 		// Never wider than the picture is, as before.
 		expect(attr(tag, "style")).toContain("max-width: 1200px;");
 	});
 
-	it("a gallery's own sizes value is used as given", async () => {
-		const key = "2024/05/gallery-override.jpg";
-		await seed(key, [[300, CURRENT]]);
-		const html = await asVisitor(Gallery, { ...gallery([key]), sizes: "220px" });
-		expect(attr(tagFor(html, "gallery-override.jpg"), "sizes")).toBe("220px");
+	it.each([
+		{
+			name: "a generated hint",
+			override: undefined,
+			expected: "(max-width: 640px) calc((100vw - 1rem) / 2), calc((100vw - 1rem) / 2)",
+		},
+		{
+			name: "an explicit hint",
+			override: "(max-width: 640px) 45vw,  220px",
+			expected: "(max-width: 640px) 45vw,  220px",
+		},
+	])("the square gallery keeps $name unchanged", async ({ override, expected }) => {
+		const key = "2024/05/gallery-square.jpg";
+		await seed(
+			key,
+			[
+				[300, CURRENT],
+				[768, CURRENT],
+				[1024, CURRENT],
+			],
+			[1200, 1200],
+		);
+		const html = await asVisitor(Gallery, {
+			...gallery([key], { width: 400, height: 400 }),
+			...(override === undefined ? {} : { sizes: override }),
+		});
+		const tag = tagFor(html, key);
+		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "srcset")).toBe(
+			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w, ${FILE}${key}?w=1024 1024w`,
+		);
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "width")).toBe("400");
+		expect(attr(tag, "height")).toBe("400");
+		expect(attr(tag, "sizes")).toBe(expected);
 	});
 
 	it("a gallery with nothing stored renders exactly as it does with no database", async () => {
@@ -431,14 +565,22 @@ describe("stored image sizes on a logged-out page", () => {
 			[3072, 1728],
 		);
 		const html = await asVisitor(Cover, {
-			node: { _type: "cover", _key: "c1", backgroundImage: `${FILE}${key}`, content: [] },
+			node: {
+				_type: "cover",
+				_key: "c1",
+				backgroundImage: `${FILE}${key}`,
+				content: [],
+				minHeight: "320px",
+			},
 		});
 		const tag = tagFor(html, "cover.jpg");
 		expect(attr(tag, "srcset")).toBe(
 			`${FILE}${key}?w=480 480w, ${FILE}${key}?w=768 768w, ${FILE}${key}?w=1536 1536w, ${FILE}${key}?w=2048 2048w`,
 		);
-		expect(attr(tag, "sizes")).toBe("100vw");
+		expect(html).toContain('style="min-height: 320px;"');
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
+		expect(attr(tag, "loading")).toBe("lazy");
+		expect(attr(tag, "sizes")).toBe("auto, 100vw");
 	});
 
 	it("an original wider than every stored size is offered last, at its own width", async () => {
@@ -587,7 +729,7 @@ describe("stored image sizes on a logged-out page", () => {
 			await asVisitor(EmDashImage, image(key, { width: 6000, height: 4000 })),
 			"event-card.jpg",
 		);
-		expect(attr(tag, "sizes")).toBe("(min-width: 6000px) 6000px, 100vw");
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 6000px) 6000px, 100vw");
 		const offered = (attr(tag, "srcset") ?? "").split(", ");
 		expect(offered).toEqual([
 			`${FILE}${key}?w=300 300w`,
@@ -615,6 +757,6 @@ describe("stored image sizes on a logged-out page", () => {
 		expect(attr(tag, "srcset")).toBe(
 			`${FILE}${key}?w=300 300w, ${FILE}${key}?w=480 480w, ${FILE}${key}?w=768 768w, ${FILE}${key} 1000w`,
 		);
-		expect(attr(tag, "sizes")).toBe("(min-width: 900px) 900px, 100vw");
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 900px) 900px, 100vw");
 	});
 });
