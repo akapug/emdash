@@ -35,6 +35,11 @@ import {
 import { getPublicOrigin } from "../api/public-url.js";
 import { focalPointToObjectPosition } from "../media/focal-point.js";
 import { getCommittedVariants, srcsetWidthsFor } from "../media/variant-read.js";
+// THE SRCSET BUILDER CALLS THIS AND NEVER IMPORTED IT, so every variant-bearing image threw
+// `ReferenceError: variantUrl is not defined` the moment a rung existed. That is why the landed
+// tip stored 1,490 variants and changed no page: the code below could not run at all.
+import { variantUrl } from "../media/variants.js";
+import { responsiveSizes } from "../media/responsive.js";
 
 interface Props extends Omit<
 	HTMLAttributes<"img">,
@@ -161,6 +166,12 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				: [];
 			const rungs = srcsetWidthsFor(committed, finalWidth);
 			if (rungs.length) {
+				// OUR SRCSET WINS, so this image does NOT go through <AstroImage>: that component
+				// takes `src` alone and derives its own srcset from the local file, which silently
+				// discarded every committed variant. The REAL PROOF on a fresh import stored 1,490
+				// variants, served them at ?w=, and the pages did not change. Clearing this sends
+				// the markup down the <img> branch, which passes srcset and sizes through untouched.
+				astroImageSrc = "";
 				srcset = rungs
 					.map((w) => {
 						const h = Math.round((w * finalHeight) / finalWidth);
