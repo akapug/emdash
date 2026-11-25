@@ -180,6 +180,8 @@ export {
 	DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
 } from "./utils/sanitize.js";
 export { decodeSlug, slugify } from "./utils/slugify.js";
+/** Which picture a post card draws: featured image, else the first picture in the content, else nothing. */
+export { cardPicture, pictureInHtml, type CardPicture } from "./utils/card-picture.js";
 
 // Live Collections query functions (loader is in emdash/runtime)
 export {
