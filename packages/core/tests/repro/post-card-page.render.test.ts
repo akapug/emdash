@@ -64,7 +64,7 @@ const state = vi.hoisted(() => ({ entries: [] as unknown[] }));
 
 // SPREAD THE REAL MODULE FIRST, as the neighbouring page arms do: `emdash`'s entry pulls the registry packages,
 // and a factory that returns a closed object fails to resolve them before any arm runs.
-vi.mock("emdash", async () => {
+async function reads() {
 	const actual = await vi.importActual<Record<string, unknown>>("emdash");
 	return {
 		...actual,
@@ -78,11 +78,12 @@ vi.mock("emdash", async () => {
 		getTermsForEntries: async () => new Map(),
 		optInPageCache: () => {},
 	};
-});
-vi.mock(
-	"../../dist/index.mjs",
-	async () => await vi.importActual<Record<string, unknown>>("emdash"),
-);
+}
+vi.mock("emdash", reads);
+// THE TEMPLATE RESOLVES `emdash` TO dist/index.mjs, so the mock must land THERE with the same reads object. This
+// used to spread the actual module, which meant the page ran the real query and ignored `state.entries` — every arm
+// then measured whatever the fixture database held, not the three posts the arm described.
+vi.mock("../../dist/index.mjs", reads);
 vi.mock("../../../../templates/blog-cloudflare/src/layouts/Base.astro", async () => ({
 	default: (await import("./StubBase.astro")).default,
 }));
@@ -188,7 +189,11 @@ describe("the post card a visitor gets", () => {
 		// with a single pictureless post must carry the title and NOT the element this change adds.
 		const page = await renderIndex(noPicturePost.slug);
 		expect(page, "the pictureless post still renders its card").toContain(noPicturePost.title);
-		expect(page, `the change must add nothing to a pictureless card`).not.toContain("post-picture");
-		expect(page, "and no picture element").not.toContain("<img");
+		// THE CLAIM IS ABOUT WHAT THIS CHANGE ADDS, so it is asserted on the element it adds. The page may legitimately
+		// carry an <img> from chrome this change never touches (a byline avatar, a logo); what must be absent is the
+		// card picture wrapper and any media-file src the picker would have produced.
+		expect(page, "the change must add nothing to a pictureless card").not.toContain("post-picture");
+		expect(page, "and no media-file picture the picker would have chosen").not.toContain("first.jpg");
+		expect(page, "nor the htmlBlock picture").not.toContain("real.jpg");
 	});
 });
