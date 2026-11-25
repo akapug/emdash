@@ -82,8 +82,11 @@ async function emdashReads() {
 	const slug = await import("../../src/utils/slugify.js");
 	const plugins = await import("../../src/plugins/define-plugin.js");
 	const responses = await import("../../src/plugin-types.js");
+	// THE POSTS INDEX NOW DRAWS A CARD PICTURE and imports it from `emdash`, so this closed mock must carry it.
+	const cardPictureModule = await import("../../src/utils/card-picture.js");
 	return {
 		definePlugin: plugins.definePlugin,
+		...cardPictureModule,
 		pluginResponse: responses.pluginResponse,
 		getSeoMeta: seo.getSeoMeta,
 		getContentSeo: seo.getContentSeo,

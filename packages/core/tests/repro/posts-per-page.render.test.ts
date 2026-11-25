@@ -43,8 +43,14 @@ function makePost(index: number, withFeaturedImage: boolean) {
 async function reads() {
 	const seo =
 		await vi.importActual<typeof import("../../src/seo/index.js")>("../../src/seo/index.js");
+	// THE CARD PICTURE IS PART OF WHAT THE POSTS INDEX DRAWS now, so this closed mock has to carry it — the page
+	// imports it from `emdash`, and a mock without it makes every arm in this file fail on the import.
+	const cardPictureModule = await vi.importActual<typeof import("../../src/utils/card-picture.js")>(
+		"../../src/utils/card-picture.js",
+	);
 	return {
 		...seo,
+		...cardPictureModule,
 		getHomepage: async () => ({ entry: null, collection: null, cacheHint: {} }),
 		getEmDashCollection: async (
 			_collection: string,
