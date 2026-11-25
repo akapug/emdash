@@ -5,8 +5,10 @@
  * Renders raw HTML blocks that couldn't be converted to Portable Text.
  * Sanitizes HTML to prevent XSS attacks.
  */
+import { getPublicOrigin } from "../api/public-url.js";
 import { optOutPageCache } from "../page-cache/state.js";
 import { sanitizeContent } from "../utils/sanitize.js";
+import { withStoredSizes } from "../utils/raw-media-tags.js";
 import { siteIframeHosts } from "../utils/site-iframe-hosts.js";
 
 export interface Props {
@@ -27,9 +29,18 @@ const sanitized = sanitizeContent(node.html, {
 	allowedIframeHostnames: await siteIframeHosts(node.html, Astro.locals as Record<string, unknown>, Astro.url),
 });
 if (/<form\b/i.test(sanitized)) optOutPageCache();
+// THE EMITTER IS THIS LINE'S INPUT. A WordPress body's `<img src="/_emdash/api/media/file/…">` arrives here as
+// raw markup and would otherwise reach the browser with no srcset: measured on one imported site, one such tag
+// fetched 874 KB into a 300x225 box while the tenant held four stored sizes for it. The rewrite only ADDS
+// srcset and sizes to media-file tags that have sizes to offer, and leaves every other byte alone.
+// The PUBLIC origin, as Image.astro reads it: behind a proxy the request's own origin is not the one the
+// content's absolute urls were written on.
+const withSizes = await withStoredSizes(sanitized, {
+	origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
+});
 ---
 
-<div class="emdash-html-block" set:html={sanitized} />
+<div class="emdash-html-block" set:html={withSizes} />
 
 <style>
 	.emdash-html-block {
