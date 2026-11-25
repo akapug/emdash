@@ -52,7 +52,12 @@ export function importCapabilities(
 	embedsSchema: { safeParse: (input: unknown) => { success: boolean } } = mappedEmbedsSchema,
 ): readonly string[] {
 	return embedsSchema.safeParse(EVENT_SEARCH_BAR_PROBE).success
-		? [PROTECTED_CONTENT_CAPABILITY, EVENT_SEARCH_BAR_CAPABILITY, BATCH_REDIRECTS_CAPABILITY, MEDIA_VARIANTS_CAPABILITY]
+		? [
+				PROTECTED_CONTENT_CAPABILITY,
+				EVENT_SEARCH_BAR_CAPABILITY,
+				BATCH_REDIRECTS_CAPABILITY,
+				MEDIA_VARIANTS_CAPABILITY,
+			]
 		: [PROTECTED_CONTENT_CAPABILITY, BATCH_REDIRECTS_CAPABILITY, MEDIA_VARIANTS_CAPABILITY];
 }
 

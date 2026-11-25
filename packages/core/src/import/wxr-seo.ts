@@ -184,7 +184,11 @@ const DESCRIPTION_KEYS: Array<[Family, string]> = [
 	["aioseo", "_aioseop_description"],
 ];
 
-const CANONICAL_KEYS = ["_yoast_wpseo_canonical", "rank_math_canonical_url", "_aioseop_custom_link"];
+const CANONICAL_KEYS = [
+	"_yoast_wpseo_canonical",
+	"rank_math_canonical_url",
+	"_aioseop_custom_link",
+];
 
 const IMAGE_KEYS: Array<[idKey: string, urlKey: string]> = [
 	["_yoast_wpseo_opengraph-image-id", "_yoast_wpseo_opengraph-image"],
@@ -261,7 +265,10 @@ function escapeRegex(text: string): string {
 }
 
 /** Remove a trailing `<separator> <site name>`: EmDash appends the site name itself. */
-function withoutSiteName(title: string, siteTitle: string | undefined): { title: string; had: boolean } {
+function withoutSiteName(
+	title: string,
+	siteTitle: string | undefined,
+): { title: string; had: boolean } {
 	const name = siteTitle?.trim();
 	if (!name) return { title, had: false };
 	const separators = `${escapeRegex(SEP)}|[${escapeRegex(SEPARATOR_CHARS)}]`;
@@ -273,7 +280,9 @@ function withoutSiteName(title: string, siteTitle: string | undefined): { title:
 function trimSeparators(text: string): string {
 	let out = text.trim();
 	for (;;) {
-		const next = out.replace(new RegExp(`^${escapeRegex(SEP)}|${escapeRegex(SEP)}$`, "g"), "").trim();
+		const next = out
+			.replace(new RegExp(`^${escapeRegex(SEP)}|${escapeRegex(SEP)}$`, "g"), "")
+			.trim();
 		if (next === out) return out;
 		out = next;
 	}
@@ -328,7 +337,9 @@ function mediaKey(url: string): string {
 
 function robotsTokens(value: string): Set<string> {
 	if (value.startsWith("a:")) {
-		return new Set(Array.from(value.matchAll(PHP_ARRAY_STRING_RE), ([, token]) => token.toLowerCase()));
+		return new Set(
+			Array.from(value.matchAll(PHP_ARRAY_STRING_RE), ([, token]) => token.toLowerCase()),
+		);
 	}
 	if (value.startsWith("[")) {
 		try {

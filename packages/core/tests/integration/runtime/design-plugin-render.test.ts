@@ -13,11 +13,15 @@ import Database from "better-sqlite3";
 import { SqliteDialect } from "kysely";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+	computeFingerprint,
+	createPlugin,
+	designPlugin,
+} from "../../../../plugins/design/src/index.js";
 import { EmDashRuntime } from "../../../src/emdash-runtime.js";
 import { renderFragments } from "../../../src/page/fragments.js";
 import { dispatchPluginApiRequest } from "../../../src/plugins/http-route-dispatch.js";
 import type { PublicPageContext } from "../../../src/plugins/types.js";
-import { computeFingerprint, createPlugin, designPlugin } from "../../../../plugins/design/src/index.js";
 
 const runtimes: EmDashRuntime[] = [];
 
@@ -154,8 +158,13 @@ describe("emb/27: @emdash-cms/plugin-design real EmDash render & tenant wiring",
 		expect(desc.adminPages).toEqual([{ path: "/design", label: "Design", icon: "paint-brush" }]);
 
 		const root = resolve(import.meta.dirname, "../../../../..");
-		const astroConfig = readFileSync(resolve(root, "templates/blog-cloudflare/astro.config.mjs"), "utf8");
-		const pkgJson = JSON.parse(readFileSync(resolve(root, "templates/blog-cloudflare/package.json"), "utf8")) as {
+		const astroConfig = readFileSync(
+			resolve(root, "templates/blog-cloudflare/astro.config.mjs"),
+			"utf8",
+		);
+		const pkgJson = JSON.parse(
+			readFileSync(resolve(root, "templates/blog-cloudflare/package.json"), "utf8"),
+		) as {
 			dependencies?: Record<string, string>;
 		};
 

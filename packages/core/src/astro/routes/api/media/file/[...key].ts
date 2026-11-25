@@ -9,8 +9,8 @@ import type { APIRoute } from "astro";
 import { apiError, handleError } from "#api/error.js";
 import { IMMUTABLE_IMAGE_CACHE, MUTABLE_MEDIA_CACHE_CONTROL } from "#media/image-endpoint.js";
 
-import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 import { resolveVariantForRequest } from "../../../../../media/variant-serve.js";
+import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 
 export const prerender = false;
 

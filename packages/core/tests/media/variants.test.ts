@@ -14,7 +14,13 @@ import {
 	type VariantParent,
 } from "../../src/media/variants.js";
 
-const PARENT: VariantParent = { id: "m1", width: 4414, height: 6122, contentHash: "sha1:current", status: "ready" };
+const PARENT: VariantParent = {
+	id: "m1",
+	width: 4414,
+	height: 6122,
+	contentHash: "sha1:current",
+	status: "ready",
+};
 
 function v(over: Partial<StoredVariant> = {}): StoredVariant {
 	return {
@@ -54,7 +60,9 @@ describe("variantRefusal — every rule, server-side", () => {
 		expect(variantRefusal(PARENT, offer({ contentType: "application/pdf" }))).toBe("not-a-raster");
 	});
 	it("refuses bytes over the cap", () => {
-		expect(variantRefusal(PARENT, offer({ bytes: VARIANT_BYTE_CAP + 1 }))).toBe("over-the-byte-cap");
+		expect(variantRefusal(PARENT, offer({ bytes: VARIANT_BYTE_CAP + 1 }))).toBe(
+			"over-the-byte-cap",
+		);
 	});
 	it("trusts the decoded bytes, never the client's claim", () => {
 		expect(variantRefusal(PARENT, offer({ width: 768, decodedWidth: 4414 }))).toBe(
@@ -64,25 +72,37 @@ describe("variantRefusal — every rule, server-side", () => {
 	it("refuses a width off the ladder", () => {
 		// The decoded dimensions agree with the claim, so the ONLY rule broken is the ladder.
 		expect(
-			variantRefusal(PARENT, offer({ width: 777, height: 1077, decodedWidth: 777, decodedHeight: 1077 })),
+			variantRefusal(
+				PARENT,
+				offer({ width: 777, height: 1077, decodedWidth: 777, decodedHeight: 1077 }),
+			),
 		).toBe("not-on-the-ladder");
 	});
 	it("refuses a variant that is not smaller than its parent", () => {
 		const small: VariantParent = { ...PARENT, width: 300, height: 416 };
 		expect(
-			variantRefusal(small, offer({ width: 300, height: 416, decodedWidth: 300, decodedHeight: 416 })),
+			variantRefusal(
+				small,
+				offer({ width: 300, height: 416, decodedWidth: 300, decodedHeight: 416 }),
+			),
 		).toBe("not-smaller-than-the-parent");
 	});
 	it("refuses a hard crop offered as a smaller version — the 300x300 of a 4414x6122", () => {
 		// A 300x300 crop of that portrait is a 33% aspect change, far outside 1%.
 		expect(
-			variantRefusal(PARENT, offer({ width: 300, height: 300, decodedWidth: 300, decodedHeight: 300 })),
+			variantRefusal(
+				PARENT,
+				offer({ width: 300, height: 300, decodedWidth: 300, decodedHeight: 300 }),
+			),
 		).toBe("aspect-differs-from-the-parent");
 	});
 	it("accepts a square size of a square original", () => {
 		const square: VariantParent = { ...PARENT, width: 1200, height: 1200 };
 		expect(
-			variantRefusal(square, offer({ width: 300, height: 300, decodedWidth: 300, decodedHeight: 300 })),
+			variantRefusal(
+				square,
+				offer({ width: 300, height: 300, decodedWidth: 300, decodedHeight: 300 }),
+			),
 		).toBeNull();
 	});
 });
@@ -105,7 +125,11 @@ describe("chooseVariant — the ?w= resolver", () => {
 		// The identity is the parent's CONTENT HASH, not a generation: `media` has no
 		// version column and a Replace rewrites content_hash.
 		expect(
-			chooseVariant({ ...PARENT, contentHash: "sha1:new" }, [v({ parentContentHash: "sha1:old" })], 300),
+			chooseVariant(
+				{ ...PARENT, contentHash: "sha1:new" },
+				[v({ parentContentHash: "sha1:old" })],
+				300,
+			),
 		).toBeNull();
 	});
 	it("serves nothing for a parent that is not ready", () => {

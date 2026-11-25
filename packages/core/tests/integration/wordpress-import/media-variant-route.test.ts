@@ -1,3 +1,4 @@
+import { Role } from "@emdash-cms/auth";
 /**
  * W8: the whole path, through the real route handler and the real file route.
  *
@@ -18,14 +19,17 @@
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { GET as fileGet } from "../../../src/astro/routes/api/media/file/[...key].js";
+import {
+	handleMediaDelete,
+	handleMediaGet,
+	handleMediaVariantStore,
+} from "../../../src/api/handlers/media.js";
 import { POST as variantPost } from "../../../src/astro/routes/api/import/wordpress/media-variant.js";
-import { handleMediaDelete, handleMediaGet, handleMediaVariantStore } from "../../../src/api/handlers/media.js";
+import { GET as fileGet } from "../../../src/astro/routes/api/media/file/[...key].js";
 import { MediaVariantRepository } from "../../../src/database/repositories/media-variants.js";
 import { MediaRepository } from "../../../src/database/repositories/media.js";
 import type { Database } from "../../../src/database/types.js";
 import { MEDIA_VARIANT_STORAGE_PREFIX } from "../../../src/transfer/staging/keys.js";
-import { Role } from "@emdash-cms/auth";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
 let db: Kysely<Database>;
@@ -77,7 +81,11 @@ async function seedImage(): Promise<{ id: string; storageKey: string }> {
 type FileContext = Parameters<typeof fileGet>[0];
 
 /** The file route with a fake storage on locals, and a url carrying `?w=`. */
-function fileContext(key: string, w: string | null, storage: ReturnType<typeof storageDouble>): FileContext {
+function fileContext(
+	key: string,
+	w: string | null,
+	storage: ReturnType<typeof storageDouble>,
+): FileContext {
 	const url = new URL(`https://site.test/media/file/${key}`);
 	if (w !== null) url.searchParams.set("w", w);
 	return {
@@ -98,7 +106,11 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 	it("stores, serves the variant, then serves the original once the parent is deleted", async () => {
 		const storage = storageDouble();
 		const image = await seedImage();
-		await storage.upload({ key: image.storageKey, body: ORIGINAL_BYTES, contentType: "image/jpeg" });
+		await storage.upload({
+			key: image.storageKey,
+			body: ORIGINAL_BYTES,
+			contentType: "image/jpeg",
+		});
 
 		// 1. The POST reaches the handler and stores.
 		// MULTIPART, which is the route's real contract, and the real admin role:
@@ -126,7 +138,8 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 					db,
 					storage,
 					handleMediaGet: (id: string) => handleMediaGet(db, id),
-					handleMediaVariantStore: (input: never) => handleMediaVariantStore(db, storage as never, input),
+					handleMediaVariantStore: (input: never) =>
+						handleMediaVariantStore(db, storage as never, input),
 				},
 				user: { role: Role.ADMIN },
 			},
@@ -145,7 +158,9 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 		expect(new Uint8Array(await other.arrayBuffer())).toEqual(ORIGINAL_BYTES);
 
 		// 5. The variant's OWN key is 404: a variant object has no public address.
-		const ownKey = [...storage.objects.keys()].find((k) => k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX));
+		const ownKey = [...storage.objects.keys()].find((k) =>
+			k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX),
+		);
 		expect(ownKey, "the object must live under the reserved prefix").toBeTruthy();
 		const direct = await fileGet(fileContext(ownKey!, null, storage));
 		expect(direct.status).toBe(404);
@@ -157,7 +172,11 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 		const original = storage.objects.get(image.storageKey)!;
 		await handleMediaDelete(db, image.id, storage as never);
 		expect(storage.objects.has(ownKey!), "the variant object must be retired").toBe(false);
-		await storage.upload({ key: image.storageKey, body: original.body, contentType: original.contentType });
+		await storage.upload({
+			key: image.storageKey,
+			body: original.body,
+			contentType: original.contentType,
+		});
 		const afterRetire = await fileGet(fileContext(image.storageKey, "300", storage));
 		expect(afterRetire.status).toBe(200);
 		expect(new Uint8Array(await afterRetire.arrayBuffer())).toEqual(ORIGINAL_BYTES);
@@ -178,6 +197,8 @@ describe("W8: a stored variant is served from the parent's URL, and retiring it 
 			contentHash: "hash-of-the-variant",
 		});
 		expect(result.success).toBe(false);
-		expect(await new MediaVariantRepository(db).forParent(image.id, "hash-from-before-the-replace")).toHaveLength(0);
+		expect(
+			await new MediaVariantRepository(db).forParent(image.id, "hash-from-before-the-replace"),
+		).toHaveLength(0);
 	});
 });

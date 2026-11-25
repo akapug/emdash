@@ -9,7 +9,11 @@ import {
 	wxrUrlKey,
 } from "../../../src/import/wxr-seo.js";
 
-const SITE = { title: "Example Garden", description: "Plants and paths", link: "https://example.org" };
+const SITE = {
+	title: "Example Garden",
+	description: "Plants and paths",
+	link: "https://example.org",
+};
 const IMAGE = "https://example.org/wp-content/uploads/2024/05/pond.jpg";
 
 function site(entryPaths: Record<string, string> = {}) {
@@ -36,7 +40,10 @@ function post(meta: Record<string, string>, extra: Partial<WxrPost> = {}): WxrPo
 
 describe("extractWxrSeo: titles", () => {
 	it("carries a literal Yoast title and removes the site name EmDash appends itself", () => {
-		const out = extractWxrSeo(post({ _yoast_wpseo_title: "Visit the pond - Example Garden" }), site());
+		const out = extractWxrSeo(
+			post({ _yoast_wpseo_title: "Visit the pond - Example Garden" }),
+			site(),
+		);
 		expect(out.seo.title).toBe("Visit the pond");
 		expect(out.notes).not.toContain("site-name-appended");
 	});
@@ -52,12 +59,14 @@ describe("extractWxrSeo: titles", () => {
 
 	it("resolves Rank Math and All in One SEO variables", () => {
 		expect(
-			extractWxrSeo(post({ rank_math_title: "%title% for %sitedesc% %sep% %sitename%" }), site()).seo
-				.title,
+			extractWxrSeo(post({ rank_math_title: "%title% for %sitedesc% %sep% %sitename%" }), site())
+				.seo.title,
 		).toBe("The Pond for Plants and paths");
 		expect(
-			extractWxrSeo(post({ _aioseo_title: "#post_title at #tagline #separator_sa #site_title" }), site())
-				.seo.title,
+			extractWxrSeo(
+				post({ _aioseo_title: "#post_title at #tagline #separator_sa #site_title" }),
+				site(),
+			).seo.title,
 		).toBe("The Pond at Plants and paths");
 	});
 
@@ -79,13 +88,21 @@ describe("extractWxrSeo: titles", () => {
 	});
 
 	it("drops a title whose separator is not at the end, since its value is a plugin setting", () => {
-		const out = extractWxrSeo(post({ _yoast_wpseo_title: "%%sitename%% %%sep%% %%title%%" }), site());
+		const out = extractWxrSeo(
+			post({ _yoast_wpseo_title: "%%sitename%% %%sep%% %%title%%" }),
+			site(),
+		);
 		expect(out.seo.title).toBeUndefined();
-		expect(out.dropped).toEqual([{ field: "title", reason: "unresolved-variable", variables: ["sep"] }]);
+		expect(out.dropped).toEqual([
+			{ field: "title", reason: "unresolved-variable", variables: ["sep"] },
+		]);
 	});
 
 	it("stores nothing when the title resolves to the entry's own title", () => {
-		const out = extractWxrSeo(post({ _yoast_wpseo_title: "%%title%% %%sep%% %%sitename%%" }), site());
+		const out = extractWxrSeo(
+			post({ _yoast_wpseo_title: "%%title%% %%sep%% %%sitename%%" }),
+			site(),
+		);
 		expect(out.seo).toEqual({});
 		expect(out.asDefault).toEqual(["title"]);
 	});
@@ -168,7 +185,10 @@ describe("extractWxrSeo: robots", () => {
 
 describe("extractWxrSeo: canonical", () => {
 	it("leaves a canonical to the entry itself to EmDash, which points it at the new URL", () => {
-		const out = extractWxrSeo(post({ _yoast_wpseo_canonical: "https://www.example.org/the-pond" }), site());
+		const out = extractWxrSeo(
+			post({ _yoast_wpseo_canonical: "https://www.example.org/the-pond" }),
+			site(),
+		);
 		expect(out.seo.canonical).toBeUndefined();
 		expect(out.asDefault).toEqual(["canonical"]);
 	});
@@ -182,12 +202,18 @@ describe("extractWxrSeo: canonical", () => {
 	});
 
 	it("drops a canonical that points off the site", () => {
-		const out = extractWxrSeo(post({ _yoast_wpseo_canonical: "https://example.net/the-pond/" }), site());
+		const out = extractWxrSeo(
+			post({ _yoast_wpseo_canonical: "https://example.net/the-pond/" }),
+			site(),
+		);
 		expect(out.dropped).toEqual([{ field: "canonical", reason: "off-site" }]);
 	});
 
 	it("drops an on-site canonical that names no imported entry", () => {
-		const out = extractWxrSeo(post({ _yoast_wpseo_canonical: "https://example.org/category/news/" }), site());
+		const out = extractWxrSeo(
+			post({ _yoast_wpseo_canonical: "https://example.org/category/news/" }),
+			site(),
+		);
 		expect(out.dropped).toEqual([{ field: "canonical", reason: "not-an-entry" }]);
 	});
 });
@@ -206,7 +232,10 @@ describe("extractWxrSeo: social image", () => {
 
 	it("carries the image by URL, including a resized copy of an attachment", () => {
 		const out = extractWxrSeo(
-			post({ rank_math_facebook_image: "https://example.org/wp-content/uploads/2024/05/pond-1024x768.jpg" }),
+			post({
+				rank_math_facebook_image:
+					"https://example.org/wp-content/uploads/2024/05/pond-1024x768.jpg",
+			}),
 			site(),
 		);
 		expect(out.seo.image).toBe(IMAGE);
@@ -226,7 +255,10 @@ describe("tallyWxrSeo", () => {
 	it("counts carried fields, defaults, drops and the variables behind them", () => {
 		const tally = emptyWxrSeoTally();
 		const s = site();
-		tallyWxrSeo(tally, extractWxrSeo(post({ _yoast_wpseo_title: "Koi", _yoast_wpseo_metadesc: "Fish." }), s));
+		tallyWxrSeo(
+			tally,
+			extractWxrSeo(post({ _yoast_wpseo_title: "Koi", _yoast_wpseo_metadesc: "Fish." }), s),
+		);
 		tallyWxrSeo(tally, extractWxrSeo(post({ _yoast_wpseo_title: "%%title%% %%currentyear%%" }), s));
 		tallyWxrSeo(tally, extractWxrSeo(post({ _yoast_wpseo_focuskw: "pond" }), s));
 		expect(tally.entries).toBe(2);

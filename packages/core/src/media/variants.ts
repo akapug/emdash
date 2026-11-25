@@ -111,7 +111,7 @@ export interface VariantOffer {
 	width: number;
 	height: number;
 	/** Dimensions read from the encoded bytes — NOT from the client's claim. */
-decodedWidth: number;
+	decodedWidth: number;
 	decodedHeight: number;
 	contentType: string;
 	bytes: number;
@@ -136,8 +136,10 @@ export function variantRefusal(parent: VariantParent, offer: VariantOffer): Vari
 	if (offer.decodedWidth !== offer.width || offer.decodedHeight !== offer.height)
 		return "dimensions-do-not-match-bytes";
 	if (!(VARIANT_LADDER as readonly number[]).includes(offer.width)) return "not-on-the-ladder";
-	if (offer.width >= parent.width && offer.height >= parent.height) return "not-smaller-than-the-parent";
-	if (parent.width <= 0 || parent.height <= 0 || offer.height <= 0) return "aspect-differs-from-the-parent";
+	if (offer.width >= parent.width && offer.height >= parent.height)
+		return "not-smaller-than-the-parent";
+	if (parent.width <= 0 || parent.height <= 0 || offer.height <= 0)
+		return "aspect-differs-from-the-parent";
 	const parentRatio = parent.width / parent.height;
 	const offerRatio = offer.width / offer.height;
 	if (Math.abs(offerRatio - parentRatio) / parentRatio > ASPECT_TOLERANCE)

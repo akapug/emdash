@@ -72,7 +72,11 @@ describe("WXR import: scheduled, missed-schedule, unzoned, invalid, private, pen
 		const registry = new SchemaRegistry(db);
 		await registry.createCollection({ slug: "posts", label: "Posts", labelSingular: "Post" });
 		await registry.createField("posts", { slug: "title", label: "Title", type: "string" });
-		await registry.createField("posts", { slug: "content", label: "Content", type: "portableText" });
+		await registry.createField("posts", {
+			slug: "content",
+			label: "Content",
+			type: "portableText",
+		});
 		await registry.createField("posts", { slug: "excerpt", label: "Excerpt", type: "text" });
 		emdash = handlersFromRuntime(createTestRuntime(db));
 	});
@@ -179,9 +183,7 @@ describe("WXR import: scheduled, missed-schedule, unzoned, invalid, private, pen
 		expect(unzoned.status).toBe("draft");
 		expect(unzoned.scheduledAt).toBeNull();
 		expect(
-			result.errors.some(
-				(e) => e.title === "unzoned-local-only" && /no timezone/i.test(e.error),
-			),
+			result.errors.some((e) => e.title === "unzoned-local-only" && /no timezone/i.test(e.error)),
 		).toBe(true);
 
 		const invalidGmt = await bySlug("invalid-gmt");

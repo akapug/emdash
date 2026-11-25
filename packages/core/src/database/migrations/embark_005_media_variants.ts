@@ -31,7 +31,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		// The parent. `on delete cascade` retires the rows with the image; the
 		// OBJECT keys are recorded before the cascade runs, because a cascade cannot
 		// tell anyone what to delete from storage.
-		.addColumn("media_id", "text", (column) => column.notNull().references("media.id").onDelete("cascade"))
+		.addColumn("media_id", "text", (column) =>
+			column.notNull().references("media.id").onDelete("cascade"),
+		)
 		// WordPress's own name (thumbnail | medium | large | <custom>). Provenance
 		// only: a server cannot check it, because `media` carries no metadata column.
 		.addColumn("size_name", "text", (column) => column.notNull())
@@ -49,7 +51,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		// actually moves when the image behind a variant is replaced.
 		.addColumn("parent_content_hash", "text", (column) => column.notNull())
 		.addColumn("created_at", "text", (column) => column.notNull().defaultTo(sql`(datetime('now'))`))
-		.addPrimaryKeyConstraint("pk_emdash_media_variants", ["media_id", "parent_content_hash", "width"])
+		.addPrimaryKeyConstraint("pk_emdash_media_variants", [
+			"media_id",
+			"parent_content_hash",
+			"width",
+		])
 		.execute();
 
 	// Resolving `?w=` reads by parent and its content hash, then picks a width.

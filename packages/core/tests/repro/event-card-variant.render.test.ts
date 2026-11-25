@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 /**
  * The EVENT CARD emits the ladder, because it renders through EmDashImage.
  *
@@ -12,8 +14,6 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { readFileSync } from "node:fs";
-
 /** The template's card component, read as source: this arm runs in core's suite. */
 const EVENT_COVER = new URL(
 	"../../../../templates/blog-cloudflare/src/components/EventCover.astro",
@@ -23,7 +23,9 @@ const EVENT_COVER = new URL(
 describe("the event card renders through the component that owns the ladder", () => {
 	it("draws through emdash/ui's Image, which is EmDashImage", () => {
 		const source = readFileSync(EVENT_COVER, "utf8");
-		expect(source, "the card must import Image from emdash/ui").toMatch(/import\s*\{\s*Image\s*\}\s*from\s*"emdash\/ui"/);
+		expect(source, "the card must import Image from emdash/ui").toMatch(
+			/import\s*\{\s*Image\s*\}\s*from\s*"emdash\/ui"/,
+		);
 		expect(source, "and draw it").toMatch(/<Image\b/);
 	});
 

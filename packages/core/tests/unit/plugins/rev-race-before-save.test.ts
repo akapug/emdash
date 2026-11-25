@@ -20,18 +20,27 @@ import { definePlugin } from "../../../src/plugins/define-plugin.js";
 import { createHookPipeline } from "../../../src/plugins/hooks.js";
 import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../../utils/test-db.js";
 
-const { deferredTasks } = vi.hoisted(() => ({ deferredTasks: [] as Array<() => void | Promise<void>> }));
+const { deferredTasks } = vi.hoisted(() => ({
+	deferredTasks: [] as Array<() => void | Promise<void>>,
+}));
 vi.mock("../../../src/after.js", () => ({
-	after: vi.fn((fn: () => void | Promise<void>) => { deferredTasks.push(fn); }),
+	after: vi.fn((fn: () => void | Promise<void>) => {
+		deferredTasks.push(fn);
+	}),
 }));
 
-function buildRuntime(db: Kysely<Database>, onBeforeSave: () => void | Promise<void>): EmDashRuntime {
+function buildRuntime(
+	db: Kysely<Database>,
+	onBeforeSave: () => void | Promise<void>,
+): EmDashRuntime {
 	const plugin = definePlugin({
 		id: "rev-race-test",
 		version: "1.0.0",
 		capabilities: ["content:read", "content:write"],
 		hooks: {
-			"content:beforeSave": async () => { await onBeforeSave(); },
+			"content:beforeSave": async () => {
+				await onBeforeSave();
+			},
 		},
 	});
 	const config: EmDashConfig = {};
@@ -41,17 +50,32 @@ function buildRuntime(db: Kysely<Database>, onBeforeSave: () => void | Promise<v
 		config,
 		plugins: [plugin],
 		// eslint-disable-next-line typescript/no-explicit-any -- match RuntimeDependencies signature
-		createDialect: (() => { throw new Error("createDialect not used in this test"); }) as any,
+		createDialect: (() => {
+			throw new Error("createDialect not used in this test");
+		}) as any,
 		createStorage: null,
 		sandboxEnabled: false,
 		sandboxedPluginEntries: [],
 		createSandboxRunner: null,
 	};
 	return new EmDashRuntime({
-		db, storage: null, config: {}, configuredPlugins: [], sandboxedPlugins: new Map(),
-		sandboxedPluginEntries: [], hooks, enabledPlugins: new Set(), pluginStates: new Map(),
-		mediaProviders: new Map(), mediaProviderEntries: [], cronExecutor: null, cronScheduler: null,
-		emailPipeline: null, allPipelinePlugins: [plugin], pipelineFactoryOptions, runtimeDeps,
+		db,
+		storage: null,
+		config: {},
+		configuredPlugins: [],
+		sandboxedPlugins: new Map(),
+		sandboxedPluginEntries: [],
+		hooks,
+		enabledPlugins: new Set(),
+		pluginStates: new Map(),
+		mediaProviders: new Map(),
+		mediaProviderEntries: [],
+		cronExecutor: null,
+		cronScheduler: null,
+		emailPipeline: null,
+		allPipelinePlugins: [plugin],
+		pipelineFactoryOptions,
+		runtimeDeps,
 		pipelineRef: { current: hooks },
 	});
 }
@@ -64,11 +88,16 @@ describe("emb/81: a write in the beforeSave window", () => {
 		db = await setupTestDatabaseWithCollections();
 		repo = new ContentRepository(db);
 	});
-	afterEach(async () => { await teardownTestDatabase(db); });
+	afterEach(async () => {
+		await teardownTestDatabase(db);
+	});
 
 	it("THE WINDOW: a hook that writes between the check and the stage makes the update refuse", async () => {
 		const runtime0 = buildRuntime(db, () => {});
-		const created = await runtime0.handleContentCreate("post", { data: { title: "Original" }, status: "draft" });
+		const created = await runtime0.handleContentCreate("post", {
+			data: { title: "Original" },
+			status: "draft",
+		});
 		expect(created.success).toBe(true);
 		const id = created.data!.item.id;
 		const rev = created.data!._rev;
@@ -103,11 +132,17 @@ describe("emb/81: a write in the beforeSave window", () => {
 
 	it("CONTROL: with no interleave the update saves", async () => {
 		const runtime = buildRuntime(db, () => {});
-		const created = await runtime.handleContentCreate("post", { data: { title: "Original" }, status: "draft" });
+		const created = await runtime.handleContentCreate("post", {
+			data: { title: "Original" },
+			status: "draft",
+		});
 		expect(created.success).toBe(true);
 		const id = created.data!.item.id;
 		const rev = created.data!._rev;
-		const updated = await runtime.handleContentUpdate("post", id, { data: { title: "Mine" }, _rev: rev });
+		const updated = await runtime.handleContentUpdate("post", id, {
+			data: { title: "Mine" },
+			_rev: rev,
+		});
 		expect(updated.success, "no interleave, no refusal").toBe(true);
 	});
 });

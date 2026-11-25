@@ -21,14 +21,22 @@ beforeEach(async () => {
 	db = createDatabase({ url: ":memory:" });
 	await runMigrations(db);
 	await sql`INSERT INTO media (id, filename, mime_type, size, width, height, storage_key, status)
-		VALUES ('m1', 'portrait.jpg', 'image/jpeg', 9555168, 4414, 6122, '01PARENT.jpg', 'ready')`.execute(db);
+		VALUES ('m1', 'portrait.jpg', 'image/jpeg', 9555168, 4414, 6122, '01PARENT.jpg', 'ready')`.execute(
+		db,
+	);
 });
 
 afterEach(async () => {
 	await db.destroy();
 });
 
-const PARENT: VariantParent = { id: "m1", width: 4414, height: 6122, contentHash: "sha1:original", status: "ready" };
+const PARENT: VariantParent = {
+	id: "m1",
+	width: 4414,
+	height: 6122,
+	contentHash: "sha1:original",
+	status: "ready",
+};
 
 async function storeRow(over: Partial<StoredVariant> & { mediaId: string }) {
 	const row = {
@@ -48,7 +56,8 @@ async function storeRow(over: Partial<StoredVariant> & { mediaId: string }) {
 }
 
 async function storedOnDisk(): Promise<StoredVariant[]> {
-	const { rows } = await sql<StoredVariant>`SELECT media_id AS mediaId, size_name AS sizeName, width,
+	const { rows } =
+		await sql<StoredVariant>`SELECT media_id AS mediaId, size_name AS sizeName, width,
 		height, storage_key AS storageKey, bytes, content_hash AS contentHash,
 		parent_content_hash AS parentContentHash, created_at AS createdAt
 		FROM _emdash_media_variants`.execute(db);

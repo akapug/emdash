@@ -17,9 +17,10 @@ import WpShell from "../../../../templates/blog-cloudflare/src/layouts/WpShell.a
 import { wpShellProblem } from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
 
 const reads = vi.hoisted(() => ({
-	getWidgetAreaWithCacheHint: vi.fn(
-		async (_name: string): Promise<unknown> => ({ data: null, cacheHint: {} }),
-	),
+	getWidgetAreaWithCacheHint: vi.fn(async (_name: string): Promise<unknown> => ({
+		data: null,
+		cacheHint: {},
+	})),
 }));
 
 async function emdashReads() {

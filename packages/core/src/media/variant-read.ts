@@ -32,9 +32,9 @@
 import { sql, type Kysely } from "kysely";
 
 import type { Database } from "../database/types.js";
-import { requestCached } from "../request-cache.js";
-import { cachedQuery, invalidateObjectCache, CacheNamespace } from "../object-cache/index.js";
 import type { StoredVariant } from "../media/variants.js";
+import { cachedQuery, invalidateObjectCache, CacheNamespace } from "../object-cache/index.js";
+import { requestCached } from "../request-cache.js";
 
 /** The widths a renderer may offer, narrowest first. Must match the fork's ladder. */
 export const RENDERABLE_VARIANT_WIDTHS = [300, 480, 768, 1024] as const;
@@ -118,7 +118,10 @@ function storageKeyOf(url: string | null): string | null {
  * image renders. Empty is the contract that keeps the markup identical to a site
  * with no variants, so it is a correct answer rather than a failure.
  */
-export function srcsetWidthsFor(variants: readonly StoredVariant[], renderedWidth: number | undefined): number[] {
+export function srcsetWidthsFor(
+	variants: readonly StoredVariant[],
+	renderedWidth: number | undefined,
+): number[] {
 	if (!renderedWidth || renderedWidth <= 0) return [];
 	return variants
 		.map((v) => v.width)

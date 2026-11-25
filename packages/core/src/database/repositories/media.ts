@@ -836,7 +836,10 @@ export class MediaRepository {
 	 * keys are read and returned here, before the write, for the caller to delete.
 	 * An unchanged hash returns nothing, because those objects are still in use.
 	 */
-	async retireVariantsForNewHash(id: string, nextHash: string | null | undefined): Promise<string[]> {
+	async retireVariantsForNewHash(
+		id: string,
+		nextHash: string | null | undefined,
+	): Promise<string[]> {
 		if (!nextHash) return [];
 		const current = await this.db
 			.selectFrom("media")
@@ -852,5 +855,4 @@ export class MediaRepository {
 			.execute();
 		return rows.map((row) => row.storage_key);
 	}
-
 }

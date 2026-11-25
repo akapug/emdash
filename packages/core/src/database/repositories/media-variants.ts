@@ -129,12 +129,14 @@ export class MediaVariantRepository {
 			.selectFrom("_emdash_media_variants")
 			.select(["storage_key"])
 			.where("media_id", "=", mediaId);
-		if (parentContentHash !== undefined) query = query.where("parent_content_hash", "=", parentContentHash);
+		if (parentContentHash !== undefined)
+			query = query.where("parent_content_hash", "=", parentContentHash);
 		const doomed = (await query.execute()).map((row) => row.storage_key);
 		if (!doomed.length) return [];
 
 		let del = this.db.deleteFrom("_emdash_media_variants").where("media_id", "=", mediaId);
-		if (parentContentHash !== undefined) del = del.where("parent_content_hash", "=", parentContentHash);
+		if (parentContentHash !== undefined)
+			del = del.where("parent_content_hash", "=", parentContentHash);
 		await del.execute();
 		return doomed;
 	}
@@ -142,7 +144,9 @@ export class MediaVariantRepository {
 	/** How much the variant store holds for this tenant, for the import report's line. */
 	async totals(): Promise<{ rows: number; bytes: number }> {
 		const { rows } = await sql<{ n: number | null; b: number | null }>`
-			SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM _emdash_media_variants`.execute(this.db);
+			SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM _emdash_media_variants`.execute(
+			this.db,
+		);
 		return { rows: Number(rows[0]?.n ?? 0), bytes: Number(rows[0]?.b ?? 0) };
 	}
 }

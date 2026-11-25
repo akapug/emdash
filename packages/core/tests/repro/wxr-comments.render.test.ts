@@ -43,16 +43,14 @@ describe("a carried comment, drawn", () => {
 			id: 999,
 			content: "Try &lt;script&gt;alert(1)&lt;/script&gt; here",
 		});
-		items.list = approved.map(
-			(c): PublicComment => ({
-				id: String(c.id),
-				parentId: null,
-				authorName: c.author,
-				isRegisteredUser: false,
-				body: wxrCommentText(c.content),
-				createdAt: "2026-01-16T10:00:00.000Z",
-			}),
-		);
+		items.list = approved.map((c): PublicComment => ({
+			id: String(c.id),
+			parentId: null,
+			authorName: c.author,
+			isRegisteredUser: false,
+			body: wxrCommentText(c.content),
+			createdAt: "2026-01-16T10:00:00.000Z",
+		}));
 
 		const c = await AstroContainer.create();
 		const html = await c.renderToString(Comments, {

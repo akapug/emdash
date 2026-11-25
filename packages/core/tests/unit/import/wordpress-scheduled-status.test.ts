@@ -36,11 +36,19 @@ describe("WordPress's status, as EmDash's", () => {
 		expect(fromGmt.date?.toISOString()).toBe("2099-05-01T10:00:00.000Z");
 		expect(fromGmt.unzonedLocalOnly).toBe(false);
 
-		const fromPub = parseScheduledWxrDate("0000-00-00 00:00:00", "Fri, 01 May 2099 10:00:00 -0400", "2099-05-01 10:00:00");
+		const fromPub = parseScheduledWxrDate(
+			"0000-00-00 00:00:00",
+			"Fri, 01 May 2099 10:00:00 -0400",
+			"2099-05-01 10:00:00",
+		);
 		expect(fromPub.date?.toISOString()).toBe("2099-05-01T14:00:00.000Z");
 		expect(fromPub.unzonedLocalOnly).toBe(false);
 
-		const localOnly = parseScheduledWxrDate("0000-00-00 00:00:00", undefined, "2099-05-01 10:00:00");
+		const localOnly = parseScheduledWxrDate(
+			"0000-00-00 00:00:00",
+			undefined,
+			"2099-05-01 10:00:00",
+		);
 		expect(localOnly.date).toBeNull();
 		expect(localOnly.unzonedLocalOnly).toBe(true);
 

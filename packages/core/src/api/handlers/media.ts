@@ -4,8 +4,8 @@
 
 import type { Kysely } from "kysely";
 
-import { MediaRepository, type MediaItem } from "../../database/repositories/media.js";
 import { MediaVariantRepository } from "../../database/repositories/media-variants.js";
+import { MediaRepository, type MediaItem } from "../../database/repositories/media.js";
 import { InvalidCursorError } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
 import { isValidFocalPointUpdate, type FocalPointUpdate } from "../../media/focal-point.js";
@@ -392,7 +392,14 @@ export async function handleMediaVariantStore(
 		contentType: string;
 		contentHash: string;
 	},
-): Promise<ApiResult<{ outcome: "stored" | "replayed" | "conflict"; width: number; height: number; contentHash: string }>> {
+): Promise<
+	ApiResult<{
+		outcome: "stored" | "replayed" | "conflict";
+		width: number;
+		height: number;
+		contentHash: string;
+	}>
+> {
 	if (!storage) {
 		return { success: false, error: { code: "NO_STORAGE", message: "Storage not configured" } };
 	}
@@ -401,9 +408,16 @@ export async function handleMediaVariantStore(
 	// Re-read the parent: a Replace that landed between the route's check and here
 	// must not receive a size of the image it replaced.
 	const parent = await new MediaRepository(db).findById(input.mediaId);
-	if (!parent) return { success: false, error: { code: "NOT_FOUND", message: `Media item not found: ${input.mediaId}` } };
+	if (!parent)
+		return {
+			success: false,
+			error: { code: "NOT_FOUND", message: `Media item not found: ${input.mediaId}` },
+		};
 	if (parent.status !== "ready") {
-		return { success: false, error: { code: "INVALID_STATE", message: "Only a ready image can receive a variant" } };
+		return {
+			success: false,
+			error: { code: "INVALID_STATE", message: "Only a ready image can receive a variant" },
+		};
 	}
 	// `media` has no version column; `content_hash` is what a Replace rewrites, so it
 	// is the identity that actually moves when the image behind this changes.
@@ -411,7 +425,10 @@ export async function handleMediaVariantStore(
 	if (parentHash === null || parentHash !== input.parentContentHash) {
 		return {
 			success: false,
-			error: { code: "CONFLICT", message: "The parent changed while this variant was being stored" },
+			error: {
+				code: "CONFLICT",
+				message: "The parent changed while this variant was being stored",
+			},
 		};
 	}
 

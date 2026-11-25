@@ -64,20 +64,28 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	const fileEntry = form.get("file");
 	const file = fileEntry instanceof File ? fileEntry : null;
 
-	if (typeof mediaId !== "string" || !mediaId) return apiError("INVALID_REQUEST", "mediaId is required", 400);
-	if (typeof sizeName !== "string" || !sizeName) return apiError("INVALID_REQUEST", "sizeName is required", 400);
+	if (typeof mediaId !== "string" || !mediaId)
+		return apiError("INVALID_REQUEST", "mediaId is required", 400);
+	if (typeof sizeName !== "string" || !sizeName)
+		return apiError("INVALID_REQUEST", "sizeName is required", 400);
 	if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
 		return apiError("INVALID_REQUEST", "width and height must be positive integers", 400);
 	}
 	if (!file) return apiError("INVALID_REQUEST", "file is required", 400);
-	if (file.size > VARIANT_BYTE_CAP) return apiError("PAYLOAD_TOO_LARGE", "A variant is bounded in bytes", 413);
+	if (file.size > VARIANT_BYTE_CAP)
+		return apiError("PAYLOAD_TOO_LARGE", "A variant is bounded in bytes", 413);
 
 	const got = await emdash.handleMediaGet(mediaId);
 	if (!got.success) return apiError("NOT_FOUND", "No such media", 404);
 	const media = got.data.item;
 
 	// (2) the parent's own mutation authority — the same check replace makes.
-	const ownerDenied = requireOwnerPerm(user, media.authorId ?? "", "media:edit_own", "media:edit_any");
+	const ownerDenied = requireOwnerPerm(
+		user,
+		media.authorId ?? "",
+		"media:edit_own",
+		"media:edit_any",
+	);
 	if (ownerDenied) return ownerDenied;
 	if (media.status !== "ready") {
 		return apiError("INVALID_STATE", "Only a ready image can receive a variant", 400);
@@ -138,6 +146,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	}
 	return new Response(
 		JSON.stringify({ outcome: stored.data.outcome, width, height, contentHash }),
-		{ status: stored.data.outcome === "stored" ? 201 : 200, headers: { "content-type": "application/json" } },
+		{
+			status: stored.data.outcome === "stored" ? 201 : 200,
+			headers: { "content-type": "application/json" },
+		},
 	);
 };
