@@ -142,20 +142,25 @@ export function cardPicture(
 		const assetUrl = typeof viaAsset?.url === "string" ? viaAsset.url : undefined;
 		const url = own ?? assetUrl;
 		if (isUsableSource(url)) return { src: url };
+		// A STORED REFERENCE IS A PICTURE TOO. A `featured_image` row can hold the media reference and nothing else —
+		// measured on a real post, where an image node's asset is `{ _ref: "/_emdash/api/media/file/<id>.<ext>" }` with
+		// no `url` beside it — and a card that ignored the ref would draw nothing for an image the site clearly has.
+		const viaRef = typeof viaAsset?._ref === "string" ? viaAsset._ref : undefined;
+		if (viaRef && isUsableSource(viaRef)) return { src: viaRef, assetRef: viaRef };
 	}
 
-	const pick = options.pick ?? pictureInNode;
-	const blocks: unknown[] = Array.isArray(post.content) ? post.content : [];
-	const queue: unknown[] = [...blocks];
-	while (queue.length > 0) {
-		const node = asRecord(queue.shift());
-		if (!node) continue;
-		const found = pick(node);
-		if (found) return found;
-		// DOCUMENT ORDER means a container's own children come before the next sibling block, so they go to the
-		// FRONT of the queue.
-		const children: unknown[] = Array.isArray(node.content) ? node.content : [];
-		queue.unshift(...children);
-	}
+	// NO CARD PICTURE WITHOUT A FEATURED IMAGE.
+	//
+	// The first version of this function walked the post's content and drew its first picture instead. That rule was
+	// measured on ONE theme, and most WordPress themes draw no card picture at all when a post has no featured image —
+	// so on those sites the walk ADDS pictures the source never showed. A rule that a site's own listing was never
+	// observed doing must not be applied to it: the same rule item 152 follows, where only a positive observation of
+	// the source opts a site in.
+	//
+	// The content-first fallback is therefore a SITE SETTING, off by default, to be switched on only where the
+	// source's own listing is seen drawing a content picture for a post with no featured image. `pick` stays in the
+	// signature so that setting can supply it.
+	void options.pick;
+	void post.content;
 	return null;
 }

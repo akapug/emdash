@@ -25,7 +25,11 @@ const REAL_URL = "/_emdash/api/media/file/2024/05/real.jpg";
 /** The three posts, in the order the page lists them (published_at desc). */
 const imageNodePost = {
 	slug: "has-image-node",
-	title: "Post with an image node",
+	title: "Post with a featured image",
+	// A FEATURED IMAGE IS THE ONE THING A CARD DRAWS BY DEFAULT. The first version of this fixture relied on the
+	// card walking the post's content for a picture; that rule was measured on one theme and most themes draw nothing
+	// without a featured image, so it is now a site setting (off) and the card's default path is this value.
+	featuredImage: { asset: { _type: "reference", _ref: "/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg" } },
 	content: [
 		{ _type: "block", _key: "b1", children: [{ _type: "span", _key: "s1", text: "Words." }] },
 		{
@@ -41,7 +45,10 @@ const imageNodePost = {
 };
 const htmlBlockPost = {
 	slug: "has-htmlblock-picture",
-	title: "Post with an htmlBlock picture",
+	title: "Post with no featured image",
+	// NO FEATURED IMAGE, and a picture in its content that a card must NOT draw: the content-first rule is off by
+	// default, because a site whose listing was never seen doing it should not gain pictures it never showed.
+	featuredImage: undefined,
 	content: [
 		{
 			_type: "htmlBlock",
@@ -135,6 +142,9 @@ beforeAll(async () => {
 		["title", "string"],
 		["content", "portableText"],
 		["excerpt", "text"],
+		// THE FIELD A CARD DRAWS BY DEFAULT. Without it the column does not exist and the insert fails, which is how
+		// this arm found out that a featured image must be DECLARED on the collection — not merely written to.
+		["featured_image", "json"],
 	] as const)
 		await registry.createField("posts", { slug, label: slug, type });
 
@@ -146,7 +156,7 @@ beforeAll(async () => {
 			slug: post.slug,
 			status: "published",
 			locale: "en",
-			data: { title: post.title, content: post.content },
+			data: { title: post.title, content: post.content, ...(post.featuredImage ? { featured_image: post.featuredImage } : {}) },
 			publishedAt: new Date(Date.UTC(2024, 0, day++)),
 		} as never);
 	}
@@ -169,6 +179,8 @@ async function renderIndex(only?: string): Promise<string> {
 			slug: post.slug,
 			title: post.title,
 			content: post.content,
+			// THE ENTRY THE PAGE READS, so the mock's data matches what the row holds.
+			...(post.featuredImage ? { featured_image: post.featuredImage } : {}),
 			publishedAt: new Date("2024-01-03T00:00:00Z"),
 			bylines: [],
 		},
@@ -207,7 +219,7 @@ function articleFor(html: string, slug: string): string {
 }
 
 describe("the post card a visitor gets", () => {
-	it("draws an IMAGE NODE's picture inside the post link, with its alt", async () => {
+	it("draws the FEATURED image inside the post link", async () => {
 		const card = articleFor(await renderIndex(), imageNodePost.slug);
 		// THE PICTURE ELEMENT, not merely the first <img> in the card: a byline avatar is also an <img>, and taking
 		// the first match would let this arm pass or fail on chrome the change never touches.
@@ -227,19 +239,22 @@ describe("the post card a visitor gets", () => {
 			'src="/_emdash/api/media/file/01M883SDWF1PY8YZBGF4YDDP71.jpeg"',
 		);
 		expect(picture, `the route must not be prefixed twice; got: ${picture}`).not.toContain("file//_emdash");
-		expect(picture, "with the alt the image node carries").toContain('alt="An image node picture"');
+		// THE ALT COMES FROM THE FEATURED VALUE; with the content-first rule off there is no node to read one from.
+		expect(picture, "the picture must carry an alt").toMatch(/alt="[^"]*"/);
 		// Inside the link to the post, so the picture is clickable like the title.
 		const linkOpen = card.indexOf('<a href="/posts/has-image-node"');
 		expect(linkOpen).toBeGreaterThan(-1);
 		expect(card.indexOf(picture)).toBeGreaterThan(linkOpen);
 	});
 
-	it("takes the REAL picture from an htmlBlock, skipping the 1x1", async () => {
+	it("draws NO picture for a post whose only picture is in its content", async () => {
+		// A POST WITH NO FEATURED IMAGE DRAWS NO CARD PICTURE, even though its content holds one. The content-first
+		// rule was measured on ONE theme; most themes draw nothing here, so applying it everywhere would add pictures
+		// the source never showed. It is a site setting, off by default, and this arm pins the default.
 		const card = articleFor(await renderIndex(), htmlBlockPost.slug);
-		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
-		expect(picture, `the real picture must be drawn; got: ${card}`).toContain(REAL_URL);
-		expect(picture).toContain('alt="The real picture"');
-		expect(card, "the 1x1 is never the picture").not.toContain("tracker.gif");
+		expect(card, `no picture wrapper without a featured image; got: ${card}`).not.toContain("post-picture");
+		expect(card, "and nothing is drawn from the content").not.toContain(REAL_URL);
+		expect(card, "the card still renders its title").toContain(htmlBlockPost.title);
 	});
 
 	it("a post with NO picture renders the same article as before this change", async () => {
