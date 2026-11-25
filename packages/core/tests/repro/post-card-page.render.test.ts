@@ -169,7 +169,13 @@ describe("the post card a visitor gets", () => {
 		// THE PICTURE ELEMENT, not merely the first <img> in the card: a byline avatar is also an <img>, and taking
 		// the first match would let this arm pass or fail on chrome the change never touches.
 		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
-		expect(picture, `the card must hold the picture wrapper; got: ${card}`).toContain(IMAGE_URL);
+		// A STORED ASSET IS DRAWN BY ITS REF, not by its url — that is what the template does and what the image
+		// component needs. So the card carries the media-file route for the ref, and the arm reads that.
+		// A STORED ASSET IS DRAWN BY ITS REF through the media-file route — that is what the template does, and
+		// this post's node carries `_ref: "ref-1"`. Asserting the raw url here would fail on correct output.
+		expect(picture, `the card must hold the picture wrapper; got: ${card}`).toContain(
+			"/_emdash/api/media/file/ref-1",
+		);
 		expect(picture, "with the alt the image node carries").toContain('alt="An image node picture"');
 		// Inside the link to the post, so the picture is clickable like the title.
 		const linkOpen = card.indexOf('<a href="/posts/has-image-node"');
