@@ -26,6 +26,7 @@
  */
 
 import type { Kysely } from "kysely";
+import { ulid } from "ulidx";
 
 import type { WxrCategory, WxrPost, WxrTag, WxrTerm } from "../cli/wxr/parser.js";
 import {
@@ -33,6 +34,10 @@ import {
 	selectTaxonomyDefs,
 } from "../database/repositories/taxonomy-def.js";
 import { TaxonomyRepository } from "../database/repositories/taxonomy.js";
+import type {
+	ExpectedAtomicTerm,
+	PendingAtomicTerm,
+} from "../database/repositories/wxr-atomic-import.js";
 import type { Database } from "../database/types.js";
 import { invalidateTermCache } from "../taxonomies/index.js";
 
@@ -539,6 +544,306 @@ export async function setPostTermAssignmentsReplacing(
 		attached += termIds.length;
 	}
 	return attached;
+}
+
+/**
+ * Resolve all permitted taxonomy pivots for a WXR post up front so atomic
+ * per-post D1 batches can attach/replace them in the same batch as the
+ * content row.
+ */
+export async function resolvePostTaxonomyPivots(
+	db: Kysely<Database>,
+	collection: string,
+	post: WxrPost,
+	plan: TaxonomyImportPlan,
+): Promise<{
+	pivots: Array<{ taxonomy: string; termGroup: string }>;
+	carriedTaxonomies: string[];
+}> {
+	const repo = new TaxonomyRepository(db);
+	const resolved = resolvePostTermAssignments(collection, post, plan);
+	const pivots: Array<{ taxonomy: string; termGroup: string }> = [];
+	const carriedTaxonomies: string[] = [];
+	for (const [taxonomyName, termIds] of resolved) {
+		carriedTaxonomies.push(taxonomyName);
+		for (const termId of termIds) {
+			const group = await termTranslationGroup(repo, plan, termId);
+			if (group) {
+				pivots.push({ taxonomy: taxonomyName, termGroup: group });
+			}
+		}
+	}
+	return { pivots, carriedTaxonomies };
+}
+
+type WxrTermMetadata = Readonly<{ label: string; description?: string }>;
+type WxrSourceTermIdentity = WxrTermMetadata & { taxonomy: string; slug: string };
+
+function carriedTaxonomyName(name: string): string | undefined {
+	if (!name || name === "language" || name === "nav_menu" || name === "wp_theme") return;
+	return name === "post_tag" ? "tag" : name;
+}
+
+/** Deterministic term inputs from the WXR item and headers, independent of destination rows. */
+export function canonicalSourceTermIdentities(
+	post: WxrPost,
+	headerMetadata: ReadonlyMap<string, WxrTermMetadata>,
+): WxrSourceTermIdentity[] {
+	const seen = new Map<string, WxrSourceTermIdentity>();
+	const add = (taxonomy: string, slug: string) => {
+		if (!slug) return;
+		const key = `${taxonomy}\u0000${slug}`;
+		if (!seen.has(key)) {
+			const metadata = headerMetadata.get(key) ?? { label: labelFor(post, taxonomy, slug) };
+			seen.set(key, { taxonomy, slug, ...metadata });
+		}
+	};
+	for (const slug of post.categories) add("category", slug);
+	for (const slug of post.tags) add("tag", slug);
+	if (post.customTaxonomies) {
+		for (const [name, slugs] of post.customTaxonomies) {
+			const taxonomy = carriedTaxonomyName(name);
+			if (taxonomy) for (const slug of slugs) add(taxonomy, slug);
+		}
+	}
+	return [...seen.values()].toSorted(
+		(a, b) => a.taxonomy.localeCompare(b.taxonomy) || a.slug.localeCompare(b.slug),
+	);
+}
+
+type PlannedAtomicTerm = PendingAtomicTerm & Pick<ExpectedAtomicTerm, "parentId" | "sortOrder">;
+
+/**
+ * Read-only in-memory snapshot of existing taxonomy defs and term rows used by
+ * atomic WXR import so zero taxonomy writes or conflict checks happen before
+ * per-post receipt/slug classification.
+ */
+export interface AtomicTaxonomyState {
+	/** Known taxonomy defs -> allowed collections (empty set = any collection). */
+	collectionsByTaxonomy: Map<string, Set<string>>;
+	/** Existing term rows keyed by `${name}\0${slug}\0${locale}`. */
+	byNameSlugLocale: Map<string, ExpectedAtomicTerm>;
+	/** First existing term row per `${name}\0${slug}` (ordered by locale ASC). */
+	anyLocaleByNameSlug: Map<string, ExpectedAtomicTerm>;
+	/** Highest saved root sibling position across all locales, per taxonomy. */
+	maxRootSortOrderByName: Map<string, number>;
+	/** Only parsed WXR header data, never populated from existing or committed terms. */
+	readonly wxrMetaByNameSlug: ReadonlyMap<string, WxrTermMetadata>;
+	/** Running tallies updated ONLY after a post batch commits. */
+	termsCreated: Record<string, number>;
+	termsReused: Record<string, number>;
+}
+
+/**
+ * Load existing taxonomy definitions and term rows read-only (ZERO writes, ZERO
+ * conflict throws). Used by atomic WXR import before item classification.
+ */
+export async function loadAtomicTaxonomyStateFromDb(
+	db: Kysely<Database>,
+	categories: readonly WxrCategory[],
+	tags: readonly WxrTag[],
+	terms: readonly WxrTerm[],
+): Promise<AtomicTaxonomyState> {
+	const wxrMetaByNameSlug = new Map<string, WxrTermMetadata>();
+	const state: AtomicTaxonomyState = {
+		collectionsByTaxonomy: new Map(),
+		byNameSlugLocale: new Map(),
+		anyLocaleByNameSlug: new Map(),
+		maxRootSortOrderByName: new Map(),
+		wxrMetaByNameSlug,
+		termsCreated: {},
+		termsReused: {},
+	};
+
+	const defs = await selectTaxonomyDefs(db).orderBy("d.locale", "asc").execute();
+	for (const def of defs) {
+		if (!state.collectionsByTaxonomy.has(def.name)) {
+			state.collectionsByTaxonomy.set(def.name, new Set(parseDefCollections(def.collections)));
+		}
+	}
+
+	const rows = await db
+		.selectFrom("taxonomies")
+		.select([
+			"id",
+			"name",
+			"slug",
+			"locale",
+			"translation_group as translationGroup",
+			"parent_id as parentId",
+			"sort_order as sortOrder",
+		])
+		.orderBy("locale", "asc")
+		.execute();
+	for (const row of rows) rememberAtomicTerm(state, row);
+
+	const rememberMetadata = (
+		name: string,
+		slug: string | undefined,
+		label: string | undefined,
+		description: string | undefined,
+	): void => {
+		if (!slug) return;
+		wxrMetaByNameSlug.set(`${name}\u0000${slug}`, {
+			label: label || slug,
+			...(description !== undefined ? { description } : {}),
+		});
+	};
+	for (const cat of categories)
+		rememberMetadata("category", cat.nicename, cat.name, cat.description);
+	for (const tag of tags) rememberMetadata("tag", tag.slug, tag.name, tag.description);
+	for (const term of terms) {
+		const name = carriedTaxonomyName(term.taxonomy);
+		if (name) rememberMetadata(name, term.slug, term.name, term.description);
+	}
+
+	return state;
+}
+
+function rememberAtomicTerm(state: AtomicTaxonomyState, row: ExpectedAtomicTerm): void {
+	const key = `${row.name}\u0000${row.slug}`;
+	state.byNameSlugLocale.set(`${key}\u0000${row.locale}`, row);
+	const first = state.anyLocaleByNameSlug.get(key);
+	if (!first || row.locale < first.locale) state.anyLocaleByNameSlug.set(key, row);
+	if (row.parentId === null) {
+		const max = state.maxRootSortOrderByName.get(row.name);
+		if (max === undefined || row.sortOrder > max) {
+			state.maxRootSortOrderByName.set(row.name, row.sortOrder);
+		}
+	}
+}
+
+/**
+ * Plan taxonomy pivots and any missing term/mirror rows for ONE new atomic WXR
+ * post (ZERO writes). Called ONLY after receipt + slug classification decides
+ * the post is new.
+ */
+export function planAtomicPostTaxonomies(
+	state: AtomicTaxonomyState,
+	collection: string,
+	post: WxrPost,
+	postLocale: string,
+	canonicalLocale: string,
+	extraLocales: Iterable<string> = [],
+): {
+	pivots: Array<{ taxonomy: string; termGroup: string }>;
+	pendingTerms: PlannedAtomicTerm[];
+	carriedTaxonomies: string[];
+	expectedTerms: ExpectedAtomicTerm[];
+} {
+	const pivots: Array<{ taxonomy: string; termGroup: string }> = [];
+	const pendingTerms: PlannedAtomicTerm[] = [];
+	const carriedTaxonomies: string[] = [];
+	const expectedTerms = new Map<string, ExpectedAtomicTerm>();
+	const seenSlugs = new Set<string>();
+	const seenGroupByTax = new Map<string, Set<string>>();
+	const nextRootSortOrder = new Map<string, number>();
+	const mirrorLocales = new Set<string>();
+	if (postLocale !== canonicalLocale) mirrorLocales.add(postLocale);
+	for (const loc of extraLocales) {
+		if (loc && loc !== canonicalLocale) mirrorLocales.add(loc);
+	}
+
+	const processList = (taxonomyName: string, slugs: readonly string[]) => {
+		if (slugs.length === 0) return;
+		const allowed = state.collectionsByTaxonomy.get(taxonomyName);
+		if (!allowed) return;
+		if (allowed.size > 0 && !allowed.has(collection)) return;
+
+		let taxGroups = seenGroupByTax.get(taxonomyName);
+		if (!taxGroups) {
+			taxGroups = new Set();
+			seenGroupByTax.set(taxonomyName, taxGroups);
+			carriedTaxonomies.push(taxonomyName);
+		}
+
+		for (const slug of slugs) {
+			if (!slug) continue;
+			const anyKey = `${taxonomyName}\u0000${slug}`;
+			if (seenSlugs.has(anyKey)) continue;
+			seenSlugs.add(anyKey);
+
+			const existingCanonical = state.byNameSlugLocale.get(`${anyKey}\u0000${canonicalLocale}`);
+			const source = existingCanonical ?? state.anyLocaleByNameSlug.get(anyKey);
+			const canonicalGroup = source ? (source.translationGroup ?? source.id) : ulid();
+			const parentId = source?.parentId ?? null;
+			let sortOrder: number;
+			if (source) {
+				// Record the raw saved row, not the effective group or any planned mirror.
+				expectedTerms.set(source.id, source);
+				sortOrder = source.sortOrder;
+			} else {
+				const savedMax = state.maxRootSortOrderByName.get(taxonomyName) ?? -1;
+				sortOrder = nextRootSortOrder.get(taxonomyName) ?? savedMax + 1;
+				nextRootSortOrder.set(taxonomyName, sortOrder + 1);
+			}
+
+			if (!existingCanonical) {
+				const meta = state.wxrMetaByNameSlug.get(anyKey);
+				pendingTerms.push({
+					id: source ? ulid() : canonicalGroup,
+					name: taxonomyName,
+					slug,
+					label: meta?.label ?? labelFor(post, taxonomyName, slug),
+					description: meta?.description,
+					locale: canonicalLocale,
+					translationGroup: canonicalGroup,
+					parentId,
+					sortOrder,
+				});
+			}
+
+			for (const mirrorLocale of mirrorLocales) {
+				const existingLocale = state.byNameSlugLocale.get(`${anyKey}\u0000${mirrorLocale}`);
+				if (existingLocale) {
+					if ((existingLocale.translationGroup ?? existingLocale.id) !== canonicalGroup) {
+						throw new WxrTaxonomyConflictError(
+							`Cannot import: term "${taxonomyName}/${slug}" already exists at locale "${mirrorLocale}" in a different translation group than the canonical row at this import's locale. Reconcile the rows in the admin (re-link via translationOf, or delete one) and retry.`,
+						);
+					}
+					expectedTerms.set(existingLocale.id, existingLocale);
+				} else {
+					pendingTerms.push({
+						id: ulid(),
+						name: taxonomyName,
+						slug,
+						label: slug,
+						locale: mirrorLocale,
+						translationGroup: canonicalGroup,
+						parentId,
+						sortOrder,
+					});
+				}
+			}
+
+			if (!taxGroups.has(canonicalGroup)) {
+				taxGroups.add(canonicalGroup);
+				pivots.push({ taxonomy: taxonomyName, termGroup: canonicalGroup });
+			}
+		}
+	};
+
+	processList("category", post.categories);
+	processList("tag", post.tags);
+	if (post.customTaxonomies) {
+		for (const [name, slugs] of post.customTaxonomies) {
+			const taxonomyName = carriedTaxonomyName(name);
+			if (taxonomyName) processList(taxonomyName, slugs);
+		}
+	}
+
+	return { pivots, pendingTerms, carriedTaxonomies, expectedTerms: [...expectedTerms.values()] };
+}
+
+/** Update in-memory atomic taxonomy state ONLY after a post batch commits. */
+export function recordCommittedAtomicTerms(
+	state: AtomicTaxonomyState,
+	pendingTerms: readonly PlannedAtomicTerm[],
+): void {
+	for (const { id, name, slug, locale, translationGroup, parentId, sortOrder } of pendingTerms) {
+		rememberAtomicTerm(state, { id, name, slug, locale, translationGroup, parentId, sortOrder });
+		bump(state.termsCreated, name);
+	}
 }
 
 /**

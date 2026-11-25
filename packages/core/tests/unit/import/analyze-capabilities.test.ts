@@ -9,6 +9,7 @@ import {
 	importCapabilities,
 	MEDIA_VARIANTS_CAPABILITY,
 	POST,
+	WXR_ATOMIC_IMPORT_CAPABILITY,
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
 import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../src/content/protection.js";
@@ -45,9 +46,12 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		};
 		expect(body.success).toBe(true);
 		expect(body.data.protectedContentCapability).toBe(PROTECTED_CONTENT_CAPABILITY);
-		expect(body.data.capabilities).toEqual([...IMPORT_CAPABILITIES]);
+		expect(body.data.capabilities).toEqual([
+			...importCapabilities(mappedEmbedsSchema, { atomicSupported: false }),
+		]);
 		expect(body.data.capabilities).toContain(PROTECTED_CONTENT_CAPABILITY);
 		expect(body.data.capabilities).toContain(MEDIA_VARIANTS_CAPABILITY);
+		expect(body.data.capabilities).not.toContain(WXR_ATOMIC_IMPORT_CAPABILITY);
 		expect(body.data.mediaVariantWidths).toEqual([300, 480, 768, 1024, 1536, 2048]);
 		expect(body.data.mediaVariantWidths).toEqual(VARIANT_LADDER);
 		expect(body.data.capabilities.includes(EVENT_SEARCH_BAR_CAPABILITY)).toBe(acceptsSearchBar);
@@ -60,6 +64,12 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			PROTECTED_CONTENT_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
+			WXR_ATOMIC_IMPORT_CAPABILITY,
+		]);
+		expect(importCapabilities(rejecting, { atomicSupported: false })).toEqual([
+			PROTECTED_CONTENT_CAPABILITY,
+			BATCH_REDIRECTS_CAPABILITY,
+			MEDIA_VARIANTS_CAPABILITY,
 		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
@@ -67,6 +77,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			EVENT_DETAIL_FIELDS_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
+			WXR_ATOMIC_IMPORT_CAPABILITY,
 		]);
 	});
 

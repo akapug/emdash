@@ -72,6 +72,7 @@ describe("fork migrations", () => {
 			"embark_002_import_sync_grants",
 			"embark_003_protected_content",
 			"embark_004_media_variants",
+			"embark_005_wxr_import_receipts",
 		]);
 		const sorted = [...MIGRATION_NAMES].toSorted((a, b) => a.localeCompare(b));
 		expect(sorted.slice(-fork.length)).toEqual(fork);
@@ -182,5 +183,42 @@ describe("fork migrations", () => {
 			migrationManifestV1Schema.shape.migrationSet.shape.names.safeParse(["embark_1_short"])
 				.success,
 		).toBe(false);
+	});
+
+	it("applies embark_005 cleanly after embark_004, and applies 004 then 005 in order from embark_003", async () => {
+		const all = await createMigrator(db).getMigrations();
+		const through = (last: string) => {
+			const idx = all.findIndex((m) => m.name === last);
+			expect(idx).toBeGreaterThanOrEqual(0);
+			return Object.fromEntries(all.slice(0, idx + 1).map((m) => [m.name, m.migration]));
+		};
+
+		// 1) Database already at embark_004_media_variants takes embark_005 cleanly.
+		const at004 = await createMigrator(db, {
+			migrations: through("embark_004_media_variants"),
+		}).migrateToLatest();
+		if (at004.error) throw at004.error;
+		const to005 = await createMigrator(db).migrateToLatest();
+		if (to005.error) throw to005.error;
+		expect(to005.results?.map((r) => [r.migrationName, r.status])).toEqual([
+			["embark_005_wxr_import_receipts", "Success"],
+		]);
+
+		// 2) Database at embark_003_protected_content takes embark_004 then embark_005 in order.
+		const db003 = createDatabase({ url: ":memory:" });
+		try {
+			const at003 = await createMigrator(db003, {
+				migrations: through("embark_003_protected_content"),
+			}).migrateToLatest();
+			if (at003.error) throw at003.error;
+			const toLatest = await createMigrator(db003).migrateToLatest();
+			if (toLatest.error) throw toLatest.error;
+			expect(toLatest.results?.map((r) => [r.migrationName, r.status])).toEqual([
+				["embark_004_media_variants", "Success"],
+				["embark_005_wxr_import_receipts", "Success"],
+			]);
+		} finally {
+			await db003.destroy();
+		}
 	});
 });

@@ -22,3 +22,7 @@ packages/core/tests/unit/api/site-export-zip.test.ts fleet-bulk=quotes
 packages/core/tests/unit/import/analyze-capabilities.test.ts fleet-bulk=quotes
 # Synthetic example.org WXR input inline to test execute query budget and cache coalescing.
 packages/core/tests/integration/wordpress-import/wxr-execute-query-budget.test.ts fleet-bulk=quotes
+# Synthetic example.org WXR input inline to test atomic per-post WXR execute and replay.
+packages/core/tests/integration/wordpress-import/wxr-atomic-execute.test.ts fleet-bulk=quotes
+# Synthetic example.org WXR input inline to prove legacy vs atomic import parity.
+packages/core/tests/integration/wordpress-import/wxr-atomic-parity.test.ts fleet-bulk=quotes

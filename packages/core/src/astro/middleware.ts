@@ -932,6 +932,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					handleContentGet: runtime.handleContentGet.bind(runtime),
 					handleContentAuthors: runtime.handleContentAuthors.bind(runtime),
 					handleContentCreate: runtime.handleContentCreate.bind(runtime),
+					...(runtime.handleContentCreateAtomicWxr
+						? {
+								handleContentCreateAtomicWxr: runtime.handleContentCreateAtomicWxr.bind(runtime),
+							}
+						: {}),
 					handleContentUpdate: runtime.handleContentUpdate.bind(runtime),
 					handleContentDelete: runtime.handleContentDelete.bind(runtime),
 

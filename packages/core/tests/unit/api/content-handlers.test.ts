@@ -38,6 +38,19 @@ describe("Content Handlers — auto-slug generation", () => {
 	});
 
 	describe("handleContentCreate", () => {
+		it("allocates concurrent generated slugs inside create transactions", async () => {
+			const results = await Promise.all([
+				handleContentCreate(db, "post", { data: { title: "Same Slug" } }),
+				handleContentCreate(db, "post", { data: { title: "Same Slug" } }),
+			]);
+
+			expect(
+				results
+					.map((result) => result.data?.item.slug ?? result.error?.code)
+					.toSorted((a, b) => String(a).localeCompare(String(b))),
+			).toEqual(["same-slug", "same-slug-1"]);
+		});
+
 		it("should auto-generate slug from title when slug is omitted", async () => {
 			const result = await handleContentCreate(db, "post", {
 				data: { title: "Hello World" },
@@ -1097,6 +1110,31 @@ describe("Content Handlers — slug-change auto-redirect on publish", () => {
 		expect(published.error.code).toBe("SLUG_CONFLICT");
 		expect(published.error.message).toContain("eleven");
 		expect(published.error.message).toContain(taken.data!.item.id);
+	});
+
+	it("generates a slug from title for ordinary published creates with explicit null, empty, or omitted slug", async () => {
+		const fromNull = await handleContentCreate(db, "post", {
+			data: { title: "Published Null Slug" },
+			slug: null,
+			status: "published",
+		});
+		expect(fromNull.success).toBe(true);
+		expect(fromNull.data?.item.slug).toBe("published-null-slug");
+
+		const fromEmpty = await handleContentCreate(db, "post", {
+			data: { title: "Published Empty Slug" },
+			slug: "",
+			status: "published",
+		});
+		expect(fromEmpty.success).toBe(true);
+		expect(fromEmpty.data?.item.slug).toBe("published-empty-slug");
+
+		const fromOmitted = await handleContentCreate(db, "post", {
+			data: { title: "Published Omitted Slug" },
+			status: "published",
+		});
+		expect(fromOmitted.success).toBe(true);
+		expect(fromOmitted.data?.item.slug).toBe("published-omitted-slug");
 	});
 });
 

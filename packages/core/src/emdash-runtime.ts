@@ -23,6 +23,10 @@ import virtualConfig from "virtual:emdash/config";
 import { z } from "zod";
 
 import { ErrorCode } from "./api/errors.js";
+import {
+	validateContentCreatePreconditions,
+	validatePublishedRoutableSlug,
+} from "./api/handlers/content.js";
 import { buildManifestCollections } from "./api/handlers/manifest.js";
 import {
 	handleMediaUpload as uploadMedia,
@@ -81,6 +85,13 @@ import type {
 	ContentItem as ContentItemInternal,
 	ContentDateField,
 } from "./database/repositories/types.js";
+import {
+	AtomicWxrImportRepository,
+	type AtomicWxrApplyResult,
+	type ExpectedAtomicTerm,
+	type WxrSourceAuthor,
+	type WxrTermPivot,
+} from "./database/repositories/wxr-atomic-import.js";
 import type { ImageValue } from "./fields/types.js";
 import { getI18nConfig, resolveContentCreateLocale } from "./i18n/config.js";
 import { repairLocaleCasing } from "./i18n/repair-locale-casing.js";
@@ -105,6 +116,7 @@ import {
 	refreshContentMediaUsageAfterWrite,
 } from "./media/usage/content-refresh.js";
 import { processMediaUsageWorkAfterWrite } from "./media/usage/work-processor.js";
+import { invalidateCollectionCache } from "./object-cache/index.js";
 import {
 	scheduledPolicyRejectionKey,
 	type ScheduledPolicyRejection,
@@ -3599,37 +3611,46 @@ export class EmDashRuntime {
 		return { success: true, data: result };
 	}
 
-	async handleContentCreate(
+	/**
+	 * Shared content creation preparation: locale resolution, translation source
+	 * check, beforeSave hooks, non-translatable field inheritance, block & field
+	 * normalization, and schema validation. Used by both `handleContentCreate`
+	 * and `handleContentCreateAtomicWxr` so validation/hooks never drift.
+	 */
+	private async prepareContentCreate(
 		collection: string,
 		body: {
 			data: Record<string, unknown>;
 			protection?: ContentProtection;
-			seo?: ContentWriteInput["seo"];
-			slug?: string | null;
-			status?: string;
-			authorId?: string;
-			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
 			locale?: string;
 			translationOf?: string;
-			taxonomies?: Record<string, string[]>;
-			references?: Record<string, string[]>;
 			actor?: ActorInfo;
 			migrateBlocks?: boolean;
 			replaceBlocks?: boolean;
 		},
 		options: {
 			skipSaveHooks?: boolean;
-			excludeAfterSavePluginId?: string;
-			skipMediaUsageRefresh?: boolean;
-		} = {},
-	) {
+		},
+	): Promise<
+		| {
+				ok: true;
+				actor: ActorInfo | undefined;
+				locale: string;
+				processedData: Record<string, unknown>;
+				sharedFieldSlugs: string[];
+		  }
+		| {
+				ok: false;
+				error: { code: string; message: string; details?: Record<string, unknown> };
+		  }
+	> {
 		const actor = body.actor ? { ...body.actor } : undefined;
 		let locale: string;
 		try {
 			locale = resolveContentCreateLocale(body.locale);
 		} catch (error) {
 			return {
-				success: false as const,
+				ok: false,
 				error: {
 					code: "VALIDATION_ERROR",
 					message: error instanceof Error ? error.message : "Invalid locale",
@@ -3644,7 +3665,7 @@ export class EmDashRuntime {
 			const source = await repo.findById(collection, body.translationOf);
 			if (!source) {
 				return {
-					success: false as const,
+					ok: false,
 					error: { code: "NOT_FOUND", message: "Translation source content not found" },
 				};
 			}
@@ -3658,11 +3679,6 @@ export class EmDashRuntime {
 					.where("field.translatable", "=", 0)
 					.execute()
 			)
-				// A storage-less field has nothing in `data` worth sharing: its
-				// selection is keyed by translation group, so every translation
-				// already reads the same edges. What the source row does carry under
-				// that slug is the frozen column a field bound after the fact left
-				// behind, and copying it would send a key `data` no longer accepts.
 				.filter((field) => !isStoragelessFieldRow(field))
 				.map((field) => field.slug);
 			const siblings = await repo.findTranslations(
@@ -3671,7 +3687,7 @@ export class EmDashRuntime {
 			);
 			if (siblings.some((sibling) => sibling.locale?.toLowerCase() === locale.toLowerCase())) {
 				return {
-					success: false as const,
+					ok: false,
 					error: {
 						code: "CONFLICT",
 						message: `Translation already exists in locale "${locale}" for this content item`,
@@ -3693,7 +3709,8 @@ export class EmDashRuntime {
 				);
 				processedData = hookResult.content;
 			} catch (error) {
-				return beforeSaveFailure(error);
+				const failure = beforeSaveFailure(error);
+				return { ok: false, error: failure.error };
 			}
 		}
 
@@ -3730,7 +3747,7 @@ export class EmDashRuntime {
 			} catch (error) {
 				if (error instanceof SchemaError) {
 					return {
-						success: false as const,
+						ok: false,
 						error: { code: error.code, message: error.message, details: error.details },
 					};
 				}
@@ -3745,19 +3762,51 @@ export class EmDashRuntime {
 			resolvedBlockTypes,
 		);
 
-		// Validate against the collection schema. Hook output is validated
-		// rather than `body.data` so plugins that mutate field values can't
-		// sneak invalid data past.
 		const { validateContentData } = await import("./api/handlers/validation.js");
 		const validation = await validateContentData(this.db, collection, processedData, {
 			partial: false,
 		});
 		if (!validation.ok) {
-			return {
-				success: false as const,
-				error: validation.error,
-			};
+			return { ok: false, error: validation.error };
 		}
+
+		return { ok: true, actor, locale, processedData, sharedFieldSlugs };
+	}
+
+	async handleContentCreate(
+		collection: string,
+		body: {
+			data: Record<string, unknown>;
+			protection?: ContentProtection;
+			seo?: ContentWriteInput["seo"];
+			slug?: string | null;
+			status?: string;
+			authorId?: string;
+			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
+			locale?: string;
+			translationOf?: string;
+			taxonomies?: Record<string, string[]>;
+			references?: Record<string, string[]>;
+			actor?: ActorInfo;
+			migrateBlocks?: boolean;
+			replaceBlocks?: boolean;
+		},
+		options: {
+			skipSaveHooks?: boolean;
+			excludeAfterSavePluginId?: string;
+			skipMediaUsageRefresh?: boolean;
+		} = {},
+	) {
+		const prepared = await this.prepareContentCreate(collection, body, options);
+		if (!prepared.ok) {
+			return { success: false as const, error: prepared.error };
+		}
+		const { actor, locale, processedData } = prepared;
 
 		// Create the content
 		const {
@@ -3789,6 +3838,240 @@ export class EmDashRuntime {
 		}
 
 		return result;
+	}
+
+	/**
+	 * Atomic per-post WXR create (Item 132). Reuses the exact shared preparation
+	 * pipeline as `handleContentCreate`, commits all per-post writes + producer
+	 * receipt + group baseline in ONE D1 `.batch()` (or real transaction), and
+	 * skips all writes and hooks on replay/skip/conflict.
+	 */
+	async handleContentCreateAtomicWxr(
+		collection: string,
+		body: {
+			sourceLineage: string;
+			sourcePostId: string;
+			sourceGroupId?: string;
+			inputFingerprint: string;
+			data: Record<string, unknown>;
+			protection?: ContentProtection;
+			slug?: string | null;
+			status: "draft" | "published" | "scheduled";
+			authorId?: string;
+			sourceAuthor?: WxrSourceAuthor;
+			bylines?: Array<{ bylineId: string; roleLabel?: string | null }>;
+			pendingGuestByline?: {
+				slug: string;
+				displayName: string;
+				userId?: string | null;
+			};
+			locale?: string;
+			seo?: ContentWriteInput["seo"];
+			translationOf?: string;
+			terms: readonly WxrTermPivot[];
+			pendingTerms?: readonly import("./database/repositories/wxr-atomic-import.js").PendingAtomicTerm[];
+			expectedTerms?: readonly ExpectedAtomicTerm[];
+			replaceTaxonomies?: readonly string[];
+			pendingComments?: readonly import("./import/comments.js").PreparedAtomicComment[];
+			createdAt?: string | null;
+			publishedAt?: string | null;
+			scheduledAt?: string | null;
+			migrateBlocks?: boolean;
+			replaceBlocks?: boolean;
+			actor?: ActorInfo;
+		},
+		options: {
+			skipSaveHooks?: boolean;
+			excludeAfterSavePluginId?: string;
+			skipMediaUsageRefresh?: boolean;
+		} = {},
+	): Promise<ApiResult<AtomicWxrApplyResult>> {
+		let resolvedLocale: string;
+		try {
+			resolvedLocale = resolveContentCreateLocale(body.locale);
+		} catch (error) {
+			return {
+				success: false,
+				error: {
+					code: "VALIDATION_ERROR",
+					message: error instanceof Error ? error.message : "Invalid locale",
+				},
+			};
+		}
+
+		// Fast-path replay/changed/conflict check BEFORE running hooks or normalization so
+		// replays perform ZERO source writes and fire ZERO hooks.
+		const atomicRepo = new AtomicWxrImportRepository(this.db);
+		const existingReceipt = await atomicRepo.findReceipt(
+			body.sourceLineage,
+			body.sourcePostId,
+			resolvedLocale,
+		);
+		if (existingReceipt) {
+			if (existingReceipt.collection !== collection) {
+				return {
+					success: true,
+					data: {
+						outcome: "conflict",
+						reason: `Source "${body.sourcePostId}" (${resolvedLocale}) was already imported into "${existingReceipt.collection}", not "${collection}"`,
+					},
+				};
+			}
+			if (existingReceipt.input_fingerprint !== body.inputFingerprint) {
+				return {
+					success: true,
+					data: {
+						outcome: "changed",
+						reason: `Source "${body.sourcePostId}" (${resolvedLocale}) changed since it was imported and was left as imported`,
+						receipt: {
+							collection: existingReceipt.collection,
+							id: existingReceipt.entry_id,
+							slug: existingReceipt.slug,
+							locale: existingReceipt.locale,
+							translationGroup: existingReceipt.translation_group,
+							status: existingReceipt.status,
+							operationId: existingReceipt.operation_id,
+							sourcePostId: existingReceipt.source_post_id,
+							storedDataHash: existingReceipt.stored_data_hash,
+							committedHash: existingReceipt.committed_hash,
+							outcome: "changed",
+						},
+					},
+				};
+			}
+			// When incremental media-usage capture is inactive, repair derived media usage
+			// if a prior process cut happened after the atomic batch committed but before
+			// immediate usage refresh ran — without touching source rows or firing hooks.
+			if (!options.skipMediaUsageRefresh) {
+				const existingSource = await this.db
+					.selectFrom("_emdash_media_usage_sources")
+					.select("source_key")
+					.where("collection_slug", "=", collection)
+					.where("content_id", "=", existingReceipt.entry_id)
+					.executeTakeFirst();
+				if (!existingSource) {
+					await this.refreshContentUsageAfterSuccessfulWrite(collection, [
+						existingReceipt.entry_id,
+					]);
+				}
+			}
+			// Cheap derived-cache recovery if a prior cut lost the post-commit cache flush (zero source writes/hooks).
+			invalidateCollectionCache(collection);
+			return {
+				success: true,
+				data: {
+					outcome: "replayed",
+					receipt: {
+						collection: existingReceipt.collection,
+						id: existingReceipt.entry_id,
+						slug: existingReceipt.slug,
+						locale: existingReceipt.locale,
+						translationGroup: existingReceipt.translation_group,
+						status: existingReceipt.status,
+						operationId: existingReceipt.operation_id,
+						sourcePostId: existingReceipt.source_post_id,
+						storedDataHash: existingReceipt.stored_data_hash,
+						committedHash: existingReceipt.committed_hash,
+						outcome: "replayed",
+					},
+				},
+			};
+		}
+
+		// Shared preparation (hooks, inheritance, block/field normalization, validation).
+		const prepared = await this.prepareContentCreate(collection, body, options);
+		if (!prepared.ok) {
+			return { success: false, error: prepared.error };
+		}
+		const { actor, locale, processedData, sharedFieldSlugs } = prepared;
+
+		// Shared content-handler preconditions (SEO enabled, storageless keys, media MIME, slug/routable).
+		const pre = await validateContentCreatePreconditions(this.db, collection, {
+			data: processedData,
+			slug: body.slug,
+			status: body.status,
+			locale,
+			translationOf: body.translationOf,
+			seo: body.seo,
+		});
+		if (!pre.ok) {
+			return { success: false, error: pre.error };
+		}
+
+		const finalSlug = body.slug?.trim();
+		if (!finalSlug) {
+			return {
+				success: false,
+				error: { code: "VALIDATION_ERROR", message: "Atomic WXR import requires a slug" },
+			};
+		}
+		if (body.status === "published") {
+			try {
+				await validatePublishedRoutableSlug(this.db, collection, finalSlug);
+			} catch (error) {
+				return {
+					success: false,
+					error: {
+						code: "VALIDATION_ERROR",
+						message: error instanceof Error ? error.message : "Invalid publish slug",
+					},
+				};
+			}
+		}
+
+		const applied = await atomicRepo.applyCreate({
+			sourceLineage: body.sourceLineage,
+			sourcePostId: body.sourcePostId,
+			sourceGroupId: body.sourceGroupId,
+			collection,
+			slug: finalSlug,
+			locale: pre.effectiveLocale ?? locale,
+			status: body.status,
+			data: processedData,
+			authorId: body.authorId,
+			sourceAuthor: body.sourceAuthor,
+			bylines: body.bylines,
+			pendingGuestByline: body.pendingGuestByline,
+			seo: body.seo,
+			hasSeo: pre.hasSeo,
+			protection: body.protection,
+			createdAt: body.createdAt ?? undefined,
+			publishedAt: body.publishedAt ?? undefined,
+			scheduledAt: body.scheduledAt ?? undefined,
+			translationOf: body.translationOf,
+			inheritFields: sharedFieldSlugs,
+			terms: body.terms,
+			pendingTerms: body.pendingTerms,
+			expectedTerms: body.expectedTerms,
+			replaceTaxonomies: body.replaceTaxonomies,
+			pendingComments: body.pendingComments,
+			inputFingerprint: body.inputFingerprint,
+		});
+
+		if (applied.outcome === "error") {
+			return {
+				success: false,
+				error: { code: applied.code, message: applied.message },
+			};
+		}
+
+		// Post-commit side effects run ONLY on actual newly-created rows, NEVER on replay/changed/skip/conflict.
+		if (applied.outcome === "created") {
+			if (!options.skipMediaUsageRefresh) {
+				await this.refreshContentUsageAfterSuccessfulWrite(collection, [applied.receipt.id]);
+			}
+			if (!options.skipSaveHooks) {
+				this.runAfterSaveHooks(
+					{ ...processedData, id: applied.receipt.id, _slug: applied.receipt.slug },
+					collection,
+					true,
+					actor,
+					options.excludeAfterSavePluginId,
+				);
+			}
+		}
+
+		return { success: true, data: applied };
 	}
 
 	async handleContentUpdate(

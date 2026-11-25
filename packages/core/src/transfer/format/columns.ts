@@ -541,6 +541,9 @@ export const NON_PORTABLE_TABLES: Readonly<Record<string, string>> = Object.free
 	_emdash_authorization_codes: "auth",
 	_emdash_device_codes: "auth",
 	_emdash_import_baselines: "target-local import custody",
+	_emdash_wxr_import_receipts: "target-local WXR import receipts",
+	_emdash_wxr_group_baselines: "target-local WXR import group baselines",
+	_emdash_wxr_author_bindings: "target-local WXR author bindings",
 	_emdash_import_operations: "target-local import custody",
 	_emdash_import_grants: "auth",
 	// A stored size of an image. DERIVED, never transferred: an export carries the

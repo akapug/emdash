@@ -66,6 +66,10 @@ export const wpExecuteConfig = z.object({
 	locale: z.string().optional(),
 	importSeo: z.boolean().optional(),
 	importComments: z.boolean().optional(),
+	/** Host installation lineage identifier for atomic producer receipts (falls back to WXR digest). */
+	sourceLineage: z.string().min(1).max(256).optional(),
+	/** Opt into atomic per-post D1 batch import with durable producer receipts. */
+	atomic: z.boolean().optional(),
 	mappedFields: mappedFieldsSchema,
 	embeds: mappedEmbedsSchema,
 });

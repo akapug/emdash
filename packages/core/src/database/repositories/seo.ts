@@ -118,6 +118,40 @@ export class SeoRepository {
 	}
 
 	/**
+	 * Build the atomic UPSERT statement for `_emdash_seo` so callers composing
+	 * multi-statement D1 batches share the exact same SQL as `upsert()`.
+	 * Returns `null` when `input` has no fields set (no-op).
+	 */
+	prepareUpsert(
+		collection: string,
+		contentId: string,
+		input: ContentSeoInput,
+		now: string = new Date().toISOString(),
+	): ReturnType<typeof sql> | null {
+		if (!hasAnyField(input)) return null;
+		return sql`
+			INSERT INTO _emdash_seo (
+				collection, content_id,
+				seo_title, seo_description, seo_image, seo_canonical, seo_no_index,
+				created_at, updated_at
+			) VALUES (
+				${collection}, ${contentId},
+				${input.title ?? null}, ${input.description ?? null},
+				${input.image ?? null}, ${input.canonical ?? null},
+				${input.noIndex ? 1 : 0},
+				${now}, ${now}
+			)
+			ON CONFLICT (collection, content_id) DO UPDATE SET
+				seo_title = ${input.title !== undefined ? sql`${input.title}` : sql`_emdash_seo.seo_title`},
+				seo_description = ${input.description !== undefined ? sql`${input.description}` : sql`_emdash_seo.seo_description`},
+				seo_image = ${input.image !== undefined ? sql`${input.image}` : sql`_emdash_seo.seo_image`},
+				seo_canonical = ${input.canonical !== undefined ? sql`${input.canonical}` : sql`_emdash_seo.seo_canonical`},
+				seo_no_index = ${input.noIndex !== undefined ? sql`${input.noIndex ? 1 : 0}` : sql`_emdash_seo.seo_no_index`},
+				updated_at = ${now}
+		`;
+	}
+
+	/**
 	 * Upsert SEO data for a content item using INSERT ON CONFLICT DO UPDATE
 	 * for atomicity. Skips no-op writes when input has no fields set.
 	 */
@@ -139,33 +173,8 @@ export class SeoRepository {
 		) {
 			return { ...SEO_DEFAULTS, noIndex: true };
 		}
-		const now = new Date().toISOString();
-
-		// Use INSERT ON CONFLICT for atomic upsert — avoids TOCTOU race
-		// where two concurrent requests both see "no row" and both try INSERT.
-		//
-		// On conflict, we use COALESCE(excluded.col, current.col) so that
-		// only explicitly-provided fields overwrite existing values.
-		await sql`
-			INSERT INTO _emdash_seo (
-				collection, content_id,
-				seo_title, seo_description, seo_image, seo_canonical, seo_no_index,
-				created_at, updated_at
-			) VALUES (
-				${collection}, ${contentId},
-				${input.title ?? null}, ${input.description ?? null},
-				${input.image ?? null}, ${input.canonical ?? null},
-				${input.noIndex ? 1 : 0},
-				${now}, ${now}
-			)
-			ON CONFLICT (collection, content_id) DO UPDATE SET
-				seo_title = ${input.title !== undefined ? sql`${input.title}` : sql`_emdash_seo.seo_title`},
-				seo_description = ${input.description !== undefined ? sql`${input.description}` : sql`_emdash_seo.seo_description`},
-				seo_image = ${input.image !== undefined ? sql`${input.image}` : sql`_emdash_seo.seo_image`},
-				seo_canonical = ${input.canonical !== undefined ? sql`${input.canonical}` : sql`_emdash_seo.seo_canonical`},
-				seo_no_index = ${input.noIndex !== undefined ? sql`${input.noIndex ? 1 : 0}` : sql`_emdash_seo.seo_no_index`},
-				updated_at = ${now}
-		`.execute(this.db);
+		const query = this.prepareUpsert(collection, contentId, input);
+		if (query) await query.execute(this.db);
 
 		invalidateCollectionCache(collection);
 		if (options?.isNewUnprotected) {
