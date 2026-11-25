@@ -13,12 +13,15 @@ export const prerender = false;
 
 const REPLACEABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
+const MULTIPART_FORM_DATA = /^multipart\/form-data\s*;/i;
+
+const tooLarge = () => apiError("PAYLOAD_TOO_LARGE", "Replacement request too large", 413);
+const invalidForm = () =>
+	apiError("INVALID_REQUEST", "A multipart replacement file is required", 400);
 
 async function readReplacementForm(request: Request, limit: number): Promise<FormData | Response> {
-	const tooLarge = () => apiError("PAYLOAD_TOO_LARGE", "Replacement request too large", 413);
-	const invalidForm = () => apiError("INVALID_REQUEST", "A multipart replacement file is required", 400);
 	const contentType = request.headers.get("Content-Type");
-	if (!request.body || !contentType || !/^multipart\/form-data\s*;/i.test(contentType)) {
+	if (!request.body || !contentType || !MULTIPART_FORM_DATA.test(contentType)) {
 		return invalidForm();
 	}
 	if (Number(request.headers.get("Content-Length")) > limit) return tooLarge();
@@ -56,10 +59,19 @@ async function readReplacementForm(request: Request, limit: number): Promise<For
 	}
 }
 
-function readReplacementImage(bytes: Uint8Array): { mime: string; width: number; height: number } | null {
+function readReplacementImage(
+	bytes: Uint8Array,
+): { mime: string; width: number; height: number } | null {
 	try {
 		const { type, width, height } = imageSize(bytes);
-		if (!width || !height || !Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 0 || height < 0) {
+		if (
+			!width ||
+			!height ||
+			!Number.isSafeInteger(width) ||
+			!Number.isSafeInteger(height) ||
+			width < 0 ||
+			height < 0
+		) {
 			return null;
 		}
 		switch (type) {
@@ -139,7 +151,11 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 		const bytes = new Uint8Array(await file.arrayBuffer());
 		const image = readReplacementImage(bytes);
 		if (!image) {
-			return apiError("INVALID_TYPE", "Replacement bytes are not a readable JPEG, PNG, or WebP image", 400);
+			return apiError(
+				"INVALID_TYPE",
+				"Replacement bytes are not a readable JPEG, PNG, or WebP image",
+				400,
+			);
 		}
 		if (image.mime !== sourceMime) {
 			return apiError("INVALID_TYPE", "Replacement image format must match the media item", 400);
