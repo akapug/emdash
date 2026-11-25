@@ -87,7 +87,6 @@ export function importCapabilities(
 	// registered and the handler exists, so the host can send variants.
 	caps.push(MEDIA_VARIANTS_CAPABILITY);
 	return caps;
-
 }
 
 export const IMPORT_CAPABILITIES: readonly string[] = importCapabilities();
