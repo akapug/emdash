@@ -46,6 +46,15 @@ export interface MediaImportResult {
 		originalUrl: string;
 		newUrl: string;
 		mediaId: string;
+		/**
+		 * `sha1:<hex>` of the bytes stored for this row.
+		 *
+		 * THE IMPORT WRITES A wpId -> mediaId MAP and records this beside each pair, so a later backfill can refuse a
+		 * map entry whose picture has since been REPLACED. Without it every entry is written with a null hash, the
+		 * backfill cannot tell a current row from a replaced one, and it rejects the whole map — measured on real
+		 * imports where all 529 of 529 entries were null and the backfill fixed nothing.
+		 */
+		contentHash: string;
 	}>;
 	/** Failed items */
 	failed: Array<{
@@ -240,6 +249,8 @@ export async function importMediaWithProgress(
 					originalUrl: attachment.url,
 					newUrl: existingUrl,
 					mediaId: existing.id,
+					// The SAME hash this lookup used, so a reused row reports the bytes it actually holds.
+					contentHash,
 				});
 				onProgress({
 					type: "progress",
@@ -298,6 +309,7 @@ export async function importMediaWithProgress(
 				originalUrl: attachment.url,
 				newUrl,
 				mediaId: mediaItem.id,
+				contentHash,
 			});
 
 			// Add to URL map
