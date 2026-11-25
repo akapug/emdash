@@ -274,7 +274,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		return apiError("CONFLICT", "A different variant already owns this slot", 409);
 	}
 	return new Response(
-		JSON.stringify({ outcome: stored.data.outcome, width, height, contentHash }),
+		JSON.stringify({
+			outcome: stored.data.outcome,
+			width,
+			height,
+			contentHash,
+			...(stored.data.outcome === "stored" && stored.data.publicationId
+				? { publicationId: stored.data.publicationId }
+				: {}),
+		}),
 		{
 			status: stored.data.outcome === "stored" ? 201 : 200,
 			headers: { "content-type": "application/json" },
@@ -302,6 +310,8 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
 
 	let mediaId: unknown;
 	let rawWidths: unknown;
+	let rawParentContentHash: unknown;
+	let rawExact: unknown;
 	const url = new URL(request.url);
 	const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
 
@@ -317,6 +327,8 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
 		}
 		mediaId = Reflect.get(parsed, "mediaId");
 		rawWidths = Reflect.get(parsed, "widths");
+		rawParentContentHash = Reflect.get(parsed, "parentContentHash");
+		rawExact = Reflect.get(parsed, "exact");
 	} else {
 		mediaId = url.searchParams.get("mediaId");
 		const wParam = url.searchParams.get("widths");
@@ -331,6 +343,15 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
 
 	if (typeof mediaId !== "string" || mediaId.trim().length === 0) {
 		return apiError("INVALID_REQUEST", "mediaId is required", 400);
+	}
+
+	const isExactForm = rawExact !== undefined || rawParentContentHash !== undefined;
+	if (isExactForm) {
+		return apiError(
+			"INVALID_REQUEST",
+			"Exact variant deletion must call DELETE /_emdash/api/import/wordpress/media-variant/exact",
+			400,
+		);
 	}
 
 	let widths: number[] | undefined;
@@ -373,7 +394,10 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
 	}
 
 	return new Response(
-		JSON.stringify({ deleted: deleted.data.deleted, removed: deleted.data.removed }),
+		JSON.stringify({
+			deleted: deleted.data.deleted,
+			removed: deleted.data.removed,
+		}),
 		{
 			status: 200,
 			headers: { "content-type": "application/json" },

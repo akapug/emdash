@@ -2,8 +2,29 @@ import { sql, type Kysely } from "kysely";
 
 import { invalidateVariants } from "../../media/variant-read.js";
 import type { StoredVariant } from "../../media/variants.js";
+import { sha256Hex } from "../../transfer/format/digest.js";
 import { isPostgres } from "../dialect-helpers.js";
 import type { Database } from "../types.js";
+
+const PUBLICATION_ID_PREFIX = "media-variant-publication:v1:";
+
+/**
+ * Derive an opaque SHA-256 publication token from a variant's private storage key.
+ * Each fresh POST allocates a new UUID-backed storage key, so identical bytes
+ * re-uploaded after removal produce a different publicationId — and the raw
+ * storage key is never exposed.
+ */
+export async function variantPublicationId(storageKey: string): Promise<string> {
+	return sha256Hex(`${PUBLICATION_ID_PREFIX}${storageKey}`);
+}
+
+export type ExactVariantSkipReason = "not-the-stored-bytes" | "not-this-parent" | "absent";
+
+export interface ExactVariantTarget {
+	width: number;
+	contentHash: string;
+	publicationId: string;
+}
 
 type VariantSlot = Pick<StoredVariant, "mediaId" | "parentContentHash" | "width">;
 type VariantCandidate = Omit<StoredVariant, "createdAt">;
@@ -147,5 +168,92 @@ export class MediaVariantRepository {
 		const rows = await query.returning(["width", "content_hash"]).execute();
 		if (rows.length > 0) invalidateVariants();
 		return rows.map((row) => ({ width: Number(row.width), contentHash: row.content_hash }));
+	}
+
+	/**
+	 * Exact-match deletion for receipt-based rollback (item 144b).
+	 * Deletes in ONE SQL statement only rows matching media_id, parent_content_hash,
+	 * width, content_hash, and the storage_key whose opaque publicationId matches.
+	 * Any concurrent replacement or identical-byte re-upload has a different
+	 * storage_key / parent_content_hash and is left untouched.
+	 */
+	async deleteExact(
+		mediaId: string,
+		parentContentHash: string,
+		currentParentContentHash: string,
+		exact: readonly ExactVariantTarget[],
+	): Promise<{
+		removed: Array<{ width: number; contentHash: string }>;
+		skipped: Array<{ width: number; why: ExactVariantSkipReason }>;
+	}> {
+		if (exact.length === 0) return { removed: [], skipped: [] };
+
+		const existing = await this.db
+			.selectFrom("_emdash_media_variants")
+			.select(["width", "content_hash", "parent_content_hash", "storage_key"])
+			.where("media_id", "=", mediaId)
+			.execute();
+
+		const existingWithPub = await Promise.all(
+			existing.map(async (row) => ({
+				width: Number(row.width),
+				contentHash: row.content_hash,
+				parentContentHash: row.parent_content_hash,
+				storageKey: row.storage_key,
+				publicationId: await variantPublicationId(row.storage_key),
+			})),
+		);
+
+		const matchedTuples: Array<{ width: number; contentHash: string; storageKey: string }> = [];
+		for (const target of exact) {
+			const hit = existingWithPub.find(
+				(row) =>
+					row.parentContentHash === parentContentHash &&
+					row.width === target.width &&
+					row.contentHash === target.contentHash &&
+					row.publicationId === target.publicationId,
+			);
+			if (hit) {
+				matchedTuples.push({
+					width: hit.width,
+					contentHash: hit.contentHash,
+					storageKey: hit.storageKey,
+				});
+			}
+		}
+
+		const removed: Array<{ width: number; contentHash: string }> = [];
+		if (matchedTuples.length > 0) {
+			const predicates = matchedTuples.map(
+				(t) =>
+					sql`(width = ${t.width} AND content_hash = ${t.contentHash} AND storage_key = ${t.storageKey})`,
+			);
+			const { rows } = await sql<{ width: number; content_hash: string }>`
+				DELETE FROM _emdash_media_variants
+				WHERE media_id = ${mediaId}
+					AND parent_content_hash = ${parentContentHash}
+					AND (${sql.join(predicates, sql` OR `)})
+				RETURNING width, content_hash
+			`.execute(this.db);
+			if (rows.length > 0) invalidateVariants();
+			for (const row of rows) {
+				removed.push({ width: Number(row.width), contentHash: row.content_hash });
+			}
+		}
+
+		const removedWidths = new Set(removed.map((r) => r.width));
+		const skipped: Array<{ width: number; why: ExactVariantSkipReason }> = [];
+		for (const target of exact) {
+			if (removedWidths.has(target.width)) continue;
+			const atWidth = existingWithPub.filter((row) => row.width === target.width);
+			if (atWidth.some((row) => row.parentContentHash === parentContentHash)) {
+				skipped.push({ width: target.width, why: "not-the-stored-bytes" });
+			} else if (atWidth.length > 0 || currentParentContentHash !== parentContentHash) {
+				skipped.push({ width: target.width, why: "not-this-parent" });
+			} else {
+				skipped.push({ width: target.width, why: "absent" });
+			}
+		}
+		return { removed, skipped };
 	}
 }

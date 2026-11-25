@@ -4,7 +4,12 @@
 
 import type { Kysely } from "kysely";
 
-import { MediaVariantRepository } from "../../database/repositories/media-variants.js";
+import {
+	MediaVariantRepository,
+	variantPublicationId,
+	type ExactVariantSkipReason,
+	type ExactVariantTarget,
+} from "../../database/repositories/media-variants.js";
 import { MediaRepository, type MediaItem } from "../../database/repositories/media.js";
 import { InvalidCursorError } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
@@ -383,15 +388,22 @@ export async function handleMediaVariantStore(
 		width: number;
 		height: number;
 		contentHash: string;
+		publicationId?: string;
 	}>
 > {
 	if (!storage) {
 		return { success: false, error: { code: "NO_STORAGE", message: "Storage not configured" } };
 	}
 
-	const success = (outcome: "stored" | "replayed") => ({
+	const success = (outcome: "stored" | "replayed", publicationId?: string) => ({
 		success: true as const,
-		data: { outcome, width: input.width, height: input.height, contentHash: input.contentHash },
+		data: {
+			outcome,
+			width: input.width,
+			height: input.height,
+			contentHash: input.contentHash,
+			...(publicationId ? { publicationId } : {}),
+		},
 	});
 	const slotConflict = "A different variant already owns this slot";
 	const changed = "The parent or variant slot changed while this variant was being stored";
@@ -435,7 +447,11 @@ export async function handleMediaVariantStore(
 			{ ...input, storageKey, bytes: input.bytes.byteLength },
 			slot?.storageKey,
 		);
-		if (result.outcome !== "conflict") return success(result.outcome);
+		if (result.outcome !== "conflict") {
+			const publicationId =
+				result.outcome === "stored" ? await variantPublicationId(result.storageKey) : undefined;
+			return success(result.outcome, publicationId);
+		}
 
 		// The write definitively lost. Requeue after the PUT, even if an earlier
 		// sweep already deleted the pending key and acknowledged its first marker.
@@ -468,18 +484,35 @@ export async function handleMediaVariantStore(
  */
 export async function handleMediaVariantDelete(
 	db: Kysely<Database>,
-	input: { mediaId: string; widths?: readonly number[] },
+	input: {
+		mediaId: string;
+		widths?: readonly number[];
+		parentContentHash?: string;
+		currentParentContentHash?: string;
+		exact?: readonly ExactVariantTarget[];
+	},
 ): Promise<
 	ApiResult<{
 		deleted: number;
 		removed: Array<{ width: number; contentHash: string }>;
+		skipped?: Array<{ width: number; why: ExactVariantSkipReason }>;
 	}>
 > {
 	try {
-		const removed = await new MediaVariantRepository(db).deleteForMedia(
-			input.mediaId,
-			input.widths,
-		);
+		const repo = new MediaVariantRepository(db);
+		if (input.exact !== undefined && input.parentContentHash !== undefined) {
+			const { removed, skipped } = await repo.deleteExact(
+				input.mediaId,
+				input.parentContentHash,
+				input.currentParentContentHash ?? "",
+				input.exact,
+			);
+			return {
+				success: true,
+				data: { deleted: removed.length, removed, skipped },
+			};
+		}
+		const removed = await repo.deleteForMedia(input.mediaId, input.widths);
 		return {
 			success: true,
 			data: { deleted: removed.length, removed },

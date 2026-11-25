@@ -413,6 +413,10 @@ export function injectCoreRoutes(
 		pattern: "/_emdash/api/import/wordpress/media-variant",
 		entrypoint: resolveRoute("api/import/wordpress/media-variant.ts"),
 	});
+	injectRoute({
+		pattern: "/_emdash/api/import/wordpress/media-variant/exact",
+		entrypoint: resolveRoute("api/import/wordpress/media-variant/exact.ts"),
+	});
 
 	injectRoute({
 		pattern: "/_emdash/api/import/wordpress/media",
