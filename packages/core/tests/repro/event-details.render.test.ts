@@ -139,6 +139,21 @@ describe("Item 134: event pages, venue address, website row, calendar exports, a
 		expect(html).toContain('href="/events/evening-workshop.ics"');
 	});
 
+	it("exports a floating wall-clock time, never UTC, when neither the event nor the site names a zone", () => {
+		const noZone = eventSummary(makeEvent("nozone-ev", "No\rZone"), now)!;
+		const ics = buildEventIcs(noZone, "https://example.org/events/nozone-ev/");
+		expect(ics).toContain("DTSTART:20261130T173000\r\n");
+		expect(ics).toContain("DTEND:20261130T184500\r\n");
+		expect(ics).not.toContain("TZID=");
+		expect(ics).not.toContain("T173000Z");
+		// A bare carriage return in the title cannot start a new line of the file.
+		expect(ics).toContain("SUMMARY:NoZone\r\n");
+		const gcal = googleCalendarUrl(noZone, "https://example.org/events/nozone-ev/");
+		expect(gcal).toContain("dates=20261130T173000%2F20261130T184500");
+		expect(gcal).not.toContain("ctz=");
+		expect(gcal).not.toContain("173000Z");
+	});
+
 	it("builds Google Calendar URLs and RFC 5545 .ics payloads for timed, all-day, overnight, and recurring events", async () => {
 		const timed = eventSummary(
 			makeEvent("timed-ev", "Timed Event", { timezone: "America/New_York" }),

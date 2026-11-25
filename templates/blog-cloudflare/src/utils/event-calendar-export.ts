@@ -129,11 +129,15 @@ export function googleCalendarUrl(
 ): string {
 	const title = eventString(event.entry.data.title) ?? event.entry.id;
 	const span = resolveCalendarSpan(event, siteTimezone);
+	// NO KNOWN ZONE MEANS A FLOATING TIME, NEVER UTC. MEASURED 2026-11-25 on a site imported
+	// before the site timezone was carried: a 19:00 event was exported as 19:00Z, which a
+	// calendar in New York shows at 2 pm. Without a zone the honest statement is "19:00 on
+	// the wall clock", which is what an undecorated time means to Google and to RFC 5545.
 	const dates = span.allDay
 		? `${compactDate(span.startDate)}/${compactDate(span.endDate)}`
 		: span.timezone
 			? `${compactDate(span.startDate)}T${span.startHms}/${compactDate(span.endDate)}T${span.endHms}`
-			: `${compactDate(span.startDate)}T${span.startHms}Z/${compactDate(span.endDate)}T${span.endHms}Z`;
+			: `${compactDate(span.startDate)}T${span.startHms}/${compactDate(span.endDate)}T${span.endHms}`;
 
 	const params = new URLSearchParams();
 	params.set("action", "TEMPLATE");
@@ -160,7 +164,9 @@ function escapeIcsText(value: string): string {
 		.replaceAll(";", "\\;")
 		.replaceAll(",", "\\,")
 		.replaceAll("\r\n", "\\n")
-		.replaceAll("\n", "\\n");
+		.replaceAll("\n", "\\n")
+		// A bare CR is not a line break in RFC 5545 but some readers treat it as one.
+		.replaceAll("\r", "");
 }
 
 function deterministicDtStamp(event: EventSummary): string {
@@ -211,8 +217,9 @@ export function buildEventIcs(
 		lines.push(`DTSTART;TZID=${span.timezone}:${compactDate(span.startDate)}T${span.startHms}`);
 		lines.push(`DTEND;TZID=${span.timezone}:${compactDate(span.endDate)}T${span.endHms}`);
 	} else {
-		lines.push(`DTSTART:${compactDate(span.startDate)}T${span.startHms}Z`);
-		lines.push(`DTEND:${compactDate(span.endDate)}T${span.endHms}Z`);
+		// Floating local time (RFC 5545 form 1): see googleCalendarUrl above for why not "Z".
+		lines.push(`DTSTART:${compactDate(span.startDate)}T${span.startHms}`);
+		lines.push(`DTEND:${compactDate(span.endDate)}T${span.endHms}`);
 	}
 
 	lines.push(`SUMMARY:${escapeIcsText(title)}`);

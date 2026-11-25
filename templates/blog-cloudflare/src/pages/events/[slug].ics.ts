@@ -30,7 +30,8 @@ export const GET: APIRoute = async ({ params, url, currentLocale }) => {
 		headers: {
 			"Content-Type": "text/calendar; charset=utf-8",
 			"Content-Disposition": `attachment; filename="${safeFile}.ics"`,
-			"Cache-Control": event.preview ? "public, max-age=300" : "public, max-age=3600",
+			// Five minutes for every event: an edited date must not sit in a browser for an hour.
+			"Cache-Control": "public, max-age=300",
 		},
 	});
 };
