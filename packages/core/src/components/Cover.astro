@@ -54,10 +54,13 @@ let coverSrcset: string | undefined;
 let coverSizes: string | undefined;
 if (backgroundImage && !backgroundVideo) {
 	// A cover is drawn at the viewport's width, which we cannot know at render time, so
-	// the ladder offers what is stored and lets the browser choose.
+	// the ladder offers what is stored and lets the browser choose. That slot is known
+	// (`sizes="100vw"` is true), so the original may close the list when the stored
+	// sizes fall short of the screen.
 	const stored = await storedSizesForRender(
 		{ url: backgroundImage, origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config) },
 		Number.MAX_SAFE_INTEGER,
+		{ offerOriginal: true },
 	);
 	if (stored) {
 		coverSrcset = stored.srcset;
