@@ -556,6 +556,12 @@ export interface EmDashHandlers {
 		data?: { outcome: string };
 		error?: { code: string; message: string };
 	}>;
+	/** Delete stored variant rows for a parent media item (item 144). */
+	handleMediaVariantDelete?: (input: { mediaId: string; widths?: readonly number[] }) => Promise<{
+		success: boolean;
+		data?: { deleted: number; removed: Array<{ width: number; contentHash: string }> };
+		error?: { code: string; message: string };
+	}>;
 
 	// Revision handlers
 	handleRevisionList: (

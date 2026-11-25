@@ -256,6 +256,7 @@ import {
 	handleMediaList,
 	handleMediaGet,
 	handleMediaVariantStore,
+	handleMediaVariantDelete,
 	handleMediaCreate,
 	handleMediaRegisterUpload,
 	handleMediaUpdate,
@@ -4924,6 +4925,11 @@ export class EmDashRuntime {
 	 */
 	async handleMediaVariantStore(input: Parameters<typeof handleMediaVariantStore>[2]) {
 		return handleMediaVariantStore(this.db, this.storage ?? null, input);
+	}
+
+	/** Delete stored variant rows for a parent media item (triggers retire objects). */
+	async handleMediaVariantDelete(input: Parameters<typeof handleMediaVariantDelete>[1]) {
+		return handleMediaVariantDelete(this.db, input);
 	}
 
 	async handleMediaUpload(input: MediaUploadInput) {

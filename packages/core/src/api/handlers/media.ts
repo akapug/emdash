@@ -462,6 +462,37 @@ export async function handleMediaVariantStore(
 	}
 }
 
+/**
+ * Delete stored image variant rows for a parent media item (all widths, or a
+ * specific subset). Deletes DB rows only so triggers queue object retirement.
+ */
+export async function handleMediaVariantDelete(
+	db: Kysely<Database>,
+	input: { mediaId: string; widths?: readonly number[] },
+): Promise<
+	ApiResult<{
+		deleted: number;
+		removed: Array<{ width: number; contentHash: string }>;
+	}>
+> {
+	try {
+		const removed = await new MediaVariantRepository(db).deleteForMedia(
+			input.mediaId,
+			input.widths,
+		);
+		return {
+			success: true,
+			data: { deleted: removed.length, removed },
+		};
+	} catch (error) {
+		console.error("[media] variant delete failed:", error);
+		return {
+			success: false,
+			error: { code: "MEDIA_VARIANT_DELETE_ERROR", message: "Failed to delete media variants" },
+		};
+	}
+}
+
 /** Delete a media item, then delete or queue cleanup of its stored original. */
 export async function handleMediaDelete(
 	db: Kysely<Database>,

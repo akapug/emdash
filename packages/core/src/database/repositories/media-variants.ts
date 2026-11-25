@@ -129,4 +129,23 @@ export class MediaVariantRepository {
 		);
 		return { rows: Number(rows[0]?.n ?? 0), bytes: Number(rows[0]?.b ?? 0) };
 	}
+
+	/**
+	 * Delete stored variant rows for a parent media item (optionally filtered to
+	 * specific widths). Deletes rows ONLY so the database trigger queues each
+	 * retired storage key into `_emdash_media_variant_cleanup`.
+	 */
+	async deleteForMedia(
+		mediaId: string,
+		widths?: readonly number[],
+	): Promise<Array<{ width: number; contentHash: string }>> {
+		if (widths !== undefined && widths.length === 0) return [];
+		let query = this.db.deleteFrom("_emdash_media_variants").where("media_id", "=", mediaId);
+		if (widths && widths.length > 0) {
+			query = query.where("width", "in", [...widths]);
+		}
+		const rows = await query.returning(["width", "content_hash"]).execute();
+		if (rows.length > 0) invalidateVariants();
+		return rows.map((row) => ({ width: Number(row.width), contentHash: row.content_hash }));
+	}
 }

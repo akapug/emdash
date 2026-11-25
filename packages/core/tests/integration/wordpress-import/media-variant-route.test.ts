@@ -20,9 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	handleMediaDelete,
 	handleMediaGet,
+	handleMediaVariantDelete,
 	handleMediaVariantStore,
 } from "../../../src/api/handlers/media.js";
-import { POST as variantPost } from "../../../src/astro/routes/api/import/wordpress/media-variant.js";
+import {
+	DELETE as variantDelete,
+	POST as variantPost,
+} from "../../../src/astro/routes/api/import/wordpress/media-variant.js";
 import { GET as fileGet } from "../../../src/astro/routes/api/media/file/[...key].js";
 import { runSystemCleanup } from "../../../src/cleanup.js";
 import { MediaVariantRepository } from "../../../src/database/repositories/media-variants.js";
@@ -764,5 +768,108 @@ describe("codex's lifecycle probes", () => {
 		expect(storage.objects.get(newKey)?.body).toEqual(VARIANT_BYTES);
 		expect(await cleanupReason(newKey)).toBeUndefined();
 		expect(await cleanupReason(oldKey)).toBe("retired");
+	});
+
+	it("DELETE /media-variant enforces authority, retires rows via trigger, invalidates cache, and is idempotent", async () => {
+		const storage = storageDouble();
+		await storage.upload({
+			key: "2024/01/photo.jpg",
+			body: ORIGINAL_BYTES,
+			contentType: "image/png",
+		});
+		const repo = new MediaRepository(db);
+		const parent = await repo.create({
+			filename: "photo.jpg",
+			mimeType: "image/png",
+			storageKey: "2024/01/photo.jpg",
+			size: ORIGINAL_BYTES.byteLength,
+			width: 1200,
+			height: 1200,
+			contentHash: "hash-of-the-original",
+			authorId: "owner-1",
+			status: "ready",
+		});
+
+		const localsFor = (user: { id: string; role: Role }) => ({
+			user,
+			emdash: {
+				db,
+				storage,
+				handleMediaGet: (id: string) => handleMediaGet(db, id),
+				handleMediaVariantStore: (input: Parameters<typeof handleMediaVariantStore>[2]) =>
+					handleMediaVariantStore(db, storage as never, input),
+				handleMediaVariantDelete: (input: Parameters<typeof handleMediaVariantDelete>[1]) =>
+					handleMediaVariantDelete(db, input),
+			},
+		});
+
+		const form = new FormData();
+		form.set("mediaId", parent.id);
+		form.set("sizeName", "medium");
+		form.set("width", "300");
+		form.set("height", "300");
+		form.set("file", new File([VARIANT_BYTES], "medium.png", { type: "image/png" }));
+		const postRes = await variantPost({
+			request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+				method: "POST",
+				body: form,
+			}),
+			locals: localsFor({ id: "owner-1", role: Role.ADMIN }),
+		} as unknown as Parameters<typeof variantPost>[0]);
+		expect(postRes.status).toBe(201);
+		const storedBody = (await postRes.json()) as { contentHash: string };
+		const storedSlot = (
+			await new MediaVariantRepository(db).forParent(parent.id, "hash-of-the-original")
+		)[0]!;
+
+		// GET ?w=300 serves the stored variant.
+		const beforeGet = await fileGet(fileContext(parent.storageKey, "300", storage));
+		expect(beforeGet.status).toBe(200);
+		expect(new Uint8Array(await beforeGet.arrayBuffer())).toEqual(VARIANT_BYTES);
+
+		// Caller without import:execute (AUTHOR) is refused; variant still serves.
+		const deniedScope = await variantDelete({
+			request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+				method: "DELETE",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ mediaId: parent.id, widths: [300] }),
+			}),
+			locals: localsFor({ id: "owner-1", role: Role.AUTHOR }),
+		} as unknown as Parameters<typeof variantDelete>[0]);
+		expect(deniedScope.status).toBe(403);
+
+		// Authorized DELETE removes the row, queues cleanup via trigger, and invalidates cache.
+		const delRes = await variantDelete({
+			request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+				method: "DELETE",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ mediaId: parent.id, widths: [300] }),
+			}),
+			locals: localsFor({ id: "owner-1", role: Role.ADMIN }),
+		} as unknown as Parameters<typeof variantDelete>[0]);
+		expect(delRes.status).toBe(200);
+		expect(await delRes.json()).toEqual({
+			deleted: 1,
+			removed: [{ width: 300, contentHash: storedBody.contentHash }],
+		});
+
+		// GET ?w=300 now serves ORIGINAL bytes, and cleanup record exists while object waits for sweeper.
+		const afterGet = await fileGet(fileContext(parent.storageKey, "300", storage));
+		expect(afterGet.status).toBe(200);
+		expect(new Uint8Array(await afterGet.arrayBuffer())).toEqual(ORIGINAL_BYTES);
+		expect(await cleanupReason(storedSlot.storageKey)).toBe("retired");
+		expect(storage.objects.has(storedSlot.storageKey)).toBe(true);
+
+		// Repeat DELETE is idempotent (count 0).
+		const againRes = await variantDelete({
+			request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+				method: "DELETE",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ mediaId: parent.id }),
+			}),
+			locals: localsFor({ id: "owner-1", role: Role.ADMIN }),
+		} as unknown as Parameters<typeof variantDelete>[0]);
+		expect(againRes.status).toBe(200);
+		expect(await againRes.json()).toEqual({ deleted: 0, removed: [] });
 	});
 });

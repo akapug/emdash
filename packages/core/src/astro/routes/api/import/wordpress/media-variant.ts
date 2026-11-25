@@ -281,3 +281,103 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		},
 	);
 };
+
+/**
+ * `DELETE /_emdash/api/import/wordpress/media-variant` — guarded removal of stored
+ * image variant rows for a parent media item (item 144).
+ *
+ * Accepts JSON `{ mediaId, widths? }` or query `?mediaId=...&widths=300,768`.
+ * Enforces the exact same two-step authority as POST (`import:execute` + parent
+ * owner mutation authority). Deletes rows ONLY so DB triggers queue object cleanup.
+ */
+export const DELETE: APIRoute = async ({ request, locals }) => {
+	const { emdash, user } = locals;
+
+	const denied = requirePerm(user, "import:execute");
+	if (denied) return denied;
+
+	if (!emdash?.handleMediaGet || !emdash?.handleMediaVariantDelete) {
+		return apiError("NOT_CONFIGURED", "EmDash not configured", 500);
+	}
+
+	let mediaId: unknown;
+	let rawWidths: unknown;
+	const url = new URL(request.url);
+	const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+
+	if (contentType.includes("application/json")) {
+		let parsed: unknown;
+		try {
+			parsed = await request.json();
+		} catch {
+			return apiError("INVALID_REQUEST", "A valid JSON body is required", 400);
+		}
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return apiError("INVALID_REQUEST", "A JSON object body is required", 400);
+		}
+		const obj = parsed as Record<string, unknown>;
+		mediaId = obj.mediaId;
+		rawWidths = obj.widths;
+	} else {
+		mediaId = url.searchParams.get("mediaId");
+		const wParam = url.searchParams.get("widths");
+		if (wParam !== null) {
+			rawWidths = wParam
+				.split(",")
+				.map((s) => s.trim())
+				.filter((s) => s.length > 0)
+				.map((s) => Number(s));
+		}
+	}
+
+	if (typeof mediaId !== "string" || mediaId.trim().length === 0) {
+		return apiError("INVALID_REQUEST", "mediaId is required", 400);
+	}
+
+	let widths: number[] | undefined;
+	if (rawWidths !== undefined) {
+		if (!Array.isArray(rawWidths)) {
+			return apiError("INVALID_REQUEST", "widths must be an array of positive integers", 400);
+		}
+		const unique = new Set<number>();
+		for (const w of rawWidths) {
+			if (typeof w !== "number" || !Number.isInteger(w) || w <= 0) {
+				return apiError("INVALID_REQUEST", "widths must be positive integers", 400);
+			}
+			unique.add(w);
+		}
+		widths = [...unique];
+	}
+
+	const got = await emdash.handleMediaGet(mediaId);
+	if (!got.success) return apiError("NOT_FOUND", "No such media", 404);
+	const media = got.data.item;
+
+	const ownerDenied = requireOwnerPerm(
+		user,
+		media.authorId ?? "",
+		"media:edit_own",
+		"media:edit_any",
+	);
+	if (ownerDenied) return ownerDenied;
+
+	const deleted = await emdash.handleMediaVariantDelete({
+		mediaId,
+		...(widths !== undefined ? { widths } : {}),
+	});
+	if (!deleted.success || !deleted.data) {
+		return apiError(
+			"UNAVAILABLE",
+			deleted.error?.message ?? "The variants could not be deleted",
+			500,
+		);
+	}
+
+	return new Response(
+		JSON.stringify({ deleted: deleted.data.deleted, removed: deleted.data.removed }),
+		{
+			status: 200,
+			headers: { "content-type": "application/json" },
+		},
+	);
+};

@@ -972,6 +972,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					// throws on its first real request. My W8 fixture supplied the method
 					// itself, which is exactly how a missing binding hides from an arm.
 					handleMediaVariantStore: runtime.handleMediaVariantStore.bind(runtime),
+					...(runtime.handleMediaVariantDelete
+						? { handleMediaVariantDelete: runtime.handleMediaVariantDelete.bind(runtime) }
+						: {}),
 
 					// Comment administration
 					...(runtime.handleCommentModerate
