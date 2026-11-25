@@ -396,7 +396,9 @@ describe("a post card's picture on the HOME page", () => {
 		// origin, or a `/variants/<width>.<ext>` path): what matters is one candidate per stored width, each a
 		// different URL. Asserting a specific address shape would be asserting the fixture, not the rule.
 		expect(srcset).toMatch(/(?:\?w=300|\/variants\/300\.)/);
-		expect(srcset, "the widest stored width is offered too").toMatch(/(?:\?w=1024|\/variants\/1024\.)/);
+		expect(srcset, "the widest stored width is offered too").toMatch(
+			/(?:\?w=1024|\/variants\/1024\.)/,
+		);
 		// AND NO `sizes="100vw"` OVER A LIST THAT CANNOT BACK IT: the card's slot width bounds the choice.
 		expect(html).not.toContain('sizes="100vw"');
 	});

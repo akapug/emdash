@@ -150,7 +150,10 @@ describe("EmDashImage dark variant", () => {
 		const [lightTag, darkTag] = imgTags(html);
 
 		expect(imgTags(html)).toHaveLength(2);
-		expect(attr(lightTag!, "data-astro-image"), "our media route does not go to Astro").toBeUndefined();
+		expect(
+			attr(lightTag!, "data-astro-image"),
+			"our media route does not go to Astro",
+		).toBeUndefined();
 		expect(attr(lightTag!, "class")).toContain("emdash-image--light");
 		expect(attr(darkTag!, "data-astro-image")).toBeUndefined();
 		expect(attr(darkTag!, "src")).toContain("01LOCALDARK.png");
