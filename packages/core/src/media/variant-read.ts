@@ -59,16 +59,19 @@ export async function getCommittedVariants(
 	db: Kysely<Database>,
 	ref: VariantMediaRef,
 ): Promise<StoredVariant[]> {
-	const id = ref.id ?? storageKeyId(ref.storageKey ?? ref.url ?? null);
-	if (!id) return [];
-	return requestCached(`media-variants:${id}`, () =>
+	// ONE PATH FOR EVERY BRANCH. Measured on a real tenant, an image value is a url
+	// holding a storage key and carries neither an id nor a hash — so the id branch and
+	// the cover/card branch asked the same question and deserved the same code. The
+	// storage key is unique on `media`, so resolving by it reaches the one row.
+	const storageKey = ref.storageKey ?? storageKeyOf(ref.url ?? null) ?? ref.url ?? null;
+	if (!storageKey) return [];
+	return requestCached(`media-variants:${storageKey}`, () =>
 		cachedQuery({
 			namespace: CacheNamespace.MEDIA_VARIANTS,
-			key: id,
+			key: storageKey,
 			load: async () => {
-				// ONE column matches, never a mixed OR: the caller's id when it has one,
-				// otherwise the storage key the url carries. Kysely refuses to compile a
-				// mixed disjunction here, and it is also the clearer rule.
+				// The hash binding stays in SQL: a replaced parent's rows stop matching
+				// without anyone sweeping them, and no caller can hand in a stale hash.
 				const rows = await sql<StoredVariant>`
 					SELECT v.media_id AS mediaId, v.size_name AS sizeName, v.width, v.height,
 						v.storage_key AS storageKey, v.bytes, v.content_hash AS contentHash,
@@ -78,7 +81,7 @@ export async function getCommittedVariants(
 					WHERE m.status = 'ready'
 						AND m.content_hash IS NOT NULL
 						AND v.parent_content_hash = m.content_hash
-						AND m.id = ${id}
+						AND m.storage_key = ${storageKey}
 					ORDER BY v.width ASC`.execute(db);
 				return [...rows.rows];
 			},
@@ -88,8 +91,6 @@ export async function getCommittedVariants(
 
 /** What a caller has in hand. Any one of these is enough. */
 export interface VariantMediaRef {
-	/** The media id (a ULID), when the caller knows it. */
-	id?: string;
 	/** The storage key, e.g. `2024/01/photo.jpg`. */
 	storageKey?: string | null;
 	/** A public url that holds a storage key, e.g. `/_emdash/api/media/file/<key>`. */
@@ -105,15 +106,6 @@ function storageKeyOf(url: string | null): string | null {
 	if (at === -1) return null;
 	const key = url.slice(at + INTERNAL_PREFIX.length).split(/[?#]/)[0];
 	return key || null;
-}
-
-/** A media id is a storage key's basename without its extension. */
-function storageKeyId(storageKey: string | null): string | null {
-	const key = storageKeyOf(storageKey) ?? storageKey;
-	if (!key) return null;
-	const base = key.slice(key.lastIndexOf("/") + 1);
-	const dot = base.lastIndexOf(".");
-	return dot > 0 ? base.slice(0, dot) : base || null;
 }
 
 /**

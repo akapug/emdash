@@ -155,7 +155,6 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 			const mediaDb = Astro.locals.emdash?.db;
 			const committed = mediaDb
 				? await getCommittedVariants(mediaDb as never, {
-						id: img.id,
 						storageKey: img.storageKey,
 						url: img.src ?? src,
 					})
