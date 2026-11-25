@@ -27,6 +27,7 @@ import {
 	DELETE as variantDelete,
 	POST as variantPost,
 } from "../../../src/astro/routes/api/import/wordpress/media-variant.js";
+import { DELETE as exactVariantDelete } from "../../../src/astro/routes/api/import/wordpress/media-variant/exact.js";
 import { GET as fileGet } from "../../../src/astro/routes/api/media/file/[...key].js";
 import { runSystemCleanup } from "../../../src/cleanup.js";
 import { MediaVariantRepository } from "../../../src/database/repositories/media-variants.js";
@@ -38,6 +39,7 @@ import {
 	readPageGenerationVector,
 } from "../../../src/object-cache/index.js";
 import { EmDashStorageError, type DownloadResult } from "../../../src/storage/types.js";
+import { sha256Hex } from "../../../src/transfer/format/digest.js";
 import { MEDIA_VARIANT_STORAGE_PREFIX } from "../../../src/transfer/staging/keys.js";
 import { computeContentHash } from "../../../src/utils/hash.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
@@ -871,5 +873,194 @@ describe("codex's lifecycle probes", () => {
 		} as unknown as Parameters<typeof variantDelete>[0]);
 		expect(againRes.status).toBe(200);
 		expect(await againRes.json()).toEqual({ deleted: 0, removed: [] });
+	});
+
+	it("item 144b: POST returns opaque publicationId only on stored (not replay); exact DELETE matches all five and skips re-uploaded identical bytes, different bytes, replaced parent, or mixed forms", async () => {
+		const storage = storageDouble();
+		await storage.upload({
+			key: "2024/01/photo.jpg",
+			body: ORIGINAL_BYTES,
+			contentType: "image/png",
+		});
+		const repo = new MediaRepository(db);
+		const parent = await repo.create({
+			filename: "photo.jpg",
+			mimeType: "image/png",
+			storageKey: "2024/01/photo.jpg",
+			size: ORIGINAL_BYTES.byteLength,
+			width: 1200,
+			height: 1200,
+			contentHash: "hash-parent-v1",
+			authorId: "owner-1",
+			status: "ready",
+		});
+
+		const locals = {
+			user: { id: "owner-1", role: Role.ADMIN },
+			emdash: {
+				db,
+				storage,
+				handleMediaGet: (id: string) => handleMediaGet(db, id),
+				handleMediaVariantStore: (input: Parameters<typeof handleMediaVariantStore>[2]) =>
+					handleMediaVariantStore(db, storage as never, input),
+				handleMediaVariantDelete: (input: Parameters<typeof handleMediaVariantDelete>[1]) =>
+					handleMediaVariantDelete(db, input),
+			},
+		};
+
+		const postVariant = async (bytes: Uint8Array<ArrayBuffer>) => {
+			const form = new FormData();
+			form.set("mediaId", parent.id);
+			form.set("sizeName", "medium");
+			form.set("width", "300");
+			form.set("height", "300");
+			form.set("file", new File([bytes], "medium.png", { type: "image/png" }));
+			return variantPost({
+				request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+					method: "POST",
+					body: form,
+				}),
+				locals,
+			} as unknown as Parameters<typeof variantPost>[0]);
+		};
+
+		const delAdminJson = (body: unknown) =>
+			variantDelete({
+				request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+					method: "DELETE",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				}),
+				locals,
+			} as unknown as Parameters<typeof variantDelete>[0]);
+
+		const delJson = (body: unknown) =>
+			exactVariantDelete({
+				request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant/exact", {
+					method: "DELETE",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				}),
+				locals,
+			} as unknown as Parameters<typeof exactVariantDelete>[0]);
+
+		// 1. Fresh store returns opaque full SHA-256 v1 publicationId (not SHA-1, not the storage key).
+		const firstPost = await postVariant(VARIANT_BYTES);
+		expect(firstPost.status).toBe(201);
+		const firstBody = (await firstPost.json()) as {
+			outcome: string;
+			contentHash: string;
+			publicationId?: string;
+		};
+		expect(firstBody.outcome).toBe("stored");
+		const firstSlot = (
+			await new MediaVariantRepository(db).forParent(parent.id, "hash-parent-v1")
+		)[0]!;
+		const expectedV1PubId = await sha256Hex(`media-variant-publication:v1:${firstSlot.storageKey}`);
+		expect(firstBody.publicationId).toBe(expectedV1PubId);
+		expect(firstBody.publicationId).toMatch(/^[0-9a-f]{64}$/);
+		expect(firstBody.publicationId).not.toContain(MEDIA_VARIANT_STORAGE_PREFIX);
+		expect(firstBody.publicationId).not.toContain(firstSlot.storageKey);
+
+		// 2. Replay returns NO publicationId.
+		const replayPost = await postVariant(VARIANT_BYTES);
+		expect(replayPost.status).toBe(200);
+		const replayBody = (await replayPost.json()) as { outcome: string; publicationId?: string };
+		expect(replayBody.outcome).toBe("replayed");
+		expect(replayBody.publicationId).toBeUndefined();
+
+		// 3. Administrative route refuses exact-shaped bodies (400), and exact route refuses widths (400).
+		const exactOnAdmin = await delAdminJson({
+			mediaId: parent.id,
+			parentContentHash: "hash-parent-v1",
+			exact: [
+				{ width: 300, contentHash: firstBody.contentHash, publicationId: firstBody.publicationId },
+			],
+		});
+		expect(exactOnAdmin.status).toBe(400);
+
+		const mixedOnExact = await delJson({
+			mediaId: parent.id,
+			widths: [300],
+			parentContentHash: "hash-parent-v1",
+			exact: [
+				{ width: 300, contentHash: firstBody.contentHash, publicationId: firstBody.publicationId },
+			],
+		});
+		expect(mixedOnExact.status).toBe(400);
+
+		// 4. Exact DELETE with matching receipt removes its own row.
+		const delFirst = await delJson({
+			mediaId: parent.id,
+			parentContentHash: "hash-parent-v1",
+			exact: [
+				{ width: 300, contentHash: firstBody.contentHash, publicationId: firstBody.publicationId },
+				{ width: 768, contentHash: firstBody.contentHash, publicationId: firstBody.publicationId },
+			],
+		});
+		expect(delFirst.status).toBe(200);
+		expect(await delFirst.json()).toEqual({
+			deleted: 1,
+			removed: [{ width: 300, contentHash: firstBody.contentHash }],
+			skipped: [{ width: 768, why: "absent" }],
+		});
+		expect(await cleanupReason(firstSlot.storageKey)).toBe("retired");
+
+		// 5. Re-upload IDENTICAL bytes -> fresh publicationId; old receipt SKIPS and leaves new row intact.
+		const reuploadPost = await postVariant(VARIANT_BYTES);
+		expect(reuploadPost.status).toBe(201);
+		const reuploadBody = (await reuploadPost.json()) as {
+			outcome: string;
+			contentHash: string;
+			publicationId?: string;
+		};
+		expect(reuploadBody.contentHash).toBe(firstBody.contentHash);
+		expect(reuploadBody.publicationId).toBeDefined();
+		expect(reuploadBody.publicationId).not.toBe(firstBody.publicationId);
+		const secondSlot = (
+			await new MediaVariantRepository(db).forParent(parent.id, "hash-parent-v1")
+		)[0]!;
+
+		const staleReceiptDel = await delJson({
+			mediaId: parent.id,
+			parentContentHash: "hash-parent-v1",
+			exact: [
+				{ width: 300, contentHash: firstBody.contentHash, publicationId: firstBody.publicationId },
+			],
+		});
+		expect(staleReceiptDel.status).toBe(200);
+		expect(await staleReceiptDel.json()).toEqual({
+			deleted: 0,
+			removed: [],
+			skipped: [{ width: 300, why: "not-the-stored-bytes" }],
+		});
+		// New row and object remain intact and servable.
+		expect(await cleanupReason(secondSlot.storageKey)).toBeUndefined();
+		const stillServed = await fileGet(fileContext(parent.storageKey, "300", storage));
+		expect(new Uint8Array(await stillServed.arrayBuffer())).toEqual(VARIANT_BYTES);
+
+		// 6. Parent replaced (different parent_content_hash) -> deletes nothing and reports not-this-parent.
+		await db
+			.updateTable("media")
+			.set({ content_hash: "hash-parent-v2" })
+			.where("id", "=", parent.id)
+			.execute();
+		const wrongParentDel = await delJson({
+			mediaId: parent.id,
+			parentContentHash: "hash-parent-v1",
+			exact: [
+				{
+					width: 300,
+					contentHash: reuploadBody.contentHash,
+					publicationId: reuploadBody.publicationId,
+				},
+			],
+		});
+		expect(wrongParentDel.status).toBe(200);
+		expect(await wrongParentDel.json()).toEqual({
+			deleted: 0,
+			removed: [],
+			skipped: [{ width: 300, why: "not-this-parent" }],
+		});
 	});
 });

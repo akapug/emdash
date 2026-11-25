@@ -553,13 +553,26 @@ export interface EmDashHandlers {
 		contentHash: string;
 	}) => Promise<{
 		success: boolean;
-		data?: { outcome: string };
+		data?: { outcome: string; publicationId?: string };
 		error?: { code: string; message: string };
 	}>;
-	/** Delete stored variant rows for a parent media item (item 144). */
-	handleMediaVariantDelete?: (input: { mediaId: string; widths?: readonly number[] }) => Promise<{
+	/** Delete stored variant rows for a parent media item (item 144 / 144b). */
+	handleMediaVariantDelete?: (input: {
+		mediaId: string;
+		widths?: readonly number[];
+		parentContentHash?: string;
+		currentParentContentHash?: string;
+		exact?: readonly { width: number; contentHash: string; publicationId: string }[];
+	}) => Promise<{
 		success: boolean;
-		data?: { deleted: number; removed: Array<{ width: number; contentHash: string }> };
+		data?: {
+			deleted: number;
+			removed: Array<{ width: number; contentHash: string }>;
+			skipped?: Array<{
+				width: number;
+				why: "not-the-stored-bytes" | "not-this-parent" | "absent";
+			}>;
+		};
 		error?: { code: string; message: string };
 	}>;
 
