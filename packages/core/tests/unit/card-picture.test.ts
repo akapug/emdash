@@ -18,7 +18,9 @@ const imageNode = (url: string, alt?: string) => ({
 
 describe("pictureInHtml — an htmlBlock's pictures", () => {
 	it("takes the first real picture", () => {
-		const found = pictureInHtml(`<p>x</p><img src="/_emdash/api/media/file/a.jpg" alt="A"><img src="/b.jpg">`);
+		const found = pictureInHtml(
+			`<p>x</p><img src="/_emdash/api/media/file/a.jpg" alt="A"><img src="/b.jpg">`,
+		);
 		expect(found).toEqual({ src: "/_emdash/api/media/file/a.jpg", alt: "A" });
 	});
 
@@ -81,7 +83,9 @@ describe("cardPicture — the order the lead specified", () => {
 
 	it("falls back to a GALLERY's first image", () => {
 		const post = {
-			content: [{ _type: "gallery", _key: "g", images: [imageNode("/g1.jpg"), imageNode("/g2.jpg")] }],
+			content: [
+				{ _type: "gallery", _key: "g", images: [imageNode("/g1.jpg"), imageNode("/g2.jpg")] },
+			],
 		};
 		expect(cardPicture(post)?.src).toBe("/g1.jpg");
 	});
@@ -94,7 +98,12 @@ describe("cardPicture — the order the lead specified", () => {
 
 	it("falls back to the first <img> inside an htmlBlock, guards and all", () => {
 		const post = {
-			content: [{ _type: "htmlBlock", html: `<img src="/spacer.gif" width="1"><img src="/body.jpg" alt="B">` }],
+			content: [
+				{
+					_type: "htmlBlock",
+					html: `<img src="/spacer.gif" width="1"><img src="/body.jpg" alt="B">`,
+				},
+			],
 		};
 		expect(cardPicture(post)).toEqual({ src: "/body.jpg", alt: "B" });
 	});
@@ -110,7 +119,9 @@ describe("cardPicture — the order the lead specified", () => {
 	});
 
 	it("returns null when there is neither a featured image nor any picture", () => {
-		expect(cardPicture({ content: [{ _type: "p" }, { _type: "htmlBlock", html: "<p>words</p>" }] })).toBeNull();
+		expect(
+			cardPicture({ content: [{ _type: "p" }, { _type: "htmlBlock", html: "<p>words</p>" }] }),
+		).toBeNull();
 	});
 
 	it("returns null for a post with no content at all", () => {
