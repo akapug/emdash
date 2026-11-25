@@ -38,7 +38,10 @@ const MAX_MULTIPART_BYTES = VARIANT_BYTE_CAP + 64 * 1024;
 class BodyTooLarge extends Error {}
 
 /** Read at most `limit` bytes from a stream, or throw {@link BodyTooLarge}. */
-async function boundedBody(stream: ReadableStream<Uint8Array>, limit: number): Promise<ArrayBuffer> {
+async function boundedBody(
+	stream: ReadableStream<Uint8Array>,
+	limit: number,
+): Promise<ArrayBuffer> {
 	const reader = stream.getReader();
 	const chunks: Uint8Array[] = [];
 	let total = 0;
@@ -161,7 +164,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	// THE STORED TYPE IS THE BYTES' TYPE, and it must match the parent's: a variant is a
 	// size of the same picture, so a format change is a different file, not a size.
 	const actualType = contentTypeOf(bytes);
-	if (!actualType) return apiError("INVALID_TYPE", "The bytes are not a recognised raster image", 400);
+	if (!actualType)
+		return apiError("INVALID_TYPE", "The bytes are not a recognised raster image", 400);
 	if (actualType !== media.mimeType) {
 		return apiError("INVALID_TYPE", "A variant must be the parent's own format", 400);
 	}

@@ -439,9 +439,7 @@ export async function handleMediaVariantStore(
 	// THE CANDIDATE KEY IS RECORDED BEFORE THE UPLOAD. A crash between the upload and the
 	// row would otherwise leave an object named by nothing; now the cleanup record names
 	// it, and the sweeper removes it. The record is dropped once the row is committed.
-	await new MediaRepository(db)
-		.recordPendingVariantCleanup(storageKey)
-		.catch(() => undefined);
+	await new MediaRepository(db).recordPendingVariantCleanup(storageKey).catch(() => undefined);
 
 	// Bytes first, then the row. A cut between the two leaves an object nobody can
 	// fetch (the prefix is private and no row names it), never a row without bytes.

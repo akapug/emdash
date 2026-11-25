@@ -226,7 +226,9 @@ describe("codex's lifecycle probes", () => {
 		});
 		expect(stored.success).toBe(true);
 
-		const key = [...storage.objects.keys()].find((k) => k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX))!;
+		const key = [...storage.objects.keys()].find((k) =>
+			k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX),
+		)!;
 		const download = storage.download;
 		storage.download = async (asked: string) => {
 			if (asked === key) throw new Error("File not found");
@@ -252,7 +254,9 @@ describe("codex's lifecycle probes", () => {
 			contentType: "image/png",
 			contentHash: "probe-variant",
 		});
-		const key = [...storage.objects.keys()].find((k) => k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX))!;
+		const key = [...storage.objects.keys()].find((k) =>
+			k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX),
+		)!;
 
 		const remove = storage.delete;
 		storage.delete = async (asked: string) => {
@@ -299,7 +303,10 @@ describe("codex's lifecycle probes", () => {
 			contentHash: input.parentContentHash,
 		});
 		const replay = await handleMediaVariantStore(db, storage as never, input);
-		expect(replay.success, `a restored parent can take the size again: ${JSON.stringify(replay)}`).toBe(true);
+		expect(
+			replay.success,
+			`a restored parent can take the size again: ${JSON.stringify(replay)}`,
+		).toBe(true);
 		const [variant] = await new MediaVariantRepository(db).forParent(
 			image.id,
 			input.parentContentHash,

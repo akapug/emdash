@@ -1,7 +1,7 @@
 import { sql, type Kysely } from "kysely";
 
-import type { StoredVariant } from "../../media/variants.js";
 import { invalidateVariants } from "../../media/variant-read.js";
+import type { StoredVariant } from "../../media/variants.js";
 import type { Database } from "../types.js";
 
 /**

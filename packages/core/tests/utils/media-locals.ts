@@ -8,8 +8,8 @@
  */
 import type { Kysely } from "kysely";
 
-import { EmDashRuntime } from "../../src/emdash-runtime.js";
 import type { Database } from "../../src/database/types.js";
+import { EmDashRuntime } from "../../src/emdash-runtime.js";
 
 /** A minimal locals object for a route that needs the media handlers and storage. */
 export function mediaLocalsFor(db: Kysely<Database>, storage: unknown) {

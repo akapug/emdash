@@ -551,7 +551,11 @@ export interface EmDashHandlers {
 		bytes: Uint8Array<ArrayBuffer>;
 		contentType: string;
 		contentHash: string;
-	}) => Promise<{ success: boolean; data?: { outcome: string }; error?: { code: string; message: string } }>;
+	}) => Promise<{
+		success: boolean;
+		data?: { outcome: string };
+		error?: { code: string; message: string };
+	}>;
 
 	// Revision handlers
 	handleRevisionList: (
