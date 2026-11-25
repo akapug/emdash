@@ -122,6 +122,10 @@ let src = "";
 let srcset: string | undefined;
 let sizes: string | undefined;
 let astroImageSrc = "";
+// The width the STORED candidates stop at: a reserved box the browser can lay out, even when the block carries no
+// dimensions of its own (see `lazyAutoSizes` below).
+let storedBound: number | undefined;
+let storedShape: number | undefined;
 const providerId = asset.provider;
 
 if (providerId && providerId !== "local") {
@@ -179,6 +183,11 @@ if (!src) {
 	// The original may close the list only when an editor set a display width, so the
 	// slot is known. Without one, `sizes` names the original's width and not the column
 	// the image sits in, and offering the original would fetch it for a small slot.
+	// A STORED LIST IS ITS OWN RESERVED BOX. `stored.bound` is the width the stored candidates stop at, which is exactly
+	// what the browser needs to lay the image out — but `renderWidth` can be undefined here (an imported block often
+	// carries no dimensions), and `lazyAutoSizes` refuses to say `auto, …` without a box. Measured on a real home page:
+	// four image blocks inside columns got `(min-width: 3024px) 3024px, 100vw` and fetched ?w=1536 for a column slot,
+	// 4.5 MB of a 7.45 MB page — while the two images whose blocks DO carry dimensions got `auto, …` and were fine.
 	const stored = await storedSizesForRender(
 		{ url: asset.url, origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config) },
 		renderWidth,
@@ -189,16 +198,38 @@ if (!src) {
 		astroImageSrc = "";
 		srcset = stored.srcset;
 		sizes = responsiveSizes(stored.bound);
+		storedBound = stored.bound;
+		storedShape = stored.shape;
 	}
 }
 
 // Both plain <img> branches use only stored or provider-generated width candidates.
 const imgLoading = "lazy";
+/** Height implied by the stored bound and the media's own shape, when the node gives none. */
+const derivedHeight =
+	renderHeight ??
+	(renderWidth !== undefined && storedShape
+		? Math.max(1, Math.round(renderWidth / storedShape))
+		: storedBound !== undefined && storedShape
+			? Math.max(1, Math.round(storedBound / storedShape))
+			: undefined);
+const effectiveWidth = renderWidth ?? storedBound;
+const effectiveHeight = renderHeight ?? derivedHeight;
 const imgSizes = lazyAutoSizes(sizes, {
 	loading: imgLoading,
 	hasWidthSrcset: Boolean(srcset),
-	width: renderWidth,
-	height: renderHeight,
+	// THE STORED BOUND IS A RESERVED BOX. An imported block often carries no dimensions, so `renderWidth` is undefined
+	// even though the server knows exactly which widths this image has — and `lazyAutoSizes` refuses `auto, …` without a
+	// box. Measured on a real home page: four image blocks inside columns got `(min-width: 3024px) 3024px, 100vw` and
+	// fetched ?w=1536 for a column slot — 4.5 MB of a 7.45 MB page — while the two blocks carrying dimensions got
+	// `auto, …` and were fine. The bound says the same thing the dimensions would, so it counts.
+	// BOTH DIMENSIONS, BECAUSE `auto` NEEDS A REAL BOX. `sizes="auto"` asks the browser for the LAID-OUT width, and a
+	// lazy image with no `height` lays out 0 tall until it loads — so the browser takes the smallest candidate and the
+	// picture arrives blurry. The stored bound gives the width and `shape` (width/height) gives the height, so the box
+	// is reserved before load and nothing shifts.
+	width: renderWidth ?? storedBound,
+	height: renderHeight ?? derivedHeight,
+	hasReservedBox: effectiveWidth !== undefined && effectiveHeight !== undefined,
 	sources: [src, asset.url, asset._ref, node.asset.meta?.storageKey],
 	mimeType: node.asset.mimeType ?? node.asset.meta?.mimeType,
 });
@@ -242,8 +273,8 @@ if (placeholder && blurhash) {
 						srcset={srcset}
 						sizes={imgSizes}
 						alt={alt}
-						width={renderWidth}
-						height={renderHeight}
+						width={effectiveWidth}
+						height={effectiveHeight}
 						loading={imgLoading}
 						decoding="async"
 						style={placeholderStyle || undefined}
@@ -267,8 +298,8 @@ if (placeholder && blurhash) {
 				srcset={srcset}
 				sizes={imgSizes}
 				alt={alt}
-				width={renderWidth}
-				height={renderHeight}
+				width={effectiveWidth}
+				height={effectiveHeight}
 				loading={imgLoading}
 				decoding="async"
 				style={placeholderStyle || undefined}

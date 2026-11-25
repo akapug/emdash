@@ -322,11 +322,15 @@ describe("stored image sizes on a logged-out page", () => {
 		const tag = tagFor(await asVisitor(Image, block(key)), "content.jpg");
 		// No display width, so the slot is unknown: stored sizes only, never the original.
 		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w, ${FILE}${key}?w=768 768w`);
-		expect(attr(tag, "sizes")).toBe("(min-width: 1600px) 1600px, 100vw");
+		// CHANGED DELIBERATELY (item 141b). This used to require NO `auto,` and NO width/height attributes, which was the
+		// defect: a lazy image with no reserved box makes the browser pick the smallest candidate, and the stored bound
+		// (1600 here) is a box the server already knows. The src is OUR media route, so this is the case the cure is for.
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 1600px) 1600px, 100vw");
 		expect(attr(tag, "src")).toBe(`${FILE}${key}`);
 		expect(attr(tag, "loading")).toBe("lazy");
-		expect(attr(tag, "width")).toBeUndefined();
-		expect(attr(tag, "height")).toBeUndefined();
+		// BOTH DIMENSIONS, derived from the stored bound and the media's own shape: width alone would lay out 0 tall.
+		expect(attr(tag, "width")).toBe("1600");
+		expect(attr(tag, "height")).toBe("901");
 	});
 
 	it("a photo stored on its side is bounded by its upright width, not its stored one", async () => {
@@ -335,7 +339,12 @@ describe("stored image sizes on a logged-out page", () => {
 		await seed(key, [[300, CURRENT]], [800, 400], [400, 800]);
 		const tag = tagFor(await asVisitor(Image, block(key)), "turned.jpg");
 		expect(attr(tag, "srcset")).toBe(`${FILE}${key}?w=300 300w`);
-		expect(attr(tag, "sizes")).toBe("(min-width: 400px) 400px, 100vw");
+		// CHANGED DELIBERATELY (item 141b), same reason: the bound is 400 because the picture is UPRIGHT 400 wide, and
+		// that bound is the box. The height must follow the UPRIGHT shape too — a rotated photo's stored 800x400 must not
+		// become the reserved aspect, or the box would be twice as tall as the picture the browser draws.
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 400px) 400px, 100vw");
+		expect(attr(tag, "width")).toBe("400");
+		expect(attr(tag, "height")).toBe("800");
 	});
 
 	it.each([
