@@ -164,21 +164,23 @@ function articleFor(html: string, slug: string): string {
 describe("the post card a visitor gets", () => {
 	it("draws an IMAGE NODE's picture inside the post link, with its alt", async () => {
 		const card = articleFor(await renderIndex(), imageNodePost.slug);
-		const img = /<img\b[^>]*>/.exec(card)?.[0] ?? "";
-		expect(img, `the card must hold the picture; got: ${card}`).toContain(IMAGE_URL);
-		expect(img).toContain('alt="An image node picture"');
+		// THE PICTURE ELEMENT, not merely the first <img> in the card: a byline avatar is also an <img>, and taking
+		// the first match would let this arm pass or fail on chrome the change never touches.
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
+		expect(picture, `the card must hold the picture wrapper; got: ${card}`).toContain(IMAGE_URL);
+		expect(picture, "with the alt the image node carries").toContain('alt="An image node picture"');
 		// Inside the link to the post, so the picture is clickable like the title.
 		const linkOpen = card.indexOf('<a href="/posts/has-image-node"');
 		expect(linkOpen).toBeGreaterThan(-1);
-		expect(card.indexOf(img)).toBeGreaterThan(linkOpen);
+		expect(card.indexOf(picture)).toBeGreaterThan(linkOpen);
 	});
 
 	it("takes the REAL picture from an htmlBlock, skipping the 1x1", async () => {
 		const card = articleFor(await renderIndex(), htmlBlockPost.slug);
-		const img = /<img\b[^>]*>/.exec(card)?.[0] ?? "";
-		expect(img, `the real picture must be drawn; got: ${card}`).toContain(REAL_URL);
-		expect(img).toContain('alt="The real picture"');
-		expect(card).not.toContain("tracker.gif");
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
+		expect(picture, `the real picture must be drawn; got: ${card}`).toContain(REAL_URL);
+		expect(picture).toContain('alt="The real picture"');
+		expect(card, "the 1x1 is never the picture").not.toContain("tracker.gif");
 	});
 
 	it("a post with NO picture renders the same article as before this change", async () => {
