@@ -5,6 +5,7 @@
  * Renders an image/video with text overlay from WordPress imports.
  */
 import { getPublicOrigin } from "../api/public-url.js";
+import { lazyAutoSizes } from "../media/responsive.js";
 import { storedSizesForRender } from "../media/variant-read.js";
 import { nestedRenderOf } from "./portable-text-nested.js";
 
@@ -68,6 +69,14 @@ if (backgroundImage && !backgroundVideo) {
 	}
 }
 
+const coverLoading = "lazy";
+const coverImgSizes = lazyAutoSizes(coverSizes, {
+	loading: coverLoading,
+	hasWidthSrcset: Boolean(coverSrcset),
+	// The background fills the cover's CSS box, not its own intrinsic dimensions.
+	hasReservedBox: true,
+	sources: [backgroundImage],
+});
 const hasBackground = backgroundImage || backgroundVideo;
 const overlayStyle = overlayColor
 	? `background-color: ${overlayColor}; opacity: ${overlayOpacity};`
@@ -84,9 +93,9 @@ const overlayStyle = overlayColor
 				src={backgroundImage}
 				alt=""
 				class="emdash-cover__background"
-				loading="lazy"
+				loading={coverLoading}
 				srcset={coverSrcset}
-				sizes={coverSizes}
+				sizes={coverImgSizes}
 			/>
 		)
 	}

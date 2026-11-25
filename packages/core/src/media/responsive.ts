@@ -9,6 +9,8 @@
  * resolves inside an Astro project, not in this precompiled package).
  */
 
+import { normalizeMime } from "./mime.js";
+
 /** Standard responsive breakpoints. Matches CDN-provider srcset generation. */
 export const RESPONSIVE_BREAKPOINTS = [640, 750, 828, 960, 1080, 1280, 1600, 1920];
 
@@ -30,6 +32,31 @@ export function responsiveWidths(maxWidth: number): number[] {
 /** Build the `sizes` attribute for an image with a known display width. */
 export function responsiveSizes(width: number | undefined): string {
 	return width ? `(min-width: ${width}px) ${width}px, 100vw` : "100vw";
+}
+
+/** Let a lazy image with a reserved box select by layout width, keeping its fallback. */
+export function lazyAutoSizes(
+	fallback: string | undefined,
+	image: {
+		loading: string | null | undefined;
+		hasWidthSrcset: boolean;
+		width?: number;
+		height?: number;
+		hasReservedBox?: boolean;
+		sources: readonly unknown[];
+		mimeType?: unknown;
+	},
+): string | undefined {
+	if (!fallback || image.loading !== "lazy" || !image.hasWidthSrcset) return fallback;
+	if (/^\s*auto\s*(?:,|$)/i.test(fallback)) return fallback;
+	const { width, height, mimeType } = image;
+	const hasDimensions =
+		Number.isFinite(width) && (width ?? 0) >= 1 && Number.isFinite(height) && (height ?? 0) >= 1;
+	if (!image.hasReservedBox && !hasDimensions) return fallback;
+	if (typeof mimeType === "string" && normalizeMime(mimeType) === "image/svg+xml") return fallback;
+	const svgSource = /^(?:[^?#]*\.svgz?(?:[?#]|$)|data:image\/svg\+xml[;,])/i;
+	if (image.sources.some((src) => typeof src === "string" && svgSource.test(src))) return fallback;
+	return `auto, ${fallback}`;
 }
 
 /** Column count `Gallery.astro` uses when a gallery block does not set one. */

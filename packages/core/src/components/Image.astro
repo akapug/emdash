@@ -9,7 +9,12 @@ import { Image as AstroImage } from "astro:assets";
 import type { ImageEmbed } from "../media/types.js";
 import { getMediaProvider } from "../media/provider-loader.js";
 import { buildRenderMediaUrl } from "../media/url.js";
-import { responsiveSizes, toAbsoluteMediaUrl, RESPONSIVE_BREAKPOINTS } from "../media/responsive.js";
+import {
+	lazyAutoSizes,
+	responsiveSizes,
+	toAbsoluteMediaUrl,
+	RESPONSIVE_BREAKPOINTS,
+} from "../media/responsive.js";
 import { storedSizesForRender } from "../media/variant-read.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { sanitizeHref } from "../utils/url.js";
@@ -23,6 +28,7 @@ export interface Props {
 		asset: {
 			_ref: string;
 			url?: string;
+			mimeType?: string;
 			/** Provider ID for external media (e.g., "cloudflare-images") */
 			provider?: string;
 			/** Provider metadata. LQIP is read from first-class fields below;
@@ -186,6 +192,17 @@ if (!src) {
 	}
 }
 
+// Both plain <img> branches use only stored or provider-generated width candidates.
+const imgLoading = "lazy";
+const imgSizes = lazyAutoSizes(sizes, {
+	loading: imgLoading,
+	hasWidthSrcset: Boolean(srcset),
+	width: renderWidth,
+	height: renderHeight,
+	sources: [src, asset.url, asset._ref, node.asset.meta?.storageKey],
+	mimeType: node.asset.mimeType ?? node.asset.meta?.mimeType,
+});
+
 // Build placeholder background style. Prefer first-class LQIP fields; fall
 // back to `asset.meta` for legacy snapshots persisted before LQIP was promoted.
 const blurhash = (node.blurhash ?? (node.asset.meta?.blurhash as string | undefined)) as
@@ -223,11 +240,11 @@ if (placeholder && blurhash) {
 					<img
 						src={src}
 						srcset={srcset}
-						sizes={sizes}
+						sizes={imgSizes}
 						alt={alt}
 						width={renderWidth}
 						height={renderHeight}
-						loading="lazy"
+						loading={imgLoading}
 						decoding="async"
 						style={placeholderStyle || undefined}
 					/>
@@ -248,11 +265,11 @@ if (placeholder && blurhash) {
 			<img
 				src={src}
 				srcset={srcset}
-				sizes={sizes}
+				sizes={imgSizes}
 				alt={alt}
 				width={renderWidth}
 				height={renderHeight}
-				loading="lazy"
+				loading={imgLoading}
 				decoding="async"
 				style={placeholderStyle || undefined}
 			/>
