@@ -173,7 +173,10 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		// Astro's list is the same original at every entry — and with `sizes` beside it the browser picks the largest
 		// candidate for a wide slot, which is exactly the multi-megabyte download this component exists to avoid. A
 		// caller that passes dimensions is common (a card gets them from the media row) and used to be routed here.
-		const isOurs = absoluteSrc.startsWith(`${publicOrigin}/`);
+		// OUR MEDIA ROUTE, NOT MERELY OUR ORIGIN. A same-origin path the app serves as a static file (a theme's own
+		// `/media/custom.jpg`) still goes through Astro's pipeline, which existing arms pin; only the media route's
+		// files have nothing behind them that resizes, so only those must avoid a list Astro would invent.
+		const isOurs = absoluteSrc.startsWith(`${publicOrigin}/_emdash/api/media/file/`);
 		// OUR OWN MEDIA IS ALWAYS HANDLED HERE, dimensions or not: the stored read is the only thing that can offer a
 		// width list this component can back.
 		const useAstroImage = !isOurs && Boolean(finalWidth && finalHeight);
