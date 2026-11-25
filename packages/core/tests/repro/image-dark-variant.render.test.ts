@@ -126,7 +126,13 @@ describe("EmDashImage dark variant", () => {
 		expect(attr(darkTag!, "class")).toContain("emdash-image--dark");
 	});
 
-	test("same-origin local media renders both variants through the Astro image pipeline", async () => {
+	// CHANGED DELIBERATELY (item 137c). This arm used to require `data-astro-image="constrained"` for OUR OWN media
+	// route, i.e. that a local media file went through Astro's <Image>. Nothing behind `/_emdash/api/media/file/`
+	// resizes, so Astro's candidate list was the SAME original at every width — and with `sizes` beside it the browser
+	// then picked the largest, which is the multi-megabyte download. The contract this arm now holds is the one that
+	// keeps both variants drawn: each is a plain <img> carrying this component's own markup. An arm whose src is a CDN
+	// or a theme static path still requires Astro's pipeline, and is untouched.
+	test("same-origin local media draws BOTH variants with our own markup, not Astro's list", async () => {
 		const html = await render({
 			image: {
 				id: "01LOCALLIGHT",
@@ -144,9 +150,12 @@ describe("EmDashImage dark variant", () => {
 		const [lightTag, darkTag] = imgTags(html);
 
 		expect(imgTags(html)).toHaveLength(2);
-		expect(attr(lightTag!, "data-astro-image")).toBe("constrained");
+		expect(
+			attr(lightTag!, "data-astro-image"),
+			"our media route does not go to Astro",
+		).toBeUndefined();
 		expect(attr(lightTag!, "class")).toContain("emdash-image--light");
-		expect(attr(darkTag!, "data-astro-image")).toBe("constrained");
+		expect(attr(darkTag!, "data-astro-image")).toBeUndefined();
 		expect(attr(darkTag!, "src")).toContain("01LOCALDARK.png");
 		expect(attr(darkTag!, "class")).toContain("emdash-image--dark");
 	});

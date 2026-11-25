@@ -169,8 +169,19 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		// ASTRO'S <Image> THROWS MissingImageDimension ON A REMOTE SRC WITHOUT BOTH DIMENSIONS, so `useAstroImage`
 		// already requires them. A caller that passes neither — a card, before it was given the row's size — falls to
 		// a plain <img> with the original, which is the honest markup rather than a page that fails to render.
+		// A LOCAL SRC NEVER GOES THROUGH ASTRO'S <Image> FOR ITS SRCSET. Nothing behind a local media URL resizes, so
+		// Astro's list is the same original at every entry — and with `sizes` beside it the browser picks the largest
+		// candidate for a wide slot, which is exactly the multi-megabyte download this component exists to avoid. A
+		// caller that passes dimensions is common (a card gets them from the media row) and used to be routed here.
+		// OUR MEDIA ROUTE, NOT MERELY OUR ORIGIN. A same-origin path the app serves as a static file (a theme's own
+		// `/media/custom.jpg`) still goes through Astro's pipeline, which existing arms pin; only the media route's
+		// files have nothing behind them that resizes, so only those must avoid a list Astro would invent.
+		const isOurs = absoluteSrc.startsWith(`${publicOrigin}/_emdash/api/media/file/`);
+		// UNCHANGED FROM BEFORE: a src on our origin with both dimensions goes through the stored read. A REMOTE src
+		// does NOT belong here — it has no stored widths to read, and routing it in took its existing pipeline away
+		// (four arms caught exactly that when this said `!isOurs && …`, which is true for a CDN URL).
 		const useAstroImage = finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`);
-		if (storedSizesOnly || useAstroImage) {
+		if (storedSizesOnly || useAstroImage || isOurs) {
 			// Offer only the widths that are stored. A fixed ladder would promise 300w over
 			// a multi-megabyte original, which is worse than no srcset because the browser
 			// believes it. Nothing stored leaves the markup exactly as it was.
@@ -194,7 +205,8 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				srcset = stored.srcset;
 				hasWidthSrcset = true;
 				sizes = responsiveSizes(storedSizesOnly ? stored.bound : finalWidth);
-			} else if (!storedSizesOnly) {
+			} else if (!storedSizesOnly && !isOurs) {
+				// Only a NON-local src can fall back to Astro's <Image>; for ours the branches above already decided.
 				astroImageSrc = absoluteSrc;
 			}
 		} else {

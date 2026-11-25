@@ -320,6 +320,10 @@ describe("faithful render of migrated image node", () => {
 		expect(attr(tag, "decoding")).toBe("async");
 	});
 
+	// CHANGED DELIBERATELY (item 137c), for the same reason as the dark-variant arm above: this fixture's src is OUR
+	// media route, which used to satisfy the "goes through Astro's <Image>" condition. It no longer does, because Astro
+	// derives a width list from one URL there. What this arm exists to hold is unchanged — the caller's priority and
+	// passthrough attributes survive — so it asserts those on the markup the component now draws.
 	test("public EmDashImage preserves priority and passthrough attrs", async () => {
 		const html = await renderEmDashImage({
 			image: {
@@ -338,7 +342,8 @@ describe("faithful render of migrated image node", () => {
 		expect(attr(tag, "src")).toContain("/_emdash/api/media/file/01MEDIA.jpg");
 		expect(attr(tag, "loading")).toBe("eager");
 		expect(attr(tag, "fetchpriority")).toBe("high");
-		expect(attr(tag, "class")).toBe("hero-image");
+		// The component's own media class is always present now; the caller's class rides beside it.
+		expect(attr(tag, "class")).toContain("hero-image");
 		expect(attr(tag, "data-testid")).toBe("hero");
 	});
 
