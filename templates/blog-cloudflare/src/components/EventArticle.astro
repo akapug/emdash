@@ -4,9 +4,10 @@ import EventCover from "./EventCover.astro";
 import BlogPortableText from "./BlogPortableText.astro";
 import WpShellPortableText from "./WpShellPortableText.astro";
 import EventFacts from "./EventFacts.astro";
+import { googleCalendarUrl } from "../utils/event-calendar-export.js";
 import { boundEventPageCache } from "../utils/event-page-cache.js";
 import { eventSummary, eventString, type EventEntry } from "../utils/events.js";
-import { safeHref } from "../utils/wp-shell.js";
+
 interface Props {
 	entry: EventEntry;
 	now?: Date;
@@ -17,11 +18,14 @@ const { entry, now = new Date(), title = true, shell = false } = Astro.props;
 const PortableText = shell ? WpShellPortableText : BlogPortableText;
 const site = await getSiteSettingsWithCacheHint();
 if (Astro.cache?.enabled) Astro.cache.set(false);
-const event = eventSummary(entry, now, undefined, eventString(site.data.timezone));
-if (event?.preview) boundEventPageCache([event], now);
+const siteTimezone = eventString(site.data.timezone);
+const event = eventSummary(entry, now, undefined, siteTimezone);
+if (event?.preview) boundEventPageCache([event], now, siteTimezone);
 const data = entry.data;
-const more = eventString(data.more_info);
-const href = more ? safeHref(more) : "#";
+const slug = encodeURIComponent(entry.id);
+const pageUrl = new URL(`/events/${slug}/`, Astro.url.origin).toString();
+const gcalHref = event ? googleCalendarUrl(event, pageUrl, siteTimezone) : null;
+const icsHref = event ? `/events/${slug}.ics` : null;
 ---
 
 <article class="event-article">
@@ -33,23 +37,31 @@ const href = more ? safeHref(more) : "#";
 	<div class="event-article__cover">
 		<EventCover image={data.featured_image} />
 	</div>
-	{
-		event ? (
-			<EventFacts event={event} />
-		) : (
-			<p>Event schedule unavailable. Please check with the organizer.</p>
-		)
-	}
-	<div {...entry.edit?.content}>
+	<div class="event-article__description" {...entry.edit?.content}>
 		<PortableText value={Array.isArray(data.content) ? data.content : []} />
 	</div>
 	{
-		href !== "#" && (
-			<p>
-				<a href={href}>
-					{eventString(data.more_info_title) ?? "More information"}
-				</a>
-			</p>
+		event ? (
+			<div class="event-article__details">
+				<EventFacts event={event} />
+				{gcalHref && icsHref && (
+					<div class="event-article__calendar-actions">
+						<a
+							class="event-article__cal-link"
+							href={gcalHref}
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							+ Add to Google Calendar
+						</a>
+						<a class="event-article__cal-link" href={icsHref}>
+							+ iCal / Outlook export
+						</a>
+					</div>
+				)}
+			</div>
+		) : (
+			<p>Event schedule unavailable. Please check with the organizer.</p>
 		)
 	}
 </article>
@@ -69,5 +81,24 @@ const href = more ? safeHref(more) : "#";
 		max-height: 36rem;
 		margin: 0 auto 1.5rem;
 		object-fit: contain;
+	}
+	.event-article__details {
+		margin-top: 1.75rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+	}
+	.event-article__calendar-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 1rem;
+	}
+	.event-article__cal-link {
+		display: inline-block;
+		padding: 0.45rem 0.85rem;
+		border: 1px solid currentColor;
+		text-decoration: none;
+		font-size: 0.9em;
+		font-weight: 500;
 	}
 </style>

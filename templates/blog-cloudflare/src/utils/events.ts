@@ -16,6 +16,7 @@ const EVENT_VIEW_KEYS = new Set([
 	"navigation",
 	"filters",
 	"searchBar",
+	"dateStyle",
 ]);
 const EVENT_SEARCH_BAR_KEYS = new Set(["text", "monthYear"]);
 const EVENT_MONTH_NUM_PATTERN = /^(?:0[1-9]|1[0-2])$/;
@@ -41,6 +42,7 @@ export type EventView = {
 	navigation?: boolean;
 	filters?: Partial<Record<"category" | "location" | "organizer", string[]>>;
 	searchBar?: EventSearchBar;
+	dateStyle?: "mec";
 };
 export interface EventSummary {
 	entry: EventEntry;
@@ -88,6 +90,55 @@ export function formatEventDate(date: string, locale?: string): string {
 		day: "numeric",
 		timeZone: "UTC",
 	}).format(new Date(`${date}T12:00:00Z`));
+}
+
+/** MEC card day+month form: "30 Nov" (day-first, short month). */
+export function formatEventMecDayMonth(date: string, locale?: string): string {
+	if (!eventDate(date)) return date;
+	const parts = new Intl.DateTimeFormat(displayLocale(locale) ?? "en-GB", {
+		day: "numeric",
+		month: "short",
+		timeZone: "UTC",
+	}).formatToParts(new Date(`${date}T12:00:00Z`));
+	const day = parts.find((p) => p.type === "day")?.value ?? "";
+	const month = parts.find((p) => p.type === "month")?.value ?? "";
+	return day && month ? `${day} ${month}` : date;
+}
+
+/** MEC home-block full date form: "30 November 2026" (day-first, full month + year). */
+export function formatEventMecFullDate(date: string, locale?: string): string {
+	if (!eventDate(date)) return date;
+	const parts = new Intl.DateTimeFormat(displayLocale(locale) ?? "en-GB", {
+		day: "numeric",
+		month: "long",
+		year: "numeric",
+		timeZone: "UTC",
+	}).formatToParts(new Date(`${date}T12:00:00Z`));
+	const day = parts.find((p) => p.type === "day")?.value ?? "";
+	const month = parts.find((p) => p.type === "month")?.value ?? "";
+	const year = parts.find((p) => p.type === "year")?.value ?? "";
+	return day && month && year ? `${day} ${month} ${year}` : date;
+}
+
+function formatMecClock12(value: string): string {
+	const [hhRaw, mmRaw] = value.split(":");
+	const hh = Number(hhRaw ?? 0);
+	const mm = mmRaw ?? "00";
+	const suffix = hh >= 12 ? "pm" : "am";
+	const hour12 = hh % 12 || 12;
+	return `${hour12}:${mm} ${suffix}`;
+}
+
+/** MEC 12-hour lowercase time range with spaced hyphen: "5:30 pm - 6:45 pm". */
+export function formatEventMecTimes(
+	event: Pick<EventSummary, "allDay" | "startTime" | "endTime">,
+): string | undefined {
+	if (event.allDay) return undefined;
+	const start = clock(event.startTime);
+	const end = clock(event.endTime);
+	if (!start && !end) return undefined;
+	if (start && end) return `${formatMecClock12(start)} - ${formatMecClock12(end)}`;
+	return start ? formatMecClock12(start) : end ? `Until ${formatMecClock12(end)}` : undefined;
 }
 
 export function formatEventMonth(month: string, locale?: string): string {
@@ -352,6 +403,7 @@ function isEventView(value: unknown): value is EventView {
 			return false;
 		if (!value.searchBar.text && !value.searchBar.monthYear) return false;
 	}
+	if (value.dateStyle !== undefined && value.dateStyle !== "mec") return false;
 	return true;
 }
 
