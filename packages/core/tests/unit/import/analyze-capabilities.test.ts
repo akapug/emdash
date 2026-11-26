@@ -16,6 +16,7 @@ import {
 import { mappedEmbedsSchema } from "../../../src/astro/routes/api/import/wordpress/mapped-embeds.js";
 import { PROTECTED_CONTENT_CAPABILITY } from "../../../src/content/protection.js";
 import { VARIANT_LADDER } from "../../../src/media/variants.js";
+import { WP_SHORTLINK_CAPABILITY } from "../../../src/redirects/shortlink.js";
 
 const MINIMAL_WXR = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/">
@@ -67,6 +68,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_OPTIONAL_START_DATE_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			WP_SHORTLINK_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
@@ -75,6 +77,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_OPTIONAL_START_DATE_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			WP_SHORTLINK_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 		]);
@@ -84,6 +87,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			EVENT_DETAIL_FIELDS_CAPABILITY,
 			EVENT_OPTIONAL_START_DATE_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
+			WP_SHORTLINK_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
@@ -103,5 +107,6 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		// it and this fails.
 		expect(IMPORT_CAPABILITIES).toContain(MEDIA_VARIANTS_CAPABILITY);
 		expect(IMPORT_CAPABILITIES).toContain(MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY);
+		expect(IMPORT_CAPABILITIES).toContain(WP_SHORTLINK_CAPABILITY);
 	});
 });

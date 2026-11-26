@@ -16,9 +16,10 @@
 
 import { defineMiddleware } from "astro:middleware";
 
-import { RedirectRepository } from "../../database/repositories/redirect.js";
+import { RedirectRepository, type Redirect } from "../../database/repositories/redirect.js";
 import { getDb } from "../../loader.js";
 import { loadCachedRedirects, matchCachedPatterns } from "../../redirects/cache.js";
+import { wpShortlinkKey } from "../../redirects/shortlink.js";
 import { isTerminalStatus } from "../../redirects/status.js";
 
 /** Paths that should never be intercepted by redirects */
@@ -66,8 +67,20 @@ export const onRequest = defineMiddleware(async (context, next) => {
 		// Map + array, so the next request returns immediately without probing.
 		const cached = await loadCachedRedirects(() => repo.findAllEnabled());
 
-		// 1. Exact match (O(1) Map lookup)
-		let exact = cached.exact.get(pathname);
+		// 1. Exact match (O(1) Map lookup).
+		// Check narrow WordPress shortlink queries (`/?p=N`, `/?page_id=N`,
+		// `/?attachment_id=N`, plus reviewed tracking params) on `/` BEFORE the
+		// bare `/` lookup so a root redirect cannot shadow shortlinks.
+		let exact: Redirect | undefined;
+		if (pathname === "/" && context.url.search.length > 0) {
+			const shortlink = wpShortlinkKey(context.url);
+			if (shortlink) {
+				exact = cached.exact.get(shortlink);
+			}
+		}
+		if (!exact) {
+			exact = cached.exact.get(pathname);
+		}
 		if (!exact && pathname.length > 1) {
 			const alt = pathname.endsWith("/") ? pathname.slice(0, -1) : `${pathname}/`;
 			exact = cached.exact.get(alt);

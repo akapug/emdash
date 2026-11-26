@@ -23,6 +23,7 @@ import {
 	WXR_ATOMIC_IMPORT_CAPABILITY,
 } from "../../../../../database/repositories/wxr-atomic-import.js";
 import { VARIANT_LADDER } from "../../../../../media/variants.js";
+import { WP_SHORTLINK_CAPABILITY } from "../../../../../redirects/shortlink.js";
 import { mappedEmbedsSchema } from "./mapped-embeds.js";
 import { mecEventFieldType } from "./mapped-fields.js";
 
@@ -105,6 +106,7 @@ export function importCapabilities(
 	}
 	caps.push(EVENT_OPTIONAL_START_DATE_CAPABILITY);
 	caps.push(BATCH_REDIRECTS_CAPABILITY);
+	caps.push(WP_SHORTLINK_CAPABILITY);
 	// This build can store WordPress's generated sizes (item 135): the route is
 	// registered and the handler exists, so the host can send variants.
 	caps.push(MEDIA_VARIANTS_CAPABILITY);

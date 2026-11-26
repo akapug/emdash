@@ -495,3 +495,113 @@ describe("redirect middleware — trailing-slash normalisation (issue #1271)", (
 		expect(r2.headers.get("Location")).toBe("/newer");
 	});
 });
+
+describe("redirect middleware — WordPress shortlink query-string rules (item 159)", () => {
+	let db: Kysely<Database>;
+
+	beforeEach(async () => {
+		invalidateRedirectCache();
+		db = await setupTestDatabase();
+		const repo = new RedirectRepository(db);
+		await repo.create({ source: "/?p=123", destination: "/posts/hello", type: 301 });
+		await repo.create({ source: "/?page_id=45", destination: "/pages/about", type: 301 });
+		await repo.create({ source: "/?p=45", destination: "/pages/about", type: 301 });
+		await repo.create({
+			source: "/?attachment_id=500",
+			destination: "/_emdash/api/media/file/abc",
+			type: 301,
+		});
+		getDbMock.mockReset();
+		getDbMock.mockResolvedValue(db);
+	});
+
+	afterEach(async () => {
+		await teardownTestDatabase(db);
+	});
+
+	async function runMiddleware(
+		context: MiddlewareContext,
+		next: () => Promise<Response>,
+	): Promise<Response> {
+		const res = await onRequest(context, next);
+		if (!(res instanceof Response)) {
+			throw new Error("Expected Response from redirect middleware");
+		}
+		return res;
+	}
+
+	it("matches /?p=N, /?page_id=N, and /?attachment_id=N and records hits", async () => {
+		for (const [reqPath, expectedDest] of [
+			["/?p=123", "/posts/hello"],
+			["/?page_id=45", "/pages/about"],
+			["/?p=45", "/pages/about"],
+			["/?attachment_id=500", "/_emdash/api/media/file/abc"],
+		] as const) {
+			const { context, redirect } = buildContext({ pathname: reqPath });
+			const next = vi.fn(async () => new Response("not found", { status: 404 }));
+			const response = await runMiddleware(context, next);
+
+			expect(redirect).toHaveBeenCalledWith(expectedDest, 301);
+			expect(response.status).toBe(301);
+			expect(response.headers.get("Location")).toBe(expectedDest);
+			expect(next).not.toHaveBeenCalled();
+		}
+	});
+
+	it("allows reviewed tracking params beside the shortlink id and drops them on redirect", async () => {
+		for (const [reqPath, expectedDest] of [
+			["/?p=123&utm_source=newsletter&utm_medium=email&utm_campaign=fall", "/posts/hello"],
+			["/?fbclid=IwAR0abc&p=123", "/posts/hello"],
+			["/?page_id=45&gclid=xyz&mc_cid=111&mc_eid=222", "/pages/about"],
+			["/?attachment_id=500&UTM_CONTENT=hero", "/_emdash/api/media/file/abc"],
+		] as const) {
+			const { context, redirect } = buildContext({ pathname: reqPath });
+			const next = vi.fn(async () => new Response("not found", { status: 404 }));
+			const response = await runMiddleware(context, next);
+
+			expect(redirect).toHaveBeenCalledWith(expectedDest, 301);
+			expect(response.status).toBe(301);
+			expect(response.headers.get("Location")).toBe(expectedDest);
+			expect(next).not.toHaveBeenCalled();
+		}
+	});
+
+	it("checks shortlink match before a root / redirect rule", async () => {
+		const repo = new RedirectRepository(db);
+		await repo.create({ source: "/", destination: "/pages/home", type: 301 });
+		invalidateRedirectCache();
+
+		const { context, redirect } = buildContext({ pathname: "/?p=123" });
+		const next = vi.fn(async () => new Response("not found", { status: 404 }));
+		const response = await runMiddleware(context, next);
+
+		expect(redirect).toHaveBeenCalledWith("/posts/hello", 301);
+		expect(response.headers.get("Location")).toBe("/posts/hello");
+		expect(next).not.toHaveBeenCalled();
+	});
+
+	it("falls through to next() on any other query string, non-integer id, duplicate key, or non-root path", async () => {
+		for (const reqPath of [
+			"/?s=search-term",
+			"/?p=123&preview=true",
+			"/?p=123&foo=bar",
+			"/?p=123&p=456",
+			"/?p=123&page_id=45",
+			"/?p=abc",
+			"/?p=0",
+			"/?p=0123",
+			"/?p=-5",
+			"/?p=",
+			"/?utm_source=newsletter",
+			"/posts/?p=123",
+		]) {
+			const { context, redirect } = buildContext({ pathname: reqPath });
+			const next = vi.fn(async () => new Response("ok", { status: 200 }));
+			const response = await runMiddleware(context, next);
+
+			expect(redirect, `must not redirect ${reqPath}`).not.toHaveBeenCalled();
+			expect(next, `must call next() for ${reqPath}`).toHaveBeenCalledTimes(1);
+			expect(response.status).toBe(200);
+		}
+	});
+});
