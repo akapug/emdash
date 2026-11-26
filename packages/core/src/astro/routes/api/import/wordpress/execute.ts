@@ -604,7 +604,7 @@ export async function importContent(
 
 		try {
 			const mappedData = mappedFields.data?.[String(post.id)] ?? {};
-			if (mappedFields.data !== undefined) {
+			if (mappedFields.data !== undefined && Object.keys(mappedData).length > 0) {
 				validateMappedFields(
 					mappedData,
 					manifest.collections[collection].fields,

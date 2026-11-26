@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { BATCH_REDIRECTS_CAPABILITY } from "../../../src/api/handlers/redirects.js";
 import {
 	EVENT_DETAIL_FIELDS_CAPABILITY,
+	EVENT_OPTIONAL_START_DATE_CAPABILITY,
 	EVENT_SEARCH_BAR_CAPABILITY,
 	EVENT_SEARCH_BAR_PROBE,
 	IMPORT_CAPABILITIES,
@@ -64,6 +65,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		const accepting = { safeParse: () => ({ success: true }) };
 		expect(importCapabilities(rejecting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
+			EVENT_OPTIONAL_START_DATE_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
@@ -71,6 +73,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		]);
 		expect(importCapabilities(rejecting, { atomicSupported: false })).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
+			EVENT_OPTIONAL_START_DATE_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
@@ -79,6 +82,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			PROTECTED_CONTENT_CAPABILITY,
 			EVENT_SEARCH_BAR_CAPABILITY,
 			EVENT_DETAIL_FIELDS_CAPABILITY,
+			EVENT_OPTIONAL_START_DATE_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,

@@ -159,18 +159,33 @@ async function prepareImport(
 
 			for (const field of postType.fields ?? []) {
 				const eventFieldType = isEventsType ? mecEventFieldType(field.slug) : undefined;
-				if (
-					eventFieldType &&
-					(field.type !== eventFieldType || field.required !== (field.slug === "start_date"))
-				) {
+				// Item 160: `start_date` may be optional (false) or required (true, legacy hosts);
+				// all other mapped event fields remain optional.
+				const validRequired =
+					field.slug === "start_date"
+						? typeof field.required === "boolean"
+						: field.required === false;
+				if (eventFieldType && (field.type !== eventFieldType || !validRequired)) {
 					result.errors.push({
 						collection: collectionSlug,
-						error: `Invalid event field "${field.slug}": expected ${eventFieldType} (required: ${field.slug === "start_date"})`,
+						error: `Invalid event field "${field.slug}": expected ${eventFieldType} (required: ${field.slug === "start_date" ? "boolean" : "false"})`,
 					});
 					continue;
 				}
 				const existingField = existingFieldsBySlug.get(field.slug);
 				if (existingField) {
+					if (
+						isEventsType &&
+						field.slug === "start_date" &&
+						existingField.type === field.type &&
+						existingField.required === true &&
+						field.required === false
+					) {
+						// Widening `start_date` from required -> optional is safe for all existing rows
+						// and lets existing tenants accept genuinely undated events without manual migration.
+						await registry.updateField(collectionSlug, field.slug, { required: false });
+						continue;
+					}
 					if (
 						isEventsType &&
 						(existingField.type !== field.type || existingField.required !== field.required)

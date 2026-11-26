@@ -1547,7 +1547,7 @@ export class SchemaRegistry {
 					updates.column_type = newColumnType;
 				}
 
-				if (input.required !== undefined && input.required !== field.required) {
+				if (input.required === true && !field.required) {
 					throw new SchemaError(
 						`Changing required for field "${fieldSlug}" requires a manual content migration.`,
 						"FIELD_UPDATE_REQUIRES_MIGRATION",

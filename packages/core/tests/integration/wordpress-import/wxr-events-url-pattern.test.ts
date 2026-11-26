@@ -121,4 +121,42 @@ describe("an events collection's url pattern", () => {
 		const body = (await response.json()) as { data?: { errors?: Array<{ error: string }> } };
 		expect(JSON.stringify(body)).toMatch(/conflicts with/);
 	});
+
+	it.each([
+		["tribe_events", "tribe_events"],
+		["mec-events", "mec_events"],
+	])(
+		"item 160 check (c): prepare relaxes an existing required:true start_date on %s to required:false in place",
+		async (name, slug) => {
+			// Seed an existing pre-160 events collection where start_date is required: true.
+			await prepareType(name, slug);
+			const colBefore = await registry.getCollection(slug);
+			const fieldsBefore = await registry.listFields(colBefore!.id);
+			expect(fieldsBefore.find((f) => f.slug === "start_date")?.required).toBe(true);
+
+			// Now prepare with start_date required: false (item 160).
+			const optionalFields = [
+				{ slug: "title", label: "Title", type: "string", required: true },
+				{ slug: "start_date", label: "Start date", type: "string", required: false },
+			];
+			const request = new Request("http://localhost/_emdash/api/import/wordpress/prepare", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ postTypes: [{ name, collection: slug, fields: optionalFields }] }),
+			});
+			const response = await prepare({
+				request,
+				locals: { emdash, user: { id: "operator", role: Role.ADMIN } },
+			} as Parameters<typeof prepare>[0]);
+			expect(response.status).toBe(200);
+			const body = (await response.json()) as {
+				data?: { success?: boolean; errors?: Array<{ error: string }> };
+			};
+			expect(body.data?.success).toBe(true);
+			expect(body.data?.errors).toEqual([]);
+
+			const fieldsAfter = await registry.listFields(colBefore!.id);
+			expect(fieldsAfter.find((f) => f.slug === "start_date")?.required).toBe(false);
+		},
+	);
 });

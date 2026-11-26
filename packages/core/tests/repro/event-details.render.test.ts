@@ -278,4 +278,128 @@ describe("Item 134: event pages, venue address, website row, calendar exports, a
 		expect(defaultHtml).toContain("Upcoming events");
 		expect(defaultHtml).toContain("Mon, Nov 30, 2026");
 	});
+
+	it("item 160 checks (a)+(b): an undated published event renders without a date line or calendar links, returns 404 on .ics, and is excluded from every date-ordered list and calendar view", async () => {
+		const container = await AstroContainer.create();
+		const undated = makeEvent("undated-gathering", "Undated Community Gathering", {
+			start_date: undefined,
+			end_date: undefined,
+			start_time: undefined,
+			end_time: undefined,
+		});
+		const upcoming = makeEvent("upcoming-workshop", "Upcoming Workshop", {
+			start_date: "2026-11-30",
+		});
+		const past = makeEvent("past-workshop", "Past Workshop", {
+			start_date: "2026-10-15",
+		});
+
+		// (a) Single event page renders title + body + unavailable schedule notice, NO Date:, NO Google Calendar link, NO .ics link.
+		const articleHtml = await container.renderToString(EventArticle, {
+			props: { entry: undated, now },
+			request: new Request("https://example.org/events/undated-gathering/"),
+		});
+		expect(articleHtml).toContain("Undated Community Gathering");
+		expect(articleHtml).toContain("Join us for an evening workshop.");
+		expect(articleHtml).toContain("Event schedule unavailable");
+		expect(articleHtml).not.toContain("Date:");
+		expect(articleHtml).not.toContain("calendar.google.com");
+		expect(articleHtml).not.toContain(".ics");
+
+		// (a) .ics route returns 404 for an undated event (never invalid ICS or 500).
+		mocks.entry = undated;
+		const icsResponse = await getEventIcs({
+			params: { slug: "undated-gathering" },
+			url: new URL("https://example.org/events/undated-gathering.ics"),
+			currentLocale: "en-US",
+		} as Parameters<typeof getEventIcs>[0]);
+		expect(icsResponse.status).toBe(404);
+
+		// (b) Every date-ordered list / calendar view excludes the undated event cleanly without crashing.
+		const allEntries = [undated, upcoming, past];
+
+		// Default /events/ index (Upcoming + Past)
+		const indexHtml = await container.renderToString(EventList, {
+			props: { entries: allEntries, now },
+			request: new Request("https://example.org/events/"),
+		});
+		expect(indexHtml).toContain("Upcoming Workshop");
+		expect(indexHtml).toContain("Past Workshop");
+		expect(indexHtml).not.toContain("Undated Community Gathering");
+
+		// Upcoming list + monthly calendar grid view
+		const upcomingView = parseEventView({
+			version: 1,
+			viewSlug: "upcoming",
+			mode: "upcoming",
+			order: "asc",
+			layout: "list",
+			start: "today",
+		})!;
+		const upcomingListHtml = await container.renderToString(EventList, {
+			props: { entries: allEntries, view: upcomingView, now },
+			request: new Request("https://example.org/upcoming/"),
+		});
+		expect(upcomingListHtml).toContain("Upcoming Workshop");
+		expect(upcomingListHtml).not.toContain("Undated Community Gathering");
+
+		const monthlyHtml = await container.renderToString(EventList, {
+			props: { entries: allEntries, view: upcomingView, now },
+			request: new Request(
+				"https://example.org/upcoming/?events-view[upcoming]=monthly&events-month[upcoming]=2026-11",
+			),
+		});
+		expect(monthlyHtml).toContain("Upcoming Workshop");
+		expect(monthlyHtml).not.toContain("Undated Community Gathering");
+
+		// Past events list
+		const pastView = parseEventView({
+			version: 1,
+			viewSlug: "past",
+			mode: "past",
+			order: "desc",
+			layout: "list",
+			start: "start_current_month",
+		})!;
+		const pastHtml = await container.renderToString(EventList, {
+			props: { entries: allEntries, view: pastView, now },
+			request: new Request("https://example.org/past-events/"),
+		});
+		expect(pastHtml).toContain("Past Workshop");
+		expect(pastHtml).not.toContain("Undated Community Gathering");
+
+		// Home "next events" grid cards
+		const homeGridView = parseEventView({
+			version: 1,
+			viewSlug: "home-grid",
+			mode: "upcoming",
+			order: "asc",
+			layout: "grid",
+			start: "today",
+			limit: 3,
+			dateStyle: "mec",
+		})!;
+		const homeHtml = await container.renderToString(EventList, {
+			props: { entries: allEntries, view: homeGridView, now },
+			request: new Request("https://example.org/"),
+		});
+		expect(homeHtml).toContain("Upcoming Workshop");
+		expect(homeHtml).not.toContain("Undated Community Gathering");
+
+		// Month bar / tile view
+		const tileView = parseEventView({
+			version: 1,
+			viewSlug: "updates-tile",
+			mode: "upcoming",
+			order: "asc",
+			layout: "tile",
+			start: "today",
+		})!;
+		const tileHtml = await container.renderToString(EventList, {
+			props: { entries: allEntries, view: tileView, now },
+			request: new Request("https://example.org/updates-2/"),
+		});
+		expect(tileHtml).toContain("Upcoming Workshop");
+		expect(tileHtml).not.toContain("Undated Community Gathering");
+	});
 });
