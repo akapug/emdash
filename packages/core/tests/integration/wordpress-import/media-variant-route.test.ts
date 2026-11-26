@@ -348,17 +348,28 @@ describe("WordPress media variant width ladder", () => {
 		expect(new Uint8Array(await offLadder.arrayBuffer())).toEqual(parentBytes);
 	});
 
-	it("refuses width 1600 without writing a variant", async () => {
-		const { storage, post, slots } = await setup();
-		const upload = vi.spyOn(storage, "upload");
-		const response = await post(jpeg(1600, 400), 400, 1600);
+	it("stores and serves width 1600: any width in the named range is carried (161)", async () => {
+		const { parent, storage, post } = await setup();
+		const bytes = jpeg(1600, 400);
+		const response = await post(bytes, 400, 1600);
+		expect(response.status, await response.text()).toBe(201);
+
+		const served = await fileGet(fileContext(parent.storageKey, "1600", storage));
+		expect(served.status).toBe(200);
+		expect(new Uint8Array(await served.arrayBuffer())).toEqual(bytes);
+	});
+
+	it("refuses a width outside the named range without writing a variant", async () => {
+		const huge = await jpegVariantRequest(jpeg(9000, 2250), 9000, 2250);
+		const upload = vi.spyOn(huge.storage, "upload");
+		const response = await huge.post(jpeg(5000, 1250), 1250, 5000);
 
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({
-			error: { code: "INVALID_VARIANT", message: "not on the ladder" },
+			error: { code: "INVALID_VARIANT", message: "width out of range" },
 		});
 		expect(upload).not.toHaveBeenCalled();
-		expect(await slots()).toEqual([]);
+		expect(await huge.slots()).toEqual([]);
 	});
 
 	it("refuses an on-ladder file one byte over 2 MiB without writing a variant", async () => {
