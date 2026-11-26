@@ -386,6 +386,54 @@ describe("WordPress media variant width ladder", () => {
 	});
 });
 
+describe("WordPress media variant slot quota", () => {
+	it("admits only one contender for the last slot and still replays and repairs at capacity", async () => {
+		const { storage, post, slots } = await jpegVariantRequest(jpeg(256, 64), 256, 64);
+		const offer = (width: number) => post(jpeg(width, width / 4), width / 4, width);
+		for (let width = 4; width <= 124; width += 4) {
+			expect((await offer(width)).status).toBe(201);
+		}
+
+		const upload = storage.upload;
+		let arrivals = 0;
+		let unblock!: () => void;
+		const bothUploading = new Promise<void>((resolve) => {
+			unblock = resolve;
+		});
+		const barrier = vi.spyOn(storage, "upload").mockImplementation(async (input) => {
+			if (++arrivals === 2) unblock();
+			await bothUploading;
+			return upload(input);
+		});
+		const contenders = await Promise.all([offer(128), offer(132)]);
+		barrier.mockRestore();
+		const statuses = contenders.map((response) => response.status).toSorted((a, b) => a - b);
+		expect(statuses).toEqual([201, 400]);
+		expect(await contenders.find((response) => response.status === 400)!.json()).toMatchObject({
+			error: { code: "INVALID_VARIANT", message: "variant-slot-cap" },
+		});
+		expect(await slots()).toHaveLength(32);
+
+		const extra = await offer(136);
+		expect(extra.status).toBe(400);
+		expect(await extra.json()).toMatchObject({ error: { message: "variant-slot-cap" } });
+
+		const existing = (await slots()).find((slot) => slot.width === 124)!;
+		const replay = await offer(124);
+		expect(replay.status).toBe(200);
+		expect(await replay.json()).toMatchObject({ outcome: "replayed" });
+		await storage.delete(existing.storageKey);
+		const repair = await offer(124);
+		expect(repair.status).toBe(200);
+		expect(await repair.json()).toMatchObject({ outcome: "replayed" });
+		const afterRepair = await slots();
+		expect(afterRepair).toHaveLength(32);
+		const repaired = afterRepair.find((slot) => slot.width === 124)!;
+		expect(repaired.storageKey).not.toBe(existing.storageKey);
+		expect(storage.objects.get(repaired.storageKey)?.body).toEqual(jpeg(124, 31));
+	});
+});
+
 describe("WordPress JPEG variant orientation", () => {
 	it.each([5, 6, 7, 8])("stores an upright derivative with parent EXIF %i", async (orientation) => {
 		const { storage, post, slots } = await jpegVariantRequest(

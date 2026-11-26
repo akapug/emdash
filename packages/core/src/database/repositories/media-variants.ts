@@ -1,9 +1,9 @@
 import { sql, type Kysely } from "kysely";
 
 import { invalidateVariants } from "../../media/variant-read.js";
-import type { StoredVariant } from "../../media/variants.js";
+import { VARIANT_SLOT_CAP, type StoredVariant } from "../../media/variants.js";
 import { sha256Hex } from "../../transfer/format/digest.js";
-import { isPostgres } from "../dialect-helpers.js";
+import { executeAtomicBatchIfSupported, isPostgres } from "../dialect-helpers.js";
 import type { Database } from "../types.js";
 
 const PUBLICATION_ID_PREFIX = "media-variant-publication:v1:";
@@ -31,7 +31,20 @@ type VariantCandidate = Omit<StoredVariant, "createdAt">;
 
 export type VariantStoreOutcome =
 	| { outcome: "stored" | "replayed"; storageKey: string }
-	| { outcome: "conflict" };
+	| { outcome: "conflict" | "variant-slot-cap" };
+
+function classifyVariantInsert(row: unknown, capped: boolean): VariantStoreOutcome {
+	if (row === undefined) return { outcome: capped ? "variant-slot-cap" : "conflict" };
+	if (
+		typeof row !== "object" ||
+		row === null ||
+		!("storage_key" in row) ||
+		typeof row.storage_key !== "string"
+	) {
+		throw new Error("Variant insert returned an invalid storage key");
+	}
+	return { outcome: "stored", storageKey: row.storage_key };
+}
 
 /** Stored sizes are scoped to one ready parent generation and width. */
 export class MediaVariantRepository {
@@ -88,37 +101,72 @@ export class MediaVariantRepository {
 				AND c.reason = 'pending'
 			${locks}
 		`;
-		const statement =
-			missingStorageKey === undefined
-				? sql<{ storage_key: string }>`
-					INSERT INTO _emdash_media_variants
-						(media_id, size_name, width, height, storage_key, bytes, content_hash, parent_content_hash)
-					SELECT ${input.mediaId}, ${input.sizeName}, ${input.width}, ${input.height},
-						candidate.storage_key, ${input.bytes}, ${input.contentHash}, ${input.parentContentHash}
-					FROM (${admitted}) AS candidate
-					WHERE true
-					ON CONFLICT (media_id, parent_content_hash, width) DO NOTHING
-					RETURNING storage_key
-				`
-				: sql<{ storage_key: string }>`
-					UPDATE _emdash_media_variants
-					SET storage_key = ${input.storageKey}
-					WHERE media_id = ${input.mediaId}
-						AND parent_content_hash = ${input.parentContentHash}
-						AND width = ${input.width}
-						AND content_hash = ${input.contentHash}
-						AND storage_key = ${missingStorageKey}
-						AND EXISTS (${admitted})
-					RETURNING storage_key
-				`;
-		const { rows } = await statement.execute(this.db);
-		const committed = rows[0];
-		if (!committed) return { outcome: "conflict" };
-		invalidateVariants();
-		return {
-			outcome: missingStorageKey === undefined ? "stored" : "replayed",
-			storageKey: committed.storage_key,
+		if (missingStorageKey !== undefined) {
+			const { rows } = await sql<{ storage_key: string }>`
+				UPDATE _emdash_media_variants
+				SET storage_key = ${input.storageKey}
+				WHERE media_id = ${input.mediaId}
+					AND parent_content_hash = ${input.parentContentHash}
+					AND width = ${input.width}
+					AND content_hash = ${input.contentHash}
+					AND storage_key = ${missingStorageKey}
+					AND EXISTS (${admitted})
+				RETURNING storage_key
+			`.execute(this.db);
+			if (!rows[0]) return { outcome: "conflict" };
+			invalidateVariants();
+			return { outcome: "replayed", storageKey: rows[0].storage_key };
+		}
+
+		const generation = sql`media_id = ${input.mediaId} AND parent_content_hash = ${input.parentContentHash}`;
+		const full = sql`EXISTS (
+			SELECT 1 FROM _emdash_media_variants WHERE ${generation}
+			LIMIT 1 OFFSET ${VARIANT_SLOT_CAP - 1}
+		)`;
+		const insert = sql<{ storage_key: string }>`
+			INSERT INTO _emdash_media_variants
+				(media_id, size_name, width, height, storage_key, bytes, content_hash, parent_content_hash)
+			SELECT ${input.mediaId}, ${input.sizeName}, ${input.width}, ${input.height},
+				candidate.storage_key, ${input.bytes}, ${input.contentHash}, ${input.parentContentHash}
+			FROM (${admitted}) AS candidate
+			WHERE NOT ${full}
+			ON CONFLICT (media_id, parent_content_hash, width) DO NOTHING
+			RETURNING storage_key
+		`;
+		const refusedByCap = sql`
+			SELECT 1 WHERE ${full} AND EXISTS (${admitted}) AND NOT EXISTS (
+				SELECT 1 FROM _emdash_media_variants WHERE ${generation} AND width = ${input.width}
+			)
+		`;
+		const write = async (db: Kysely<Database>) => {
+			const { rows } = await insert.execute(db);
+			return classifyVariantInsert(
+				rows[0],
+				!rows[0] && (await refusedByCap.execute(db)).rows.length > 0,
+			);
 		};
+
+		let result: VariantStoreOutcome;
+		if (isPostgres(this.db)) {
+			// Lock before starting the INSERT so its snapshot sees the previous writer's commit.
+			result = await this.db
+				.transaction()
+				.setIsolationLevel("read committed")
+				.execute(async (db) => {
+					const parent = await sql`SELECT id FROM media
+						WHERE id = ${input.mediaId} AND status = 'ready' AND content_hash = ${input.parentContentHash}
+						FOR NO KEY UPDATE`.execute(db);
+					return parent.rows.length ? write(db) : { outcome: "conflict" };
+				});
+		} else {
+			// SQLite serializes the guarded INSERT itself. D1 can also batch its diagnosis.
+			const batch = await executeAtomicBatchIfSupported(this.db, [insert, refusedByCap]);
+			result = batch
+				? classifyVariantInsert(batch[0]?.rows[0], (batch[1]?.rows.length ?? 0) > 0)
+				: await write(this.db);
+		}
+		if (result.outcome === "stored") invalidateVariants();
+		return result;
 	}
 
 	/** Every committed variant of the parent's CURRENT generation. Stale rows are not returned. */

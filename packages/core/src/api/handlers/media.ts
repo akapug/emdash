@@ -447,7 +447,7 @@ export async function handleMediaVariantStore(
 			{ ...input, storageKey, bytes: input.bytes.byteLength },
 			slot?.storageKey,
 		);
-		if (result.outcome !== "conflict") {
+		if (result.outcome === "stored" || result.outcome === "replayed") {
 			const publicationId =
 				result.outcome === "stored" ? await variantPublicationId(result.storageKey) : undefined;
 			return success(result.outcome, publicationId);
@@ -467,6 +467,9 @@ export async function handleMediaVariantStore(
 		if (winner && (await storage.exists(winner.storageKey))) {
 			const current = await repo.findSlot(input);
 			if (current?.storageKey === winner.storageKey) return success("replayed");
+		}
+		if (result.outcome === "variant-slot-cap") {
+			return { success: false, error: { code: "INVALID_VARIANT", message: result.outcome } };
 		}
 		return variantConflict(changed);
 	} catch (error) {
