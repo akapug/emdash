@@ -305,7 +305,12 @@ export interface ConvertOptions {
 	 * to receive a second value. `kept` means the wrapper was preserved as one HTML block; `flat` means the children were kept and the
 	 * wrapper dropped, because a descendant was a shortcode or a block that saves no markup.
 	 */
-	onContainer?: (event: { blockName: string | null; outcome: "kept" | "flat" }) => void;
+	onContainer?: (event: {
+		blockName: string | null;
+		outcome: "kept" | "flat";
+		/** Block names of childless no-saved-markup descendants spliced as "" inside a kept container (item 163d). */
+		droppedNoMarkup?: string[];
+	}) => void;
 	/**
 	 * Store the text as WordPress showed it: its curly quotes, apostrophes,
 	 * dashes and ellipses (texturize.ts, wptexturize). Default true; false keeps

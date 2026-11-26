@@ -6,6 +6,7 @@ import type { BlockTransformer, PortableTextBlock } from "../types.js";
 import {
 	allDescendantsAreStaticSavedHtml,
 	assembleUnknownContainer,
+	droppedNoMarkupIn,
 } from "../unknown-container.js";
 import * as core from "./core.js";
 import * as embed from "./embed.js";
@@ -90,7 +91,12 @@ export const fallbackTransformer: BlockTransformer = (
 		if (allDescendantsAreStaticSavedHtml(block)) {
 			const assembled = assembleUnknownContainer(block);
 			if (assembled.trim()) {
-				context.onContainer?.({ blockName: block.blockName, outcome: "kept" });
+				const droppedNoMarkup = droppedNoMarkupIn(block);
+				context.onContainer?.({
+					blockName: block.blockName,
+					outcome: "kept",
+					...(droppedNoMarkup.length > 0 ? { droppedNoMarkup } : {}),
+				});
 				return [
 					{
 						_type: "htmlBlock",

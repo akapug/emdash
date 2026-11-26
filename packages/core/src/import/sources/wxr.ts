@@ -315,7 +315,11 @@ function wxrPostToNormalizedItem(
 	const typed = (text: string) => (texturize ? wptexturize(text) : text);
 	// Item 163c: the converter tells us what it decided about each unknown page-builder container, so the import report can say
 	// how many sections kept their layout and how many were flattened. Collected per post here, summed by the caller.
-	const containerEvents: Array<{ blockName: string | null; outcome: "kept" | "flat" }> = [];
+	const containerEvents: Array<{
+		blockName: string | null;
+		outcome: "kept" | "flat";
+		droppedNoMarkup?: string[];
+	}> = [];
 	const content = post.content
 		? gutenbergToPortableText(post.content, {
 				texturize,

@@ -302,7 +302,11 @@ export interface NormalizedItem {
 	 * Per-item so the import can sum them and report two numbers. `kept` names the plugin, because "10 sections from Spectra kept"
 	 * and "10 sections from Kadence kept" are different facts about the site.
 	 */
-	containers?: Array<{ blockName: string | null; outcome: "kept" | "flat" }>;
+	containers?: Array<{
+		blockName: string | null;
+		outcome: "kept" | "flat";
+		droppedNoMarkup?: string[];
+	}>;
 	/** Excerpt/summary */
 	excerpt?: string;
 	/** Publication date */
@@ -392,6 +396,7 @@ export interface ImportResult {
 	containers?: {
 		kept: Array<{ plugin: string; count: number }>;
 		flat: number;
+		droppedNoMarkup?: Array<{ blockName: string; count: number }>;
 	};
 }
 

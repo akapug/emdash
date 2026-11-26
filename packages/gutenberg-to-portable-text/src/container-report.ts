@@ -43,6 +43,7 @@ export function keptContainersIn(
 export function containerReportLines(
 	kept: Array<{ plugin: string; count: number }>,
 	flat: number,
+	droppedNoMarkup: Array<{ blockName: string; count: number }> = [],
 ): string[] {
 	const lines: string[] = [];
 	const keptTotal = kept.reduce((n, k) => n + k.count, 0);
@@ -53,8 +54,12 @@ export function containerReportLines(
 		);
 	}
 	if (flat > 0) {
+		lines.push(`${flat} section(s) kept flat: they contain a shortcode or dynamic core block`);
+	}
+	for (const { blockName, count } of droppedNoMarkup) {
+		if (count <= 0) continue;
 		lines.push(
-			`${flat} section(s) kept flat: they contain a shortcode or a block that saves no markup`,
+			`${count} ${blockName} ${count === 1 ? "block has" : "blocks have"} no saved markup and ${count === 1 ? "was" : "were"} not carried`,
 		);
 	}
 	return lines;

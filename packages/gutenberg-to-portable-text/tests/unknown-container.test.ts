@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { keptContainersIn } from "../src/container-report.js";
+import { containerReportLines, keptContainersIn } from "../src/container-report.js";
 import { gutenbergToPortableText } from "../src/index.js";
 import type { PortableTextBlock } from "../src/types.js";
 
@@ -93,20 +93,57 @@ describe("163c: an unknown container keeps its wrapper when every descendant is 
 		).toBe(true);
 	});
 
-	it("A MARKUP-LESS descendant keeps today's flattening — a hole is worse than a collapse", () => {
-		// `uagb/icon` is self-closing: its innerHTML is empty by construction, so assembling its ancestor
-		// would emit a wrapper with a real gap where the icon should be.
-		const events: Array<{ blockName: string | null; outcome: string }> = [];
+	it("163d: a no-saved-markup descendant (twpe 3x uagb/icon inside a uagb/container grid) keeps the wrapper and names the 3 dropped blocks", () => {
+		// Flat or kept, a descendant that saves no markup is lost either way — so keeping the enclosing
+		// wrapper is strictly better, while counting and naming every dropped no-markup block for the report.
+		const events: Array<{
+			blockName: string | null;
+			outcome: "kept" | "flat";
+			droppedNoMarkup?: string[];
+		}> = [];
+		const card = (hash: string, iconId: string, quote: string) =>
+			container(
+				`<!-- wp:uagb/icon {"icon":"quote-left","block_id":"${iconId}"} /-->${paragraph(quote)}`,
+				hash,
+				`{"block_id":"${hash}"}`,
+			);
+		const grid = container(
+			card("11111111", "d7de978c", "First testimonial") +
+				card("22222222", "fee179dd", "Second testimonial") +
+				card("33333333", "495a3e5f", "Third testimonial"),
+			"grid0001",
+			'{"block_id":"grid0001"}',
+		);
+		const out = gutenbergToPortableText(grid, { onContainer: (e) => events.push(e) });
+		const html = htmlOf(out);
+		expect(html, "outer grid wrapper kept").toContain("uagb-block-grid0001");
+		expect(html, "all three nested testimonial cards kept").toContain("uagb-block-11111111");
+		expect(html).toContain("uagb-block-22222222");
+		expect(html).toContain("uagb-block-33333333");
+		expect(html.match(/First testimonial/g)).toHaveLength(1);
+		expect(html.match(/Second testimonial/g)).toHaveLength(1);
+		expect(html.match(/Third testimonial/g)).toHaveLength(1);
+		expect(events).toEqual([
+			{
+				blockName: "uagb/container",
+				outcome: "kept",
+				droppedNoMarkup: ["uagb/icon", "uagb/icon", "uagb/icon"],
+			},
+		]);
+		const lines = containerReportLines(keptContainersIn(out), 0, [
+			{ blockName: "uagb/icon", count: 3 },
+		]);
+		expect(lines).toContain("3 uagb/icon blocks have no saved markup and were not carried");
+	});
+
+	it("163d: a DYNAMIC CORE block descendant (e.g. core/latest-posts) still flattens the container", () => {
+		const events: Array<{ blockName: string | null; outcome: "kept" | "flat" }> = [];
 		const out = gutenbergToPortableText(
-			container(`<!-- wp:uagb/icon {"icon":"star"} /-->${paragraph("After")}`),
+			container(`<!-- wp:latest-posts {"postsToShow":3} /-->${paragraph("After")}`, "dyn00001"),
 			{ onContainer: (e) => events.push(e) },
 		);
-		const html = htmlOf(out);
-		expect(html, "no wrapper for a section with a hole").not.toContain("uagb-block-");
-		expect(
-			events.some((e) => e.outcome === "flat"),
-			"reported flat so the import can name it",
-		).toBe(true);
+		expect(htmlOf(out), "no wrapper kept for dynamic core block").not.toContain("uagb-block-");
+		expect(events).toEqual([{ blockName: "uagb/container", outcome: "flat" }]);
 	});
 
 	it("a site with NO unknown containers is unchanged: the report is empty", () => {

@@ -73,7 +73,12 @@ function savesMarkup(block: GutenbergBlock): boolean {
 }
 
 /**
- * Every descendant is static saved HTML, so the container's own saved markup can stand in for its children's rendered output.
+ * Every descendant is static saved HTML — or a childless block that saves no markup at all (item 163d).
+ *
+ * Flat or kept, a descendant block that saves no markup is lost either way, so keeping the enclosing
+ * wrapper is strictly better while counting and naming every dropped no-markup block for the report.
+ * Shortcodes and dynamic core blocks still disqualify the container so raw `[shortcode]` text never
+ * leaks into an assembled HTML block.
  *
  * `depth` guards the recursion: a pathological or cyclic export must not assemble without bound.
  */
@@ -83,11 +88,30 @@ export function allDescendantsAreStaticSavedHtml(block: GutenbergBlock, depth = 
 		const name = qualifiedName(child.blockName);
 		if (name === "core/shortcode") return false;
 		if (name.startsWith("core/") && DYNAMIC_CORE_BLOCKS.has(name.slice(5))) return false;
-		// A CHILDLESS block that saves no markup is a hole: nothing to put where it stood.
-		if (child.innerBlocks.length === 0 && !savesMarkup(child)) return false;
+		if (child.innerBlocks.length === 0 && !savesMarkup(child)) continue;
 		if (!allDescendantsAreStaticSavedHtml(child, depth + 1)) return false;
 	}
 	return true;
+}
+
+/**
+ * Block names of every childless descendant that saves no markup (item 163d), in document order.
+ * Called when an unknown container is kept so the import report can name what was not carried.
+ */
+export function droppedNoMarkupIn(block: GutenbergBlock, depth = 0): string[] {
+	if (depth > 8) return [];
+	const dropped: string[] = [];
+	for (const child of block.innerBlocks) {
+		if (child.innerBlocks.length === 0 && !savesMarkup(child)) {
+			const name = qualifiedName(child.blockName);
+			if (name) dropped.push(name);
+			continue;
+		}
+		if (child.innerBlocks.length > 0) {
+			dropped.push(...droppedNoMarkupIn(child, depth + 1));
+		}
+	}
+	return dropped;
 }
 
 /**

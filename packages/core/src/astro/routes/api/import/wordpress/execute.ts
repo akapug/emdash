@@ -450,8 +450,9 @@ export async function importContent(
 		},
 	};
 
-	// Item 163c: unknown page-builder containers, summed across every item of this import and reported as two numbers.
+	// Item 163c/163d: unknown page-builder containers and dropped no-markup descendants, summed across this import.
 	const containerTally = new Map<string, number>();
+	const droppedNoMarkupTally = new Map<string, number>();
 	let flatContainers = 0;
 
 	const mappedFields = mappedFieldsSchema.safeParse(config.mappedFields);
@@ -1028,12 +1029,15 @@ export async function importContent(
 					result.imported++;
 					result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
 					for (const c of post.containers ?? []) {
-						if (c.outcome === "kept")
+						if (c.outcome === "kept") {
 							containerTally.set(
 								c.blockName ?? "unknown",
 								(containerTally.get(c.blockName ?? "unknown") ?? 0) + 1,
 							);
-						else flatContainers += 1;
+							for (const dropped of c.droppedNoMarkup ?? []) {
+								droppedNoMarkupTally.set(dropped, (droppedNoMarkupTally.get(dropped) ?? 0) + 1);
+							}
+						} else flatContainers += 1;
 					}
 					result.items?.push(applied.receipt);
 					if (plannedTerms.pendingTerms.length > 0) {
@@ -1168,12 +1172,15 @@ export async function importContent(
 				}
 				result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
 				for (const c of post.containers ?? []) {
-					if (c.outcome === "kept")
+					if (c.outcome === "kept") {
 						containerTally.set(
 							c.blockName ?? "unknown",
 							(containerTally.get(c.blockName ?? "unknown") ?? 0) + 1,
 						);
-					else flatContainers += 1;
+						for (const dropped of c.droppedNoMarkup ?? []) {
+							droppedNoMarkupTally.set(dropped, (droppedNoMarkupTally.get(dropped) ?? 0) + 1);
+						}
+					} else flatContainers += 1;
 				}
 
 				// `handleContentCreate` returns `data: { item, _rev? }` on
@@ -1342,13 +1349,18 @@ export async function importContent(
 
 	result.success = result.errors.length === 0;
 
-	// Item 163c: TWO numbers, because "layout kept" and "layout lost" are opposite outcomes for the operator.
+	// Item 163c/163d: kept vs flat container counts, plus any childless no-markup blocks dropped inside kept containers.
 	if (containerTally.size > 0 || flatContainers > 0) {
+		const droppedNoMarkup = Array.from(droppedNoMarkupTally, ([blockName, count]) => ({
+			blockName,
+			count,
+		})).toSorted((a, b) => b.count - a.count);
 		result.containers = {
 			kept: Array.from(containerTally, ([plugin, count]) => ({ plugin, count })).toSorted(
 				(a, b) => b.count - a.count,
 			),
 			flat: flatContainers,
+			...(droppedNoMarkup.length > 0 ? { droppedNoMarkup } : {}),
 		};
 	}
 	return result;
