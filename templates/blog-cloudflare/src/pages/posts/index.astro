@@ -94,20 +94,47 @@ const withPictures = await Promise.all(
  * than inside the component. The dimensions are the row's own, when the card could read them.
  */
 function cardImage(
-	picture: { assetRef?: string; src: string; alt?: string },
+	picture: { assetRef?: string; src: string; alt?: string; focalX?: number; focalY?: number },
 	dimensions: { width: number; height: number } | undefined,
 	fallbackAlt: string,
-): { id: string; src: string; alt: string; width?: number; height?: number } {
+): {
+	id: string;
+	src: string;
+	alt: string;
+	width?: number;
+	height?: number;
+	focalX?: number;
+	focalY?: number;
+} {
 	// `id` IS REQUIRED BY THE COMPONENT'S `ImageValue`, even though the local branch draws from `src`: the type is the
-	// media record, and the fork's own components pass the id so a provider can resolve the current file. The card's
-	// id is the media id in the stored path, or the path itself when the value carries no id of its own.
+	// media record, and the fork's own components pass the id so a provider can resolve the current file.
+	//
+	// IT IS THE WHOLE KEY, DECODED — not the first path segment. The old regex `/\/media\/file\/([^/?#]+)/` stopped at
+	// the first `/`, so a NESTED key `2024/05/x.jpg` yielded id `"2024"`, and an encoded key yielded a percent-encoded
+	// id. `EmDashImage` falls back to `img.id` when it has no storage key, so a wrong id there means the wrong file.
 	const src = picture.assetRef ?? picture.src;
-	const id = /\/media\/file\/([^/?#]+)/.exec(src)?.[1] ?? src;
+	const fromRoute = /^\/_emdash\/api\/media\/file\/(.+)$/.exec(src)?.[1];
+	const id = fromRoute
+		? fromRoute
+				.split("/")
+				.map((segment) => {
+					try {
+						return decodeURIComponent(segment);
+					} catch {
+						return segment;
+					}
+				})
+				.join("/")
+		: src;
 	return {
 		id,
 		src,
 		alt: picture.alt || fallbackAlt,
 		...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
+		// THE FOCAL POINT TRAVELS WITH THE PICTURE. `EmDashImage` turns it into `object-position`, so dropping it here
+		// cropped every card at the centre — including photos whose subject the owner had explicitly moved.
+		...(picture.focalX !== undefined ? { focalX: picture.focalX } : {}),
+		...(picture.focalY !== undefined ? { focalY: picture.focalY } : {}),
 	};
 }
 

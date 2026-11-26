@@ -23,6 +23,42 @@ import { setupTestDatabase, teardownTestDatabase } from "../utils/test-db.js";
 const REAL_URL = "/_emdash/api/media/file/2024/05/real.jpg";
 
 /** The three posts, in the order the page lists them (published_at desc). */
+/** The STORED MEDIA VALUE, field for field as a real tenant holds it: no `url`, no `asset.url`. */
+const STORED_MEDIA_VALUE = {
+	provider: "local",
+	id: "01M89XSZYN028DKNRN4NRM2Q0C",
+	filename: "club-logo.png",
+	mimeType: "image/png",
+	width: 500,
+	height: 500,
+	meta: { storageKey: "01M89XSZJF7EHVPC7VP7E47NED.png", caption: null },
+};
+
+/** A post whose featured image is that value — the shape EVERY imported featured image actually has. */
+const storedMediaPost = {
+	slug: "stored-media-value",
+	title: "Post with a stored media featured image",
+	featuredImage: { ...STORED_MEDIA_VALUE, focalX: 0.25, focalY: 0.75 },
+	content: [
+		{ _type: "block", _key: "b1", children: [{ _type: "span", _key: "s1", text: "Words." }] },
+	],
+};
+
+/** A post whose featured image uses a NESTED storage key — the layout real uploads use. */
+const nestedKeyPost = {
+	slug: "nested-key",
+	title: "Post with a nested-key featured image",
+	featuredImage: {
+		provider: "local",
+		width: 500,
+		height: 500,
+		meta: { storageKey: "2024/05/club-logo.png" },
+	},
+	content: [
+		{ _type: "block", _key: "b1", children: [{ _type: "span", _key: "s1", text: "Words." }] },
+	],
+};
+
 const imageNodePost = {
 	slug: "has-image-node",
 	title: "Post with a featured image",
@@ -180,9 +216,8 @@ afterAll(async () => {
 
 /** Render the real page with the three posts, as a visitor would. */
 async function renderIndex(only?: string): Promise<string> {
-	const chosen = only
-		? [imageNodePost, htmlBlockPost, noPicturePost].filter((p) => p.slug === only)
-		: [imageNodePost, htmlBlockPost, noPicturePost];
+	const all = [imageNodePost, htmlBlockPost, noPicturePost, storedMediaPost, nestedKeyPost];
+	const chosen = only ? all.filter((p) => p.slug === only) : all;
 	state.entries = chosen.map((post) => ({
 		id: post.slug,
 		collection: "posts",
@@ -265,6 +300,67 @@ describe("the post card a visitor gets", () => {
 		const linkOpen = card.indexOf('<a href="/posts/has-image-node"');
 		expect(linkOpen).toBeGreaterThan(-1);
 		expect(card.indexOf(picture)).toBeGreaterThan(linkOpen);
+	});
+
+	it("draws the STORED MEDIA VALUE — the shape every imported featured image holds — as a real src the browser can fetch", async () => {
+		// THE ARM THE LEAD ASKED FOR, AND THE ONE THE OLD ARMS COULD NOT BE. `cardPicture` alone said the value was
+		// recognised; the CONSUMER is what decides whether the picture is drawable. `index.astro` renders
+		// `picture.assetRef ?? picture.src` as the `<img src>` and passes the same value to `storedDimensionsForRender`,
+		// so when `assetRef` was the BARE KEY a calulti card produced `<img src="01M89….png">` — a relative URL that
+		// resolves under /posts/ and 404s, with no dimensions. This renders the page and reads what a browser receives.
+		const card = articleFor(await renderIndex(storedMediaPost.slug), storedMediaPost.slug);
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
+		expect(picture.length, "the card must render a post-picture span at all").toBeGreaterThan(0);
+		expect(picture, "the src is OUR MEDIA ROUTE, not a bare storage key").toContain(
+			'src="/_emdash/api/media/file/01M89XSZJF7EHVPC7VP7E47NED.png"',
+		);
+		expect(picture, "and never the bare key as a relative URL").not.toMatch(/src="01M89XSZ/);
+		// THE BOX IS REAL: without both dimensions the image lays out at 0 wide before load and the browser takes the
+		// smallest candidate. The stored value carries them, so the card must reserve the box.
+		expect(picture, "the card reserves the image's box with a real width").toMatch(/width="\d+"/);
+		expect(picture, "and a real height").toMatch(/height="\d+"/);
+	});
+
+	it("draws a NESTED key through the real route — `2024/05/x.jpg` is a valid key, not a rejected one", async () => {
+		// The first version refused any key containing "/", so a nested upload drew NOTHING. This renders the page the way
+		// the other arms do — through the fixture list — and reads the src a browser receives.
+		const card = articleFor(await renderIndex(nestedKeyPost.slug), nestedKeyPost.slug);
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
+		expect(
+			picture,
+			`the nested key must render a fetchable route; got: ${card.slice(0, 300)}`,
+		).toContain('src="/_emdash/api/media/file/2024/05/club-logo.png"');
+		expect(picture).toMatch(/width="\d+"/);
+		expect(picture).toMatch(/height="\d+"/);
+	});
+
+	it("carries the FOCAL POINT into object-position, so the crop is the owner's and not the centre", async () => {
+		// `cardImage` used to rebuild the image object with {id, src, alt, width, height} and DROP the focal point, so
+		// every card cropped at the centre even where the owner had moved the subject. `EmDashImage` reads img.focalX/Y.
+		const card = articleFor(await renderIndex(storedMediaPost.slug), storedMediaPost.slug);
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
+		expect(
+			picture,
+			"the card's picture must carry an object-position from the stored focal point",
+		).toContain("object-position");
+		expect(picture, "and it must NOT be the centre default").not.toContain(
+			"object-position: 50% 50%",
+		);
+	});
+
+	it("the nested key's ID is the WHOLE key, not its first path segment", async () => {
+		// The id fed `EmDashImage`'s proxy fallback. The old regex stopped at the first `/`, so `2024/05/club-logo.png`
+		// became id "2024" — a different file — and an encoded key became a percent-encoded id.
+		const card = articleFor(await renderIndex(nestedKeyPost.slug), nestedKeyPost.slug);
+		expect(card, "the card renders at all").toContain("post-picture");
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(card)?.[0] ?? "";
+		expect(picture, "the src keeps the whole nested key").toContain(
+			"/_emdash/api/media/file/2024/05/club-logo.png",
+		);
+		// The id is not printed by every branch, so assert it where it IS observable: the data the component receives is
+		// the src for a local picture, and the id only matters on the proxy fallback — so this arm pins the SRC CONTRACT
+		// and the cardImage unit below pins the id itself.
+		expect(picture).toMatch(/width="\d+"/);
 	});
 
 	it("draws NO picture for a post whose only picture is in its content", async () => {

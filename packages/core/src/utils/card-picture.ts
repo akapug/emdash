@@ -1,3 +1,4 @@
+import { localMediaFileUrl } from "../media/url.js";
 /**
  * Which picture a POST CARD draws.
  *
@@ -22,6 +23,15 @@ export interface CardPicture {
 	alt?: string;
 	/** A ref for a stored media asset, when the node carries one (drawn through the image component). */
 	assetRef?: string;
+	/**
+	 * The media value's own focal point, carried so a card can crop the subject rather than the middle.
+	 *
+	 * `index.astro` rebuilds the image object it hands the component (lines 97-110), so anything the card does not carry
+	 * here is lost by the time the component sees it — the stored alt and focal point were being dropped on exactly the
+	 * values that now draw at all.
+	 */
+	focalX?: number;
+	focalY?: number;
 }
 
 /** A root-relative path or an absolute http(s) url — a `data:`, `javascript:` or `blob:` source matches neither. */
@@ -157,6 +167,45 @@ export function cardPicture(
 		// no `url` beside it — and a card that ignored the ref would draw nothing for an image the site clearly has.
 		const viaRef = typeof viaAsset?._ref === "string" ? viaAsset._ref : undefined;
 		if (viaRef && isUsableSource(viaRef)) return { src: viaRef, assetRef: viaRef };
+		// THE STORED MEDIA VALUE — the shape the media pass actually writes, and the one this branch could not see.
+		//
+		// Measured from a real row: `{provider:"local", id, filename, mimeType, width, height, blurhash, dominantColor,
+		// meta:{storageKey}}`. There is NO `url` and NO `asset.url`, so every branch above missed it and an imported
+		// featured image fell through to the content walk — a card drawing the post's first body picture while the
+		// image the site designated sat unread.
+		//
+		// LOCAL ONLY. A non-local provider's `meta.storageKey`, if it has one, names a file in SOMEONE ELSE'S storage; the
+		// route this builds is joined to OUR tenant, so honouring it would show a different local asset in place of a
+		// remote picture. Any other provider declines the branch — no guess, no substitution.
+		//
+		// A LEGACY VALUE with no `provider` is supported, because the earliest imported values carry none and their file is
+		// ours. `provider` present and not "local" is the only case that declines.
+		//
+		// BUILT BY `localMediaFileUrl`, never by interpolation: a storage key may be NESTED (`2024/05/x.jpg`) and is valid,
+		// and its segments must be percent-encoded so `?`, `#` and `%` stay inside the path. `assetRef` is the ROUTE, the
+		// same convention as every other branch — `index.astro:104` renders `picture.assetRef ?? picture.src` AS the `<img
+		// src>`, so the bare key produced a relative URL that 404s under /posts/ and yielded no dimensions.
+		const provider = featuredRecord.provider;
+		const isLocal = provider === undefined || provider === "local";
+		const storageKey = asRecord(featuredRecord.meta)?.storageKey;
+		if (isLocal && typeof storageKey === "string" && storageKey.length > 0) {
+			const route = localMediaFileUrl(storageKey);
+			// THE VALUE'S OWN alt AND FOCAL POINT, carried. The template rebuilds the image object, so a field not carried
+			// here never reaches the component: the alt fell back to the post's title and the focal point to the centre.
+			const alt =
+				typeof featuredRecord.alt === "string" && featuredRecord.alt.trim() !== ""
+					? featuredRecord.alt
+					: undefined;
+			const focalX = typeof featuredRecord.focalX === "number" ? featuredRecord.focalX : undefined;
+			const focalY = typeof featuredRecord.focalY === "number" ? featuredRecord.focalY : undefined;
+			return {
+				src: route,
+				assetRef: route,
+				...(alt !== undefined ? { alt } : {}),
+				...(focalX !== undefined ? { focalX } : {}),
+				...(focalY !== undefined ? { focalY } : {}),
+			};
+		}
 	}
 
 	// NO CARD PICTURE WITHOUT A FEATURED IMAGE, unless this site's own listing was SEEN drawing one from the content.
