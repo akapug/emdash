@@ -18,6 +18,10 @@ export type WpShortlinkKey = (typeof WP_SHORTLINK_KEYS)[number];
 
 const WP_SHORTLINK_KEY_SET: ReadonlySet<string> = new Set<string>(WP_SHORTLINK_KEYS);
 
+function isShortlinkKey(key: string): key is WpShortlinkKey {
+	return WP_SHORTLINK_KEY_SET.has(key);
+}
+
 /**
  * Named, reviewed set of tracking query keys allowed beside a WordPress
  * shortlink ID. Tracking parameters are ignored during lookup and dropped by
@@ -49,10 +53,10 @@ export function wpShortlinkKey(url: URL): string | null {
 	let foundId: string | null = null;
 
 	for (const [key, value] of url.searchParams.entries()) {
-		if (WP_SHORTLINK_KEY_SET.has(key)) {
+		if (isShortlinkKey(key)) {
 			if (foundKey !== null) return null;
 			if (!POSITIVE_INT.test(value)) return null;
-			foundKey = key as WpShortlinkKey;
+			foundKey = key;
 			foundId = value;
 			continue;
 		}
