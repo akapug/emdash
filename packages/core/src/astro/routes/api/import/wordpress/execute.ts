@@ -1349,20 +1349,18 @@ export async function importContent(
 
 	result.success = result.errors.length === 0;
 
-	// Item 163c/163d: kept vs flat container counts, plus any childless no-markup blocks dropped inside kept containers.
-	if (containerTally.size > 0 || flatContainers > 0) {
-		const droppedNoMarkup = Array.from(droppedNoMarkupTally, ([blockName, count]) => ({
+	// Item 163c/163d: ALWAYS set `result.containers` (empty when none) so an absent field
+	// unambiguously identifies a pre-163c tenant build rather than a site with zero builder sections.
+	result.containers = {
+		kept: Array.from(containerTally, ([plugin, count]) => ({ plugin, count })).toSorted(
+			(a, b) => b.count - a.count,
+		),
+		flat: flatContainers,
+		droppedNoMarkup: Array.from(droppedNoMarkupTally, ([blockName, count]) => ({
 			blockName,
 			count,
-		})).toSorted((a, b) => b.count - a.count);
-		result.containers = {
-			kept: Array.from(containerTally, ([plugin, count]) => ({ plugin, count })).toSorted(
-				(a, b) => b.count - a.count,
-			),
-			flat: flatContainers,
-			...(droppedNoMarkup.length > 0 ? { droppedNoMarkup } : {}),
-		};
-	}
+		})).toSorted((a, b) => b.count - a.count),
+	};
 	return result;
 }
 

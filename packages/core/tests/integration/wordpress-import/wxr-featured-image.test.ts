@@ -187,6 +187,9 @@ describe("WXR import: a post's featured image", () => {
 		);
 		expect(imported.errors).toEqual([]);
 		expect(imported.imported).toBe(1);
+		// Item 163d: execute.ts ALWAYS sets `result.containers` (empty when none) so an absent field
+		// unambiguously means a pre-163c tenant build, never a plain site with zero builder sections.
+		expect(imported.containers).toEqual({ kept: [], flat: 0, droppedNoMarkup: [] });
 		// Execute stores the attachment's own URL.
 		expect(await featured()).toEqual({ provider: "external", id: "", src: IMAGE });
 
