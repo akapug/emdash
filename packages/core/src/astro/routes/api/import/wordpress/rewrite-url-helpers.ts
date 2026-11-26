@@ -212,6 +212,66 @@ function rewriteSkeletonLinkKeys(
 	return rewritten;
 }
 
+const MAX_ORIGINAL_ATTRS_DEPTH = 16;
+
+function rewriteAttrString(
+	value: string,
+	exactMap: Record<string, string>,
+	baseMap: Map<string, string>,
+): { newValue: string; count: number } | null {
+	if (!value) return null;
+	const exactOrBase = findMatchingUrl(value, exactMap, baseMap);
+	if (exactOrBase && exactOrBase !== value) {
+		return { newValue: exactOrBase, count: 1 };
+	}
+	if (!value.includes("://") && !value.startsWith("/")) return null;
+	const embedded = rewriteStringUrls(value, exactMap, baseMap);
+	return embedded.changed ? { newValue: embedded.newValue, count: embedded.urlsRewritten } : null;
+}
+
+/**
+ * Walk `htmlBlock.originalAttrs` (nested objects/arrays, bounded depth) and
+ * rewrite every string value through the same URL map the HTML rewrite uses.
+ */
+function rewriteOriginalAttrsUrls(
+	value: unknown,
+	exactMap: Record<string, string>,
+	baseMap: Map<string, string>,
+	depth: number,
+): number {
+	if (depth >= MAX_ORIGINAL_ATTRS_DEPTH) return 0;
+	let rewritten = 0;
+	if (Array.isArray(value)) {
+		for (let i = 0; i < value.length; i++) {
+			const item: unknown = value[i];
+			if (typeof item === "string") {
+				const next = rewriteAttrString(item, exactMap, baseMap);
+				if (next) {
+					value[i] = next.newValue;
+					rewritten += next.count;
+				}
+			} else if (isRecord(item)) {
+				rewritten += rewriteOriginalAttrsUrls(item, exactMap, baseMap, depth + 1);
+			}
+		}
+		return rewritten;
+	}
+	if (!isRecord(value)) return 0;
+	for (const key of Object.keys(value)) {
+		const entry: unknown = value[key];
+		if (typeof entry === "string") {
+			const next = rewriteAttrString(entry, exactMap, baseMap);
+			if (next) {
+				value[key] = next.newValue;
+				rewritten += next.count;
+			}
+		} else if (isRecord(entry)) {
+			rewritten += rewriteOriginalAttrsUrls(entry, exactMap, baseMap, depth + 1);
+		}
+	}
+	return rewritten;
+}
+
 /**
  * Rewrite URLs in a Portable Text array, returning whether any changes were made
  */
@@ -320,12 +380,25 @@ export function rewritePortableTextUrls(
 		// it would change what the script does; the same reason the host's own
 		// blanking work exists. So the html is split on those elements and only
 		// the segments between them are rewritten.
-		if (block._type === "htmlBlock" && typeof block.html === "string") {
-			const rewritten = rewriteHtmlOutsideScripts(block.html, exactMap, baseMap);
-			if (rewritten.changed) {
-				block.html = rewritten.html;
-				changed = true;
-				urlsRewritten += rewritten.urlsRewritten;
+		if (block._type === "htmlBlock") {
+			if (typeof block.html === "string") {
+				const rewritten = rewriteHtmlOutsideScripts(block.html, exactMap, baseMap);
+				if (rewritten.changed) {
+					block.html = rewritten.html;
+					changed = true;
+					urlsRewritten += rewritten.urlsRewritten;
+				}
+			}
+			// Unknown Gutenberg blocks (e.g. Spectra `uagb/*`) carry their original JSON
+			// attributes on `originalAttrs` (fallbackTransformer). Rewrite every mapped
+			// source URL stored inside nested objects/arrays so no residual source-host
+			// media/attachment URLs remain on the row.
+			if (isRecord(block.originalAttrs)) {
+				const attrsRewritten = rewriteOriginalAttrsUrls(block.originalAttrs, exactMap, baseMap, 0);
+				if (attrsRewritten > 0) {
+					changed = true;
+					urlsRewritten += attrsRewritten;
+				}
 			}
 		}
 

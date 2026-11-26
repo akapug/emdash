@@ -644,3 +644,88 @@ describe("an embed block's URL is rewritten", () => {
 		expect((blocks[0] as { url: string }).url).toBe(yt);
 	});
 });
+
+describe("163e: htmlBlock.originalAttrs source URLs are rewritten", () => {
+	const bg = "http://twpe.wpengine.com/wp-content/uploads/2025/07/whitebkgdv1.png";
+	const bgMedium = "http://twpe.wpengine.com/wp-content/uploads/2025/07/whitebkgdv1-300x121.png";
+	const bgMoved = "/_emdash/api/media/file/01BG.png";
+	const avatar = "http://twpe.wpengine.com/wp-content/uploads/2022/11/avatar.jpeg";
+	const avatarMoved = "/_emdash/api/media/file/01AVATAR.jpeg";
+	const avatarPage = "https://twpe.wpengine.com/earth-store-testimonial-avatar-img/";
+	const external = "https://websitedemos.net/earth-store-08/wp-content/uploads/2022/10/hero.jpg";
+	const exact = {
+		[bg]: bgMoved,
+		[avatar]: avatarMoved,
+		[avatarPage]: avatarMoved,
+	};
+	const base = buildBaseUrlMap(exact);
+
+	it("rewrites nested object and array URLs inside originalAttrs (including WP size variants) and keeps html rewrite unchanged", () => {
+		const originalAttrs = {
+			block_id: "2571cf0c",
+			backgroundImageDesktop: {
+				url: bg,
+				link: bg,
+				sizes: {
+					medium: { url: bgMedium },
+					full: { url: bg },
+				},
+			},
+			test_block: [
+				{
+					name: "Alice",
+					image: {
+						url: avatar,
+						link: avatarPage,
+					},
+				},
+			],
+		};
+		const blocks: PortableTextBlock[] = [
+			{
+				_type: "htmlBlock",
+				_key: "u1",
+				html: `<div class="uagb-block-2571cf0c"><img src="${avatar}"></div>`,
+				originalBlockName: "uagb/testimonial",
+				originalAttrs,
+			},
+		];
+
+		const result = rewritePortableTextUrls(blocks, exact, base);
+		expect(result).toEqual({ changed: true, urlsRewritten: 7 });
+		expect(blocks[0]?.html).toBe(
+			`<div class="uagb-block-2571cf0c"><img src="${avatarMoved}"></div>`,
+		);
+		expect(originalAttrs.backgroundImageDesktop.url).toBe(bgMoved);
+		expect(originalAttrs.backgroundImageDesktop.link).toBe(bgMoved);
+		expect(originalAttrs.backgroundImageDesktop.sizes.medium.url).toBe(bgMoved);
+		expect(originalAttrs.backgroundImageDesktop.sizes.full.url).toBe(bgMoved);
+		expect(originalAttrs.test_block[0]?.image.url).toBe(avatarMoved);
+		expect(originalAttrs.test_block[0]?.image.link).toBe(avatarMoved);
+		expect(JSON.stringify(blocks)).not.toContain("twpe.wpengine.com");
+	});
+
+	it("leaves unmapped external URLs and non-URL fields in originalAttrs untouched", () => {
+		const originalAttrs = {
+			block_id: "9fd49796",
+			urlTablet: external,
+			columns: 3,
+			enabled: true,
+		};
+		const blocks: PortableTextBlock[] = [
+			{
+				_type: "htmlBlock",
+				_key: "u2",
+				html: `<p>Plain copy</p>`,
+				originalBlockName: "uagb/image",
+				originalAttrs,
+			},
+		];
+
+		const result = rewritePortableTextUrls(blocks, exact, base);
+		expect(result).toEqual({ changed: false, urlsRewritten: 0 });
+		expect(originalAttrs.urlTablet).toBe(external);
+		expect(originalAttrs.columns).toBe(3);
+		expect(originalAttrs.enabled).toBe(true);
+	});
+});
