@@ -1985,7 +1985,7 @@ export function wpShellProblem(value: unknown): string | null {
 		return `version ${String(value.version)} is not ${WP_SHELL_VERSION}`;
 	if (typeof value.id !== "string" || !RECORD_ID.test(value.id)) return "no id";
 	if (!isObject(value.source) || typeof value.source.url !== "string") return "no source";
-	const { html, body, styles, menus, parts, imageAliases } = value;
+	const { html, body, styles, menus, parts, imageAliases, contentWidth } = value;
 	if (imageAliases !== undefined) {
 		if (!isObject(imageAliases)) return "image aliases are not an object";
 		const aliases = Object.entries(imageAliases);
@@ -2039,7 +2039,8 @@ export function wpShellProblem(value: unknown): string | null {
 		archives: archives.length,
 		subscribe: subscribe.length,
 	};
-	const layout = checkLayout({ body, styles, parts }, menus.length, counts);
+	// The base layout's measured content width (141c) is checked like a home, page or post layout's: WpShell.astro falls back to it.
+	const layout = checkLayout({ body, styles, parts, contentWidth }, menus.length, counts);
 	if (layout) return layout;
 	if (value.home !== undefined) {
 		const why = isObject(value.home)

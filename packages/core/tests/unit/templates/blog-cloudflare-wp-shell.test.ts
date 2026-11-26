@@ -169,6 +169,15 @@ describe("wp-shell record", () => {
 		expect(parseWpShell(sample())).toEqual(sample());
 	});
 
+	it("checks the base layout's content width the way it checks a home, page or post layout's", () => {
+		// WpShell.astro falls back to the base record's contentWidth, so the record check must read it (141c).
+		expect(wpShellProblem({ ...sample(), contentWidth: 1140 })).toBeNull();
+		for (const bad of [100, 1140.5, "1140", 99999])
+			expect(wpShellProblem({ ...sample(), contentWidth: bad }), String(bad)).toBe(
+				"contentWidth is not a valid pixel width",
+			);
+	});
+
 	it("is absent, not an error, when the site has none", () => {
 		expect(parseWpShell(undefined)).toBeNull();
 	});
