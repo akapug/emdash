@@ -50,7 +50,9 @@ it("admits a single last slot on D1 and still repairs a committed slot at capaci
 		const contenders = [candidate(VARIANT_SLOT_CAP), candidate(VARIANT_SLOT_CAP + 1)];
 		for (const input of contenders) await repo.registerCandidate(input.storageKey);
 		const outcomes = await Promise.all(contenders.map((input) => repo.store(input)));
-		expect(outcomes.map(({ outcome }) => outcome).sort()).toEqual(["stored", "variant-slot-cap"]);
+		const kinds = outcomes.map(({ outcome }) => outcome);
+		expect(kinds).toContain("stored");
+		expect(kinds).toContain("variant-slot-cap");
 
 		const repair = candidate(1, "repaired-variant");
 		await repo.registerCandidate(repair.storageKey);

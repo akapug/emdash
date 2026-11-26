@@ -33,6 +33,19 @@ export type VariantStoreOutcome =
 	| { outcome: "stored" | "replayed"; storageKey: string }
 	| { outcome: "conflict" | "variant-slot-cap" };
 
+function classifyVariantInsert(row: unknown, capped: boolean): VariantStoreOutcome {
+	if (row === undefined) return { outcome: capped ? "variant-slot-cap" : "conflict" };
+	if (
+		typeof row !== "object" ||
+		row === null ||
+		!("storage_key" in row) ||
+		typeof row.storage_key !== "string"
+	) {
+		throw new Error("Variant insert returned an invalid storage key");
+	}
+	return { outcome: "stored", storageKey: row.storage_key };
+}
+
 /** Stored sizes are scoped to one ready parent generation and width. */
 export class MediaVariantRepository {
 	constructor(private readonly db: Kysely<Database>) {}
@@ -125,16 +138,12 @@ export class MediaVariantRepository {
 				SELECT 1 FROM _emdash_media_variants WHERE ${generation} AND width = ${input.width}
 			)
 		`;
-		const classify = (
-			row: { storage_key: string } | undefined,
-			capped: boolean,
-		): VariantStoreOutcome =>
-			row
-				? { outcome: "stored", storageKey: row.storage_key }
-				: { outcome: capped ? "variant-slot-cap" : "conflict" };
 		const write = async (db: Kysely<Database>) => {
 			const { rows } = await insert.execute(db);
-			return classify(rows[0], !rows[0] && (await refusedByCap.execute(db)).rows.length > 0);
+			return classifyVariantInsert(
+				rows[0],
+				!rows[0] && (await refusedByCap.execute(db)).rows.length > 0,
+			);
 		};
 
 		let result: VariantStoreOutcome;
@@ -153,10 +162,7 @@ export class MediaVariantRepository {
 			// SQLite serializes the guarded INSERT itself. D1 can also batch its diagnosis.
 			const batch = await executeAtomicBatchIfSupported(this.db, [insert, refusedByCap]);
 			result = batch
-				? classify(
-						batch[0]?.rows[0] as { storage_key: string } | undefined,
-						Boolean(batch[1]?.rows.length),
-					)
+				? classifyVariantInsert(batch[0]?.rows[0], (batch[1]?.rows.length ?? 0) > 0)
 				: await write(this.db);
 		}
 		if (result.outcome === "stored") invalidateVariants();

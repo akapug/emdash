@@ -407,7 +407,8 @@ describe("WordPress media variant slot quota", () => {
 		});
 		const contenders = await Promise.all([offer(128), offer(132)]);
 		barrier.mockRestore();
-		expect(contenders.map((response) => response.status).sort()).toEqual([201, 400]);
+		const statuses = contenders.map((response) => response.status).toSorted((a, b) => a - b);
+		expect(statuses).toEqual([201, 400]);
 		expect(await contenders.find((response) => response.status === 400)!.json()).toMatchObject({
 			error: { code: "INVALID_VARIANT", message: "variant-slot-cap" },
 		});
