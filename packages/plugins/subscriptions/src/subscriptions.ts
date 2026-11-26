@@ -443,7 +443,8 @@ export async function unsubscribe(
 	for (;;) {
 		const { items } = await env.outbox.query({ where: { subscriber: id }, limit: 100 });
 		if (items.length === 0) break;
-		await env.outbox.deleteMany(items.map((i: OutboxMessage) => i.id));
+		// query() returns stored rows ({ id, data }), not bare messages: the id is on the row.
+		await env.outbox.deleteMany(items.map((row) => row.id));
 	}
 	return outcome("unsubscribed", sub);
 }
