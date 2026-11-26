@@ -1063,4 +1063,102 @@ describe("codex's lifecycle probes", () => {
 			skipped: [{ width: 300, why: "not-this-parent" }],
 		});
 	});
+
+	it("accepts a WebP variant for a PNG parent, serves image/webp through ?w=, keeps the PNG original, and still refuses other cross-format uploads", async () => {
+		const REAL_WEBP = new Uint8Array(
+			Buffer.from(
+				"UklGRuYAAABXRUJQVlA4INoAAACQFgCdASosASwBPm02mUmkIyKhICgAgA2JaW7hd2EbQAnsA99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtk5D32ych77ZOQ99snIe+2TkPfbJyHvtWAA/v/fAP/zttFpfK/+DZIprsAAAAAAAAAAAAAAAA==",
+				"base64",
+			),
+		);
+		const storage = storageDouble();
+		const pngParent = await new MediaRepository(db).create({
+			filename: "newsletter.png",
+			mimeType: "image/png",
+			storageKey: "2026/05/newsletter.png",
+			size: ORIGINAL_BYTES.byteLength,
+			width: 1200,
+			height: 1200,
+			contentHash: "hash-png-parent",
+			status: "ready",
+		});
+		await storage.upload({
+			key: pngParent.storageKey,
+			body: ORIGINAL_BYTES,
+			contentType: "image/png",
+		});
+
+		const postForm = async (
+			mediaId: string,
+			bytes: Uint8Array<ArrayBuffer>,
+			name: string,
+			type: string,
+		) => {
+			const form = new FormData();
+			form.set("mediaId", mediaId);
+			form.set("sizeName", "ext-300w");
+			form.set("width", "300");
+			form.set("height", "300");
+			form.set("file", new File([bytes], name, { type }));
+			return variantPost({
+				request: new Request("https://site.test/_emdash/api/import/wordpress/media-variant", {
+					method: "POST",
+					body: form,
+				}),
+				locals: {
+					emdash: {
+						db,
+						storage,
+						handleMediaGet: (id: string) => handleMediaGet(db, id),
+						handleMediaVariantStore: (input: never) =>
+							handleMediaVariantStore(db, storage as never, input),
+					},
+					user: { role: Role.ADMIN },
+				},
+			} as unknown as Parameters<typeof variantPost>[0]);
+		};
+
+		// 1. PNG parent accepts a WebP variant and stores it with .webp + image/webp metadata.
+		const webpPost = await postForm(pngParent.id, REAL_WEBP, "ext-300w.webp", "image/webp");
+		expect(webpPost.status, await webpPost.clone().text()).toBe(201);
+		const storedKey = [...storage.objects.keys()].find((k) =>
+			k.startsWith(MEDIA_VARIANT_STORAGE_PREFIX),
+		);
+		expect(storedKey).toMatch(/\.webp$/);
+		expect(storage.objects.get(storedKey!)?.contentType).toBe("image/webp");
+
+		// 2. Real ?w=300 route serves the variant's stored image/webp Content-Type and WebP bytes.
+		const servedVariant = await fileGet(fileContext(pngParent.storageKey, "300", storage));
+		expect(servedVariant.status).toBe(200);
+		expect(servedVariant.headers.get("content-type")).toBe("image/webp");
+		expect(servedVariant.headers.get("content-disposition")).toBe("inline");
+		expect(new Uint8Array(await servedVariant.arrayBuffer())).toEqual(REAL_WEBP);
+
+		// 3. Original URL (no ?w= and unmatched ?w=777) still serves image/png and original PNG bytes.
+		for (const w of [null, "777"]) {
+			const servedOriginal = await fileGet(fileContext(pngParent.storageKey, w, storage));
+			expect(servedOriginal.status).toBe(200);
+			expect(servedOriginal.headers.get("content-type")).toBe("image/png");
+			expect(new Uint8Array(await servedOriginal.arrayBuffer())).toEqual(ORIGINAL_BYTES);
+		}
+
+		// 4. Other cross-format combinations remain refused (JPEG -> PNG parent, WebP -> JPEG parent).
+		const jpegForPng = await postForm(pngParent.id, jpeg(300, 300), "ext-300w.jpg", "image/jpeg");
+		expect(jpegForPng.status).toBe(400);
+		expect(await jpegForPng.json()).toMatchObject({ error: { code: "INVALID_TYPE" } });
+
+		const jpegParent = await new MediaRepository(db).create({
+			filename: "photo.jpg",
+			mimeType: "image/jpeg",
+			storageKey: "2026/05/photo.jpg",
+			size: 1234,
+			width: 1200,
+			height: 1200,
+			contentHash: "hash-jpeg-parent",
+			status: "ready",
+		});
+		const webpForJpeg = await postForm(jpegParent.id, REAL_WEBP, "ext-300w.webp", "image/webp");
+		expect(webpForJpeg.status).toBe(400);
+		expect(await webpForJpeg.json()).toMatchObject({ error: { code: "INVALID_TYPE" } });
+	});
 });

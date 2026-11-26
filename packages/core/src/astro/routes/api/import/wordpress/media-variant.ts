@@ -190,12 +190,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
 	const decoded = readDimensions(bytes);
 	if (!decoded) return apiError("INVALID_TYPE", "The bytes are not a readable raster image", 400);
 
-	// THE STORED TYPE IS THE BYTES' TYPE, and it must match the parent's: a variant is a
-	// size of the same picture, so a format change is a different file, not a size.
+	// THE STORED TYPE IS THE BYTES' TYPE. A variant is normally the parent's own format,
+	// with one bounded exception: a PNG parent may carry a WebP variant (item 153c) so
+	// large photographic PNGs can serve smaller WebP variants while keeping the original
+	// PNG untouched. All other cross-format combinations remain refused.
 	const actualType = contentTypeOf(bytes);
 	if (!actualType)
 		return apiError("INVALID_TYPE", "The bytes are not a recognised raster image", 400);
-	if (actualType !== media.mimeType) {
+	const allowedType =
+		actualType === media.mimeType ||
+		(media.mimeType === "image/png" && actualType === "image/webp");
+	if (!allowedType) {
 		return apiError("INVALID_TYPE", "A variant must be the parent's own format", 400);
 	}
 
