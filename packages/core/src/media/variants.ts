@@ -26,6 +26,8 @@
  * {@link VARIANT_CACHE_CONTROL}.
  */
 
+import { VARIANT_MAX_WIDTH, VARIANT_MIN_WIDTH } from "./variant-widths.js";
+
 /** Exact upload widths advertised by analyze; each width is one slot per parent generation. */
 export const VARIANT_LADDER = [300, 480, 768, 1024, 1536, 2048] as const;
 
@@ -92,7 +94,7 @@ export type VariantRefusal =
 	| "dimensions-do-not-match-bytes"
 	| "not-smaller-than-the-parent"
 	| "aspect-differs-from-the-parent"
-	| "not-on-the-ladder"
+	| "width-out-of-range"
 	| "over-the-byte-cap";
 
 /** The parent facts a variant is checked against. */
@@ -135,7 +137,17 @@ export function variantRefusal(parent: VariantParent, offer: VariantOffer): Vari
 	// The client's claim is irrelevant; the bytes decide.
 	if (offer.decodedWidth !== offer.width || offer.decodedHeight !== offer.height)
 		return "dimensions-do-not-match-bytes";
-	if (!(VARIANT_LADDER as readonly number[]).includes(offer.width)) return "not-on-the-ladder";
+	// ANY WIDTH IN THE NAMED RANGE (item 161). WordPress stores sizes at its own widths
+	// (150/524/600/1038 on real sites), and the build advertises
+	// emdash.media-variants.any-width.v1, so refusing them here made the capability a lie:
+	// a real import stored 181 of 654 offered sizes. The aspect and not-smaller rules below
+	// still decide what counts as a smaller version of the same picture.
+	if (
+		!Number.isInteger(offer.width) ||
+		offer.width < VARIANT_MIN_WIDTH ||
+		offer.width > VARIANT_MAX_WIDTH
+	)
+		return "width-out-of-range";
 	// NEITHER DIMENSION MAY GROW. A size wider AND taller than the parent is an upscale;
 	// one that is wider but shorter is a crop, and the aspect rule below refuses it. This
 	// catches the first case without relying on the ratio at all.

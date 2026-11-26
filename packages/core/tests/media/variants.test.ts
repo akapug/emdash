@@ -69,14 +69,22 @@ describe("variantRefusal — every rule, server-side", () => {
 			"dimensions-do-not-match-bytes",
 		);
 	});
-	it("refuses a width off the ladder", () => {
-		// The decoded dimensions agree with the claim, so the ONLY rule broken is the ladder.
+	it("accepts a width off the ladder: WordPress's own sizes are carried as they are (161)", () => {
 		expect(
 			variantRefusal(
 				PARENT,
 				offer({ width: 777, height: 1077, decodedWidth: 777, decodedHeight: 1077 }),
 			),
-		).toBe("not-on-the-ladder");
+		).toBeNull();
+	});
+	it("refuses a width outside the named range", () => {
+		const huge: VariantParent = { ...PARENT, width: 9000, height: 12483 };
+		expect(
+			variantRefusal(
+				huge,
+				offer({ width: 5000, height: 6935, decodedWidth: 5000, decodedHeight: 6935 }),
+			),
+		).toBe("width-out-of-range");
 	});
 	it("refuses a variant that is not smaller than its parent", () => {
 		const small: VariantParent = { ...PARENT, width: 300, height: 416 };
