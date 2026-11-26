@@ -296,6 +296,13 @@ export interface NormalizedItem {
 	title: string;
 	/** Content as Portable Text (already converted) */
 	content: PortableTextBlock[];
+	/**
+	 * Unknown page-builder containers this item's body held (item 163c).
+	 *
+	 * Per-item so the import can sum them and report two numbers. `kept` names the plugin, because "10 sections from Spectra kept"
+	 * and "10 sections from Kadence kept" are different facts about the site.
+	 */
+	containers?: Array<{ blockName: string | null; outcome: "kept" | "flat" }>;
 	/** Excerpt/summary */
 	excerpt?: string;
 	/** Publication date */
@@ -375,6 +382,17 @@ export interface ImportResult {
 	comments?: { imported: number; skipped: number };
 	/** Site settings applied from the source (plugin import) */
 	siteSettings?: string[];
+	/**
+	 * Unknown page-builder containers in this import (item 163c).
+	 *
+	 * `kept` are the ones whose wrapper was preserved as one HTML block — layout kept, edited as HTML. `flat` are the ones whose
+	 * children were kept and whose wrapper was dropped, because a descendant was a shortcode or a block that saves no markup. Two
+	 * numbers rather than one total, because those are opposite outcomes for the operator.
+	 */
+	containers?: {
+		kept: Array<{ plugin: string; count: number }>;
+		flat: number;
+	};
 }
 
 // =============================================================================

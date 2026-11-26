@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { takeContainerReport } from "../src/container-report.js";
+import { keptContainersIn } from "../src/container-report.js";
 import { gutenbergToPortableText } from "../src/index.js";
 import type { PortableTextBlock } from "../src/types.js";
 
@@ -78,35 +78,44 @@ describe("163c: an unknown container keeps its wrapper when every descendant is 
 
 	it("A SHORTCODE descendant keeps today's flattening and is counted as flat", () => {
 		// A shortcode's output is generated at render; keeping the saved markup would show `[gallery]` as prose.
+		const events: Array<{ blockName: string | null; outcome: string }> = [];
 		const out = gutenbergToPortableText(
 			container(`<!-- wp:shortcode -->
 [gallery ids="1,2"]
 <!-- /wp:shortcode -->${paragraph("After")}`),
+			{ onContainer: (e) => events.push(e) },
 		);
 		const html = htmlOf(out);
 		expect(html, "no wrapper kept for a section holding a shortcode").not.toContain("uagb-block-");
-		const report = takeContainerReport();
-		expect(report.flat.map((f) => f.plugin)).toContain("uagb/container");
+		expect(
+			events.some((e) => e.outcome === "flat"),
+			"reported flat so the import can name it",
+		).toBe(true);
 	});
 
 	it("A MARKUP-LESS descendant keeps today's flattening — a hole is worse than a collapse", () => {
 		// `uagb/icon` is self-closing: its innerHTML is empty by construction, so assembling its ancestor
 		// would emit a wrapper with a real gap where the icon should be.
+		const events: Array<{ blockName: string | null; outcome: string }> = [];
 		const out = gutenbergToPortableText(
 			container(`<!-- wp:uagb/icon {"icon":"star"} /-->${paragraph("After")}`),
+			{ onContainer: (e) => events.push(e) },
 		);
 		const html = htmlOf(out);
 		expect(html, "no wrapper for a section with a hole").not.toContain("uagb-block-");
-		const report = takeContainerReport();
-		expect(report.flat.length, "counted so the report can name it").toBeGreaterThan(0);
+		expect(
+			events.some((e) => e.outcome === "flat"),
+			"reported flat so the import can name it",
+		).toBe(true);
 	});
 
 	it("a site with NO unknown containers is unchanged: the report is empty", () => {
-		const out = gutenbergToPortableText(paragraph("Just a paragraph") + heading("And a heading"));
+		const events: Array<{ blockName: string | null; outcome: string }> = [];
+		const out = gutenbergToPortableText(paragraph("Just a paragraph") + heading("And a heading"), {
+			onContainer: (e) => events.push(e),
+		});
 		expect(htmlOf(out), "no htmlBlock at all").toBe("");
-		const report = takeContainerReport();
-		expect(report.kept).toHaveLength(0);
-		expect(report.flat).toHaveLength(0);
+		expect(events, "nothing to report").toHaveLength(0);
 	});
 
 	it("HOSTILE classes are still removed by the existing sanitiser on the render path", () => {
@@ -121,5 +130,36 @@ describe("163c: an unknown container keeps its wrapper when every descendant is 
 			html,
 			"an onclick attribute from attrs must not be printed into the markup",
 		).not.toContain("onclick=");
+	});
+});
+
+describe("163c: the counts the operator sees, from the converter the import actually calls", () => {
+	it("an import of a page with one KEPT and one FLAT container reports {kept:1, flat:1}", () => {
+		// This is the report the lead asked for: the two numbers the operator reads, derived from the same sink the
+		// WXR source uses to fill NormalizedItem.containers. One kept (static descendants), one flat (a shortcode).
+		const events: Array<{ blockName: string | null; outcome: "kept" | "flat" }> = [];
+		gutenbergToPortableText(
+			`${container(heading("Kept section"))}
+${container(
+	`<!-- wp:shortcode -->
+[gallery ids="9"]
+<!-- /wp:shortcode -->`,
+	"bbbb2222",
+)}`,
+			{ onContainer: (e) => events.push(e) },
+		);
+		expect(
+			events.filter((e) => e.outcome === "kept"),
+			"one section kept its layout",
+		).toHaveLength(1);
+		expect(
+			events.filter((e) => e.outcome === "flat"),
+			"one was flattened",
+		).toHaveLength(1);
+		// and the counts group by plugin, which is what the report line names
+		const kept = keptContainersIn(
+			gutenbergToPortableText(container(heading("Only kept")), { onContainer: () => {} }),
+		);
+		expect(kept).toEqual([{ plugin: "uagb/container", count: 1 }]);
 	});
 });

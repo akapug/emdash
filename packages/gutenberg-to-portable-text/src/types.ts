@@ -299,6 +299,14 @@ export interface ConvertOptions {
 	/** Custom key generator */
 	keyGenerator?: () => string;
 	/**
+	 * Told once for every unknown container the fallback had to decide about (item 163c).
+	 *
+	 * A sink rather than a return value: the converter's signature returns the blocks, and every existing caller would have to change
+	 * to receive a second value. `kept` means the wrapper was preserved as one HTML block; `flat` means the children were kept and the
+	 * wrapper dropped, because a descendant was a shortcode or a block that saves no markup.
+	 */
+	onContainer?: (event: { blockName: string | null; outcome: "kept" | "flat" }) => void;
+	/**
 	 * Store the text as WordPress showed it: its curly quotes, apostrophes,
 	 * dashes and ellipses (texturize.ts, wptexturize). Default true; false keeps
 	 * the stored text, for a site that turned wptexturize off.
@@ -323,6 +331,8 @@ export interface TransformContext {
 	shortcode?: ConvertOptions["shortcode"];
 	/** Transform child blocks recursively */
 	transformBlocks: (blocks: GutenbergBlock[]) => PortableTextBlock[];
+	/** Forwarded from `ConvertOptions.onContainer`, so a transformer can report what it decided (item 163c). */
+	onContainer?: ConvertOptions["onContainer"];
 	/** Parse inline HTML to spans */
 	parseInlineContent: (html: string) => {
 		children: PortableTextSpan[];

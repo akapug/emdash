@@ -313,8 +313,19 @@ function wxrPostToNormalizedItem(
 	// and an export another program wrote is stored as written.
 	const texturize = texturizes(post.locale ?? siteLanguage, generator);
 	const typed = (text: string) => (texturize ? wptexturize(text) : text);
-	const content = post.content ? gutenbergToPortableText(post.content, { texturize }) : [];
+	// Item 163c: the converter tells us what it decided about each unknown page-builder container, so the import report can say
+	// how many sections kept their layout and how many were flattened. Collected per post here, summed by the caller.
+	const containerEvents: Array<{ blockName: string | null; outcome: "kept" | "flat" }> = [];
+	const content = post.content
+		? gutenbergToPortableText(post.content, {
+				texturize,
+				onContainer: (event) => containerEvents.push(event),
+			})
+		: [];
 	if (siteUrl) relativizeContentLinks(content, siteUrl);
+
+	// Item 163c: the containers this body held, so the import can report kept-vs-flat across the whole run.
+	const containers = containerEvents.length > 0 ? containerEvents : undefined;
 
 	// Resolve featured image: _thumbnail_id is the attachment ID, look up the URL
 	const thumbnailId = post.meta.get("_thumbnail_id");
@@ -344,6 +355,7 @@ function wxrPostToNormalizedItem(
 		// As WordPress printed them, like the content (wptexturize); the slug is the stored title's.
 		title: typed(post.title || "Untitled"),
 		content,
+		...(containers ? { containers } : {}),
 		excerpt: post.excerpt ? typed(post.excerpt) : post.excerpt,
 		date: parseWxrDate(post.postDateGmt, post.pubDate, post.postDate) ?? new Date(),
 		modified: parseWxrDate(post.postModifiedGmt, undefined, post.postModified),

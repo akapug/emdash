@@ -2,7 +2,6 @@
  * Block transformers registry
  */
 
-import { noteFlatContainer, noteKeptContainer } from "../container-report.js";
 import type { BlockTransformer, PortableTextBlock } from "../types.js";
 import {
 	allDescendantsAreStaticSavedHtml,
@@ -91,7 +90,7 @@ export const fallbackTransformer: BlockTransformer = (
 		if (allDescendantsAreStaticSavedHtml(block)) {
 			const assembled = assembleUnknownContainer(block);
 			if (assembled.trim()) {
-				noteKeptContainer(block.blockName);
+				context.onContainer?.({ blockName: block.blockName, outcome: "kept" });
 				return [
 					{
 						_type: "htmlBlock",
@@ -103,7 +102,7 @@ export const fallbackTransformer: BlockTransformer = (
 				];
 			}
 		}
-		noteFlatContainer(block.blockName);
+		context.onContainer?.({ blockName: block.blockName, outcome: "flat" });
 		return context.transformBlocks(block.innerBlocks);
 	}
 
