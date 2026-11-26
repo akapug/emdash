@@ -3,6 +3,10 @@
  */
 
 import type { BlockTransformer, PortableTextBlock } from "../types.js";
+import {
+	allDescendantsAreStaticSavedHtml,
+	assembleUnknownContainer,
+} from "../unknown-container.js";
 import * as core from "./core.js";
 import * as embed from "./embed.js";
 
@@ -73,8 +77,32 @@ export const fallbackTransformer: BlockTransformer = (
 		return [];
 	}
 
-	// If it has inner blocks, try to transform those
+	// AN UNKNOWN CONTAINER WHOSE DESCENDANTS ARE ALL STATIC SAVED HTML KEEPS ITS WRAPPER (item 163c).
+	//
+	// The wrapper is where a page builder keeps its layout: Spectra writes `uagb-block-<hash>` on the container's own tag, and
+	// that class exists in no attr and in no CSS of ours. Flattening to the children made every grid/flex rule lose its subject.
+	// MEASURED: `innerHTML` of one twpe container is 176 characters — its opening tag alone — because WordPress keeps each child's
+	// markup in the child, so the parent's markup has to be ASSEMBLED from `innerContent`, not read.
+	//
+	// The qualifier is the safety property: a shortcode's output or a self-closing block's absence would make the assembled wrapper
+	// a lie (visible `[shortcode]` text, or a real hole). Those keep today's flattening and are counted for the report.
 	if (block.innerBlocks.length > 0) {
+		if (allDescendantsAreStaticSavedHtml(block)) {
+			const assembled = assembleUnknownContainer(block);
+			if (assembled.trim()) {
+				context.onContainer?.({ blockName: block.blockName, outcome: "kept" });
+				return [
+					{
+						_type: "htmlBlock",
+						_key: context.generateKey(),
+						html: assembled,
+						originalBlockName: block.blockName,
+						originalAttrs: Object.keys(block.attrs).length > 0 ? block.attrs : undefined,
+					},
+				];
+			}
+		}
+		context.onContainer?.({ blockName: block.blockName, outcome: "flat" });
 		return context.transformBlocks(block.innerBlocks);
 	}
 

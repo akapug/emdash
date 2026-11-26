@@ -450,6 +450,10 @@ export async function importContent(
 		},
 	};
 
+	// Item 163c: unknown page-builder containers, summed across every item of this import and reported as two numbers.
+	const containerTally = new Map<string, number>();
+	let flatContainers = 0;
+
 	const mappedFields = mappedFieldsSchema.safeParse(config.mappedFields);
 	if (!mappedFields.success) {
 		result.success = false;
@@ -1023,6 +1027,14 @@ export async function importContent(
 				if (applied.outcome === "created") {
 					result.imported++;
 					result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
+					for (const c of post.containers ?? []) {
+						if (c.outcome === "kept")
+							containerTally.set(
+								c.blockName ?? "unknown",
+								(containerTally.get(c.blockName ?? "unknown") ?? 0) + 1,
+							);
+						else flatContainers += 1;
+					}
 					result.items?.push(applied.receipt);
 					if (plannedTerms.pendingTerms.length > 0) {
 						recordCommittedAtomicTerms(atomicTaxonomyState, plannedTerms.pendingTerms);
@@ -1155,6 +1167,14 @@ export async function importContent(
 					else tallyWxrSeoNoCollection(seoTally, seo);
 				}
 				result.byCollection[collection] = (result.byCollection[collection] || 0) + 1;
+				for (const c of post.containers ?? []) {
+					if (c.outcome === "kept")
+						containerTally.set(
+							c.blockName ?? "unknown",
+							(containerTally.get(c.blockName ?? "unknown") ?? 0) + 1,
+						);
+					else flatContainers += 1;
+				}
 
 				// `handleContentCreate` returns `data: { item, _rev? }` on
 				// success (see `ApiResult<ContentResponse>` in
@@ -1321,6 +1341,16 @@ export async function importContent(
 	}
 
 	result.success = result.errors.length === 0;
+
+	// Item 163c: TWO numbers, because "layout kept" and "layout lost" are opposite outcomes for the operator.
+	if (containerTally.size > 0 || flatContainers > 0) {
+		result.containers = {
+			kept: Array.from(containerTally, ([plugin, count]) => ({ plugin, count })).toSorted(
+				(a, b) => b.count - a.count,
+			),
+			flat: flatContainers,
+		};
+	}
 	return result;
 }
 

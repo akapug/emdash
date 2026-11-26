@@ -941,6 +941,7 @@ function createTransformContext(
 	const context: TransformContext = {
 		generateKey,
 		shortcode: options.shortcode,
+		onContainer: options.onContainer,
 		parseInlineContent: (html: string) => parseInlineContent(html, generateKey, options.shortcode),
 		transformBlocks: (blocks: GutenbergBlock[]) =>
 			blocks.flatMap((block) => transformBlock(block, options, context)),
