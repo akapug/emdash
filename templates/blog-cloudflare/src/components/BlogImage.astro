@@ -1,0 +1,13 @@
+---
+import type { ComponentProps } from "astro/types";
+import { PTImage } from "emdash/ui";
+import { CONTENT_COLUMN_GUTTER_PX, CONTENT_COLUMN_INNER_PX } from "../utils/image-sizes";
+
+type Props = ComponentProps<typeof PTImage>;
+---
+
+<PTImage
+	{...Astro.props}
+	maxWidth={CONTENT_COLUMN_INNER_PX}
+	gutterPx={CONTENT_COLUMN_GUTTER_PX}
+/>

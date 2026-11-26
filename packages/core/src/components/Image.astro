@@ -10,8 +10,8 @@ import type { ImageEmbed } from "../media/types.js";
 import { getMediaProvider } from "../media/provider-loader.js";
 import { buildRenderMediaUrl } from "../media/url.js";
 import {
+	constrainedSizes,
 	lazyAutoSizes,
-	responsiveSizes,
 	toAbsoluteMediaUrl,
 	RESPONSIVE_BREAKPOINTS,
 } from "../media/responsive.js";
@@ -60,6 +60,10 @@ export interface Props {
 	};
 	/** Render the LQIP placeholder as an inline background. Disable for strict CSP. */
 	placeholder?: boolean;
+	/** Maximum slot width in CSS px (e.g. the template's article column). Ignored for full-bleed alignment. */
+	maxWidth?: number;
+	/** Horizontal viewport gutter in CSS px on narrow viewports (pairs with `maxWidth`). */
+	gutterPx?: number;
 }
 
 /**
@@ -78,13 +82,14 @@ function generateSrcset(
 		.join(", ");
 }
 
-const { node, placeholder = true } = Astro.props;
+const { node, placeholder = true, maxWidth, gutterPx } = Astro.props;
 
 if (!node?.asset) {
 	return null;
 }
 
 const { caption, displayWidth, displayHeight, alignment, link } = node;
+const slotMaxWidth = alignment === "full" ? undefined : maxWidth;
 const { asset, alt = "", width, height } = resolveImageMedia(node);
 
 const imageLink = normalizeImageLink(link);
@@ -150,12 +155,10 @@ if (providerId && providerId !== "local") {
 
 				// Generate srcset if provider supports dynamic sizing
 				if (embed.getSrc) {
-					const maxWidth = renderWidth || 1200;
+					const providerMaxWidth = renderWidth || 1200;
 					const ar = renderWidth && renderHeight ? renderWidth / renderHeight : aspectRatio;
-					srcset = generateSrcset(embed.getSrc, maxWidth, ar);
-					sizes = renderWidth
-						? `(min-width: ${renderWidth}px) ${renderWidth}px, 100vw`
-						: "100vw";
+					srcset = generateSrcset(embed.getSrc, providerMaxWidth, ar);
+					sizes = constrainedSizes(renderWidth, slotMaxWidth, gutterPx);
 				}
 			}
 		} catch (error) {
@@ -197,7 +200,7 @@ if (!src) {
 		// <AstroImage> takes `src` alone and derives a srcset of its own.
 		astroImageSrc = "";
 		srcset = stored.srcset;
-		sizes = responsiveSizes(stored.bound);
+		sizes = constrainedSizes(stored.bound, slotMaxWidth, gutterPx);
 		storedBound = stored.bound;
 		storedShape = stored.shape;
 	}

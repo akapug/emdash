@@ -34,6 +34,30 @@ export function responsiveSizes(width: number | undefined): string {
 	return width ? `(min-width: ${width}px) ${width}px, 100vw` : "100vw";
 }
 
+/**
+ * Build the `sizes` attribute for a body image whose slot is bounded by
+ * `maxWidth` (the content column's inner width in CSS px) and `gutterPx`
+ * (horizontal padding around the column on narrow viewports).
+ *
+ * Never declares a slot wider than the image's own width (`width`).
+ * When `maxWidth` is omitted, falls back to `responsiveSizes(width)`.
+ */
+export function constrainedSizes(
+	width: number | undefined,
+	maxWidth: number | undefined,
+	gutterPx = 0,
+): string {
+	if (!maxWidth || !(maxWidth > 0)) return responsiveSizes(width);
+	const slot =
+		typeof width === "number" && Number.isFinite(width) && width > 0
+			? Math.min(width, maxWidth)
+			: maxWidth;
+	const gutter = Number.isFinite(gutterPx) && gutterPx > 0 ? Math.round(gutterPx) : 0;
+	const bp = slot + gutter;
+	const narrow = gutter > 0 ? `calc(100vw - ${gutter}px)` : "100vw";
+	return `(min-width: ${bp}px) ${slot}px, ${narrow}`;
+}
+
 const AUTO_SIZES_PREFIX = /^\s*auto\s*(?:,|$)/i;
 const SVG_SOURCE = /^(?:[^?#]*\.svgz?(?:[?#]|$)|data:image\/svg\+xml[;,])/i;
 

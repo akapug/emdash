@@ -24,6 +24,7 @@ vi.mock("../../src/media/variant-read.js", () => ({
 }));
 
 const { default: Image } = await import("../../src/components/Image.astro");
+const { default: Cover } = await import("../../src/components/Cover.astro");
 
 const locals = { emdash: { getPublicMediaUrl: (k: string) => `/_emdash/api/media/file/${k}` } };
 const imgTag = (html: string) => html.match(/<img\b[^>]*>/)?.[0] ?? "";
@@ -47,9 +48,9 @@ const withDimensions = {
 	height: 900,
 };
 
-async function render(node: unknown) {
+async function render(node: unknown, extraProps: Record<string, unknown> = {}) {
 	const c = await AstroContainer.create();
-	return c.renderToString(Image, { props: { node, placeholder: false }, locals });
+	return c.renderToString(Image, { props: { node, placeholder: false, ...extraProps }, locals });
 }
 
 describe("an image block inside columns gets a layout-driven sizes", () => {
@@ -90,5 +91,57 @@ describe("an image block inside columns gets a layout-driven sizes", () => {
 		const tag = imgTag(await render(nodimensions));
 		const sizes = attr(tag, "sizes") ?? "";
 		expect(sizes.startsWith("auto,"), `sizes was "${sizes}"`).toBe(false);
+	});
+});
+
+describe("141b: article body images declare the content column width, never wider than the image", () => {
+	test("a body image wider than the column gets the column sizes", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01WIDE.png?w=600 600w, /_emdash/api/media/file/01WIDE.png?w=1024 1024w, /_emdash/api/media/file/01WIDE.png?w=1440 1440w",
+			bound: 1456,
+			shape: 1456 / 800,
+		};
+		const tag = imgTag(await render(withDimensions, { maxWidth: 632, gutterPx: 48 }));
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 680px) 632px, calc(100vw - 48px)");
+	});
+
+	test("a body image narrower than the column keeps its own width", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01SMALL.png?w=150 150w, /_emdash/api/media/file/01SMALL.png?w=500 500w",
+			bound: 500,
+			shape: 500 / 350,
+		};
+		const narrowNode = { ...nodimensions, width: 500, height: 350 };
+		const tag = imgTag(await render(narrowNode, { maxWidth: 632, gutterPx: 48 }));
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 548px) 500px, calc(100vw - 48px)");
+	});
+
+	test("a full-width image block (alignment: full) and a Cover block keep full viewport width", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01HERO.png?w=600 600w, /_emdash/api/media/file/01HERO.png?w=1440 1440w",
+			bound: 1456,
+			shape: 1456 / 800,
+		};
+		const fullImageTag = imgTag(
+			await render({ ...withDimensions, alignment: "full" }, { maxWidth: 632, gutterPx: 48 }),
+		);
+		expect(attr(fullImageTag, "sizes")).toBe("auto, (min-width: 1456px) 1456px, 100vw");
+
+		const c = await AstroContainer.create();
+		const coverHtml = await c.renderToString(Cover, {
+			props: {
+				node: {
+					_type: "cover",
+					_key: "cv1",
+					backgroundImage: "/_emdash/api/media/file/01HERO.png",
+					content: [],
+				},
+			},
+			locals,
+		});
+		expect(attr(imgTag(coverHtml), "sizes")).toBe("auto, 100vw");
 	});
 });

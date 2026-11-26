@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
 	RESPONSIVE_BREAKPOINTS,
 	buildResponsiveImage,
+	constrainedSizes,
 	gallerySizes,
 	responsiveSizes,
 	responsiveWidths,
@@ -40,6 +41,21 @@ describe("responsiveSizes", () => {
 
 	it("falls back to 100vw when width is unknown", () => {
 		expect(responsiveSizes(undefined)).toBe("100vw");
+	});
+});
+
+describe("constrainedSizes (141b)", () => {
+	it("bounds an image wider than the column to the column width + gutter", () => {
+		expect(constrainedSizes(1456, 632, 48)).toBe("(min-width: 680px) 632px, calc(100vw - 48px)");
+	});
+
+	it("never declares a slot wider than an image narrower than the column", () => {
+		expect(constrainedSizes(500, 632, 48)).toBe("(min-width: 548px) 500px, calc(100vw - 48px)");
+	});
+
+	it("falls back to responsiveSizes when maxWidth is omitted", () => {
+		expect(constrainedSizes(1456, undefined, 48)).toBe("(min-width: 1456px) 1456px, 100vw");
+		expect(constrainedSizes(undefined, undefined, 48)).toBe("100vw");
 	});
 });
 
