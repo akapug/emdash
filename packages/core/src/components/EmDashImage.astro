@@ -338,6 +338,10 @@ function imgProps(
 		class: ["emdash-image-media", variantClass, className].filter(Boolean).join(" "),
 		...attrs,
 	};
+	// `sizes` is only meaningful beside a srcset; drop caller-provided sizes when no srcset is emitted.
+	if (!props.srcset) {
+		props.sizes = undefined;
+	}
 	// Passthrough can override loading and the source list; only opt in our own candidates.
 	const highPriority =
 		typeof props.fetchpriority === "string" && props.fetchpriority.toLowerCase() === "high";

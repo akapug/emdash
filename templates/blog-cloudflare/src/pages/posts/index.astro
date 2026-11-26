@@ -146,6 +146,14 @@ const postsWithTags = withPictures.map(({ post, picture, dimensions }) => ({
 	...(dimensions ? { dimensions } : {}),
 }));
 
+// THE CARD'S REAL SLOT WIDTH PER BREAKPOINT (derived from `.posts-page` CSS below:
+// max-width `--content-width` 680px with 24px horizontal padding -> 632px at >= 680px;
+// 100vw - 3rem (48px) between 601px and 679px; 100vw - 2rem (32px) at <= 600px).
+// Keeping `auto` first lets Chromium use the laid-out box for lazy images while
+// Safari and Firefox read the real slot width instead of falling back to 100vw.
+const POST_CARD_IMAGE_SIZES =
+	"auto, (min-width: 680px) 632px, (min-width: 601px) calc(100vw - 3rem), calc(100vw - 2rem)";
+
 const formatDate = (date: Date) =>
 	date.toLocaleDateString("en-US", {
 		year: "numeric",
@@ -183,6 +191,7 @@ const formatDate = (date: Date) =>
 										    back. A JSX comment cannot sit between attributes, which is why this one is here. */}
 										<Image
 											image={cardImage(picture, dimensions, post.data.title)}
+											sizes={POST_CARD_IMAGE_SIZES}
 											loading="lazy"
 											decoding="async"
 										/>

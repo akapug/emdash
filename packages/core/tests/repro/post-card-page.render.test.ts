@@ -447,6 +447,23 @@ describe("a post card's picture never promises a width it cannot back", () => {
 		expect(picture, `no srcset when nothing is stored; got: ${picture}`).not.toContain("srcset=");
 		expect(picture, `and no sizes either; got: ${picture}`).not.toContain("sizes=");
 	});
+
+	it("states the card's real slot width per breakpoint with auto first, never the image's own width or 100vw", async () => {
+		const page = await renderCard({
+			storedWidths: [300, 768, 1024, 1536],
+			dimensions: { width: 1761, height: 1174 },
+		});
+		const picture = /<span class="post-picture"[^>]*>([\s\S]*?)<\/span>/.exec(page)?.[0] ?? "";
+		const sizes = /sizes="([^"]*)"/.exec(picture)?.[1] ?? "";
+		expect(
+			sizes,
+			"card states auto first followed by exact breakpoint slot widths from .posts-page CSS",
+		).toBe(
+			"auto, (min-width: 680px) 632px, (min-width: 601px) calc(100vw - 3rem), calc(100vw - 2rem)",
+		);
+		expect(sizes, "must not fall back to bare 100vw").not.toMatch(/,\s*100vw\b/);
+		expect(sizes).not.toContain("1761px");
+	});
 });
 
 /**
