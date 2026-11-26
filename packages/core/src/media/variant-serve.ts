@@ -13,9 +13,9 @@
  */
 
 import type { Kysely } from "kysely";
-import { VARIANT_MAX_WIDTH, VARIANT_MIN_WIDTH } from "./variant-widths.js";
 
 import type { Database } from "../database/types.js";
+import { VARIANT_MAX_WIDTH, VARIANT_MIN_WIDTH } from "./variant-widths.js";
 
 export interface ResolvedVariant {
 	storageKey: string;
@@ -39,7 +39,8 @@ export async function resolveVariantForRequest(
 	// 161: ANY INTEGER IN A NAMED RANGE, not a fixed ladder. WordPress generated sizes at 150/524/600/672/1038 on real sites
 	// and a ladder refused every one of them; the row is the authority — `variant.width = width` below is an exact match, so
 	// an unstocked width already falls back to the original. The range only stops a nonsense number reaching the query.
-	if (!Number.isInteger(width) || width < VARIANT_MIN_WIDTH || width > VARIANT_MAX_WIDTH) return null;
+	if (!Number.isInteger(width) || width < VARIANT_MIN_WIDTH || width > VARIANT_MAX_WIDTH)
+		return null;
 
 	return (
 		(await db
