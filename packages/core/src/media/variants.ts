@@ -122,6 +122,9 @@ export interface VariantOffer {
 /** The most a single variant object may be. Every real size measured is 30-142 KB. */
 export const VARIANT_BYTE_CAP = 2 * 1024 * 1024;
 
+/** Distinct committed widths allowed per parent generation. */
+export const VARIANT_SLOT_CAP = 32;
+
 /**
  * Every rule a variant must satisfy, in the order that gives the most useful
  * refusal. Returns the first rule broken, or `null` when the offer is good.

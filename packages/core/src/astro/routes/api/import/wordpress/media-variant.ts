@@ -270,6 +270,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 		if (stored.error?.code === "CONFLICT") {
 			return apiError("CONFLICT", stored.error.message, 409);
 		}
+		if (stored.error?.code === "INVALID_VARIANT") {
+			return apiError("INVALID_VARIANT", stored.error.message, 400);
+		}
 		return apiError("UNAVAILABLE", stored.error?.message ?? "The variant could not be stored", 500);
 	}
 
