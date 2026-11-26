@@ -76,6 +76,7 @@ import {
 	type WpShellSubscribeFill,
 	wpShellDateSite,
 	wpShellDocumentTitle,
+	WP_SHELL_CONTENT_WIDTH_KEY,
 } from "../utils/wp-shell";
 import { hasSkeleton, skeletonTree } from "../utils/wp-skeleton";
 
@@ -287,6 +288,12 @@ const featured = featuredMatches && (kind === "page" || kind === "home") &&
 const featuredAnchor = featured
 	? pieces.findIndex((piece) => featured.placement === "before-title" ? "title" in piece : "content" in piece)
 	: -1;
+
+// Pass the active layout's measured desktop content width (141c) to WpShellImage via per-request locals.
+const layoutContentWidth = layout.contentWidth ?? shell.contentWidth;
+if (layoutContentWidth !== undefined) {
+	Reflect.set(Astro.locals, WP_SHELL_CONTENT_WIDTH_KEY, layoutContentWidth);
+}
 
 // WordPress's own markup for what EmDash draws otherwise: a left alignment, an aligned image, a
 // video embedded from a link in classic content, and a form imported from the site's form plugin,

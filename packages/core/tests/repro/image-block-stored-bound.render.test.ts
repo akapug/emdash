@@ -25,6 +25,10 @@ vi.mock("../../src/media/variant-read.js", () => ({
 
 const { default: Image } = await import("../../src/components/Image.astro");
 const { default: Cover } = await import("../../src/components/Cover.astro");
+const { default: WpShellImage } =
+	await import("../../../../templates/blog-cloudflare/src/components/WpShellImage.astro");
+const { WP_SHELL_CONTENT_WIDTH_KEY } =
+	await import("../../../../templates/blog-cloudflare/src/utils/wp-shell.js");
 
 const locals = { emdash: { getPublicMediaUrl: (k: string) => `/_emdash/api/media/file/${k}` } };
 const imgTag = (html: string) => html.match(/<img\b[^>]*>/)?.[0] ?? "";
@@ -118,7 +122,7 @@ describe("141b: article body images declare the content column width, never wide
 		expect(attr(tag, "sizes")).toBe("auto, (min-width: 548px) 500px, calc(100vw - 48px)");
 	});
 
-	test("a full-width image block (alignment: full) and a Cover block keep full viewport width", async () => {
+	test("a full-width or wide image block (alignment: full | wide) and a Cover block keep full width", async () => {
 		stored.value = {
 			srcset:
 				"/_emdash/api/media/file/01HERO.png?w=600 600w, /_emdash/api/media/file/01HERO.png?w=1440 1440w",
@@ -129,6 +133,11 @@ describe("141b: article body images declare the content column width, never wide
 			await render({ ...withDimensions, alignment: "full" }, { maxWidth: 632, gutterPx: 48 }),
 		);
 		expect(attr(fullImageTag, "sizes")).toBe("auto, (min-width: 1456px) 1456px, 100vw");
+
+		const wideImageTag = imgTag(
+			await render({ ...withDimensions, alignment: "wide" }, { maxWidth: 632, gutterPx: 48 }),
+		);
+		expect(attr(wideImageTag, "sizes")).toBe("auto, (min-width: 1456px) 1456px, 100vw");
 
 		const c = await AstroContainer.create();
 		const coverHtml = await c.renderToString(Cover, {
@@ -143,5 +152,68 @@ describe("141b: article body images declare the content column width, never wide
 			locals,
 		});
 		expect(attr(imgTag(coverHtml), "sizes")).toBe("auto, 100vw");
+	});
+});
+
+describe("141c: shelled WpShellImage uses the shell layout's measured contentWidth", () => {
+	async function renderShelled(node: unknown, contentWidth?: number) {
+		const c = await AstroContainer.create();
+		const shellLocals: Record<PropertyKey, unknown> = { ...locals };
+		if (contentWidth !== undefined) shellLocals[WP_SHELL_CONTENT_WIDTH_KEY] = contentWidth;
+		return c.renderToString(WpShellImage, {
+			props: { node, placeholder: false },
+			locals: shellLocals,
+		});
+	}
+
+	test("shelled post with contentWidth 1140 and 2400px image caps desktop sizes at 1140px", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01BIG.png?w=600 600w, /_emdash/api/media/file/01BIG.png?w=1200 1200w, /_emdash/api/media/file/01BIG.png?w=2400 2400w",
+			bound: 2400,
+			shape: 2400 / 1600,
+		};
+		const tag = imgTag(await renderShelled({ ...nodimensions, width: 2400, height: 1600 }, 1140));
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 1140px) 1140px, 100vw");
+	});
+
+	test("shelled post with contentWidth 1140 and 600px image keeps the image's own 600px width", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01MED.png?w=300 300w, /_emdash/api/media/file/01MED.png?w=600 600w",
+			bound: 600,
+			shape: 600 / 400,
+		};
+		const tag = imgTag(await renderShelled({ ...nodimensions, width: 600, height: 400 }, 1140));
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 600px) 600px, 100vw");
+	});
+
+	test("shelled post with contentWidth absent keeps today's sizes unchanged", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01BIG.png?w=600 600w, /_emdash/api/media/file/01BIG.png?w=2400 2400w",
+			bound: 2400,
+			shape: 2400 / 1600,
+		};
+		const tag = imgTag(await renderShelled({ ...nodimensions, width: 2400, height: 1600 }));
+		expect(attr(tag, "sizes")).toBe("auto, (min-width: 2400px) 2400px, 100vw");
+	});
+
+	test("shelled post with contentWidth 1140 leaves alignment: wide and alignment: full uncapped", async () => {
+		stored.value = {
+			srcset:
+				"/_emdash/api/media/file/01BIG.png?w=600 600w, /_emdash/api/media/file/01BIG.png?w=2400 2400w",
+			bound: 2400,
+			shape: 2400 / 1600,
+		};
+		const wideTag = imgTag(
+			await renderShelled({ ...nodimensions, width: 2400, height: 1600, alignment: "wide" }, 1140),
+		);
+		expect(attr(wideTag, "sizes")).toBe("auto, (min-width: 2400px) 2400px, 100vw");
+
+		const fullTag = imgTag(
+			await renderShelled({ ...nodimensions, width: 2400, height: 1600, alignment: "full" }, 1140),
+		);
+		expect(attr(fullTag, "sizes")).toBe("auto, (min-width: 2400px) 2400px, 100vw");
 	});
 });

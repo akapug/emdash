@@ -60,7 +60,7 @@ export interface Props {
 	};
 	/** Render the LQIP placeholder as an inline background. Disable for strict CSP. */
 	placeholder?: boolean;
-	/** Maximum slot width in CSS px (e.g. the template's article column). Ignored for full-bleed alignment. */
+	/** Maximum slot width in CSS px (e.g. the template's article column). Ignored for wide/full alignment. */
 	maxWidth?: number;
 	/** Horizontal viewport gutter in CSS px on narrow viewports (pairs with `maxWidth`). */
 	gutterPx?: number;
@@ -89,7 +89,7 @@ if (!node?.asset) {
 }
 
 const { caption, displayWidth, displayHeight, alignment, link } = node;
-const slotMaxWidth = alignment === "full" ? undefined : maxWidth;
+const slotMaxWidth = alignment === "full" || alignment === "wide" ? undefined : maxWidth;
 const { asset, alt = "", width, height } = resolveImageMedia(node);
 
 const imageLink = normalizeImageLink(link);

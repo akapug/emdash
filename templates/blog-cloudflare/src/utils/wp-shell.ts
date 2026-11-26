@@ -379,6 +379,19 @@ export interface WpShellLayout {
 	/** The site's stylesheets, in cascade order. */
 	styles: string[];
 	parts: WpShellPart[];
+	/** Measured desktop content-column ceiling in CSS px (141c), omitted when not safely bounded. */
+	contentWidth?: number;
+}
+
+/** Per-request `Astro.locals` key carrying the active shell layout's measured `contentWidth` to `WpShellImage`. */
+export const WP_SHELL_CONTENT_WIDTH_KEY = Symbol.for("emdash.wp-shell.content-width");
+
+export function readWpShellContentWidth(locals: unknown): number | undefined {
+	if (typeof locals !== "object" || locals === null) return undefined;
+	const value: unknown = Reflect.get(locals, WP_SHELL_CONTENT_WIDTH_KEY);
+	return typeof value === "number" && Number.isInteger(value) && value >= 320 && value <= 4096
+		? value
+		: undefined;
 }
 
 export interface WpShellPopupTrigger {
@@ -1601,6 +1614,15 @@ function checkLayout(
 	}
 	if (countSlot(parts, "comments") > 1) return "a post layout has more than one comments slot";
 	if (countSlot(parts, "subtitle") > 1) return "a layout has more than one subtitle slot";
+	if (
+		l.contentWidth !== undefined &&
+		(typeof l.contentWidth !== "number" ||
+			!Number.isInteger(l.contentWidth) ||
+			l.contentWidth < 320 ||
+			l.contentWidth > 4096)
+	) {
+		return "contentWidth is not a valid pixel width";
+	}
 	return null;
 }
 

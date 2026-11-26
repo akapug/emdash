@@ -23,6 +23,7 @@
  */
 import type { ComponentProps } from "astro/types";
 import { normalizeImageLink, PTImage } from "emdash/ui";
+import { readWpShellContentWidth } from "../utils/wp-shell.js";
 
 type Props = ComponentProps<typeof PTImage>;
 
@@ -79,6 +80,7 @@ const linkTitleOf: unknown =
 		? (linkTitles as Record<string, unknown>)[link]
 		: undefined;
 const linkTitle = typeof linkTitleOf === "string" && linkTitleOf !== "" ? linkTitleOf : undefined;
+const contentWidth = Astro.props.maxWidth ?? readWpShellContentWidth(Astro.locals);
 ---
 
 {
@@ -111,6 +113,6 @@ const linkTitle = typeof linkTitleOf === "string" && linkTitleOf !== "" ? linkTi
 			decoding="async"
 		/>
 	) : (
-		<PTImage {...Astro.props} />
+		<PTImage {...Astro.props} maxWidth={contentWidth} />
 	)
 }
