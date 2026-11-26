@@ -8,6 +8,7 @@ import {
 	EVENT_SEARCH_BAR_PROBE,
 	IMPORT_CAPABILITIES,
 	importCapabilities,
+	MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY,
 	MEDIA_VARIANTS_CAPABILITY,
 	MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 	POST,
@@ -71,6 +72,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			WP_SHORTLINK_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
+			MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
 		]);
 		expect(importCapabilities(rejecting, { atomicSupported: false })).toEqual([
@@ -80,6 +82,8 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			WP_SHORTLINK_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
+			// 161: this build stores a variant at any width in range, so a host may send WordPress's own numbers.
+			MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY,
 		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
@@ -90,6 +94,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			WP_SHORTLINK_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
 			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
+			MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
 		]);
 	});

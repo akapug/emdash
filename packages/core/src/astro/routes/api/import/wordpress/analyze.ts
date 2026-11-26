@@ -22,6 +22,7 @@ import {
 	supportsAtomicWxrImport,
 	WXR_ATOMIC_IMPORT_CAPABILITY,
 } from "../../../../../database/repositories/wxr-atomic-import.js";
+import { MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY } from "../../../../../media/variant-widths.js";
 import { VARIANT_LADDER } from "../../../../../media/variants.js";
 import { WP_SHORTLINK_CAPABILITY } from "../../../../../redirects/shortlink.js";
 import { mappedEmbedsSchema } from "./mapped-embeds.js";
@@ -51,6 +52,15 @@ export const MEDIA_VARIANTS_CAPABILITY = "emdash.media-variants.v1" as const;
  */
 export const MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY =
 	"emdash.media-variants.webp-for-png.v1" as const;
+
+// 161: the any-width capability and its range live in `media/variant-widths.js` — shared constants belong beside the thing they
+// describe, and a media module must not import a route module to reach them. Re-exported here so this file stays the one place
+// a caller looks for a capability name.
+export {
+	MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY,
+	VARIANT_MAX_WIDTH,
+	VARIANT_MIN_WIDTH,
+} from "../../../../../media/variant-widths.js";
 export { WXR_ATOMIC_IMPORT_CAPABILITY };
 
 export const EVENT_SEARCH_BAR_PROBE = {
@@ -111,6 +121,8 @@ export function importCapabilities(
 	// registered and the handler exists, so the host can send variants.
 	caps.push(MEDIA_VARIANTS_CAPABILITY);
 	caps.push(MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY);
+	// And ANY width in range: the route resolves exact stored widths, so WordPress's own numbers are carried as they are.
+	caps.push(MEDIA_VARIANTS_ANY_WIDTH_CAPABILITY);
 	if (options?.atomicSupported !== false) {
 		caps.push(WXR_ATOMIC_IMPORT_CAPABILITY);
 	}
