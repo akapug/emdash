@@ -8,6 +8,7 @@ import {
 	IMPORT_CAPABILITIES,
 	importCapabilities,
 	MEDIA_VARIANTS_CAPABILITY,
+	MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 	POST,
 	WXR_ATOMIC_IMPORT_CAPABILITY,
 } from "../../../src/astro/routes/api/import/wordpress/analyze.js";
@@ -51,6 +52,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		]);
 		expect(body.data.capabilities).toContain(PROTECTED_CONTENT_CAPABILITY);
 		expect(body.data.capabilities).toContain(MEDIA_VARIANTS_CAPABILITY);
+		expect(body.data.capabilities).toContain(MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY);
 		expect(body.data.capabilities).not.toContain(WXR_ATOMIC_IMPORT_CAPABILITY);
 		expect(body.data.mediaVariantWidths).toEqual([300, 480, 768, 1024, 1536, 2048]);
 		expect(body.data.mediaVariantWidths).toEqual(VARIANT_LADDER);
@@ -64,12 +66,14 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			PROTECTED_CONTENT_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
+			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
 		]);
 		expect(importCapabilities(rejecting, { atomicSupported: false })).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
+			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 		]);
 		expect(importCapabilities(accepting)).toEqual([
 			PROTECTED_CONTENT_CAPABILITY,
@@ -77,6 +81,7 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 			EVENT_DETAIL_FIELDS_CAPABILITY,
 			BATCH_REDIRECTS_CAPABILITY,
 			MEDIA_VARIANTS_CAPABILITY,
+			MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY,
 			WXR_ATOMIC_IMPORT_CAPABILITY,
 		]);
 	});
@@ -93,5 +98,6 @@ describe("WordPress WXR analyze capabilities (Item 109)", () => {
 		// check honest — if the capability leaves the list, the route stops advertising
 		// it and this fails.
 		expect(IMPORT_CAPABILITIES).toContain(MEDIA_VARIANTS_CAPABILITY);
+		expect(IMPORT_CAPABILITIES).toContain(MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY);
 	});
 });

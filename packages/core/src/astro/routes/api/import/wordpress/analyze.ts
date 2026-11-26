@@ -36,6 +36,13 @@ export const EVENT_DETAIL_FIELDS_CAPABILITY = "emdash.event-detail-fields.v1" as
  * meaningful rather than decorative.
  */
 export const MEDIA_VARIANTS_CAPABILITY = "emdash.media-variants.v1" as const;
+/**
+ * Item 153c Phase 2: this build accepts `image/webp` variants against `image/png`
+ * parents on `POST /_emdash/api/import/wordpress/media-variant`. Hosts gate WebP
+ * encoding on this capability so older targets keep receiving PNG variants (no 400s).
+ */
+export const MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY =
+	"emdash.media-variants.webp-for-png.v1" as const;
 export { WXR_ATOMIC_IMPORT_CAPABILITY };
 
 export const EVENT_SEARCH_BAR_PROBE = {
@@ -93,6 +100,7 @@ export function importCapabilities(
 	// This build can store WordPress's generated sizes (item 135): the route is
 	// registered and the handler exists, so the host can send variants.
 	caps.push(MEDIA_VARIANTS_CAPABILITY);
+	caps.push(MEDIA_VARIANTS_WEBP_FOR_PNG_CAPABILITY);
 	if (options?.atomicSupported !== false) {
 		caps.push(WXR_ATOMIC_IMPORT_CAPABILITY);
 	}
