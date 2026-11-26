@@ -1,6 +1,7 @@
 import sanitizeHtml from "sanitize-html";
 
 import { canonicalIframeHosts, isPlatformChrome } from "./iframe-hosts.js";
+import { carryInlineSvg } from "./sanitize-svg.js";
 
 /**
  * Iframe hosts allowed out of the box.
@@ -216,6 +217,14 @@ function newsletterActionOf(
  * and a tracking pixel's `<img>` loaded on every page view.
  */
 export function sanitizeContent(html: string, options: SanitizeOptions = {}): string {
+	// ITEM 163g: static inline SVG is carried as a finished, inert string BEFORE sanitize-html sees the markup.
+	//
+	// Measured first: 11 inline `<svg>` across 3 pages on 2 of the five real sites, all of them icons (`svg`/`g`/`path`). The
+	// pre-pass rebuilds each from validated nodes and attributes only, or removes the subtree whole — see sanitize-svg.ts for why a
+	// `sanitize-html` tag rule cannot do this (flat walk, no namespace, and an allowed child of a refused parent unwraps in place).
+	// The rebuilt string reaches the allowlist below as ordinary markup: `svg`, `g` and `path` are nonTextTags so its raw form can
+	// never survive, and the attribute allowlist keeps the casing the rebuild chose (`viewBox`), which is why this pass runs first.
+	html = carryInlineSvg(html);
 	const perCall = canonicalIframeHosts(options.allowedIframeHostnames);
 	const added = new Set([...addedHostnames(), ...perCall].filter((h) => !DEFAULT_HOSTS.has(h)));
 	const allowed = [...DEFAULT_HOSTS, ...added];
@@ -260,6 +269,12 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			"textarea",
 			"button",
 			"label",
+			// ITEM 163g: the three SVG elements the pre-pass can emit. They are allowed HERE so the rebuild survives this pass;
+			// their attributes and values are allowlisted below, and an exclusiveFilter drops an <svg> carrying anything else
+			// whole — so a raw subtree the rebuild refused cannot be kept by being allowed here.
+			"svg",
+			"g",
+			"path",
 		],
 		nonTextTags: ["script", "style", "noscript"],
 		allowedAttributes: {
@@ -288,10 +303,64 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			textarea: ["name", "id", "class", "rows", "cols", "placeholder", "required", "aria-label"],
 			button: ["type", "name", "value", "id", "class", "aria-label"],
 			label: ["for", "class", "id"],
+			// ITEM 163g. `viewbox` is lowercase because sanitize-html lowercases every attribute name; transformTags.svg restores
+			// the casing SVG requires. No href, no xlink:*, no style, no on*, no class/id — codex's amend, and the value grammars
+			// live in sanitize-svg.ts.
+			svg: [
+				// BOTH SPELLINGS: transformTags.svg restores SVG's case before the allowlist filters, so the restored name must be
+				// present too — listing only `viewbox` stripped every attribute off the element and drew an empty box.
+				"viewbox",
+				"viewBox",
+				"preserveaspectratio",
+				"preserveAspectRatio",
+				"width",
+				"height",
+				"fill",
+				"stroke",
+				"stroke-width",
+				"role",
+				"aria-hidden",
+				"aria-label",
+				"focusable",
+			],
+			g: [
+				"fill",
+				"stroke",
+				"stroke-width",
+				"fill-rule",
+				"stroke-linecap",
+				"stroke-linejoin",
+				"opacity",
+				"fill-opacity",
+				"stroke-opacity",
+				"transform",
+			],
+			path: [
+				"d",
+				"fill",
+				"stroke",
+				"stroke-width",
+				"fill-rule",
+				"stroke-linecap",
+				"stroke-linejoin",
+				"opacity",
+				"fill-opacity",
+				"stroke-opacity",
+				"transform",
+			],
 		},
 		allowedIframeHostnames: allowed,
 		transformTags: {
 			...controlTransforms,
+			// ITEM 163g: sanitize-html lowercases attribute names (deliberately — it is what makes mixed-case `ONLOAD` fail the
+			// allowlist). SVG's own names are case-SENSITIVE, so the two that matter are restored here, after filtering, on the
+			// elements the pre-pass built.
+			svg: (tagName, attribs) => ({
+				tagName,
+				attribs: Object.fromEntries(
+					Object.entries(attribs).map(([k, v]) => [k === "viewbox" ? "viewBox" : k === "preserveaspectratio" ? "preserveAspectRatio" : k, v]),
+				),
+			}),
 			// A NEWSLETTER FORM IS CARRIED WORKING. The action is approved here,
 			// and the marker is what the exclusiveFilter reads to keep the form
 			// and its controls; every other form is dropped whole.
@@ -341,8 +410,17 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			// whole — with their controls, which is what every other form got
 			// before this change.
 			if (frame.tag === "form") return frame.attribs["data-embark-newsletter"] !== "1";
+			// ITEM 163g: an <svg> survives only if the pre-pass built it. The rebuild stamps every element it emits, and a raw subtree
+			// the rebuild REFUSED never carries the stamp — so it is dropped here whole, with its children, instead of having its
+			// allowed children unwrapped in place (which would reparent them out of the SVG context codex's amend requires).
+			// Each of the three carries its own marker, so a raw `<path>` pasted in HTML — which the allowlist would otherwise keep as
+			// a bare element — is dropped whole rather than drawn outside any SVG context.
+			if (frame.tag === "svg" || frame.tag === "g" || frame.tag === "path") return frame.attribs["data-embark-svg"] !== "1";
 			if (frame.attribs["data-embark-drop"] === "1") return true;
 			return false;
 		},
-	});
+	}) 
+		// The rebuild's marker is OURS: it told the filter above which elements the pre-pass built, and it has no business in a
+		// customer's markup. Removed here, once, after the filter has read it.
+		.replace(/ data-embark-svg="1"/g, "");
 }
