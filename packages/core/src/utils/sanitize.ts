@@ -175,12 +175,25 @@ function newsletterHostAllowed(host: string, allowed: readonly string[]): boolea
  * a host not on the list, or a script handler on the form. The controls are
  * only ever carried inside a form whose action this function approved.
  */
+/** The site's own search page: a relative action the sanitizer accepts (164d), matched exactly. */
+export const SEARCH_ACTION_PATHS: ReadonlySet<string> = new Set(["/search"]);
+
 function newsletterActionOf(
 	attribs: Record<string, string>,
 	allowed: readonly string[],
 ): string | null {
 	const action = (attribs.action ?? "").trim();
 	if (action.length === 0) return null;
+	// ITEM 164d: THE SITE'S OWN SEARCH PAGE is an allowed action, and it is RELATIVE.
+	// `new URL("/search")` throws without a base, so a relative action fell to null and the form was
+	// dropped whole — which is why a carried WordPress search box could never work. The path is
+	// matched exactly: a relative action is otherwise still refused, since only this one route is ours.
+	if (SEARCH_ACTION_PATHS.has(action.toLowerCase())) {
+		for (const attr of ["onsubmit", "onload", "onerror", "onclick"]) {
+			if (attribs[attr] !== undefined) return null;
+		}
+		return action;
+	}
 	let url: URL;
 	try {
 		url = new URL(action);

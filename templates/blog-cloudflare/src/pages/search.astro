@@ -10,8 +10,10 @@ const query = Astro.url.searchParams.get("q")?.trim() || "";
 // filtering in JS. FTS scales as the post count grows, returns ranked
 // results, and handles tokenization/stemming. Templates that grep all
 // post bodies in JS quickly become unusable past a few hundred posts.
+// POSTS AND PAGES (164d): WordPress's own search covers both, and source behaviour is the spec. A page
+// found here links at its own URL; a post at /posts/<slug>.
 const { items: results } = query
-	? await search(query, { collections: ["posts"], limit: 30 })
+	? await search(query, { collections: ["posts", "pages"], limit: 30 })
 	: { items: [] };
 ---
 
@@ -54,7 +56,11 @@ const { items: results } = query
 					{results.map((result) => (
 						<li class="search-result">
 							<a
-								href={`/posts/${result.slug ?? result.id}`}
+								href={
+									result.collection === "pages"
+										? `/${result.slug ?? result.id}`
+										: `/posts/${result.slug ?? result.id}`
+								}
 								class="result-link"
 							>
 								<h2 class="result-title">{result.title ?? "Untitled"}</h2>
