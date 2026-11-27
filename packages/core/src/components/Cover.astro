@@ -22,6 +22,11 @@ export interface Props {
 		content: unknown[];
 		minHeight?: string;
 		alignment?: "left" | "center" | "right";
+		/** The source drew this section edge to edge (Avada's `hundred_percent="yes"`). */
+		fullBleed?: boolean;
+		/** The section's own vertical padding: px only, 0–600, anything else dropped. */
+		paddingTop?: number;
+		paddingBottom?: number;
 	};
 }
 
@@ -109,6 +114,20 @@ const normalizedBlendMode =
 	typeof rawBackgroundBlendMode === "string" ? rawBackgroundBlendMode.trim().toLowerCase() : "";
 const validBlendMode = COVER_BLEND_MODES.has(normalizedBlendMode) ? normalizedBlendMode : undefined;
 
+/**
+ * A padding the section states, or undefined.
+ *
+ * px ONLY, 0–600, and NOTHING ELSE: this becomes a CSS length, so `175`, `175px; color: red` and `-5` all have to be refused rather than
+ * repaired. A number is accepted because a stored block may hold one; a string must be exactly `<digits>px`.
+ */
+function paddingOf(value: unknown): number | undefined {
+	const n = typeof value === "number" ? value : typeof value === "string" && /^\d{1,3}px$/u.test(value.trim()) ? Number.parseInt(value, 10) : NaN;
+	return Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= 600 ? n : undefined;
+}
+const padTop = paddingOf(node?.paddingTop);
+const padBottom = paddingOf(node?.paddingBottom);
+const fullBleed = node?.fullBleed === true;
+
 const hasBackground = backgroundImage || backgroundVideo;
 const baseOverlayStyle = overlayColor
 	? `background-color: ${overlayColor}; opacity: ${overlayOpacity};`
@@ -119,8 +138,12 @@ const overlayStyle = validBlendMode
 ---
 
 <div
-	class:list={["emdash-cover", `emdash-cover--align-${alignment}`]}
-	style={`min-height: ${minHeight};`}
+	class:list={["emdash-cover", `emdash-cover--align-${alignment}`, fullBleed && "emdash-cover--full-bleed"]}
+	style={[
+		`min-height: ${minHeight};`,
+		padTop !== undefined ? `padding-top: ${padTop}px;` : "",
+		padBottom !== undefined ? `padding-bottom: ${padBottom}px;` : "",
+	].filter(Boolean).join(" ")}
 >
 	{
 		backgroundImage && !backgroundVideo && (
@@ -156,6 +179,21 @@ const overlayStyle = validBlendMode
 </div>
 
 <style>
+	/*
+	 * A FULL-BLEED SECTION ESCAPES A CENTRED COLUMN. The page body may be capped at the shell's measured contentWidth and centred (a
+	 * migrated Avada site's 1100px), and a section the source drew edge to edge must break out of that cap — `100vw` wide and pulled back
+	 * to the viewport's left edge by the same amount the column is inset. `overflow: hidden` goes with it: a breakout that clips would be
+	 * invisible past the column.
+	 */
+	.emdash-cover--full-bleed {
+		width: 100vw;
+		max-width: 100vw;
+		margin-left: calc(50% - 50vw);
+		margin-right: calc(50% - 50vw);
+		padding-left: max(2rem, calc(50vw - 50%));
+		padding-right: max(2rem, calc(50vw - 50%));
+	}
+
 	.emdash-cover {
 		position: relative;
 		display: flex;
