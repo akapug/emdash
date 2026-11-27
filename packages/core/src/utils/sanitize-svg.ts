@@ -298,21 +298,42 @@ export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>, c
 		for (const child of kids) {
 			if (child.nodeName === "#text") {
 				const text = child.value ?? "";
-				const marker = [...carried.keys()].find((m) => text.includes(m));
-				if (marker && text === marker && live(marker, child)) {
-					// The text node IS the slot: replace it with the validated nodes at exactly this position.
-					for (const built of carried.get(marker) ?? []) {
-						built.parentNode = node;
-						out.push(built);
+				// SPLIT AT EVERY ISSUED MARKER. The parser can merge a slot with adjacent prose or another slot into ONE text node, so
+				// requiring the whole node to be a marker left the marker visible as text whenever an icon stood beside prose. Each
+				// occurrence is handled independently and surrounding prose is preserved in order.
+				const hits = [...carried.keys()].filter((m) => text.includes(m));
+				if (hits.length === 0) {
+					out.push(child);
+					continue;
+				}
+				// Longest-first so one marker can never be consumed inside another's text.
+				hits.sort((a, b) => b.length - a.length);
+				let rest = text;
+				const pieces: Array<{ kind: "text"; value: string } | { kind: "icon"; marker: string }> = [];
+				let at = 0;
+				while (at < rest.length) {
+					const next = hits.map((m) => ({ m, i: rest.indexOf(m, at) })).filter((h) => h.i !== -1).sort((x, y) => x.i - y.i)[0];
+					if (!next) {
+						pieces.push({ kind: "text", value: rest.slice(at) });
+						break;
 					}
-					continue;
+					if (next.i > at) pieces.push({ kind: "text", value: rest.slice(at, next.i) });
+					pieces.push({ kind: "icon", marker: next.m });
+					at = next.i + next.m.length;
 				}
-				if (marker && !live(marker, child)) {
-					// Lost, duplicated, displaced or unapproved ancestry: the icon is dropped rather than drawn somewhere unproven.
-					out.push({ nodeName: "#text", value: text.split(marker).join(""), parentNode: node });
-					continue;
+				for (const piece of pieces) {
+					if (piece.kind === "text") {
+						if (piece.value !== "") out.push({ nodeName: "#text", value: piece.value, parentNode: node });
+						continue;
+					}
+					if (live(piece.marker, child)) {
+						for (const built of carried.get(piece.marker) ?? []) {
+							built.parentNode = node;
+							out.push(built);
+						}
+					}
+					// A marker that is not live (lost, duplicated, displaced, unapproved ancestry) is STRIPPED, never left as visible text.
 				}
-				out.push(child);
 				continue;
 			}
 			rewrite(child);

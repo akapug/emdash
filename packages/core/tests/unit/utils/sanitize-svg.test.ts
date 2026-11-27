@@ -71,6 +71,30 @@ describe("163g: the real icons survive", () => {
 		expect(html, "and the image with it").toContain('src="/a.jpg"');
 	});
 
+	// CODEX'S THIRD HOLD: the parser merges a slot with adjacent prose or another slot into ONE text node. Requiring the whole node to be
+	// a marker left the marker visible as text whenever an icon stood beside prose. These are the positive cases it asked for.
+	it("an icon with PROSE ON BOTH SIDES keeps the prose and draws the icon, with no marker text", () => {
+		const html = out(`<p>before ${TWPE_ICON} after</p>`);
+		expect(html, "the icon is drawn").toContain("<svg");
+		expect(html, "the prose before survives").toContain("before");
+		expect(html, "and after").toContain("after");
+		expect(html, "no marker leaks as visible text").not.toContain("EMDASHSVG");
+	});
+
+	it("TWO ADJACENT icons are both drawn, and neither marker leaks", () => {
+		const html = out(`<p>${TWPE_ICON}${TWPE_ICON}</p>`);
+		expect(html.match(/<svg/g)?.length, "both icons").toBe(2);
+		expect(html.match(/<path/g)?.length, "with both geometries").toBe(2);
+		expect(html).not.toContain("EMDASHSVG");
+	});
+
+	it("an icon between two other icons and prose: three drawn, prose intact, no markers", () => {
+		const html = out(`<p>a ${TWPE_ICON} b ${CALULTI_ICON} c ${TWPE_ICON} d</p>`);
+		expect(html.match(/<svg/g)?.length, "all three icons").toBe(3);
+		for (const word of ["a", "b", "c", "d"]) expect(html, `prose ${word}`).toContain(word);
+		expect(html).not.toContain("EMDASHSVG");
+	});
+
 	it("a page with NO svg is byte-identical: the four sites without icons cannot change", () => {
 		const page = '<p>Prose with an ampersand &amp; a <a href="https://example.org/x">link</a> and <strong>bold</strong>.</p>';
 		expect(out(page), "same bytes in, same bytes out").toBe(page);
