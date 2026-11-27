@@ -1,99 +1,70 @@
 /**
- * Item 163g: static inline SVG the source site actually draws, carried through `sanitizeContent`.
+ * Item 163g: static inline SVG carried through `sanitizeContent`, or refused whole.
  *
- * MEASURED FIRST, on the five real exports (468 published posts and pages): 11 inline `<svg>` elements across 3 pages on 2 sites —
- * 10 on twpe (`uagb/info-box` and `uagb/icon-list-child` icons, `svg`/`path` only) and 1 on calulti (`svg`/`g`/`path`). The other
- * three sites carry none. So this allowlist is written for icons, not for SVG as a medium.
+ * MEASURED POPULATION, on the five real exports (468 published posts and pages): 11 inline `<svg>` across 3 pages on 2 sites — 10 on twpe
+ * (`uagb/info-box`, `uagb/icon-list-child`) and 1 on calulti. All of them use only `svg`/`g`/`path`. The other three sites carry none. This
+ * is an allowlist for icons, not for SVG as a medium.
  *
- * WHY A PRE-PASS AND NOT A `sanitize-html` TAG RULE. `sanitize-html` walks tags flatly: it cannot tell a `<path>` inside `<svg>`
- * from one outside it, and it has no notion of SVG's separable namespace. Building this out of `allowedTags` would let an HTML
- * context grow SVG children, and a subtree cannot be *rejected whole* by a per-tag allowlist — the allowed child of a refused
- * parent gets unwrapped in place, which is exactly the reparenting codex's amend forbids.
+ * WHY parse5 AND NOT sanitize-html'S OWN WALK. The first version stamped rebuilt elements with a `data-embark-svg` attribute and had the
+ * filter trust it — a customer could write that attribute themselves, so markup was standing in for provenance. The second tried a Symbol
+ * on the parsed node; `sanitize-html` rebuilds `attribs` from its string-keyed allowlist, so the Symbol never survived to the filter.
+ * Measured: `exclusiveFilter` receives `tag,attribs,tagPosition,text,openingTagLength,mediaChildren,updateParentNodeText,
+ * updateParentNodeMediaChildren` and **no parent** — so that library cannot answer "what does this element sit inside", which is the one
+ * question an SVG allowlist has to answer.
  *
- * So: find each complete `<svg>…</svg>` in the markup, parse it on its own, rebuild it from validated nodes and attributes only,
- * and hand the caller a finished inert string. A subtree carrying anything not on the list is rejected WHOLE, never unwrapped.
- * The result contains no attributes that can execute, fetch, or reference anything outside the element, by construction rather
- * than by blacklist — arithmetic and colour grammars only, so `url(` cannot appear.
+ * parse5 implements the HTML spec's tree construction, including the foreign-content rules that decide when `<svg>` switches namespace and
+ * when it switches back. That is the property being bought: the tree validated here is the tree a browser would build, so namespace and
+ * parentage are facts rather than assertions. Provenance is held in this module's own return value — never in markup, never in an attribute.
  */
 
-/** The only elements v1 carries (codex AMEND 11-26 22:36Z). No `title`/`desc`: text inside an icon is not this item. */
+import { parseFragment } from "parse5";
+
+/** The SVG namespace, exactly as the spec spells it. */
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** The three elements v1 carries. Anything else refuses the whole subtree. */
 const SVG_TAGS = new Set(["svg", "g", "path"]);
 
-/** Attributes allowed on each element. `class`/`id`/`data-*` are deliberately absent (codex's amend). */
+/** Attributes allowed per element. No `href`, no `xlink:*`, no `style`, no `on*`, no `class`/`id`/`data-*`. */
 const SVG_ATTRS: Record<string, ReadonlySet<string>> = {
 	svg: new Set(["viewBox", "width", "height", "fill", "stroke", "stroke-width", "role", "aria-hidden", "aria-label", "focusable"]),
-	g: new Set([
-		"fill",
-		"stroke",
-		"stroke-width",
-		"fill-rule",
-		"stroke-linecap",
-		"stroke-linejoin",
-		"opacity",
-		"fill-opacity",
-		"stroke-opacity",
-		"transform",
-	]),
-	path: new Set([
-		"d",
-		"fill",
-		"stroke",
-		"stroke-width",
-		"fill-rule",
-		"stroke-linecap",
-		"stroke-linejoin",
-		"opacity",
-		"fill-opacity",
-		"stroke-opacity",
-		"transform",
-	]),
+	g: new Set(["fill", "stroke", "stroke-width", "fill-rule", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "transform"]),
+	path: new Set(["d", "fill", "stroke", "stroke-width", "fill-rule", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "transform"]),
 };
 
-/** SVG's own case-sensitive attribute names. HTML parsing lowercases everything, so these are restored after matching. */
-const CASE_SENSITIVE: Record<string, string> = {
-	viewbox: "viewBox",
-	preserveaspectratio: "preserveAspectRatio",
-};
+/** parse5 lowercases HTML attribute names but keeps SVG's casing; accept both spellings so neither path can strip an element bare. */
+const NAME_OF: Record<string, string> = { viewbox: "viewBox", preserveaspectratio: "preserveAspectRatio" };
 
 const NUMBER = String.raw`-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?`;
 const NUM = new RegExp(`^${NUMBER}$`);
 
-/** Four finite numbers, positive extents. A zero or negative width/height is refused: it draws nothing and some browsers reject it. */
+/** Four finite numbers with positive extents: a zero extent draws nothing and some engines reject it. */
 export function validViewBox(value: string): boolean {
 	const parts = value.trim().split(/[\s,]+/);
 	if (parts.length !== 4 || !parts.every((p) => NUM.test(p))) return false;
-	const [x, y, w, h] = parts.map(Number);
-	if (![x, y, w, h].every(Number.isFinite)) return false;
-	return w > 0 && h > 0;
+	const nums = parts.map(Number);
+	return nums.every(Number.isFinite) && nums[2] > 0 && nums[3] > 0;
 }
 
-/** A paint: a hex colour, a CSS colour function with numeric arguments, a named colour token, `none`, or `currentColor`. */
 const PAINT_FN = /^(rgba?|hsla?)\(\s*[0-9.%\s,/+-]+\)$/i;
 const HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const NAMED = /^[a-z]+$/i;
+/** A paint is a hex colour, a colour function with numeric arguments, or a named token — no paint shape contains `url(`. */
 export function validPaint(value: string): boolean {
 	const v = value.trim();
-	if (!v) return false;
-	// `url(` is impossible by construction: the value must match one of these three shapes or a bare token.
-	if (HEX.test(v) || PAINT_FN.test(v) || NAMED.test(v)) return !/url\s*\(/i.test(v);
-	return false;
+	return (HEX.test(v) || PAINT_FN.test(v) || NAMED.test(v)) && !/url\s*\(/i.test(v);
 }
 
-/** The 2D affine transform functions, each with numeric arguments only. No `url()`, no expressions, nothing SVG can fetch. */
 const TRANSFORM_FN = /^(matrix|translate|scale|rotate|skewX|skewY)\(\s*[0-9eE.,\s+-]*\s*\)$/;
 export function validTransform(value: string): boolean {
 	const v = value.trim();
-	if (!v) return false;
-	return v.split(/\s+(?=[a-zA-Z])/).every((fn) => TRANSFORM_FN.test(fn.trim()));
+	return v !== "" && v.split(/\s+(?=[a-zA-Z])/).every((fn) => TRANSFORM_FN.test(fn.trim()));
 }
 
-/** A path's `d`: drawing commands and numbers. Rejects anything that could be markup or a reference. */
 const PATH_D = /^[\sMmLlHhVvCcSsQqTtAaZz0-9eE.,+-]+$/;
 export function validPathData(value: string): boolean {
 	const v = value.trim();
-	if (!v || !PATH_D.test(v)) return false;
-	// Must begin with a moveto, or it draws nothing and some engines warn.
-	return /^[Mm]/.test(v);
+	return v !== "" && PATH_D.test(v) && /^[Mm]/.test(v);
 }
 
 const DIMENSION = new RegExp(`^(?:${NUMBER})(?:px|em|rem|%)?$`);
@@ -102,137 +73,191 @@ export function validDimension(value: string): boolean {
 	return v === "" || DIMENSION.test(v);
 }
 
-/** Validate one attribute for one element, returning the value to emit or null to drop it. */
-export function validatedAttribute(element: string, rawName: string, value: string): [string, string] | null {
-	const name = CASE_SENSITIVE[rawName] ?? rawName;
+/**
+ * Keep the attributes whose name is allowed and whose value its grammar accepts.
+ *
+ * ATTRIBUTES DROP; ELEMENTS REFUSE. The measured icons carry `xmlns`, `xmlns:xlink`, `version`, `id` and `data-name`; a rule that refused on
+ * any unknown attribute dropped all 11 of them on sight. Dropping is safe — the danger is only in KEEPING a reference or an event handler.
+ */
+export function keptAttributes(element: string, attribs: Array<{ name: string; value: string }>): Record<string, string> {
 	const allowed = SVG_ATTRS[element];
-	if (!allowed?.has(name)) return null;
-	// Event handlers and anything reference-shaped are not on any list; this is a second, explicit refusal because the cost of
-	// being wrong here is script execution inside a customer's page.
-	if (/^on/i.test(name) || name === "href" || name.includes(":")) return null;
-
-	const v = value.trim();
-	switch (name) {
-		case "viewBox":
-			return validViewBox(v) ? [name, v.replace(/[\s,]+/g, " ")] : null;
-		case "d":
-			return validPathData(v) ? [name, v] : null;
-		case "fill":
-		case "stroke":
-			return validPaint(v) ? [name, v] : null;
-		case "transform":
-			return validTransform(v) ? [name, v] : null;
-		case "width":
-		case "height":
-			return validDimension(v) ? [name, v] : null;
-		case "stroke-width":
-		case "opacity":
-		case "fill-opacity":
-		case "stroke-opacity":
-			return NUM.test(v) ? [name, v] : null;
-		case "fill-rule":
-			return v === "nonzero" || v === "evenodd" ? [name, v] : null;
-		case "stroke-linecap":
-			return v === "butt" || v === "round" || v === "square" ? [name, v] : null;
-		case "stroke-linejoin":
-			return v === "miter" || v === "round" || v === "bevel" ? [name, v] : null;
-		case "aria-hidden":
-			return v === "true" || v === "false" ? [name, v] : null;
-		case "focusable":
-			return v === "true" || v === "false" ? [name, v] : null;
-		default:
-			// role, aria-label: text only, and never anything that reads as markup or a scheme.
-			if (/[<>"']/.test(v) || /^(?:javascript|data|vbscript):/i.test(v)) return null;
-			return [name, v];
-	}
-}
-
-const escapeAttribute = (v: string): string =>
-	v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-interface Token {
-	kind: "open" | "close" | "self";
-	name: string;
-	attrs: Array<[string, string]>;
-}
-
-/** Tag tokens of an SVG fragment. Anything that is not a tag — text, entities, comments — is DROPPED: an icon's text is not this item. */
-function tokens(source: string): Token[] {
-	const out: Token[] = [];
-	const tag = /<\/?([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
-	let m: RegExpExecArray | null;
-	while ((m = tag.exec(source))) {
-		const closing = m[0].startsWith("</");
-		const name = m[1].toLowerCase();
-		if (closing) {
-			out.push({ kind: "close", name, attrs: [] });
-			continue;
+	const out: Record<string, string> = {};
+	if (!allowed) return out;
+	for (const { name: rawName, value: rawValue } of attribs) {
+		const name = NAME_OF[rawName.toLowerCase()] ?? rawName;
+		if (name.includes(":") || /^on/i.test(name) || name.toLowerCase() === "href" || !allowed.has(name)) continue;
+		const v = rawValue.trim();
+		switch (name) {
+			case "viewBox":
+				if (validViewBox(v)) out[name] = v.replace(/[\s,]+/g, " ");
+				break;
+			case "d":
+				if (validPathData(v)) out[name] = v;
+				break;
+			case "fill":
+			case "stroke":
+				if (validPaint(v)) out[name] = v;
+				break;
+			case "transform":
+				if (validTransform(v)) out[name] = v;
+				break;
+			case "width":
+			case "height":
+				if (validDimension(v)) out[name] = v;
+				break;
+			case "stroke-width":
+			case "opacity":
+			case "fill-opacity":
+			case "stroke-opacity":
+				if (NUM.test(v)) out[name] = v;
+				break;
+			case "fill-rule":
+				if (v === "nonzero" || v === "evenodd") out[name] = v;
+				break;
+			case "stroke-linecap":
+				if (v === "butt" || v === "round" || v === "square") out[name] = v;
+				break;
+			case "stroke-linejoin":
+				if (v === "miter" || v === "round" || v === "bevel") out[name] = v;
+				break;
+			case "aria-hidden":
+			case "focusable":
+				if (v === "true" || v === "false") out[name] = v;
+				break;
+			default:
+				if (!/[<>"']/.test(v) && !/^(?:javascript|data|vbscript):/i.test(v)) out[name] = v;
 		}
-		const attrs: Array<[string, string]> = [];
-		const attr = /([a-zA-Z_:][a-zA-Z0-9_:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+))/g;
-		let a: RegExpExecArray | null;
-		while ((a = attr.exec(m[2]))) attrs.push([a[1].toLowerCase(), a[2] ?? a[3] ?? a[4] ?? ""]);
-		out.push({ kind: m[3] === "/" ? "self" : "open", name, attrs });
 	}
 	return out;
 }
 
-/**
- * Rebuild one `<svg>` element from validated nodes, or return null to reject the subtree WHOLE.
- *
- * Rejection is all-or-nothing on purpose: an approved child of a refused parent would be unwrapped in place, which reparents it out of
- * the SVG context codex's amend requires us to stay inside. Dropping the whole icon loses a picture; unwrapping it can lose the page.
- */
-export function rebuildSvg(inner: string): string | null {
-	const ts = tokens(inner);
-	if (ts.length === 0) return null;
-	if (ts[0].kind !== "open" || ts[0].name !== "svg") return null;
+interface P5Node {
+	nodeName: string;
+	tagName?: string;
+	namespaceURI?: string;
+	attrs?: Array<{ name: string; value: string }>;
+	childNodes?: P5Node[];
+	value?: string;
+}
 
-	const emit = (t: Token, name: string, attrs: Array<[string, string]>): string => {
-		// Every element the rebuild emits carries this marker. It is OURS, not the source's, and sanitizeContent strips it from the
-		// output: its only job is to let the reject-whole filter tell a rebuilt element from a raw one that slipped through.
-		const marked = [...attrs, ["data-embark-svg", "1"] as [string, string]];
-		const parts = marked.map(([k, v]) => ` ${k}="${escapeAttribute(v)}"`);
-		return `<${name}${parts.join("")}>`;
-	};
+const escapeText = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escapeAttr = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-	const out: string[] = [];
-	const stack: string[] = [];
-	for (const t of ts) {
-		if (!SVG_TAGS.has(t.name)) return null;
-		if (t.kind === "close") {
-			const top = stack.pop();
-			if (top !== t.name) return null;
-			out.push(`</${t.name}>`);
-			continue;
+/** Rebuild one validated SVG element, or null when the subtree carries anything this allowlist does not understand. */
+function rebuild(node: P5Node): string | null {
+	const tag = node.tagName ?? "";
+	if (node.namespaceURI !== SVG_NS || !SVG_TAGS.has(tag)) return null;
+	const attrs = keptAttributes(tag, node.attrs ?? []);
+	if (tag === "path" && attrs.d === undefined) return null;
+	const inner: string[] = [];
+	for (const child of node.childNodes ?? []) {
+		// An element child must itself be a valid SVG element; TEXT inside an icon is dropped (an icon's text is not this item), and so
+		// is anything else. A refused element child refuses the WHOLE subtree, never unwraps it.
+		if (child.namespaceURI === undefined) {
+			if (child.nodeName === "#text") continue;
+			return null;
 		}
-		const attrs: Array<[string, string]> = [];
-		for (const [rawName, value] of t.attrs) {
-			const kept = validatedAttribute(t.name, rawName, value);
-			if (kept) attrs.push(kept);
-		}
-		// A `path` with no usable `d` draws nothing and would be a bare element in the tree: refuse it with its subtree.
-		if (t.name === "path" && !attrs.some(([k]) => k === "d")) return null;
-		out.push(emit(t, t.name, attrs));
-		if (t.kind === "self") {
-			// Self-closing is legal in SVG, but emit it closed so the fragment is well-formed whatever the caller does next.
-			if (t.name === "svg") return null;
-			out[out.length - 1] = out[out.length - 1].replace(/>$/, `></${t.name}>`);
-			continue;
-		}
-		stack.push(t.name);
+		const built = rebuild(child);
+		if (built === null) return null;
+		inner.push(built);
 	}
-	if (stack.length !== 0) return null;
-	return out.join("");
+	const rendered = Object.entries(attrs)
+		.map(([k, v]) => ` ${k}="${escapeAttr(v)}"`)
+		.join("");
+	return `<${tag}${rendered}>${inner.join("")}</${tag}>`;
+}
+
+export interface CarriedSvg {
+	/** The rebuilt, inert markup for one icon. */
+	html: string;
+	/** Where it stood, as a text-node value that the caller may look for. Never trusted as provenance on its own. */
+	marker: string;
+}
+
+export interface CarryResult {
+	/** The fragment with each accepted icon replaced by a text marker. */
+	markup: string;
+	/** marker → rebuilt markup, for the icons the walk accepted. */
+	accepted: Map<string, string>;
+	/** How many candidate `<svg>` elements were refused. */
+	refused: number;
 }
 
 /**
- * Replace every complete inline `<svg>` in `html` with its validated rebuild, or with nothing when the subtree is refused.
+ * Parse the WHOLE fragment in the production `div` context and swap each accepted icon for a text marker.
  *
- * Only complete elements are touched: an `<svg>` whose close tag is missing is left to `sanitizeContent`, which strips it — a
- * half-matched element is not something this pass should guess about.
+ * The caller sanitizes this markup with the ordinary HTML policy (`svg`/`g`/`path` stay off that allowlist, so a raw one cannot survive),
+ * then re-parses the result and substitutes each marker AT ITS UNIQUE OCCURRENCE IN A TEXT NODE. Provenance is the returned map, which the
+ * source cannot write. A marker that is lost, repeated, or lands anywhere but an ordinary text node drops that icon.
  */
-export function carryInlineSvg(html: string): string {
-	if (!/<svg[\s>]/i.test(html)) return html;
-	return html.replace(/<svg[\s>][\s\S]*?<\/svg\s*>/gi, (whole) => rebuildSvg(whole) ?? "");
+export function carryInlineSvg(html: string, tokenFor: () => string): CarryResult {
+	const accepted = new Map<string, string>();
+	let refused = 0;
+	const fragment = parseFragment(html, { sourceCodeLocationInfo: false });
+	const walk = (node: P5Node): string => {
+		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
+			const built = rebuild(node);
+			if (built === null) {
+				refused++;
+				return "";
+			}
+			const marker = tokenFor();
+			accepted.set(marker, built);
+			return marker;
+		}
+		const kids = node.childNodes;
+		if (!kids?.length) return node.nodeName === "#text" ? escapeText(node.value ?? "") : "";
+		const open = node.namespaceURI !== undefined ? `<${node.tagName}${(node.attrs ?? []).map((a) => ` ${a.name}="${escapeAttr(a.value)}"`).join("")}>` : "";
+		const close = node.namespaceURI !== undefined ? `</${node.tagName}>` : "";
+		if (node.nodeName === "#comment") return "";
+		if (node.nodeName === "#document" || node.nodeName === "#document-fragment") return kids.map(walk).join("");
+		return open + kids.map(walk).join("") + close;
+	};
+	const markup = (fragment.childNodes ?? []).map(walk).join("");
+	return { markup, accepted, refused };
+}
+
+export { SVG_NS, SVG_TAGS };
+
+/**
+ * Resolve each marker in the SANITIZED output, at its unique occurrence in an ordinary text node.
+ *
+ * Re-parsing the output is what makes the claim checkable rather than assumed: a marker that ended up in an attribute value, a comment or a
+ * raw-text element is simply not a text node, and drops. A marker occurring zero times lost its slot to the HTML policy; occurring more than
+ * once means it was copied, and a copy has no provenance. Both drop the icon.
+ */
+export function resolveSvgMarkers(cleaned: string, accepted: Map<string, string>): string {
+	const fragment = parseFragment(cleaned, { sourceCodeLocationInfo: false });
+	const counts = new Map<string, number>();
+	const count = (node: P5Node): void => {
+		if (node.nodeName === "#text") {
+			const text = node.value ?? "";
+			for (const marker of accepted.keys()) {
+				let at = text.indexOf(marker);
+				while (at !== -1) {
+					counts.set(marker, (counts.get(marker) ?? 0) + 1);
+					at = text.indexOf(marker, at + marker.length);
+				}
+			}
+			return;
+		}
+		for (const child of node.childNodes ?? []) count(child);
+	};
+	count(fragment);
+
+	// Only markers standing in an ordinary text node, exactly once, survive.
+	const live = new Map([...accepted].filter(([m]) => counts.get(m) === 1));
+	if (live.size === 0) {
+		// Nothing to resolve: remove any stray markers so a duplicated one can never render as text.
+		return [...accepted.keys()].reduce((out, m) => out.split(m).join(""), cleaned);
+	}
+	let out = cleaned;
+	for (const [marker, html] of live) {
+		out = out.split(marker).join(html);
+	}
+	// Anything unresolved (duplicated) is stripped rather than drawn as literal text.
+	for (const marker of accepted.keys()) {
+		if (!live.has(marker)) out = out.split(marker).join("");
+	}
+	return out;
 }

@@ -1,7 +1,7 @@
 import sanitizeHtml from "sanitize-html";
 
 import { canonicalIframeHosts, isPlatformChrome } from "./iframe-hosts.js";
-import { carryInlineSvg } from "./sanitize-svg.js";
+import { carryInlineSvg, resolveSvgMarkers } from "./sanitize-svg.js";
 
 /**
  * Iframe hosts allowed out of the box.
@@ -216,15 +216,29 @@ function newsletterActionOf(
  * not allow), a pasted embed's "turn on JavaScript" line was drawn as text,
  * and a tracking pixel's `<img>` loaded on every page view.
  */
+/** 128 random bits per call: a source cannot guess a marker, and one call's markers are useless in the next. */
+function svgMarker(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	// Plain ASCII on purpose: control characters and comment syntax do not survive an HTML sanitizer, and a marker that gets stripped
+	// cannot be resolved. The 128 random bits are what make it unguessable; the surrounding characters just make it survive as text.
+	return "EMDASHSVG" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("") + "END";
+}
+
 export function sanitizeContent(html: string, options: SanitizeOptions = {}): string {
-	// ITEM 163g: static inline SVG is carried as a finished, inert string BEFORE sanitize-html sees the markup.
+	// ITEM 163g. ONLY a fragment containing "<svg" takes this path; every other input is byte-identical to before, because the four
+	// sites with no inline SVG must not change at all.
 	//
-	// Measured first: 11 inline `<svg>` across 3 pages on 2 of the five real sites, all of them icons (`svg`/`g`/`path`). The
-	// pre-pass rebuilds each from validated nodes and attributes only, or removes the subtree whole — see sanitize-svg.ts for why a
-	// `sanitize-html` tag rule cannot do this (flat walk, no namespace, and an allowed child of a refused parent unwraps in place).
-	// The rebuilt string reaches the allowlist below as ordinary markup: `svg`, `g` and `path` are nonTextTags so its raw form can
-	// never survive, and the attribute allowlist keeps the casing the rebuild chose (`viewBox`), which is why this pass runs first.
-	html = carryInlineSvg(html);
+	// The SVG is validated on parse5's tree - the browser's own tree construction, including the foreign-content rules that decide when
+	// `<svg>` enters the SVG namespace - and swapped for a per-call random text marker. The ordinary HTML policy then runs with `svg`,
+	// `g` and `path` OFF its allowlist, so a raw one can never survive; afterwards the markers are resolved, each only at a unique
+	// occurrence in an ordinary text node. Provenance is the map built here: the source cannot write a marker it cannot guess.
+	let carried: Map<string, string> | null = null;
+	if (/<svg/i.test(html)) {
+		const result = carryInlineSvg(html, svgMarker);
+		html = result.markup;
+		carried = result.accepted;
+	}
 	const perCall = canonicalIframeHosts(options.allowedIframeHostnames);
 	const added = new Set([...addedHostnames(), ...perCall].filter((h) => !DEFAULT_HOSTS.has(h)));
 	const allowed = [...DEFAULT_HOSTS, ...added];
@@ -245,7 +259,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		return { tagName: "embark-unwrapped-control", attribs: {} };
 	};
 	const controlTransforms = Object.fromEntries(Array.from(CONTROL_TAGS, (t) => [t, control]));
-	return sanitizeHtml(html, {
+	const cleaned = sanitizeHtml(html, {
 		onOpenTag: (name, attribs) => {
 			if (name === "form") forms.push(newsletterActionOf(attribs, newsletterHosts) !== null);
 		},
@@ -269,12 +283,9 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			"textarea",
 			"button",
 			"label",
-			// ITEM 163g: the three SVG elements the pre-pass can emit. They are allowed HERE so the rebuild survives this pass;
-			// their attributes and values are allowlisted below, and an exclusiveFilter drops an <svg> carrying anything else
-			// whole — so a raw subtree the rebuild refused cannot be kept by being allowed here.
-			"svg",
-			"g",
-			"path",
+			// ITEM 163g: `svg`, `g` and `path` are deliberately NOT here. A raw one must never survive the ordinary HTML policy, so a
+			// source cannot slip SVG past this allowlist at all — the only SVG that reaches the page is the markup this module rebuilds
+			// from parse5's validated tree and restores at its own marker's unique text-node position.
 		],
 		nonTextTags: ["script", "style", "noscript"],
 		allowedAttributes: {
@@ -415,12 +426,13 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			// allowed children unwrapped in place (which would reparent them out of the SVG context codex's amend requires).
 			// Each of the three carries its own marker, so a raw `<path>` pasted in HTML — which the allowlist would otherwise keep as
 			// a bare element — is dropped whole rather than drawn outside any SVG context.
-			if (frame.tag === "svg" || frame.tag === "g" || frame.tag === "path") return frame.attribs["data-embark-svg"] !== "1";
 			if (frame.attribs["data-embark-drop"] === "1") return true;
 			return false;
 		},
-	}) 
-		// The rebuild's marker is OURS: it told the filter above which elements the pre-pass built, and it has no business in a
-		// customer's markup. Removed here, once, after the filter has read it.
-		.replace(/ data-embark-svg="1"/g, "");
+	});
+
+	if (carried === null || carried.size === 0) return cleaned;
+	// Resolve each marker at its UNIQUE occurrence in a text node of the sanitized output. Re-parsing rather than string-replacing is what
+	// makes "it is really a text node, not an attribute or a comment" a fact instead of an assumption.
+	return resolveSvgMarkers(cleaned, carried);
 }
