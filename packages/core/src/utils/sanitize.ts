@@ -1,3 +1,4 @@
+import { defaultTreeAdapter, html as parse5Html } from "parse5";
 import sanitizeHtml from "sanitize-html";
 
 import { canonicalIframeHosts, isPlatformChrome } from "./iframe-hosts.js";
@@ -222,16 +223,11 @@ const SVG_PROBE = /<svg/i;
 /** The production `div` both renderers wrap content in. Used for BOTH parses, so recovery cannot differ between them. */
 // Built as the adapter's element type rather than cast into it: the type is the contract with parse5, so papering over it would hide
 // exactly the shape mistake the type exists to catch.
-const DIV_CONTEXT: Parameters<typeof carryInlineSvg>[2] = {
-	nodeName: "div",
-	tagName: "div",
-	namespaceURI: "http://www.w3.org/1999/xhtml" as Parameters<
-		typeof carryInlineSvg
-	>[2]["namespaceURI"],
-	attrs: [],
-	childNodes: [],
-	parentNode: null,
-};
+const DIV_CONTEXT: Parameters<typeof carryInlineSvg>[2] = defaultTreeAdapter.createElement(
+	"div",
+	parse5Html.NS.HTML,
+	[],
+);
 
 /** 128 random bits per call: a source cannot guess a marker, and one call's markers are useless in the next. */
 function svgMarker(): string {
