@@ -1,7 +1,7 @@
 import sanitizeHtml from "sanitize-html";
 
 import { canonicalIframeHosts, isPlatformChrome } from "./iframe-hosts.js";
-import { carryInlineSvg, placeSvgNodes, type P5Node } from "./sanitize-svg.js";
+import { carryInlineSvg, placeSvgNodes, type P5Child } from "./sanitize-svg.js";
 
 /**
  * Iframe hosts allowed out of the box.
@@ -250,7 +250,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	// `<svg>` enters the SVG namespace - and swapped for a per-call random text marker. The ordinary HTML policy then runs with `svg`,
 	// `g` and `path` OFF its allowlist, so a raw one can never survive; afterwards the markers are resolved, each only at a unique
 	// occurrence in an ordinary text node. Provenance is the map built here: the source cannot write a marker it cannot guess.
-	let carried: Map<string, P5Node[]> | null = null;
+	let carried: Map<string, P5Child[]> | null = null;
 	if (SVG_PROBE.test(html)) {
 		// The PRODUCTION context: the div the renderers wrap content in (HtmlBlock.astro, Embed.astro), so parse5 applies the same
 		// recovery and foreign-content rules a browser would in that exact position.
