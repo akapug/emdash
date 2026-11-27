@@ -216,6 +216,9 @@ function newsletterActionOf(
  * not allow), a pasted embed's "turn on JavaScript" line was drawn as text,
  * and a tracking pixel's `<img>` loaded on every page view.
  */
+/** The fast path's probe: no `<svg` anywhere means the fragment never touches parse5. */
+const SVG_PROBE = /<svg/i;
+
 /** The production `div` both renderers wrap content in. Used for BOTH parses, so recovery cannot differ between them. */
 const DIV_CONTEXT = {
 	nodeName: "div",
@@ -244,7 +247,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	// `g` and `path` OFF its allowlist, so a raw one can never survive; afterwards the markers are resolved, each only at a unique
 	// occurrence in an ordinary text node. Provenance is the map built here: the source cannot write a marker it cannot guess.
 	let carried: Map<string, P5Node[]> | null = null;
-	if (/<svg/i.test(html)) {
+	if (SVG_PROBE.test(html)) {
 		// The PRODUCTION context: the div the renderers wrap content in (HtmlBlock.astro, Embed.astro), so parse5 applies the same
 		// recovery and foreign-content rules a browser would in that exact position.
 		const result = carryInlineSvg(html, svgMarker, DIV_CONTEXT);

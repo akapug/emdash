@@ -45,7 +45,7 @@ const NUM = new RegExp(`^${NUMBER}$`);
 
 /** Four finite numbers with positive extents: a zero extent draws nothing and some engines reject it. */
 export function validViewBox(value: string): boolean {
-	const parts = value.trim().split(/[\s,]+/);
+	const parts = value.trim().split(VIEWBOX_SEPARATOR);
 	if (parts.length !== 4 || !parts.every((p) => NUM.test(p))) return false;
 	const nums = parts.map(Number);
 	return nums.every(Number.isFinite) && nums[2] > 0 && nums[3] > 0;
@@ -57,22 +57,29 @@ const NAMED = /^[a-z]+$/i;
 /** A paint is a hex colour, a colour function with numeric arguments, or a named token — no paint shape contains `url(`. */
 export function validPaint(value: string): boolean {
 	const v = value.trim();
-	return (HEX.test(v) || PAINT_FN.test(v) || NAMED.test(v)) && !/url\s*\(/i.test(v);
+	return (HEX.test(v) || PAINT_FN.test(v) || NAMED.test(v)) && !URL_CALL.test(v);
 }
 
 const TRANSFORM_FN = /^(matrix|translate|scale|rotate|skewX|skewY)\(\s*[0-9eE.,\s+-]*\s*\)$/;
 export function validTransform(value: string): boolean {
 	const v = value.trim();
-	return v !== "" && v.split(/\s+(?=[a-zA-Z])/).every((fn) => TRANSFORM_FN.test(fn.trim()));
+	return v !== "" && v.split(TRANSFORM_SEPARATOR).every((fn) => TRANSFORM_FN.test(fn.trim()));
 }
 
 const PATH_D = /^[\sMmLlHhVvCcSsQqTtAaZz0-9eE.,+-]+$/;
+const PATH_STARTS_WITH_MOVETO = /^[Mm]/;
 export function validPathData(value: string): boolean {
 	const v = value.trim();
-	return v !== "" && PATH_D.test(v) && /^[Mm]/.test(v);
+	return v !== "" && PATH_D.test(v) && PATH_STARTS_WITH_MOVETO.test(v);
 }
 
 const DIMENSION = new RegExp(`^(?:${NUMBER})(?:px|em|rem|%)?$`);
+const URL_CALL = /url\s*\(/i;
+const VIEWBOX_SEPARATOR = /[\s,]+/;
+const TRANSFORM_SEPARATOR = /\s+(?=[a-zA-Z])/;
+const MARKUP_CHARS = /[<>"']/;
+const SCHEME = /^(?:javascript|data|vbscript):/i;
+const NAMESPACE_PREFIXED = /^on/i;
 export function validDimension(value: string): boolean {
 	const v = value.trim();
 	return v === "" || DIMENSION.test(v);
@@ -90,7 +97,7 @@ export function keptAttributes(element: string, attribs: Array<{ name: string; v
 	if (!allowed) return out;
 	for (const { name: rawName, value: rawValue } of attribs) {
 		const name = NAME_OF[rawName.toLowerCase()] ?? rawName;
-		if (name.includes(":") || /^on/i.test(name) || name.toLowerCase() === "href" || !allowed.has(name)) continue;
+		if (name.includes(":") || NAMESPACE_PREFIXED.test(name) || name.toLowerCase() === "href" || !allowed.has(name)) continue;
 		const v = rawValue.trim();
 		switch (name) {
 			case "viewBox":
@@ -130,10 +137,19 @@ export function keptAttributes(element: string, attribs: Array<{ name: string; v
 				if (v === "true" || v === "false") out[name] = v;
 				break;
 			default:
-				if (!/[<>"']/.test(v) && !/^(?:javascript|data|vbscript):/i.test(v)) out[name] = v;
+				if (!MARKUP_CHARS.test(v) && !SCHEME.test(v)) out[name] = v;
 		}
 	}
 	return out;
+}
+
+function makeElement(tag: string): P5Node {
+	return { nodeName: tag, tagName: tag, attrs: [], childNodes: [], parentNode: null };
+}
+
+function adopt(parent: P5Node, child: P5Node): void {
+	child.parentNode = parent;
+	for (const grand of child.childNodes ?? []) adopt(parent, grand);
 }
 
 interface P5Attrs {
@@ -158,7 +174,7 @@ interface P5Node {
  *
  * Nodes, not markup: the caller inserts them into the tree it already parsed, so position is structural rather than a string match.
  */
-function buildNodes(node: P5Node, makeElement: (tag: string) => P5Node): P5Node | null {
+function buildNodes(node: P5Node): P5Node | null {
 	const tag = node.tagName ?? "";
 	if (node.namespaceURI !== SVG_NS || !SVG_TAGS.has(tag)) return null;
 	const kept = keptAttributes(tag, node.attrs ?? []);
@@ -169,7 +185,7 @@ function buildNodes(node: P5Node, makeElement: (tag: string) => P5Node): P5Node 
 	out.childNodes = [];
 	for (const child of node.childNodes ?? []) {
 		if (child.nodeName === "#text") continue; // an icon's text is not this item
-		const built = buildNodes(child, makeElement);
+		const built = buildNodes(child);
 		if (built === null) return null; // a refused child refuses the WHOLE subtree, never unwraps it
 		out.childNodes.push(built);
 	}
@@ -219,12 +235,6 @@ export function carryInlineSvg(
 	let refused = 0;
 	// parse5's OWN types at the library boundary: the adapter rejects a hand-shaped object, which is what the typechecker said.
 	const fragment = parseFragment(context, html, { sourceCodeLocationInfo: false });
-	const makeElement = (tag: string): P5Node => ({ nodeName: tag, tagName: tag, attrs: [], childNodes: [], parentNode: null });
-
-	const adopt = (parent: P5Node, child: P5Node): void => {
-		child.parentNode = parent;
-		for (const grand of child.childNodes ?? []) adopt(child, grand);
-	};
 
 	const walk = (node: P5Node): P5Node[] => {
 		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
@@ -233,7 +243,7 @@ export function carryInlineSvg(
 				refused++;
 				return [];
 			}
-			const built = buildNodes(node, makeElement);
+			const built = buildNodes(node);
 			if (built === null) {
 				refused++;
 				return [];
@@ -248,15 +258,16 @@ export function carryInlineSvg(
 		const out: P5Node[] = [];
 		for (const child of node.childNodes) out.push(...walk(child));
 		// Rewrite children in place, preserving every attribute and every childless element exactly as parsed.
-		(node as P5Node).childNodes = out;
+		node.childNodes = out;
 		for (const child of out) adopt(node, child);
 		return [node];
 	};
 
 	const roots = (fragment.childNodes ?? []).flatMap(walk);
-	const out: P5Node = { nodeName: "#document-fragment", childNodes: roots, parentNode: null };
-	for (const child of roots) adopt(out, child);
-	return { markup: serialize(out as unknown as DefaultTreeAdapterMap["parentNode"]), accepted, refused };
+	// Serialize the PARSED fragment with its children rewritten, rather than fabricating a node and casting it into parse5's type.
+	const out = { ...fragment, childNodes: roots } as DefaultTreeAdapterMap["parentNode"];
+	for (const child of roots) adopt(fragment as unknown as P5Node, child);
+	return { markup: serialize(out), accepted, refused };
 }
 
 /**
@@ -307,12 +318,12 @@ export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>, c
 					continue;
 				}
 				// Longest-first so one marker can never be consumed inside another's text.
-				hits.sort((a, b) => b.length - a.length);
+				const ordered = hits.toSorted((a, b) => b.length - a.length);
 				let rest = text;
 				const pieces: Array<{ kind: "text"; value: string } | { kind: "icon"; marker: string }> = [];
 				let at = 0;
 				while (at < rest.length) {
-					const next = hits.map((m) => ({ m, i: rest.indexOf(m, at) })).filter((h) => h.i !== -1).sort((x, y) => x.i - y.i)[0];
+					const next = ordered.map((m) => ({ m, i: rest.indexOf(m, at) })).filter((h) => h.i !== -1).toSorted((x, y) => x.i - y.i)[0];
 					if (!next) {
 						pieces.push({ kind: "text", value: rest.slice(at) });
 						break;

@@ -76,7 +76,7 @@ it("HtmlBlock's own output: the icon is real DOM, media survives, and the reques
 			imgs: document.querySelectorAll("img").length,
 			text: document.body.textContent ?? "",
 			leaksMarker: /EMDASHSVG|ENDSLOT/.test(document.documentElement.outerHTML),
-			descendants: [...new Set(Array.from(document.querySelectorAll("svg *")).map((e) => e.tagName.toLowerCase()))],
+			descendants: [...new Set(Array.from(document.querySelectorAll("svg *"), (e) => e.tagName.toLowerCase()))],
 		}));
 
 		expect(facts.svgs, "exactly one icon in the browser").toBe(1);
@@ -89,7 +89,7 @@ it("HtmlBlock's own output: the icon is real DOM, media survives, and the reques
 		expect(facts.descendants.every((t) => t === "path" || t === "g"), "only approved SVG descendants").toBe(true);
 
 		// EXACT ACCOUNTING: the navigation and the one expected media request, nothing else.
-		expect(seen.sort(), "the navigation and the fixture's own image, and nothing else").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].sort());
+		expect(seen.toSorted(), "the navigation and the fixture's own image, and nothing else").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
 	} finally {
 		await page.close();
 	}
@@ -111,7 +111,7 @@ it("Embed's own output: same guarantees through the second real caller", async (
 		expect(facts.svgs, "one icon").toBe(1);
 		expect(facts.viewBox, "viewBox survives").toBe("0 0 448 512");
 		expect(facts.imgs, "the image survived here too").toBe(1);
-		expect(seen.sort(), "no request beyond navigation and the fixture's image").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].sort());
+		expect(seen.toSorted(), "no request beyond navigation and the fixture's image").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
 	} finally {
 		await page.close();
 	}
@@ -135,7 +135,7 @@ it("both lookalikes are refused through the real component, and the request list
 		expect(facts.alertText, "no script body").toBe(false);
 		expect(facts.leaksMarker, "no marker text").toBe(false);
 		// The refused lookalikes add no request of their own.
-		expect(seen.sort(), "the refusals fetched nothing extra").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].sort());
+		expect(seen.toSorted(), "the refusals fetched nothing extra").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
 	} finally {
 		await page.close();
 	}
