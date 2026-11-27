@@ -1,6 +1,8 @@
+import { defaultTreeAdapter, html as parse5Html } from "parse5";
 import sanitizeHtml from "sanitize-html";
 
 import { canonicalIframeHosts, isPlatformChrome } from "./iframe-hosts.js";
+import { carryInlineSvg, placeSvgNodes, type P5Child } from "./sanitize-svg.js";
 
 /**
  * Iframe hosts allowed out of the box.
@@ -215,7 +217,43 @@ function newsletterActionOf(
  * not allow), a pasted embed's "turn on JavaScript" line was drawn as text,
  * and a tracking pixel's `<img>` loaded on every page view.
  */
+/** The fast path's probe: no `<svg` anywhere means the fragment never touches parse5. */
+const SVG_PROBE = /<svg/i;
+
+/** The production `div` both renderers wrap content in. Used for BOTH parses, so recovery cannot differ between them. */
+// Built as the adapter's element type rather than cast into it: the type is the contract with parse5, so papering over it would hide
+// exactly the shape mistake the type exists to catch.
+const DIV_CONTEXT: Parameters<typeof carryInlineSvg>[2] = defaultTreeAdapter.createElement(
+	"div",
+	parse5Html.NS.HTML,
+	[],
+);
+
+/** 128 random bits per call: a source cannot guess a marker, and one call's markers are useless in the next. */
+function svgMarker(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	// Plain ASCII on purpose: control characters and comment syntax do not survive an HTML sanitizer, and a marker that gets stripped
+	// cannot be resolved. The 128 random bits are what make it unguessable; the surrounding characters just make it survive as text.
+	return "EMDASHSVG" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("") + "END";
+}
+
 export function sanitizeContent(html: string, options: SanitizeOptions = {}): string {
+	// ITEM 163g. ONLY a fragment containing "<svg" takes this path; every other input is byte-identical to before, because the four
+	// sites with no inline SVG must not change at all.
+	//
+	// The SVG is validated on parse5's tree - the browser's own tree construction, including the foreign-content rules that decide when
+	// `<svg>` enters the SVG namespace - and swapped for a per-call random text marker. The ordinary HTML policy then runs with `svg`,
+	// `g` and `path` OFF its allowlist, so a raw one can never survive; afterwards the markers are resolved, each only at a unique
+	// occurrence in an ordinary text node. Provenance is the map built here: the source cannot write a marker it cannot guess.
+	let carried: Map<string, P5Child[]> | null = null;
+	if (SVG_PROBE.test(html)) {
+		// The PRODUCTION context: the div the renderers wrap content in (HtmlBlock.astro, Embed.astro), so parse5 applies the same
+		// recovery and foreign-content rules a browser would in that exact position.
+		const result = carryInlineSvg(html, svgMarker, DIV_CONTEXT);
+		html = result.markup;
+		carried = result.accepted;
+	}
 	const perCall = canonicalIframeHosts(options.allowedIframeHostnames);
 	const added = new Set([...addedHostnames(), ...perCall].filter((h) => !DEFAULT_HOSTS.has(h)));
 	const allowed = [...DEFAULT_HOSTS, ...added];
@@ -236,7 +274,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 		return { tagName: "embark-unwrapped-control", attribs: {} };
 	};
 	const controlTransforms = Object.fromEntries(Array.from(CONTROL_TAGS, (t) => [t, control]));
-	return sanitizeHtml(html, {
+	const cleaned = sanitizeHtml(html, {
 		onOpenTag: (name, attribs) => {
 			if (name === "form") forms.push(newsletterActionOf(attribs, newsletterHosts) !== null);
 		},
@@ -260,6 +298,9 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			"textarea",
 			"button",
 			"label",
+			// ITEM 163g: `svg`, `g` and `path` are deliberately NOT here. A raw one must never survive the ordinary HTML policy, so a
+			// source cannot slip SVG past this allowlist at all — the only SVG that reaches the page is the markup this module rebuilds
+			// from parse5's validated tree and restores at its own marker's unique text-node position.
 		],
 		nonTextTags: ["script", "style", "noscript"],
 		allowedAttributes: {
@@ -288,10 +329,67 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			textarea: ["name", "id", "class", "rows", "cols", "placeholder", "required", "aria-label"],
 			button: ["type", "name", "value", "id", "class", "aria-label"],
 			label: ["for", "class", "id"],
+			// ITEM 163g. `viewbox` is lowercase because sanitize-html lowercases every attribute name; transformTags.svg restores
+			// the casing SVG requires. No href, no xlink:*, no style, no on*, no class/id — codex's amend, and the value grammars
+			// live in sanitize-svg.ts.
+			svg: [
+				// BOTH SPELLINGS: transformTags.svg restores SVG's case before the allowlist filters, so the restored name must be
+				// present too — listing only `viewbox` stripped every attribute off the element and drew an empty box.
+				"viewbox",
+				"viewBox",
+				"preserveaspectratio",
+				"preserveAspectRatio",
+				"width",
+				"height",
+				"fill",
+				"stroke",
+				"stroke-width",
+				"role",
+				"aria-hidden",
+				"aria-label",
+				"focusable",
+			],
+			g: [
+				"fill",
+				"stroke",
+				"stroke-width",
+				"fill-rule",
+				"stroke-linecap",
+				"stroke-linejoin",
+				"opacity",
+				"fill-opacity",
+				"stroke-opacity",
+				"transform",
+			],
+			path: [
+				"d",
+				"fill",
+				"stroke",
+				"stroke-width",
+				"fill-rule",
+				"stroke-linecap",
+				"stroke-linejoin",
+				"opacity",
+				"fill-opacity",
+				"stroke-opacity",
+				"transform",
+			],
 		},
 		allowedIframeHostnames: allowed,
 		transformTags: {
 			...controlTransforms,
+			// ITEM 163g: sanitize-html lowercases attribute names (deliberately — it is what makes mixed-case `ONLOAD` fail the
+			// allowlist). SVG's own names are case-SENSITIVE, so the two that matter are restored here, after filtering, on the
+			// elements the pre-pass built.
+			svg: (tagName, attribs) => ({
+				tagName,
+				attribs: Object.fromEntries(
+					Object.entries(attribs).map(([k, v]) => [
+						k === "viewbox" ? "viewBox" : k === "preserveaspectratio" ? "preserveAspectRatio" : k,
+						v,
+					]),
+				),
+			}),
 			// A NEWSLETTER FORM IS CARRIED WORKING. The action is approved here,
 			// and the marker is what the exclusiveFilter reads to keep the form
 			// and its controls; every other form is dropped whole.
@@ -341,8 +439,18 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			// whole — with their controls, which is what every other form got
 			// before this change.
 			if (frame.tag === "form") return frame.attribs["data-embark-newsletter"] !== "1";
+			// ITEM 163g: an <svg> survives only if the pre-pass built it. The rebuild stamps every element it emits, and a raw subtree
+			// the rebuild REFUSED never carries the stamp — so it is dropped here whole, with its children, instead of having its
+			// allowed children unwrapped in place (which would reparent them out of the SVG context codex's amend requires).
+			// Each of the three carries its own marker, so a raw `<path>` pasted in HTML — which the allowlist would otherwise keep as
+			// a bare element — is dropped whole rather than drawn outside any SVG context.
 			if (frame.attribs["data-embark-drop"] === "1") return true;
 			return false;
 		},
 	});
+
+	if (carried === null || carried.size === 0) return cleaned;
+	// Resolve each marker at its UNIQUE occurrence in a text node of the sanitized output. Re-parsing rather than string-replacing is what
+	// makes "it is really a text node, not an attribute or a comment" a fact instead of an assumption.
+	return placeSvgNodes(cleaned, carried, DIV_CONTEXT);
 }
