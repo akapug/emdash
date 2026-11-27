@@ -15,6 +15,8 @@ export interface Props {
 		_key: string;
 		backgroundImage?: string;
 		backgroundVideo?: string;
+		backgroundPosition?: string;
+		backgroundBlendMode?: string;
 		overlayColor?: string;
 		overlayOpacity?: number;
 		content: unknown[];
@@ -23,10 +25,28 @@ export interface Props {
 	};
 }
 
+const COVER_POSITION_RE =
+	/^(?:top|center|bottom|left|right|-?\d{1,3}(?:\.\d{1,2})?%)(?:\s+(?:top|center|bottom|left|right|-?\d{1,3}(?:\.\d{1,2})?%))?$/i;
+
+const COVER_BLEND_MODES = new Set([
+	"multiply",
+	"screen",
+	"overlay",
+	"darken",
+	"lighten",
+	"color-dodge",
+	"color-burn",
+	"soft-light",
+	"hard-light",
+	"normal",
+]);
+
 const { node } = Astro.props;
 const {
 	backgroundImage: storedImage,
 	backgroundVideo: storedVideo,
+	backgroundPosition: rawBackgroundPosition,
+	backgroundBlendMode: rawBackgroundBlendMode,
 	overlayColor,
 	overlayOpacity = 0.5,
 	content = [],
@@ -77,10 +97,25 @@ const coverImgSizes = lazyAutoSizes(coverSizes, {
 	hasReservedBox: true,
 	sources: [backgroundImage],
 });
+const trimmedPosition =
+	typeof rawBackgroundPosition === "string" ? rawBackgroundPosition.trim() : "";
+const validPosition =
+	trimmedPosition && COVER_POSITION_RE.test(trimmedPosition)
+		? trimmedPosition.replace(/\s+/g, " ").toLowerCase()
+		: undefined;
+const backgroundStyle = validPosition ? `object-position: ${validPosition};` : undefined;
+
+const normalizedBlendMode =
+	typeof rawBackgroundBlendMode === "string" ? rawBackgroundBlendMode.trim().toLowerCase() : "";
+const validBlendMode = COVER_BLEND_MODES.has(normalizedBlendMode) ? normalizedBlendMode : undefined;
+
 const hasBackground = backgroundImage || backgroundVideo;
-const overlayStyle = overlayColor
+const baseOverlayStyle = overlayColor
 	? `background-color: ${overlayColor}; opacity: ${overlayOpacity};`
 	: `background-color: rgba(0, 0, 0, ${overlayOpacity});`;
+const overlayStyle = validBlendMode
+	? `${baseOverlayStyle} mix-blend-mode: ${validBlendMode};`
+	: baseOverlayStyle;
 ---
 
 <div
@@ -93,6 +128,7 @@ const overlayStyle = overlayColor
 				src={backgroundImage}
 				alt=""
 				class="emdash-cover__background"
+				style={backgroundStyle}
 				loading={coverLoading}
 				srcset={coverSrcset}
 				sizes={coverImgSizes}
@@ -103,6 +139,7 @@ const overlayStyle = overlayColor
 		backgroundVideo && (
 			<video
 				class="emdash-cover__background emdash-cover__video"
+				style={backgroundStyle}
 				autoplay
 				muted
 				loop
