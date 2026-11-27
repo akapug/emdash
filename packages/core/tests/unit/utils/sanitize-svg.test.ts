@@ -43,7 +43,32 @@ describe("163g: the real icons survive", () => {
 	it("no provenance is carried in markup: nothing to forge", () => {
 		const html = out(TWPE_ICON);
 		expect(html).not.toContain("data-embark");
-		expect(html, "no marker text leaks into the page").not.toContain("EMDASHSVG");
+		expect(html, "no slot marker leaks into the page").not.toContain("data-embark-svg-slot");
+	});
+
+	// CODEX'S THIRD FINDING, as arms. An earlier version rebuilt ordinary HTML by hand and returned "" for every childless element, so a
+	// page carrying an icon lost its images and form controls. Ordinary HTML must now be parse5's own serialization, untouched.
+	it("childless ordinary elements SURVIVE beside an icon: img and br are not collateral", () => {
+		const markup = `<p>Before</p><img src="/_emdash/api/media/file/a.jpg" alt="A"><br>`;
+		const withIcon = out(`${markup}${TWPE_ICON}`);
+		const without = out(markup);
+		expect(withIcon, "the icon is carried").toContain("<svg");
+		// The comparison is the point: the SAME ordinary markup must come through identically whether or not an icon rides along.
+		for (const fragment of ['src="/_emdash/api/media/file/a.jpg"', 'alt="A"', "<br"]) {
+			expect(withIcon, `with an icon: ${fragment}`).toContain(fragment);
+			expect(without, `without an icon: ${fragment}`).toContain(fragment);
+		}
+		// A control OUTSIDE an approved newsletter form is dropped by the existing policy in both cases — measured, not assumed, and
+		// deliberately not asserted here as if this change were responsible for it.
+		expect(withIcon, "the input is dropped by the pre-existing control policy").not.toContain("<input");
+		expect(without, "and identically without an icon").not.toContain("<input");
+	});
+
+	it("a refused icon beside ordinary content leaves the ordinary content whole", () => {
+		const html = out('<p>Keep me</p><img src="/a.jpg" alt="x"><svg viewBox="0 0 1 1"><script>alert(1)</script></svg>');
+		expect(html).not.toContain("<svg");
+		expect(html, "the paragraph is untouched").toContain("Keep me");
+		expect(html, "and the image with it").toContain('src="/a.jpg"');
 	});
 
 	it("a page with NO svg is byte-identical: the four sites without icons cannot change", () => {

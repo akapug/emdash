@@ -1,26 +1,28 @@
 /**
  * Item 163g: static inline SVG carried through `sanitizeContent`, or refused whole.
  *
- * MEASURED POPULATION, on the five real exports (468 published posts and pages): 11 inline `<svg>` across 3 pages on 2 sites — 10 on twpe
- * (`uagb/info-box`, `uagb/icon-list-child`) and 1 on calulti. All of them use only `svg`/`g`/`path`. The other three sites carry none. This
- * is an allowlist for icons, not for SVG as a medium.
+ * MEASURED POPULATION, from the five real exports' page content (468 published posts and pages): 11 inline `<svg>` across 3 pages on 2 sites —
+ * 10 on twpe (`uagb/info-box`, `uagb/icon-list-child`) and 1 on calulti. All use only `svg`/`g`/`path`. The other four sites carry none.
  *
- * WHY parse5 AND NOT sanitize-html'S OWN WALK. The first version stamped rebuilt elements with a `data-embark-svg` attribute and had the
- * filter trust it — a customer could write that attribute themselves, so markup was standing in for provenance. The second tried a Symbol
- * on the parsed node; `sanitize-html` rebuilds `attribs` from its string-keyed allowlist, so the Symbol never survived to the filter.
- * Measured: `exclusiveFilter` receives `tag,attribs,tagPosition,text,openingTagLength,mediaChildren,updateParentNodeText,
- * updateParentNodeMediaChildren` and **no parent** — so that library cannot answer "what does this element sit inside", which is the one
- * question an SVG allowlist has to answer.
+ * WHY parse5. The security boundary needs the browser's tree: the foreign-content rules decide when `<svg>` enters the SVG namespace, and
+ * parentage is the question an SVG allowlist has to answer. Measured: `sanitize-html`'s `exclusiveFilter` receives no parent at all.
  *
- * parse5 implements the HTML spec's tree construction, including the foreign-content rules that decide when `<svg>` switches namespace and
- * when it switches back. That is the property being bought: the tree validated here is the tree a browser would build, so namespace and
- * parentage are facts rather than assertions. Provenance is held in this module's own return value — never in markup, never in an attribute.
+ * PROVENANCE IS NODE IDENTITY, NOT TEXT. Three earlier attempts failed on this boundary: a `data-embark-svg` attribute the source could
+ * write; a `Symbol` the library dropped when it rebuilt `attribs`; and a random token substituted across the raw string, which cannot prove
+ * the token's position survived the policy. This version never substitutes strings. It parses the fragment, validates SVG subtrees as nodes,
+ * REPLACES each accepted element with a marker node, lets the ordinary HTML policy run, then walks the sanitized tree and puts the validated
+ * NODES back at the marker's own position — a position proved by tree identity, not by matching text.
+ *
+ * ORDINARY HTML IS NEVER RE-SERIALIZED BY HAND. Everything outside an SVG candidate goes back to the caller as parse5's own serialization of
+ * the parsed tree, so a childless `<img>` or `<input>` beside an icon survives. An earlier version rebuilt HTML by hand and silently dropped
+ * every childless element on any SVG-bearing page.
  */
 
-import { parseFragment } from "parse5";
+import { parseFragment, serialize, type DefaultTreeAdapterMap } from "parse5";
 
 /** The SVG namespace, exactly as the spec spells it. */
 const SVG_NS = "http://www.w3.org/2000/svg";
+const HTML_NS = "http://www.w3.org/1999/xhtml";
 
 /** The three elements v1 carries. Anything else refuses the whole subtree. */
 const SVG_TAGS = new Set(["svg", "g", "path"]);
@@ -32,7 +34,7 @@ const SVG_ATTRS: Record<string, ReadonlySet<string>> = {
 	path: new Set(["d", "fill", "stroke", "stroke-width", "fill-rule", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "transform"]),
 };
 
-/** parse5 lowercases HTML attribute names but keeps SVG's casing; accept both spellings so neither path can strip an element bare. */
+/** parse5 keeps SVG's attribute casing; accept lowercased spellings too so neither path can strip an element bare. */
 const NAME_OF: Record<string, string> = { viewbox: "viewBox", preserveaspectratio: "preserveAspectRatio" };
 
 const NUMBER = String.raw`-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?`;
@@ -131,133 +133,159 @@ export function keptAttributes(element: string, attribs: Array<{ name: string; v
 	return out;
 }
 
+interface P5Attrs {
+	name: string;
+	value: string;
+	namespace?: string;
+	prefix?: string;
+}
+
 interface P5Node {
 	nodeName: string;
 	tagName?: string;
 	namespaceURI?: string;
-	attrs?: Array<{ name: string; value: string }>;
+	attrs?: P5Attrs[];
 	childNodes?: P5Node[];
 	value?: string;
+	parentNode?: P5Node | null;
 }
 
-const escapeText = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const escapeAttr = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-/** Rebuild one validated SVG element, or null when the subtree carries anything this allowlist does not understand. */
-function rebuild(node: P5Node): string | null {
+/**
+ * Build the replacement NODES for one SVG element, or null when the subtree carries anything this allowlist does not understand.
+ *
+ * Nodes, not markup: the caller inserts them into the tree it already parsed, so position is structural rather than a string match.
+ */
+function buildNodes(node: P5Node, makeElement: (tag: string) => P5Node): P5Node | null {
 	const tag = node.tagName ?? "";
 	if (node.namespaceURI !== SVG_NS || !SVG_TAGS.has(tag)) return null;
-	const attrs = keptAttributes(tag, node.attrs ?? []);
-	if (tag === "path" && attrs.d === undefined) return null;
-	const inner: string[] = [];
+	const kept = keptAttributes(tag, node.attrs ?? []);
+	if (tag === "path" && kept.d === undefined) return null;
+	const out = makeElement(tag);
+	out.namespaceURI = SVG_NS;
+	out.attrs = Object.entries(kept).map(([name, value]) => ({ name, value }));
+	out.childNodes = [];
 	for (const child of node.childNodes ?? []) {
-		// An element child must itself be a valid SVG element; TEXT inside an icon is dropped (an icon's text is not this item), and so
-		// is anything else. A refused element child refuses the WHOLE subtree, never unwraps it.
-		if (child.namespaceURI === undefined) {
-			if (child.nodeName === "#text") continue;
-			return null;
-		}
-		const built = rebuild(child);
-		if (built === null) return null;
-		inner.push(built);
+		if (child.nodeName === "#text") continue; // an icon's text is not this item
+		const built = buildNodes(child, makeElement);
+		if (built === null) return null; // a refused child refuses the WHOLE subtree, never unwraps it
+		out.childNodes.push(built);
 	}
-	const rendered = Object.entries(attrs)
-		.map(([k, v]) => ` ${k}="${escapeAttr(v)}"`)
-		.join("");
-	return `<${tag}${rendered}>${inner.join("")}</${tag}>`;
-}
-
-export interface CarriedSvg {
-	/** The rebuilt, inert markup for one icon. */
-	html: string;
-	/** Where it stood, as a text-node value that the caller may look for. Never trusted as provenance on its own. */
-	marker: string;
+	return out;
 }
 
 export interface CarryResult {
-	/** The fragment with each accepted icon replaced by a text marker. */
+	/** The fragment, serialized by parse5 with each accepted icon replaced by a marker element and each refused one removed. */
 	markup: string;
-	/** marker → rebuilt markup, for the icons the walk accepted. */
-	accepted: Map<string, string>;
-	/** How many candidate `<svg>` elements were refused. */
+	/** marker text → the validated nodes standing in for that icon. */
+	accepted: Map<string, P5Node[]>;
 	refused: number;
 }
 
 /**
- * Parse the WHOLE fragment in the production `div` context and swap each accepted icon for a text marker.
- *
- * The caller sanitizes this markup with the ordinary HTML policy (`svg`/`g`/`path` stay off that allowlist, so a raw one cannot survive),
- * then re-parses the result and substitutes each marker AT ITS UNIQUE OCCURRENCE IN A TEXT NODE. Provenance is the returned map, which the
- * source cannot write. A marker that is lost, repeated, or lands anywhere but an ordinary text node drops that icon.
+ * The marker must be an element the HTML policy already ALLOWS, or the policy drops it and the slot with it — measured: a made-up element
+ * name came back as "" from `sanitizeContent`. `span` is on the allowlist, and the unguessable part is carried in a `data-` attribute, which
+ * the policy permits on every element (`"*": ["class", "id", "data-*"]`). A source writing that attribute buys nothing: only a slot the
+ * carry recorded in `accepted` can be resolved, and those exist only for icons this pass validated.
  */
-export function carryInlineSvg(html: string, tokenFor: () => string): CarryResult {
-	const accepted = new Map<string, string>();
-	let refused = 0;
-	const fragment = parseFragment(html, { sourceCodeLocationInfo: false });
-	const walk = (node: P5Node): string => {
-		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
-			const built = rebuild(node);
-			if (built === null) {
-				refused++;
-				return "";
-			}
-			const marker = tokenFor();
-			accepted.set(marker, built);
-			return marker;
-		}
-		const kids = node.childNodes;
-		if (!kids?.length) return node.nodeName === "#text" ? escapeText(node.value ?? "") : "";
-		const open = node.namespaceURI !== undefined ? `<${node.tagName}${(node.attrs ?? []).map((a) => ` ${a.name}="${escapeAttr(a.value)}"`).join("")}>` : "";
-		const close = node.namespaceURI !== undefined ? `</${node.tagName}>` : "";
-		if (node.nodeName === "#comment") return "";
-		if (node.nodeName === "#document" || node.nodeName === "#document-fragment") return kids.map(walk).join("");
-		return open + kids.map(walk).join("") + close;
-	};
-	const markup = (fragment.childNodes ?? []).map(walk).join("");
-	return { markup, accepted, refused };
-}
-
-export { SVG_NS, SVG_TAGS };
+const MARKER_TAG = "span";
+const MARKER_ATTR = "data-embark-svg-slot";
 
 /**
- * Resolve each marker in the SANITIZED output, at its unique occurrence in an ordinary text node.
+ * Parse the WHOLE fragment in the production `div` context and swap each accepted icon for a marker node.
  *
- * Re-parsing the output is what makes the claim checkable rather than assumed: a marker that ended up in an attribute value, a comment or a
- * raw-text element is simply not a text node, and drops. A marker occurring zero times lost its slot to the HTML policy; occurring more than
- * once means it was copied, and a copy has no provenance. Both drop the icon.
+ * `context` is the element the real renderers wrap content in, so parse5 applies exactly the recovery and foreign-content rules a browser
+ * would in that position rather than the implicit fragment context.
  */
-export function resolveSvgMarkers(cleaned: string, accepted: Map<string, string>): string {
-	const fragment = parseFragment(cleaned, { sourceCodeLocationInfo: false });
-	const counts = new Map<string, number>();
-	const count = (node: P5Node): void => {
-		if (node.nodeName === "#text") {
-			const text = node.value ?? "";
-			for (const marker of accepted.keys()) {
-				let at = text.indexOf(marker);
-				while (at !== -1) {
-					counts.set(marker, (counts.get(marker) ?? 0) + 1);
-					at = text.indexOf(marker, at + marker.length);
-				}
+export function carryInlineSvg(
+	html: string,
+	tokenFor: () => string,
+	context: DefaultTreeAdapterMap["element"],
+): CarryResult {
+	const accepted = new Map<string, P5Node[]>();
+	let refused = 0;
+	// parse5's OWN types at the library boundary: the adapter rejects a hand-shaped object, which is what the typechecker said.
+	const fragment = parseFragment(context, html, { sourceCodeLocationInfo: false });
+	const makeElement = (tag: string): P5Node => ({ nodeName: tag, tagName: tag, attrs: [], childNodes: [], parentNode: null });
+
+	const adopt = (parent: P5Node, child: P5Node): void => {
+		child.parentNode = parent;
+		for (const grand of child.childNodes ?? []) adopt(child, grand);
+	};
+
+	const walk = (node: P5Node): P5Node[] => {
+		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
+			const built = buildNodes(node, makeElement);
+			if (built === null) {
+				refused++;
+				return [];
 			}
-			return;
+			const marker = tokenFor();
+			// The WHOLE `svg` node, not its children: storing childNodes dropped the wrapper and left a bare path in the page.
+			accepted.set(marker, [built]);
+			const slot = makeElement(MARKER_TAG);
+			slot.namespaceURI = HTML_NS;
+			slot.attrs = [{ name: MARKER_ATTR, value: marker }];
+			return [slot];
 		}
+		if (!node.childNodes?.length) return [node];
+		const out: P5Node[] = [];
+		for (const child of node.childNodes) out.push(...walk(child));
+		// Rewrite children in place, preserving every attribute and every childless element exactly as parsed.
+		(node as P5Node).childNodes = out;
+		for (const child of out) adopt(node, child);
+		return [node];
+	};
+
+	const roots = (fragment.childNodes ?? []).flatMap(walk);
+	const out: P5Node = { nodeName: "#document-fragment", childNodes: roots, parentNode: null };
+	for (const child of roots) adopt(out, child);
+	return { markup: serialize(out as unknown as DefaultTreeAdapterMap["parentNode"]), accepted, refused };
+}
+
+/**
+ * Put the validated nodes back at their markers' own positions in the SANITIZED tree, then serialize once.
+ *
+ * A marker element that the HTML policy removed is simply absent — the icon is dropped, which is the safe answer. A marker that appears more
+ * than once has no unique position and is dropped. Nothing is matched by text, so a source cannot forge a slot.
+ */
+export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>): string {
+	if (carried.size === 0) return cleaned;
+	const fragment = parseFragment(cleaned, { sourceCodeLocationInfo: false });
+
+	const slotOf = (node: P5Node): string | undefined =>
+		node.attrs?.find((a) => a.name === MARKER_ATTR)?.value && node.tagName === MARKER_TAG
+			? node.attrs.find((a) => a.name === MARKER_ATTR)?.value
+			: undefined;
+	const seen = new Map<string, number>();
+	const count = (node: P5Node): void => {
+		const slot = slotOf(node);
+		if (slot && carried.has(slot)) seen.set(slot, (seen.get(slot) ?? 0) + 1);
 		for (const child of node.childNodes ?? []) count(child);
 	};
 	count(fragment);
 
-	// Only markers standing in an ordinary text node, exactly once, survive.
-	const live = new Map([...accepted].filter(([m]) => counts.get(m) === 1));
-	if (live.size === 0) {
-		// Nothing to resolve: remove any stray markers so a duplicated one can never render as text.
-		return [...accepted.keys()].reduce((out, m) => out.split(m).join(""), cleaned);
-	}
-	let out = cleaned;
-	for (const [marker, html] of live) {
-		out = out.split(marker).join(html);
-	}
-	// Anything unresolved (duplicated) is stripped rather than drawn as literal text.
-	for (const marker of accepted.keys()) {
-		if (!live.has(marker)) out = out.split(marker).join("");
-	}
-	return out;
+	const insert = (node: P5Node): void => {
+		const kids = node.childNodes;
+		if (!kids?.length) return;
+		const out: P5Node[] = [];
+		for (const child of kids) {
+			const slot = slotOf(child);
+			const repl = slot && seen.get(slot) === 1 ? carried.get(slot) : undefined;
+			if (repl) {
+				for (const node2 of repl) {
+					node2.parentNode = node;
+					out.push(node2);
+				}
+				continue;
+			}
+			insert(child);
+			out.push(child);
+		}
+		node.childNodes = out;
+	};
+	insert(fragment);
+	return serialize(fragment);
 }
+
+export { SVG_NS, SVG_TAGS };
+export type { P5Node };

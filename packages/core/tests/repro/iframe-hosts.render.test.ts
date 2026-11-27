@@ -90,3 +90,63 @@ describe("an imported iframe on the page", () => {
 		expect(html).toContain(`class="emdash-iframe-link">Our office</a>`);
 	});
 });
+
+/**
+ * ITEM 163g: the two PRODUCTION CALLERS carry the icon, or refuse it whole.
+ *
+ * codex held the first DOM proof for testing a synthetic wrapper instead of the real components. These arms run the real `HtmlBlock.astro` and
+ * `Embed.astro` through AstroContainer — the same path a customer's page takes — and assert both that the 11-icon shape survives and that the
+ * source lookalikes and invalid ancestry are refused there.
+ */
+const ICON =
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224 256A128 128 0 1 0 224 0z"/></svg>';
+
+describe("163g: the production callers carry a real icon", () => {
+	it("HtmlBlock draws it as SVG", async () => {
+		const html = await draw(HtmlBlock, { _type: "htmlBlock", _key: "i", html: `<div class="uagb-info-box">${ICON}</div>` });
+		expect(html, "HtmlBlock is a real caller, not a wrapper").toContain("<svg");
+		expect(html.toLowerCase()).toContain("viewbox");
+		expect(html).toContain("M224 256A128");
+	});
+
+	it("Embed draws it as SVG", async () => {
+		const html = await draw(Embed, {
+			_type: "embed",
+			_key: "ie",
+			url: "https://example.org/x",
+			html: `<div class="uagb-info-box">${ICON}</div>`,
+		});
+		expect(html, "Embed is a real caller too").toContain("<svg");
+		expect(html.toLowerCase()).toContain("viewbox");
+	});
+
+	it("a source lookalike is refused in BOTH callers", async () => {
+		const attack = '<svg data-embark-svg="1" viewBox="0 0 10 10"><script>alert(1)</script></svg>';
+		const a = await draw(HtmlBlock, { _type: "htmlBlock", _key: "a", html: attack });
+		const b = await draw(Embed, { _type: "embed", _key: "b", url: "https://example.org/x", html: attack });
+		for (const [name, html] of [["HtmlBlock", a], ["Embed", b]] as const) {
+			expect(html, `${name}: the forged attribute buys nothing`).not.toContain("<svg");
+			expect(html, `${name}: no script body`).not.toContain("alert");
+		}
+	});
+
+	it("an invalid ancestor is refused in BOTH callers", async () => {
+		const foreign = '<svg viewBox="0 0 10 10"><foreignObject><iframe src="https://evil.test"></iframe></foreignObject></svg>';
+		const a = await draw(HtmlBlock, { _type: "htmlBlock", _key: "c", html: foreign });
+		const b = await draw(Embed, { _type: "embed", _key: "d", url: "https://example.org/x", html: foreign });
+		for (const [name, html] of [["HtmlBlock", a], ["Embed", b]] as const) {
+			expect(html, `${name}: the whole subtree goes`).not.toContain("<svg");
+			expect(html, `${name}: and its iframe does not escape`).not.toContain("evil.test");
+		}
+	});
+
+	it("HtmlBlock's post-sanitize media pass still sees ordinary HTML unchanged", async () => {
+		const html = await draw(HtmlBlock, {
+			_type: "htmlBlock",
+			_key: "m",
+			html: `<p>Prose with a <a href="https://example.org/x">link</a> and an <img src="/_emdash/api/media/file/a.jpg" alt="x">.</p>`,
+		});
+		expect(html, "the media pass still runs over the block").toContain("example.org/x");
+		expect(html).not.toContain("<svg");
+	});
+});
