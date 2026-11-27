@@ -116,12 +116,13 @@ describe("163g: every way in is refused, and none of it is unwrapped", () => {
 		expect(html).not.toContain("evil.test");
 	});
 
-	it("a NAMESPACE mismatch refuses: svg inside MathML is not our SVG", () => {
+	it("a NAMESPACE mismatch REFUSES: svg inside MathML is not an approved position", () => {
+		// Codex caught the earlier version of this arm passing if the SVG survived at all — an arm that cannot fail is not a guard.
+		// An <svg> under <math> sits in an ancestry this pass never approved, so it must be refused outright.
 		const html = out('<math><svg viewBox="0 0 10 10"><path d="M0 0"/></svg></math>');
-		// parse5 puts this svg in the SVG namespace even inside math (foreign content), so the test is that whatever survives is
-		// validated markup and not a raw copy: either it is carried legitimately or dropped, never passed through unchanged.
-		if (html.includes("<svg")) expect(html.toLowerCase()).toContain("viewbox");
-		else expect(html).not.toContain("<path");
+		expect(html, "not carried into an unapproved ancestry").not.toContain("<svg");
+		expect(html, "and no bare path left behind").not.toContain("<path");
+		expect(html, "nor any unresolved slot text").not.toContain("EMDASHSVG");
 	});
 
 	it("an ORPHAN path with no svg ancestor is refused", () => {

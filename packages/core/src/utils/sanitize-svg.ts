@@ -22,6 +22,9 @@ import { parseFragment, serialize, type DefaultTreeAdapterMap } from "parse5";
 
 /** The SVG namespace, exactly as the spec spells it. */
 const SVG_NS = "http://www.w3.org/2000/svg";
+/** Plain ASCII around 128 random bits: control characters and tag syntax do not survive an HTML sanitizer, and a stripped marker cannot resolve. */
+const SLOT_PREFIX = "EMDASHSVG";
+const SLOT_SUFFIX = "ENDSLOT";
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
 /** The three elements v1 carries. Anything else refuses the whole subtree. */
@@ -182,13 +185,24 @@ export interface CarryResult {
 }
 
 /**
- * The marker must be an element the HTML policy already ALLOWS, or the policy drops it and the slot with it — measured: a made-up element
- * name came back as "" from `sanitizeContent`. `span` is on the allowlist, and the unguessable part is carried in a `data-` attribute, which
- * the policy permits on every element (`"*": ["class", "id", "data-*"]`). A source writing that attribute buys nothing: only a slot the
- * carry recorded in `accepted` can be resolved, and those exist only for icons this pass validated.
+ * THE BRIDGE IS A TEXT NODE, as the ruling specified. An element bridge was tried and withdrawn: a unique marker in an element proves which
+ * icon was validated, not that the element survived into an allowed position, and the design change was never cleared.
+ *
+ * Ancestry is checked on BOTH sides. Before: a candidate `<svg>` is only considered when every ancestor is ordinary HTML, so an `<svg>` inside
+ * `<math>`, a `foreignObject` or a raw-text element is refused rather than carried to a position nobody approved. After: the slot's own text
+ * node must sit in an approved ancestry too, and must occur exactly once.
  */
-const MARKER_TAG = "span";
-const MARKER_ATTR = "data-embark-svg-slot";
+const RAW_TEXT_ANCESTORS = new Set(["math", "script", "style", "textarea", "title", "template", "iframe", "object", "embed", "noscript"]);
+
+function approvedAncestry(node: P5Node): boolean {
+	let cur = node.parentNode ?? null;
+	while (cur) {
+		if (cur.namespaceURI !== undefined && cur.namespaceURI !== HTML_NS) return false;
+		if (cur.tagName && RAW_TEXT_ANCESTORS.has(cur.tagName.toLowerCase())) return false;
+		cur = cur.parentNode ?? null;
+	}
+	return true;
+}
 
 /**
  * Parse the WHOLE fragment in the production `div` context and swap each accepted icon for a marker node.
@@ -214,18 +228,21 @@ export function carryInlineSvg(
 
 	const walk = (node: P5Node): P5Node[] => {
 		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
+			// Ancestry first: an <svg> under <math>/foreignObject/raw-text is not a position this pass approved, so it is refused, not carried.
+			if (!approvedAncestry(node)) {
+				refused++;
+				return [];
+			}
 			const built = buildNodes(node, makeElement);
 			if (built === null) {
 				refused++;
 				return [];
 			}
-			const marker = tokenFor();
+			const marker = SLOT_PREFIX + tokenFor() + SLOT_SUFFIX;
 			// The WHOLE `svg` node, not its children: storing childNodes dropped the wrapper and left a bare path in the page.
 			accepted.set(marker, [built]);
-			const slot = makeElement(MARKER_TAG);
-			slot.namespaceURI = HTML_NS;
-			slot.attrs = [{ name: MARKER_ATTR, value: marker }];
-			return [slot];
+			// A TEXT node carries the slot: text is what the policy preserves verbatim, and it has no attributes to forge.
+			return [{ nodeName: "#text", value: marker, parentNode: null }];
 		}
 		if (!node.childNodes?.length) return [node];
 		const out: P5Node[] = [];
@@ -248,42 +265,62 @@ export function carryInlineSvg(
  * A marker element that the HTML policy removed is simply absent — the icon is dropped, which is the safe answer. A marker that appears more
  * than once has no unique position and is dropped. Nothing is matched by text, so a source cannot forge a slot.
  */
-export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>): string {
+export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>, context: DefaultTreeAdapterMap["element"]): string {
 	if (carried.size === 0) return cleaned;
-	const fragment = parseFragment(cleaned, { sourceCodeLocationInfo: false });
+	// THE SAME EXPLICIT CONTEXT as the carry parse. An implicit fragment parse here would recover differently and could file a slot under an
+	// ancestor the carry never approved.
+	const fragment = parseFragment(context, cleaned, { sourceCodeLocationInfo: false });
 
-	const slotOf = (node: P5Node): string | undefined =>
-		node.attrs?.find((a) => a.name === MARKER_ATTR)?.value && node.tagName === MARKER_TAG
-			? node.attrs.find((a) => a.name === MARKER_ATTR)?.value
-			: undefined;
-	const seen = new Map<string, number>();
+	const counts = new Map<string, number>();
 	const count = (node: P5Node): void => {
-		const slot = slotOf(node);
-		if (slot && carried.has(slot)) seen.set(slot, (seen.get(slot) ?? 0) + 1);
+		if (node.nodeName === "#text") {
+			const text = node.value ?? "";
+			for (const marker of carried.keys()) {
+				let at = text.indexOf(marker);
+				while (at !== -1) {
+					counts.set(marker, (counts.get(marker) ?? 0) + 1);
+					at = text.indexOf(marker, at + marker.length);
+				}
+			}
+			return;
+		}
 		for (const child of node.childNodes ?? []) count(child);
 	};
 	count(fragment);
 
-	const insert = (node: P5Node): void => {
+	const live = (marker: string, node: P5Node): boolean =>
+		counts.get(marker) === 1 && approvedAncestry(node);
+
+	const rewrite = (node: P5Node): void => {
 		const kids = node.childNodes;
 		if (!kids?.length) return;
 		const out: P5Node[] = [];
 		for (const child of kids) {
-			const slot = slotOf(child);
-			const repl = slot && seen.get(slot) === 1 ? carried.get(slot) : undefined;
-			if (repl) {
-				for (const node2 of repl) {
-					node2.parentNode = node;
-					out.push(node2);
+			if (child.nodeName === "#text") {
+				const text = child.value ?? "";
+				const marker = [...carried.keys()].find((m) => text.includes(m));
+				if (marker && text === marker && live(marker, child)) {
+					// The text node IS the slot: replace it with the validated nodes at exactly this position.
+					for (const built of carried.get(marker) ?? []) {
+						built.parentNode = node;
+						out.push(built);
+					}
+					continue;
 				}
+				if (marker && !live(marker, child)) {
+					// Lost, duplicated, displaced or unapproved ancestry: the icon is dropped rather than drawn somewhere unproven.
+					out.push({ nodeName: "#text", value: text.split(marker).join(""), parentNode: node });
+					continue;
+				}
+				out.push(child);
 				continue;
 			}
-			insert(child);
+			rewrite(child);
 			out.push(child);
 		}
 		node.childNodes = out;
 	};
-	insert(fragment);
+	rewrite(fragment);
 	return serialize(fragment);
 }
 

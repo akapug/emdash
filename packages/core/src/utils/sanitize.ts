@@ -216,6 +216,16 @@ function newsletterActionOf(
  * not allow), a pasted embed's "turn on JavaScript" line was drawn as text,
  * and a tracking pixel's `<img>` loaded on every page view.
  */
+/** The production `div` both renderers wrap content in. Used for BOTH parses, so recovery cannot differ between them. */
+const DIV_CONTEXT = {
+	nodeName: "div",
+	tagName: "div",
+	namespaceURI: "http://www.w3.org/1999/xhtml",
+	attrs: [],
+	childNodes: [],
+	parentNode: null,
+} as unknown as Parameters<typeof carryInlineSvg>[2];
+
 /** 128 random bits per call: a source cannot guess a marker, and one call's markers are useless in the next. */
 function svgMarker(): string {
 	const bytes = new Uint8Array(16);
@@ -237,14 +247,7 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	if (/<svg/i.test(html)) {
 		// The PRODUCTION context: the div the renderers wrap content in (HtmlBlock.astro, Embed.astro), so parse5 applies the same
 		// recovery and foreign-content rules a browser would in that exact position.
-		const result = carryInlineSvg(html, svgMarker, {
-			nodeName: "div",
-			tagName: "div",
-			namespaceURI: "http://www.w3.org/1999/xhtml",
-			attrs: [],
-			childNodes: [],
-			parentNode: null,
-		} as unknown as Parameters<typeof carryInlineSvg>[2]);
+		const result = carryInlineSvg(html, svgMarker, DIV_CONTEXT);
 		html = result.markup;
 		carried = result.accepted;
 	}
@@ -443,5 +446,5 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 	if (carried === null || carried.size === 0) return cleaned;
 	// Resolve each marker at its UNIQUE occurrence in a text node of the sanitized output. Re-parsing rather than string-replacing is what
 	// makes "it is really a text node, not an attribute or a comment" a fact instead of an assumption.
-	return placeSvgNodes(cleaned, carried);
+	return placeSvgNodes(cleaned, carried, DIV_CONTEXT);
 }
