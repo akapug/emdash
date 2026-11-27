@@ -46,3 +46,49 @@ describe("a cover block emits the variant ladder", () => {
 		expect(img).not.toMatch(/src="[^"]*\?w=\d+/);
 	});
 });
+
+// ---- ITEM 164o: a cover carries the source's background position and blend mode ----
+//
+// Measured on adamkoren: 11 containers carry a background image, 4 of them `background_position="center top"` (not the CSS default) and 6
+// `background_blend_mode="overlay"`. The live page renders both — `/finances/` is `center top` AND `overlay` on one section — so a cover
+// without them reads differently from the customer's even though the image is right.
+describe("164o: background position and blend mode reach the rendered cover", () => {
+	it("carries a valid position and blend onto the background image", async () => {
+		const html = await renderCover({
+			...COVER_NODE,
+			backgroundPosition: "center top",
+			backgroundBlendMode: "overlay",
+		});
+		expect(html).toContain("object-position: center top");
+		expect(html).toContain("mix-blend-mode: overlay");
+	});
+
+	it("emits NO style at all when the source states neither — markup unchanged", async () => {
+		const plain = await renderCover(COVER_NODE);
+		expect(plain).not.toContain("object-position");
+		expect(plain).not.toContain("mix-blend-mode");
+		// and it must be byte-identical to a cover whose fields are explicitly undefined
+		const explicit = await renderCover({
+			...COVER_NODE,
+			backgroundPosition: undefined,
+			backgroundBlendMode: undefined,
+		});
+		expect(explicit).toBe(plain);
+	});
+
+	it("REFUSES a position that is not a CSS position, rather than writing it into a style attribute", async () => {
+		// This value lands in `style="…"`. A stored block could carry anything; "mostly valid" is how a stylesheet gets a declaration nobody wrote.
+		const html = await renderCover({
+			...COVER_NODE,
+			backgroundPosition: "center; background-image: url(javascript:alert(1))",
+		});
+		expect(html).not.toContain("javascript");
+		expect(html).not.toContain("object-position");
+	});
+
+	it("REFUSES a blend mode outside the CSS keyword set", async () => {
+		const html = await renderCover({ ...COVER_NODE, backgroundBlendMode: "overlay; color: red" });
+		expect(html).not.toContain("mix-blend-mode");
+		expect(html).not.toContain("color: red");
+	});
+});

@@ -1,4 +1,3 @@
----
 /**
  * Portable Text Cover block component
  *
@@ -20,6 +19,10 @@ export interface Props {
 		content: unknown[];
 		minHeight?: string;
 		alignment?: "left" | "center" | "right";
+		/** Where the background image sits in its box: `center center`, `center top`, `50% 20%`. Validated before it lands in CSS. */
+		backgroundPosition?: string;
+		/** How the image blends into the overlay: the CSS `background-blend-mode` set, as an enum, never free text. */
+		backgroundBlendMode?: BlendMode;
 	};
 }
 
@@ -32,7 +35,28 @@ const {
 	content = [],
 	minHeight = "300px",
 	alignment = "center",
+	backgroundPosition: storedPosition,
+	backgroundBlendMode: storedBlend,
 } = node ?? {};
+
+/**
+ * `background-blend-mode`'s keywords, as a closed set. An enum rather than a string because this value lands in a style attribute: a stored
+ * block could otherwise carry `overlay; background-image: url(...)` and reach CSS we never validated.
+ */
+type BlendMode = "normal" | "multiply" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "hue" | "saturation" | "color" | "luminosity";
+const BLEND_MODES: ReadonlySet<string> = new Set<BlendMode>([
+	"normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light",
+	"difference", "exclusion", "hue", "saturation", "color", "luminosity",
+]);
+
+/**
+ * A CSS `<position>` of one or two parts, each a keyword or a percentage/length. Refused whole rather than repaired: this string is written
+ * into a style attribute, and "mostly valid" is how a stylesheet gets a declaration nobody wrote.
+ */
+const POSITION = /^(?:(?:left|right|center|top|bottom)(?:\s+(?:left|right|center|top|bottom))?|(?:-?\d+(?:\.\d+)?(?:px|%|em|rem))(?=\s|$)(?:\s+(?:-?\d+(?:\.\d+)?(?:px|%|em|rem)))?)$/iu;
+const backgroundPosition = typeof storedPosition === "string" && POSITION.test(storedPosition.trim()) ? storedPosition.trim() : undefined;
+const backgroundBlendMode: BlendMode | undefined =
+	typeof storedBlend === "string" && BLEND_MODES.has(storedBlend) ? (storedBlend as BlendMode) : undefined;
 
 // Content imported before the converter read WordPress's `backgroundType` holds a
 // video's URL as `backgroundImage`; drawn as an <img> it is a broken image. A
@@ -96,6 +120,10 @@ const overlayStyle = overlayColor
 				loading={coverLoading}
 				srcset={coverSrcset}
 				sizes={coverImgSizes}
+				style={[
+					backgroundPosition ? `object-position: ${backgroundPosition};` : "",
+					backgroundBlendMode ? `mix-blend-mode: ${backgroundBlendMode};` : "",
+				].filter(Boolean).join(" ") || undefined}
 			/>
 		)
 	}
