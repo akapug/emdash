@@ -21,7 +21,9 @@ describe("164d: a form posting to our own search page survives the sanitizer", (
 
 	it("accepts the path in any case, since a browser's action is case-insensitive", () => {
 		expect(SEARCH_ACTION_PATHS.has("/search")).toBe(true);
-		expect(sanitizeContent(SEARCH_BOX.replace('action="/search"', 'action="/Search"'))).toContain('action="/Search"');
+		expect(sanitizeContent(SEARCH_BOX.replace('action="/search"', 'action="/Search"'))).toContain(
+			'action="/Search"',
+		);
 	});
 
 	it("REFUSES every other relative action — only /search is ours", () => {
