@@ -147,11 +147,6 @@ function makeElement(tag: string): P5Node {
 	return { nodeName: tag, tagName: tag, attrs: [], childNodes: [], parentNode: null };
 }
 
-function adopt(parent: P5Node, child: P5Node): void {
-	child.parentNode = parent;
-	for (const grand of child.childNodes ?? []) adopt(parent, grand);
-}
-
 interface P5Attrs {
 	name: string;
 	value: string;
@@ -236,7 +231,7 @@ export function carryInlineSvg(
 	// parse5's OWN types at the library boundary: the adapter rejects a hand-shaped object, which is what the typechecker said.
 	const fragment = parseFragment(context, html, { sourceCodeLocationInfo: false });
 
-	const walk = (node: P5Node): P5Node[] => {
+	const walk = (node: DefaultTreeAdapterMap["node"]): DefaultTreeAdapterMap["node"][] => {
 		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
 			// Ancestry first: an <svg> under <math>/foreignObject/raw-text is not a position this pass approved, so it is refused, not carried.
 			if (!approvedAncestry(node)) {
@@ -259,15 +254,15 @@ export function carryInlineSvg(
 		for (const child of node.childNodes) out.push(...walk(child));
 		// Rewrite children in place, preserving every attribute and every childless element exactly as parsed.
 		node.childNodes = out;
-		for (const child of out) adopt(node, child);
 		return [node];
 	};
 
 	const roots = (fragment.childNodes ?? []).flatMap(walk);
-	// Serialize the PARSED fragment with its children rewritten, rather than fabricating a node and casting it into parse5's type.
-	const out = { ...fragment, childNodes: roots } as DefaultTreeAdapterMap["parentNode"];
-	for (const child of roots) adopt(fragment as unknown as P5Node, child);
-	return { markup: serialize(out), accepted, refused };
+	// Rewrite the PARSED fragment IN PLACE and serialize it, so no node is fabricated and no cast is needed. `fragment`'s type already
+	// accepts childNodes of the adapter's node type, and `walk` preserves that type — the earlier casts were papering over a shape I
+	// was inventing rather than assigning.
+	fragment.childNodes = roots;
+	return { markup: serialize(fragment), accepted, refused };
 }
 
 /**

@@ -35,10 +35,28 @@ async function renderComponent(component: typeof HtmlBlock, node: object): Promi
 	return c.renderToString(component, { props: { node }, locals: pageLocals });
 }
 
+/**
+ * LOUD SKIP WHERE THERE IS NO BROWSER. A gate node that has no Chromium cannot run this proof, and a red arm would read as a code
+ * defect while a silent pass would read as verified — both wrong. Resolution is attempted once and the RESULT IS REPORTED: the arms
+ * call `skip()` with the exact reason when the binary is absent, so the gate log says "cannot run here" in words.
+ */
 const browserP = (async () => {
 	const { chromium } = await import(process.env.EMBARK_PLAYWRIGHT_CORE ?? "playwright-core");
 	return chromium.launch(process.env.EMBARK_CHROMIUM_PATH ? { executablePath: process.env.EMBARK_CHROMIUM_PATH } : {});
-})();
+})().catch((error: unknown) => ({ unavailable: String(error).split("\n")[0] }));
+
+/** True when this node cannot run the proof. Used with `it.skipIf` so the skip is vitest's own and the reason prints. */
+const browserUnavailable = await browserP.then((b) => ("unavailable" in b ? b.unavailable : false));
+const SKIP_REASON = browserUnavailable === false ? "" : `no Chromium on this node (${browserUnavailable})`;
+// Printed once so the gate log carries the reason even though vitest reports skips tersely.
+if (SKIP_REASON !== "") console.warn(`[163g] browser arms skipped: ${SKIP_REASON}`);
+
+/** Launch, or fail loudly — by the time an arm runs, `it.skipIf` has already handled the absent case. */
+async function requireBrowser(): Promise<import("playwright-core").Browser> {
+	const b = await browserP;
+	if ("unavailable" in b) throw new Error(`no Chromium on this node (${b.unavailable})`);
+	return b;
+}
 
 const ORIGIN = "https://example.test";
 /** The one ordinary request the fixture's `<img>` legitimately makes. Anything else is a finding. */
@@ -61,11 +79,11 @@ async function serveAndRecord(page: import("playwright-core").Page, body: string
 	return seen;
 }
 
-it("HtmlBlock's own output: the icon is real DOM, media survives, and the request list is EXACTLY navigation + media", async () => {
+it.skipIf(browserUnavailable !== false)("HtmlBlock's own output: the icon is real DOM, media survives, and the request list is EXACTLY navigation + media", async () => {
 	const body = await renderComponent(HtmlBlock, { _type: "htmlBlock", _key: "g", html: MIXED });
 	expect(body, "the component itself drew the icon").toContain("<svg");
 
-	const browser = await browserP;
+	const browser = await requireBrowser();
 	const page = await browser.newPage();
 	try {
 		const seen = await serveAndRecord(page, body);
@@ -95,11 +113,11 @@ it("HtmlBlock's own output: the icon is real DOM, media survives, and the reques
 	}
 });
 
-it("Embed's own output: same guarantees through the second real caller", async () => {
+it.skipIf(browserUnavailable !== false)("Embed's own output: same guarantees through the second real caller", async () => {
 	const body = await renderComponent(Embed, { _type: "embed", _key: "e", url: "https://example.org/x", html: MIXED });
 	expect(body, "Embed drew the icon too").toContain("<svg");
 
-	const browser = await browserP;
+	const browser = await requireBrowser();
 	const page = await browser.newPage();
 	try {
 		const seen = await serveAndRecord(page, body);
@@ -117,9 +135,9 @@ it("Embed's own output: same guarantees through the second real caller", async (
 	}
 });
 
-it("both lookalikes are refused through the real component, and the request list is unchanged", async () => {
+it.skipIf(browserUnavailable !== false)("both lookalikes are refused through the real component, and the request list is unchanged", async () => {
 	const body = await renderComponent(HtmlBlock, { _type: "htmlBlock", _key: "a", html: `${ATTACKS}${MIXED}` });
-	const browser = await browserP;
+	const browser = await requireBrowser();
 	const page = await browser.newPage();
 	try {
 		const seen = await serveAndRecord(page, body);
