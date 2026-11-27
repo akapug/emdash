@@ -23,7 +23,8 @@ import { defaultTreeAdapter, parseFragment, serialize, type DefaultTreeAdapterMa
 /** The SVG namespace, exactly as the spec spells it. */
 const SVG_NS = "http://www.w3.org/2000/svg";
 /** Plain ASCII around 128 random bits: control characters and tag syntax do not survive an HTML sanitizer, and a stripped marker cannot resolve. */
-const escapeAttr = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const escapeAttr = (v: string): string =>
+	v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const SLOT_PREFIX = "EMDASHSVG";
 const SLOT_SUFFIX = "ENDSLOT";
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -33,13 +34,50 @@ const SVG_TAGS = new Set(["svg", "g", "path"]);
 
 /** Attributes allowed per element. No `href`, no `xlink:*`, no `style`, no `on*`, no `class`/`id`/`data-*`. */
 const SVG_ATTRS: Record<string, ReadonlySet<string>> = {
-	svg: new Set(["viewBox", "width", "height", "fill", "stroke", "stroke-width", "role", "aria-hidden", "aria-label", "focusable"]),
-	g: new Set(["fill", "stroke", "stroke-width", "fill-rule", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "transform"]),
-	path: new Set(["d", "fill", "stroke", "stroke-width", "fill-rule", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "transform"]),
+	svg: new Set([
+		"viewBox",
+		"width",
+		"height",
+		"fill",
+		"stroke",
+		"stroke-width",
+		"role",
+		"aria-hidden",
+		"aria-label",
+		"focusable",
+	]),
+	g: new Set([
+		"fill",
+		"stroke",
+		"stroke-width",
+		"fill-rule",
+		"stroke-linecap",
+		"stroke-linejoin",
+		"opacity",
+		"fill-opacity",
+		"stroke-opacity",
+		"transform",
+	]),
+	path: new Set([
+		"d",
+		"fill",
+		"stroke",
+		"stroke-width",
+		"fill-rule",
+		"stroke-linecap",
+		"stroke-linejoin",
+		"opacity",
+		"fill-opacity",
+		"stroke-opacity",
+		"transform",
+	]),
 };
 
 /** parse5 keeps SVG's attribute casing; accept lowercased spellings too so neither path can strip an element bare. */
-const NAME_OF: Record<string, string> = { viewbox: "viewBox", preserveaspectratio: "preserveAspectRatio" };
+const NAME_OF: Record<string, string> = {
+	viewbox: "viewBox",
+	preserveaspectratio: "preserveAspectRatio",
+};
 
 const NUMBER = String.raw`-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?`;
 const NUM = new RegExp(`^${NUMBER}$`);
@@ -92,13 +130,22 @@ export function validDimension(value: string): boolean {
  * ATTRIBUTES DROP; ELEMENTS REFUSE. The measured icons carry `xmlns`, `xmlns:xlink`, `version`, `id` and `data-name`; a rule that refused on
  * any unknown attribute dropped all 11 of them on sight. Dropping is safe — the danger is only in KEEPING a reference or an event handler.
  */
-export function keptAttributes(element: string, attribs: Array<{ name: string; value: string }>): Record<string, string> {
+export function keptAttributes(
+	element: string,
+	attribs: Array<{ name: string; value: string }>,
+): Record<string, string> {
 	const allowed = SVG_ATTRS[element];
 	const out: Record<string, string> = {};
 	if (!allowed) return out;
 	for (const { name: rawName, value: rawValue } of attribs) {
 		const name = NAME_OF[rawName.toLowerCase()] ?? rawName;
-		if (name.includes(":") || NAMESPACE_PREFIXED.test(name) || name.toLowerCase() === "href" || !allowed.has(name)) continue;
+		if (
+			name.includes(":") ||
+			NAMESPACE_PREFIXED.test(name) ||
+			name.toLowerCase() === "href" ||
+			!allowed.has(name)
+		)
+			continue;
 		const v = rawValue.trim();
 		switch (name) {
 			case "viewBox":
@@ -228,7 +275,18 @@ export interface CarryResult {
  * `<math>`, a `foreignObject` or a raw-text element is refused rather than carried to a position nobody approved. After: the slot's own text
  * node must sit in an approved ancestry too, and must occur exactly once.
  */
-const RAW_TEXT_ANCESTORS = new Set(["math", "script", "style", "textarea", "title", "template", "iframe", "object", "embed", "noscript"]);
+const RAW_TEXT_ANCESTORS = new Set([
+	"math",
+	"script",
+	"style",
+	"textarea",
+	"title",
+	"template",
+	"iframe",
+	"object",
+	"embed",
+	"noscript",
+]);
 
 function approvedAncestry(node: P5Node): boolean {
 	let cur = node.parentNode ?? null;
@@ -297,7 +355,11 @@ export function carryInlineSvg(
  * A marker element that the HTML policy removed is simply absent — the icon is dropped, which is the safe answer. A marker that appears more
  * than once has no unique position and is dropped. Nothing is matched by text, so a source cannot forge a slot.
  */
-export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>, context: DefaultTreeAdapterMap["element"]): string {
+export function placeSvgNodes(
+	cleaned: string,
+	carried: Map<string, P5Node[]>,
+	context: DefaultTreeAdapterMap["element"],
+): string {
 	if (carried.size === 0) return cleaned;
 	// THE SAME EXPLICIT CONTEXT as the carry parse. An implicit fragment parse here would recover differently and could file a slot under an
 	// ancestor the carry never approved.
@@ -341,10 +403,14 @@ export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>, c
 				// Longest-first so one marker can never be consumed inside another's text.
 				const ordered = hits.toSorted((a, b) => b.length - a.length);
 				let rest = text;
-				const pieces: Array<{ kind: "text"; value: string } | { kind: "icon"; marker: string }> = [];
+				const pieces: Array<{ kind: "text"; value: string } | { kind: "icon"; marker: string }> =
+					[];
 				let at = 0;
 				while (at < rest.length) {
-					const next = ordered.map((m) => ({ m, i: rest.indexOf(m, at) })).filter((h) => h.i !== -1).toSorted((x, y) => x.i - y.i)[0];
+					const next = ordered
+						.map((m) => ({ m, i: rest.indexOf(m, at) }))
+						.filter((h) => h.i !== -1)
+						.toSorted((x, y) => x.i - y.i)[0];
 					if (!next) {
 						pieces.push({ kind: "text", value: rest.slice(at) });
 						break;

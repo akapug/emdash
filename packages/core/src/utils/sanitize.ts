@@ -225,7 +225,9 @@ const SVG_PROBE = /<svg/i;
 const DIV_CONTEXT: Parameters<typeof carryInlineSvg>[2] = {
 	nodeName: "div",
 	tagName: "div",
-	namespaceURI: "http://www.w3.org/1999/xhtml" as Parameters<typeof carryInlineSvg>[2]["namespaceURI"],
+	namespaceURI: "http://www.w3.org/1999/xhtml" as Parameters<
+		typeof carryInlineSvg
+	>[2]["namespaceURI"],
 	attrs: [],
 	childNodes: [],
 	parentNode: null,
@@ -386,7 +388,10 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			svg: (tagName, attribs) => ({
 				tagName,
 				attribs: Object.fromEntries(
-					Object.entries(attribs).map(([k, v]) => [k === "viewbox" ? "viewBox" : k === "preserveaspectratio" ? "preserveAspectRatio" : k, v]),
+					Object.entries(attribs).map(([k, v]) => [
+						k === "viewbox" ? "viewBox" : k === "preserveaspectratio" ? "preserveAspectRatio" : k,
+						v,
+					]),
 				),
 			}),
 			// A NEWSLETTER FORM IS CARRIED WORKING. The action is approved here,

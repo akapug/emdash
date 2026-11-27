@@ -9,7 +9,8 @@ import { expect, it } from "vitest";
 
 import { sanitizeContent } from "../../src/utils/sanitize.js";
 
-const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224 256A128 128 0 1 0 224 0z"/></svg>';
+const ICON =
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224 256A128 128 0 1 0 224 0z"/></svg>';
 
 it("the Worker runtime resolves parse5 and carries a real icon", () => {
 	const html = sanitizeContent(`<div class="uagb-info-box">${ICON}</div>`);

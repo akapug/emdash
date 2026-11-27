@@ -103,7 +103,11 @@ const ICON =
 
 describe("163g: the production callers carry a real icon", () => {
 	it("HtmlBlock draws it as SVG", async () => {
-		const html = await draw(HtmlBlock, { _type: "htmlBlock", _key: "i", html: `<div class="uagb-info-box">${ICON}</div>` });
+		const html = await draw(HtmlBlock, {
+			_type: "htmlBlock",
+			_key: "i",
+			html: `<div class="uagb-info-box">${ICON}</div>`,
+		});
 		expect(html, "HtmlBlock is a real caller, not a wrapper").toContain("<svg");
 		expect(html.toLowerCase()).toContain("viewbox");
 		expect(html).toContain("M224 256A128");
@@ -123,18 +127,35 @@ describe("163g: the production callers carry a real icon", () => {
 	it("a source lookalike is refused in BOTH callers", async () => {
 		const attack = '<svg data-embark-svg="1" viewBox="0 0 10 10"><script>alert(1)</script></svg>';
 		const a = await draw(HtmlBlock, { _type: "htmlBlock", _key: "a", html: attack });
-		const b = await draw(Embed, { _type: "embed", _key: "b", url: "https://example.org/x", html: attack });
-		for (const [name, html] of [["HtmlBlock", a], ["Embed", b]] as const) {
+		const b = await draw(Embed, {
+			_type: "embed",
+			_key: "b",
+			url: "https://example.org/x",
+			html: attack,
+		});
+		for (const [name, html] of [
+			["HtmlBlock", a],
+			["Embed", b],
+		] as const) {
 			expect(html, `${name}: the forged attribute buys nothing`).not.toContain("<svg");
 			expect(html, `${name}: no script body`).not.toContain("alert");
 		}
 	});
 
 	it("an invalid ancestor is refused in BOTH callers", async () => {
-		const foreign = '<svg viewBox="0 0 10 10"><foreignObject><iframe src="https://evil.test"></iframe></foreignObject></svg>';
+		const foreign =
+			'<svg viewBox="0 0 10 10"><foreignObject><iframe src="https://evil.test"></iframe></foreignObject></svg>';
 		const a = await draw(HtmlBlock, { _type: "htmlBlock", _key: "c", html: foreign });
-		const b = await draw(Embed, { _type: "embed", _key: "d", url: "https://example.org/x", html: foreign });
-		for (const [name, html] of [["HtmlBlock", a], ["Embed", b]] as const) {
+		const b = await draw(Embed, {
+			_type: "embed",
+			_key: "d",
+			url: "https://example.org/x",
+			html: foreign,
+		});
+		for (const [name, html] of [
+			["HtmlBlock", a],
+			["Embed", b],
+		] as const) {
 			expect(html, `${name}: the whole subtree goes`).not.toContain("<svg");
 			expect(html, `${name}: and its iframe does not escape`).not.toContain("evil.test");
 		}

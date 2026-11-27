@@ -22,7 +22,8 @@ vi.mock("../../src/settings/index.ts", async (importOriginal) => ({
 
 const pageLocals = { emdash: { collectPageMetadata: () => [], collectPageFragments: () => [] } };
 
-const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224 256A128 128 0 1 0 224 0z"/></svg>';
+const ICON =
+	'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224 256A128 128 0 1 0 224 0z"/></svg>';
 /** Mixed content as a page-builder block carries it: an icon, prose on both sides, and one ordinary image. */
 const MIXED = `<div class="uagb-info-box">before ${ICON} after <img src="/media/photo.jpg" alt="A photo"></div>`;
 const ATTACKS =
@@ -42,12 +43,15 @@ async function renderComponent(component: typeof HtmlBlock, node: object): Promi
  */
 const browserP = (async () => {
 	const { chromium } = await import(process.env.EMBARK_PLAYWRIGHT_CORE ?? "playwright-core");
-	return chromium.launch(process.env.EMBARK_CHROMIUM_PATH ? { executablePath: process.env.EMBARK_CHROMIUM_PATH } : {});
+	return chromium.launch(
+		process.env.EMBARK_CHROMIUM_PATH ? { executablePath: process.env.EMBARK_CHROMIUM_PATH } : {},
+	);
 })().catch((error: unknown) => ({ unavailable: String(error).split("\n")[0] }));
 
 /** True when this node cannot run the proof. Used with `it.skipIf` so the skip is vitest's own and the reason prints. */
 const browserUnavailable = await browserP.then((b) => ("unavailable" in b ? b.unavailable : false));
-const SKIP_REASON = browserUnavailable === false ? "" : `no Chromium on this node (${browserUnavailable})`;
+const SKIP_REASON =
+	browserUnavailable === false ? "" : `no Chromium on this node (${browserUnavailable})`;
 // Printed once so the gate log carries the reason even though vitest reports skips tersely.
 if (SKIP_REASON !== "") console.warn(`[163g] browser arms skipped: ${SKIP_REASON}`);
 
@@ -66,95 +70,138 @@ const EXPECTED_MEDIA = `${ORIGIN}/media/photo.jpg`;
  * Serve a component's rendered body and record EVERY request, same-origin included. Returns the requests in order so a caller can assert
  * exact accounting rather than "nothing off-origin".
  */
-async function serveAndRecord(page: import("playwright-core").Page, body: string): Promise<string[]> {
+async function serveAndRecord(
+	page: import("playwright-core").Page,
+	body: string,
+): Promise<string[]> {
 	const seen: string[] = [];
 	await page.route("**/*", (route) => {
 		const url = route.request().url();
 		seen.push(url);
-		if (url === `${ORIGIN}/` || url === ORIGIN) return route.fulfill({ contentType: "text/html", body: `<div class="emdash-html-block">${body}</div>` });
-		if (url === EXPECTED_MEDIA) return route.fulfill({ contentType: "image/jpeg", body: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) });
+		if (url === `${ORIGIN}/` || url === ORIGIN)
+			return route.fulfill({
+				contentType: "text/html",
+				body: `<div class="emdash-html-block">${body}</div>`,
+			});
+		if (url === EXPECTED_MEDIA)
+			return route.fulfill({
+				contentType: "image/jpeg",
+				body: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+			});
 		return route.abort();
 	});
 	await page.goto(`${ORIGIN}/`, { waitUntil: "networkidle" });
 	return seen;
 }
 
-it.skipIf(browserUnavailable !== false)("HtmlBlock's own output: the icon is real DOM, media survives, and the request list is EXACTLY navigation + media", async () => {
-	const body = await renderComponent(HtmlBlock, { _type: "htmlBlock", _key: "g", html: MIXED });
-	expect(body, "the component itself drew the icon").toContain("<svg");
+it.skipIf(browserUnavailable !== false)(
+	"HtmlBlock's own output: the icon is real DOM, media survives, and the request list is EXACTLY navigation + media",
+	async () => {
+		const body = await renderComponent(HtmlBlock, { _type: "htmlBlock", _key: "g", html: MIXED });
+		expect(body, "the component itself drew the icon").toContain("<svg");
 
-	const browser = await requireBrowser();
-	const page = await browser.newPage();
-	try {
-		const seen = await serveAndRecord(page, body);
-		const facts = await page.evaluate(() => ({
-			svgs: document.querySelectorAll("svg").length,
-			paths: document.querySelectorAll("svg path").length,
-			viewBox: document.querySelector("svg")?.getAttribute("viewBox") ?? null,
-			imgs: document.querySelectorAll("img").length,
-			text: document.body.textContent ?? "",
-			leaksMarker: /EMDASHSVG|ENDSLOT/.test(document.documentElement.outerHTML),
-			descendants: [...new Set(Array.from(document.querySelectorAll("svg *"), (e) => e.tagName.toLowerCase()))],
-		}));
+		const browser = await requireBrowser();
+		const page = await browser.newPage();
+		try {
+			const seen = await serveAndRecord(page, body);
+			const facts = await page.evaluate(() => ({
+				svgs: document.querySelectorAll("svg").length,
+				paths: document.querySelectorAll("svg path").length,
+				viewBox: document.querySelector("svg")?.getAttribute("viewBox") ?? null,
+				imgs: document.querySelectorAll("img").length,
+				text: document.body.textContent ?? "",
+				leaksMarker: /EMDASHSVG|ENDSLOT/.test(document.documentElement.outerHTML),
+				descendants: [
+					...new Set(
+						Array.from(document.querySelectorAll("svg *"), (e) => e.tagName.toLowerCase()),
+					),
+				],
+			}));
 
-		expect(facts.svgs, "exactly one icon in the browser").toBe(1);
-		expect(facts.paths, "with its geometry").toBe(1);
-		expect(facts.viewBox, "viewBox survives, cased correctly").toBe("0 0 448 512");
-		expect(facts.imgs, "the mixed-media image beside it survived").toBe(1);
-		expect(facts.text, "the prose on both sides survived").toContain("before");
-		expect(facts.text).toContain("after");
-		expect(facts.leaksMarker, "no slot marker becomes visible text").toBe(false);
-		expect(facts.descendants.every((t) => t === "path" || t === "g"), "only approved SVG descendants").toBe(true);
+			expect(facts.svgs, "exactly one icon in the browser").toBe(1);
+			expect(facts.paths, "with its geometry").toBe(1);
+			expect(facts.viewBox, "viewBox survives, cased correctly").toBe("0 0 448 512");
+			expect(facts.imgs, "the mixed-media image beside it survived").toBe(1);
+			expect(facts.text, "the prose on both sides survived").toContain("before");
+			expect(facts.text).toContain("after");
+			expect(facts.leaksMarker, "no slot marker becomes visible text").toBe(false);
+			expect(
+				facts.descendants.every((t) => t === "path" || t === "g"),
+				"only approved SVG descendants",
+			).toBe(true);
 
-		// EXACT ACCOUNTING: the navigation and the one expected media request, nothing else.
-		expect(seen.toSorted(), "the navigation and the fixture's own image, and nothing else").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
-	} finally {
-		await page.close();
-	}
-});
+			// EXACT ACCOUNTING: the navigation and the one expected media request, nothing else.
+			expect(
+				seen.toSorted(),
+				"the navigation and the fixture's own image, and nothing else",
+			).toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
+		} finally {
+			await page.close();
+		}
+	},
+);
 
-it.skipIf(browserUnavailable !== false)("Embed's own output: same guarantees through the second real caller", async () => {
-	const body = await renderComponent(Embed, { _type: "embed", _key: "e", url: "https://example.org/x", html: MIXED });
-	expect(body, "Embed drew the icon too").toContain("<svg");
+it.skipIf(browserUnavailable !== false)(
+	"Embed's own output: same guarantees through the second real caller",
+	async () => {
+		const body = await renderComponent(Embed, {
+			_type: "embed",
+			_key: "e",
+			url: "https://example.org/x",
+			html: MIXED,
+		});
+		expect(body, "Embed drew the icon too").toContain("<svg");
 
-	const browser = await requireBrowser();
-	const page = await browser.newPage();
-	try {
-		const seen = await serveAndRecord(page, body);
-		const facts = await page.evaluate(() => ({
-			svgs: document.querySelectorAll("svg").length,
-			viewBox: document.querySelector("svg")?.getAttribute("viewBox") ?? null,
-			imgs: document.querySelectorAll("img").length,
-		}));
-		expect(facts.svgs, "one icon").toBe(1);
-		expect(facts.viewBox, "viewBox survives").toBe("0 0 448 512");
-		expect(facts.imgs, "the image survived here too").toBe(1);
-		expect(seen.toSorted(), "no request beyond navigation and the fixture's image").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
-	} finally {
-		await page.close();
-	}
-});
+		const browser = await requireBrowser();
+		const page = await browser.newPage();
+		try {
+			const seen = await serveAndRecord(page, body);
+			const facts = await page.evaluate(() => ({
+				svgs: document.querySelectorAll("svg").length,
+				viewBox: document.querySelector("svg")?.getAttribute("viewBox") ?? null,
+				imgs: document.querySelectorAll("img").length,
+			}));
+			expect(facts.svgs, "one icon").toBe(1);
+			expect(facts.viewBox, "viewBox survives").toBe("0 0 448 512");
+			expect(facts.imgs, "the image survived here too").toBe(1);
+			expect(seen.toSorted(), "no request beyond navigation and the fixture's image").toEqual(
+				[`${ORIGIN}/`, EXPECTED_MEDIA].toSorted(),
+			);
+		} finally {
+			await page.close();
+		}
+	},
+);
 
-it.skipIf(browserUnavailable !== false)("both lookalikes are refused through the real component, and the request list is unchanged", async () => {
-	const body = await renderComponent(HtmlBlock, { _type: "htmlBlock", _key: "a", html: `${ATTACKS}${MIXED}` });
-	const browser = await requireBrowser();
-	const page = await browser.newPage();
-	try {
-		const seen = await serveAndRecord(page, body);
-		const facts = await page.evaluate(() => ({
-			svgs: document.querySelectorAll("svg").length,
-			scripts: document.querySelectorAll("script").length,
-			alertText: (document.body.textContent ?? "").includes("alert"),
-			leaksMarker: /EMDASHSVG|ENDSLOT/.test(document.documentElement.outerHTML),
-		}));
-		// Exactly ONE: the legitimate icon inside MIXED. The forged-attribute one and the MathML one are both refused.
-		expect(facts.svgs, "only the legitimate icon").toBe(1);
-		expect(facts.scripts, "no script element").toBe(0);
-		expect(facts.alertText, "no script body").toBe(false);
-		expect(facts.leaksMarker, "no marker text").toBe(false);
-		// The refused lookalikes add no request of their own.
-		expect(seen.toSorted(), "the refusals fetched nothing extra").toEqual([`${ORIGIN}/`, EXPECTED_MEDIA].toSorted());
-	} finally {
-		await page.close();
-	}
-});
+it.skipIf(browserUnavailable !== false)(
+	"both lookalikes are refused through the real component, and the request list is unchanged",
+	async () => {
+		const body = await renderComponent(HtmlBlock, {
+			_type: "htmlBlock",
+			_key: "a",
+			html: `${ATTACKS}${MIXED}`,
+		});
+		const browser = await requireBrowser();
+		const page = await browser.newPage();
+		try {
+			const seen = await serveAndRecord(page, body);
+			const facts = await page.evaluate(() => ({
+				svgs: document.querySelectorAll("svg").length,
+				scripts: document.querySelectorAll("script").length,
+				alertText: (document.body.textContent ?? "").includes("alert"),
+				leaksMarker: /EMDASHSVG|ENDSLOT/.test(document.documentElement.outerHTML),
+			}));
+			// Exactly ONE: the legitimate icon inside MIXED. The forged-attribute one and the MathML one are both refused.
+			expect(facts.svgs, "only the legitimate icon").toBe(1);
+			expect(facts.scripts, "no script element").toBe(0);
+			expect(facts.alertText, "no script body").toBe(false);
+			expect(facts.leaksMarker, "no marker text").toBe(false);
+			// The refused lookalikes add no request of their own.
+			expect(seen.toSorted(), "the refusals fetched nothing extra").toEqual(
+				[`${ORIGIN}/`, EXPECTED_MEDIA].toSorted(),
+			);
+		} finally {
+			await page.close();
+		}
+	},
+);

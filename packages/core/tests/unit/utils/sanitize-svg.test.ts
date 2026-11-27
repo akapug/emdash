@@ -10,8 +10,13 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+	validPathData,
+	validPaint,
+	validTransform,
+	validViewBox,
+} from "../../../src/utils/sanitize-svg.js";
 import { sanitizeContent } from "../../../src/utils/sanitize.js";
-import { validPathData, validPaint, validTransform, validViewBox } from "../../../src/utils/sanitize-svg.js";
 
 /** twpe's info-box icon, as the export carries it (10 across 2 pages). */
 const TWPE_ICON =
@@ -60,12 +65,16 @@ describe("163g: the real icons survive", () => {
 		}
 		// A control OUTSIDE an approved newsletter form is dropped by the existing policy in both cases — measured, not assumed, and
 		// deliberately not asserted here as if this change were responsible for it.
-		expect(withIcon, "the input is dropped by the pre-existing control policy").not.toContain("<input");
+		expect(withIcon, "the input is dropped by the pre-existing control policy").not.toContain(
+			"<input",
+		);
 		expect(without, "and identically without an icon").not.toContain("<input");
 	});
 
 	it("a refused icon beside ordinary content leaves the ordinary content whole", () => {
-		const html = out('<p>Keep me</p><img src="/a.jpg" alt="x"><svg viewBox="0 0 1 1"><script>alert(1)</script></svg>');
+		const html = out(
+			'<p>Keep me</p><img src="/a.jpg" alt="x"><svg viewBox="0 0 1 1"><script>alert(1)</script></svg>',
+		);
 		expect(html).not.toContain("<svg");
 		expect(html, "the paragraph is untouched").toContain("Keep me");
 		expect(html, "and the image with it").toContain('src="/a.jpg"');
@@ -96,7 +105,8 @@ describe("163g: the real icons survive", () => {
 	});
 
 	it("a page with NO svg is byte-identical: the four sites without icons cannot change", () => {
-		const page = '<p>Prose with an ampersand &amp; a <a href="https://example.org/x">link</a> and <strong>bold</strong>.</p>';
+		const page =
+			'<p>Prose with an ampersand &amp; a <a href="https://example.org/x">link</a> and <strong>bold</strong>.</p>';
 		expect(out(page), "same bytes in, same bytes out").toBe(page);
 	});
 });
@@ -110,32 +120,40 @@ describe("163g: every way in is refused, and none of it is unwrapped", () => {
 	});
 
 	it("a source carrying the old provenance attribute is not trusted", () => {
-		const html = out('<svg data-embark-svg="1" viewBox="0 0 10 10"><script>alert(1)</script></svg>');
+		const html = out(
+			'<svg data-embark-svg="1" viewBox="0 0 10 10"><script>alert(1)</script></svg>',
+		);
 		expect(html).not.toContain("<svg");
 		expect(html).not.toContain("alert");
 	});
 
 	it("a source that GUESSES a marker shape cannot mint one", () => {
 		// The marker is 128 random bits per call; a literal can never match, so this text stays text and no icon appears.
-		const html = out('<p>EMDASHSVG00000000000000000000000000000000END</p>');
+		const html = out("<p>EMDASHSVG00000000000000000000000000000000END</p>");
 		expect(html).not.toContain("<svg");
 		expect(html, "the guessed text is not upgraded into markup").not.toContain("path");
 	});
 
 	it("mixed-case event handlers are refused, not lowercased into survival", () => {
-		const html = out('<svg viewBox="0 0 10 10" ONLOAD="alert(1)"><path onClick="alert(2)" d="M0 0"/></svg>');
+		const html = out(
+			'<svg viewBox="0 0 10 10" ONLOAD="alert(1)"><path onClick="alert(2)" d="M0 0"/></svg>',
+		);
 		expect(html).not.toContain("alert");
 		expect(html.toLowerCase()).not.toContain("onload");
 	});
 
 	it("foreignObject is refused, and its HTML does not escape into the page", () => {
-		const html = out('<svg viewBox="0 0 10 10"><foreignObject><iframe src="https://evil.test"></iframe></foreignObject></svg>');
+		const html = out(
+			'<svg viewBox="0 0 10 10"><foreignObject><iframe src="https://evil.test"></iframe></foreignObject></svg>',
+		);
 		expect(html).not.toContain("<svg");
 		expect(html).not.toContain("evil.test");
 	});
 
 	it("use and image cannot reference anything", () => {
-		const html = out('<svg viewBox="0 0 10 10"><use href="https://evil.test/x.svg#a"/><image href="https://evil.test/p.png"/></svg>');
+		const html = out(
+			'<svg viewBox="0 0 10 10"><use href="https://evil.test/x.svg#a"/><image href="https://evil.test/p.png"/></svg>',
+		);
 		expect(html).not.toContain("<svg");
 		expect(html).not.toContain("evil.test");
 	});
@@ -150,18 +168,34 @@ describe("163g: every way in is refused, and none of it is unwrapped", () => {
 	});
 
 	it("an ORPHAN path with no svg ancestor is refused", () => {
-		expect(out('<p>Text</p><path d="M0 0h10v10z"/>'), "flat HTML has no SVG context to belong to").not.toContain("<path");
+		expect(
+			out('<p>Text</p><path d="M0 0h10v10z"/>'),
+			"flat HTML has no SVG context to belong to",
+		).not.toContain("<path");
 	});
 
 	it("svg-like text in an ATTRIBUTE, a COMMENT, a TEXTAREA and a SCRIPT is never upgraded to markup", () => {
-		expect(out('<p title="<svg viewBox=\'0 0 1 1\'><path d=\'M0 0\'/></svg>">t</p>'), "attribute").not.toContain("<path");
-		expect(out("<!-- <svg viewBox='0 0 1 1'><path d='M0 0'/></svg> -->"), "comment").not.toContain("<path");
-		expect(out("<textarea><svg viewBox='0 0 1 1'><path d='M0 0'/></svg></textarea>"), "textarea").not.toContain("<path");
-		expect(out("<script><svg viewBox='0 0 1 1'><path d='M0 0'/></svg></script>"), "script").not.toContain("<path");
+		expect(
+			out("<p title=\"<svg viewBox='0 0 1 1'><path d='M0 0'/></svg>\">t</p>"),
+			"attribute",
+		).not.toContain("<path");
+		expect(out("<!-- <svg viewBox='0 0 1 1'><path d='M0 0'/></svg> -->"), "comment").not.toContain(
+			"<path",
+		);
+		expect(
+			out("<textarea><svg viewBox='0 0 1 1'><path d='M0 0'/></svg></textarea>"),
+			"textarea",
+		).not.toContain("<path");
+		expect(
+			out("<script><svg viewBox='0 0 1 1'><path d='M0 0'/></svg></script>"),
+			"script",
+		).not.toContain("<path");
 	});
 
 	it("an external url() paint server cannot appear: the grammar has no room for it", () => {
-		const html = out('<svg viewBox="0 0 10 10"><path fill="url(https://evil.test/x.svg#g)" stroke="url(#evil)" d="M0 0"/></svg>');
+		const html = out(
+			'<svg viewBox="0 0 10 10"><path fill="url(https://evil.test/x.svg#g)" stroke="url(#evil)" d="M0 0"/></svg>',
+		);
 		expect(html, "the icon is carried").toContain("<svg");
 		expect(html, "the paint values are dropped").not.toContain("url(");
 		expect(html).not.toContain("evil.test");
@@ -177,8 +211,10 @@ describe("163g: the value grammars are arithmetic and colour, not blacklists", (
 	});
 
 	it("paint has no shape that could hold a URL", () => {
-		for (const good of ["#333", "rgb(1,2,3)", "rgba(1,2,3,0.5)", "none", "currentColor", "red"]) expect(validPaint(good), good).toBe(true);
-		for (const bad of ["url(#x)", "url(https://evil.test/a.svg#g)", "", "javascript:alert(1)"]) expect(validPaint(bad), bad).toBe(false);
+		for (const good of ["#333", "rgb(1,2,3)", "rgba(1,2,3,0.5)", "none", "currentColor", "red"])
+			expect(validPaint(good), good).toBe(true);
+		for (const bad of ["url(#x)", "url(https://evil.test/a.svg#g)", "", "javascript:alert(1)"])
+			expect(validPaint(bad), bad).toBe(false);
 	});
 
 	it("transform takes 2D affine functions with numbers only", () => {
