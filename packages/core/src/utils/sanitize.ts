@@ -320,7 +320,10 @@ export function sanitizeContent(html: string, options: SanitizeOptions = {}): st
 			...sanitizeHtml.defaults.allowedAttributes,
 			"*": ["class", "id", "data-*"],
 			iframe: ["src", "width", "height", "frameborder", "allow", "allowfullscreen", "title"],
-			img: ["src", "srcset", "alt", "title", "width", "height", "loading"],
+			// `sizes` IS KEPT (164g). Without it here, `sanitizeContent` strips the source's own `sizes` before the render path
+			// can honour it — measured: `<img … sizes="(min-width: 400px) 400px">` came back as `<img src=… width=455 />`. The
+			// ruling is that source behaviour is the spec for `sizes`, and the attribute was being removed on the way in.
+			img: ["src", "srcset", "sizes", "alt", "title", "width", "height", "loading"],
 			form: ["action", "method", "target", "rel", "class", "id", "name", "novalidate"],
 			input: [
 				"type",

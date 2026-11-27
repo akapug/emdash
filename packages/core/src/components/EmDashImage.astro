@@ -30,6 +30,7 @@ import { buildRenderMediaUrl } from "../media/url.js";
 import {
 	buildResponsiveImage,
 	lazyAutoSizes,
+	constrainedSizes,
 	responsiveSizes,
 	toAbsoluteMediaUrl,
 	RESPONSIVE_BREAKPOINTS,
@@ -204,7 +205,17 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 			if (stored) {
 				srcset = stored.srcset;
 				hasWidthSrcset = true;
-				sizes = responsiveSizes(storedSizesOnly ? stored.bound : finalWidth);
+				// CAPPED BY THE SLOT, never the file's width alone (164g). `stored.bound` is the image's own bound; a
+				// 2560-wide picture laid out in a 400px card would declare a 2560px slot and fetch the top rung — which is
+				// what made a migrated /about/ 3.47x live. `constrainedSizes` caps at the width the caller knows; with none
+				// it says the same thing `responsiveSizes` did, so this is a strict improvement.
+				// THE SLOT IS THE PAGE'S CONTENT COLUMN, measured at capture (141c) and carried on the record (164g).
+				// Read here the same way HtmlBlock reads it: `Symbol.for` is global, so no import from the template.
+				const measuredSlot = Reflect.get(Astro.locals ?? {}, Symbol.for("emdash.wp-shell.content-width"));
+				const slotMaxWidth = typeof measuredSlot === "number" && Number.isInteger(measuredSlot) && measuredSlot >= 320 && measuredSlot <= 4096
+					? measuredSlot
+					: undefined;
+				sizes = constrainedSizes(storedSizesOnly ? stored.bound : finalWidth, slotMaxWidth);
 			} else if (!storedSizesOnly && !isOurs) {
 				// Only a NON-local src can fall back to Astro's <Image>; for ours the branches above already decided.
 				astroImageSrc = absoluteSrc;

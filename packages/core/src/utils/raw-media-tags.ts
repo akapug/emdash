@@ -13,7 +13,7 @@
  *
  * NOTE FOR THE RECORD: it is the SANITISER, not this change, that drops `decoding="async"` from a tag.
  */
-import { responsiveSizes } from "../media/responsive.js";
+import { constrainedSizes } from "../media/responsive.js";
 import { storedSizesForRender } from "../media/variant-read.js";
 import { sanitizeContent } from "./sanitize.js";
 
@@ -51,6 +51,54 @@ export function htmlBlockHasImage(html: string, matches: (src: string) => boolea
  * The width to bound by: the tag's OWN `width`, because WordPress writes it and a 300-wide tag wants the 300
  * rung; without one the lookup falls back to the original's upright width, or offers nothing.
  */
+/**
+ * The source `<img>`'s own `sizes` attribute, decoded, or null when it states none.
+ *
+ * AN UNQUOTED VALUE IS NEVER TRUSTED, and a QUOTED one is taken only when the attribute ends where the quote does. A tag whose
+ * `sizes` value is followed by more attribute text inside the same quotes (`sizes="400px" onerror="alert(1)"`) is refused whole:
+ * that shape means the source's markup was already broken, and passing any of it through would carry the rest with it.
+ */
+function sizesOf(tag: string): string | null {
+	const m = /\ssizes\s*=\s*(?:"([^"]*)"|'([^']*)')/iu.exec(tag);
+	if (!m) return null;
+	const v = (m[1] ?? m[2] ?? "").trim();
+	if (v === "") return null;
+	// Anything attribute-like inside the value means the quote was closed by something else; refuse rather than guess.
+	if (/\s[a-z-]+\s*=/iu.test(v)) return null;
+	return v;
+}
+
+/**
+ * Whether a `sizes` value is inside the CSS grammar a browser accepts, so a source cannot put anything else in the markup.
+ *
+ * Allowed: media conditions of the shape `(min-width: 400px)` / `(max-width: 767px)` / `(orientation: landscape)`, and a length in
+ * px/em/rem/vw/vh/%/pt/vmin/vmax/cm/mm/in/pc, or `auto`, or a bare `calc(...)` with no quotes or angle brackets. Commas separate
+ * entries. NOTHING ELSE — no quotes, no `<>`, no backslashes, no url(), no CSS comment opener — so a value that could break out of the
+ * attribute or reach a stylesheet is refused and rule 2 applies instead.
+ *
+ * This is a grammar check, not a sanitiser: it refuses rather than repairs, which is what the ruling asks for.
+ */
+function isSizesGrammar(value: string): boolean {
+	if (value.length > 512) return false;
+	// Anything that could terminate or re-open the attribute, or start a CSS comment / escape, is out before parsing.
+	if (/["'<>\\]|\/\*|url\s*\(/iu.test(value)) return false;
+	const entries = value.split(",");
+	if (entries.length === 0 || entries.length > 16) return false;
+	const MEDIA = /\(\s*[a-z-]+\s*:\s*[a-z0-9.%\s-]+\s*\)/iu;
+	const LENGTH = /^(?:\d*\.?\d+)(?:px|em|rem|vw|vh|vmin|vmax|%|pt|cm|mm|in|pc)$/iu;
+	for (const raw of entries) {
+		const entry = raw.trim();
+		if (entry === "") return false;
+		// Split off leading media conditions; what remains must be a length, `auto`, or a plain calc().
+		let rest = entry;
+		while (MEDIA.test(rest)) rest = rest.replace(MEDIA, "").trim();
+		if (rest === "auto" || LENGTH.test(rest)) continue;
+		if (/^calc\([^()]*\)$/iu.test(rest) && /^[\d\s.+\-*/()a-z%]+$/iu.test(rest.replace(/^calc/iu, ""))) continue;
+		return false;
+	}
+	return true;
+}
+
 export async function withStoredSizes(
 	html: string,
 	opts: {
@@ -58,6 +106,10 @@ export async function withStoredSizes(
 		origin?: string;
 		/** Injected so the rewrite's contract can be tested; the render path gets the real read. */
 		lookup?: Lookup;
+		/** The content column's inner width in CSS px, measured from the layout (141c). Caps the slot when the source states none. */
+		slotMaxWidth?: number | undefined;
+		/** Horizontal padding around that column on narrow viewports. */
+		gutterPx?: number | undefined;
 	} = {},
 ): Promise<string> {
 	const { origin } = opts;
@@ -86,12 +138,22 @@ export async function withStoredSizes(
 			}
 			const result = await pending;
 			if (!result) return null;
-			// SIZES FROM THE SAME BOUND the srcset was built against: without it the browser assumes 100vw
-			// and takes the largest rung, which is the thing being fixed.
-			return addAttributes(match[0], {
-				srcset: result.srcset,
-				sizes: responsiveSizes(result.bound),
-			});
+			// SIZES, in the order item 164g rules:
+			//
+			// 1. THE SOURCE'S OWN `sizes` WINS. Source behaviour is the spec, and the source is the only thing that knows the
+			//    column: adamkoren's podcast cover is 2560 wide and its page says `(max-width: 767px) 100vw, 400px`, because
+			//    Avada lays it out in a 400px author-chosen image_size. We cannot re-derive that, and `result.bound` — the
+			//    file's own width — is the worst guess available: measured, it made the /about/ page 3.47x live's weight.
+			//    A value outside the CSS `sizes` grammar is DROPPED and rule 2 applies, so a hostile string cannot reach the
+			//    markup.
+			// 2. Otherwise a SLOT capped by the content column, never the file's width alone.
+			const declared = sizesOf(match[0]);
+			const sizes = declared !== null && isSizesGrammar(declared)
+				? declared
+				: constrainedSizes(result.bound, opts.slotMaxWidth, opts.gutterPx ?? 0);
+			// REPLACE, never append: `addAttributes` writes a second attribute of the same name, so a source `sizes` that was
+			// REFUSED stayed on the tag beside ours — measured: the output carried both the hostile value and the capped one.
+			return addAttributes(withoutAttribute(match[0], "sizes"), { srcset: result.srcset, sizes });
 		}),
 	);
 	const byOffset = new Map<number, string>();
@@ -142,6 +204,11 @@ function decodeReferences(value: string): string {
 }
 
 /** Insert attributes before the tag's closing `>` or `/>`, keeping everything already there. */
+/** The tag with `name` removed, so a rewritten attribute replaces the source's instead of standing beside it. */
+function withoutAttribute(tag: string, name: string): string {
+	return tag.replace(new RegExp(`\\s${name}\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+)`, "iu"), "");
+}
+
 function addAttributes(tag: string, extra: Record<string, string>): string {
 	const additions = Object.entries(extra)
 		.map(

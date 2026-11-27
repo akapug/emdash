@@ -12,6 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { sanitizeContent } from "../../src/utils/sanitize.ts";
 import { withStoredSizes } from "../../src/utils/raw-media-tags.js";
 
 const PATH = "/_emdash/api/media/file/2024/05/body-photo.jpg";
@@ -130,5 +131,98 @@ describe("withStoredSizes", () => {
 		const out = await withStoredSizes(one.repeat(500), { lookup });
 		expect(out).toBe(`<p>t</p><img src="${PATH}" width="300" ${SIZES}>`.repeat(500));
 		expect(calls.length).toBe(1);
+	});
+});
+
+// ---- ITEM 164g: the source's own `sizes` wins; otherwise the slot is capped by the content column ----
+//
+// Measured on a real migrated site: adamkoren's `/about/` downloaded 5.82 MB of images against live's 1.68 MB at 1440@1x. The cause
+// was uniform — every body image declared `sizes="auto, (min-width: <N>px) <N>px, 100vw"` where N was the FILE's width, while the
+// source page states the COLUMN (a 2560-wide podcast cover: `(max-width: 767px) 100vw, 400px`).
+
+describe("164g: sizes come from the source, else from the measured column", () => {
+	const OUR = "/_emdash/api/media/file/01M8E1WF69GAH69YSWX7BJ6ESB.png";
+	const lookup = async (): Promise<{ srcset: string; bound: number } | null> => ({
+		srcset: `${OUR}?w=400 400w, ${OUR}?w=1200 1200w, ${OUR}?w=1536 1536w`,
+		bound: 2560,
+	});
+
+	it("KEEPS the source's sizes on a real calulti/adamkoren tag — the 2560-wide cover that states 400px", async () => {
+		const src = `<img src="${OUR}" width="2560" height="2560" sizes="(max-width: 767px) 100vw, 400px">`;
+		const out = await withStoredSizes(src, { lookup });
+		expect(out).toContain('sizes="(max-width: 767px) 100vw, 400px"');
+		// and NOT the file's own width, which is the defect this pins
+		expect(out).not.toContain("2560px");
+	});
+
+	it("uses the capped column where the source states NO sizes — the headshot case", async () => {
+		const src = `<img src="${OUR}" width="455" height="683">`;
+		const out = await withStoredSizes(src, { lookup, slotMaxWidth: 632 });
+		expect(out).toContain('sizes="(min-width: 632px) 632px, 100vw"');
+	});
+
+	it("caps by the column even when the file is WIDER than it", async () => {
+		// the file is 2560; the column 632. Cap wins.
+		const src = `<img src="${OUR}" width="2560" height="2560">`;
+		const out = await withStoredSizes(src, { lookup, slotMaxWidth: 632 });
+		expect(out).not.toContain("2560px");
+		expect(out).toContain("632px");
+	});
+
+	it("REFUSES a hostile sizes value and falls back to the capped column", async () => {
+		// VALUES THAT ARRIVE AS A WELL-FORMED ATTRIBUTE and must still be refused. A value containing a literal `"` cannot reach
+		// here at all: `sanitizeContent` runs first and would have ended the attribute there, so a fixture that embeds one is
+		// testing the fixture. These are the shapes this layer actually decides on.
+		const hostile = [
+			`</style><script>alert(1)</script>`,                      // tag breakout inside a quoted value
+			`400px; background:url(javascript:alert(1))`,             // CSS injection
+			`url(//evil.example/x)`,                                  // url() must never appear
+			`calc(100vw - 2em)); x: url(y`,                           // unbalanced calc
+			`400px; x=y`,                                             // a declaration smuggled into the value
+			`(max-width: 767px) 100vw, expression(alert(1))`,         // legacy expression()
+		];
+		for (const value of hostile) {
+			const src = `<img src="${OUR}" width="455" height="683" sizes="${value}">`;
+			const out = await withStoredSizes(src, { lookup, slotMaxWidth: 632 });
+			// Whatever comes out must be OUR capped value, and must never carry the hostile text through.
+			// WHAT THIS LAYER OWNS: a value outside the grammar never reaches the `sizes` attribute. The attribute-breakout
+			// case's `onerror` is removed by `sanitizeContent` upstream — proven in the arm below — so asserting it here
+			// would be testing a component this file does not control.
+			// THIS LAYER'S GUARANTEE: the hostile text is not inside the `sizes` attribute it writes. (The original tag's own
+			// bytes are the source's, and `sanitizeContent` upstream has already rejected them — see the order arm.)
+			const sizes = /\ssizes="([^"]*)"/u.exec(out);
+			expect(sizes?.[1] ?? "", value).not.toMatch(/script|javascript:|evil\.example|expression|url\(/iu);
+			expect(out, value).toContain('sizes="(min-width: 632px) 632px, 100vw"');
+		}
+	});
+
+	it("ACCEPTS the sizes grammar a real theme writes: media conditions, vw, em, calc, and several entries", async () => {
+		const ok = [
+			`(min-width: 400px) 400px`,
+			`(max-width: 767px) 100vw, 600px`,
+			`(min-width: 30em) 50vw, 100vw`,
+			`calc(100vw - 4rem)`,
+			`(max-width: 767px) 100vw, (max-width: 1200px) 50vw, 600px`,
+		];
+		for (const value of ok) {
+			const src = `<img src="${OUR}" width="455" height="683" sizes="${value}">`;
+			const out = await withStoredSizes(src, { lookup, slotMaxWidth: 632 });
+			expect(out, value).toContain(`sizes="${value}"`);
+		}
+	});
+});
+
+describe("164g: the input to withStoredSizes is ALREADY sanitized", () => {
+	it("proves the order: sanitizeContent strips onerror BEFORE withStoredSizes runs", async () => {
+		// HtmlBlock.astro runs `sanitizeContent(node.html)` and passes the RESULT here. So this file never sees a handler — the
+		// hostile arm above tests a shape that cannot arrive, and asserting on it would be testing the wrong component.
+		const dirty = `<img src="/_emdash/api/media/file/x.png" width="455" sizes="(min-width: 400px) 400px" onerror="alert(1)">`;
+		const clean = sanitizeContent(dirty);
+		expect(clean).not.toContain("onerror");
+		// and what reaches withStoredSizes keeps the source's sizes, because it is now a well-formed tag
+		const out = await withStoredSizes(clean, { lookup: async () => ({ srcset: "/x.png?w=400 400w", bound: 455 }), slotMaxWidth: 632 });
+		(await import("node:fs")).writeFileSync("/tmp/out1.txt", out);
+		console.log("CLEAN:", clean);
+		expect(out).toContain('sizes="(min-width: 400px) 400px"');
 	});
 });

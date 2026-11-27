@@ -35,8 +35,15 @@ if (/<form\b/i.test(sanitized)) optOutPageCache();
 // srcset and sizes to media-file tags that have sizes to offer, and leaves every other byte alone.
 // The PUBLIC origin, as Image.astro reads it: behind a proxy the request's own origin is not the one the
 // content's absolute urls were written on.
+// THE CONTENT COLUMN, measured during the shell capture (item 141c) and carried on the record (164g). A body image whose
+// source states no `sizes` is capped by this, never by the file's own width — the file's width is what made a migrated
+// /about/ 3.47x the live page. `Symbol.for` is global, so core reads the same key the template writes without importing it.
+// Absent (an unshelled site, or a page whose column could not be measured) leaves it undefined and the slot uncapped.
+const measured = Reflect.get(Astro.locals ?? {}, Symbol.for("emdash.wp-shell.content-width"));
+const slotMaxWidth = typeof measured === "number" && Number.isInteger(measured) && measured >= 320 && measured <= 4096 ? measured : undefined;
 const withSizes = await withStoredSizes(sanitized, {
 	origin: getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
+	...(slotMaxWidth !== undefined ? { slotMaxWidth } : {}),
 });
 ---
 
