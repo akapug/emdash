@@ -59,12 +59,12 @@ export function htmlBlockHasImage(html: string, matches: (src: string) => boolea
  * that shape means the source's markup was already broken, and passing any of it through would carry the rest with it.
  */
 function sizesOf(tag: string): string | null {
-	const m = /\ssizes\s*=\s*(?:"([^"]*)"|'([^']*)')/iu.exec(tag);
+	const m = SIZES_ATTRIBUTE.exec(tag);
 	if (!m) return null;
 	const v = (m[1] ?? m[2] ?? "").trim();
 	if (v === "") return null;
 	// Anything attribute-like inside the value means the quote was closed by something else; refuse rather than guess.
-	if (/\s[a-z-]+\s*=/iu.test(v)) return null;
+	if (ATTRIBUTE_INSIDE_VALUE.test(v)) return null;
 	return v;
 }
 
@@ -81,19 +81,17 @@ function sizesOf(tag: string): string | null {
 function isSizesGrammar(value: string): boolean {
 	if (value.length > 512) return false;
 	// Anything that could terminate or re-open the attribute, or start a CSS comment / escape, is out before parsing.
-	if (/["'<>\\]|\/\*|url\s*\(/iu.test(value)) return false;
+	if (FORBIDDEN_IN_SIZES.test(value)) return false;
 	const entries = value.split(",");
 	if (entries.length === 0 || entries.length > 16) return false;
-	const MEDIA = /\(\s*[a-z-]+\s*:\s*[a-z0-9.%\s-]+\s*\)/iu;
-	const LENGTH = /^(?:\d*\.?\d+)(?:px|em|rem|vw|vh|vmin|vmax|%|pt|cm|mm|in|pc)$/iu;
 	for (const raw of entries) {
 		const entry = raw.trim();
 		if (entry === "") return false;
 		// Split off leading media conditions; what remains must be a length, `auto`, or a plain calc().
 		let rest = entry;
-		while (MEDIA.test(rest)) rest = rest.replace(MEDIA, "").trim();
-		if (rest === "auto" || LENGTH.test(rest)) continue;
-		if (/^calc\([^()]*\)$/iu.test(rest) && /^[\d\s.+\-*/()a-z%]+$/iu.test(rest.replace(/^calc/iu, ""))) continue;
+		while (SIZES_MEDIA_CONDITION.test(rest)) rest = rest.replace(SIZES_MEDIA_CONDITION, "").trim();
+		if (rest === "auto" || SIZES_LENGTH.test(rest)) continue;
+		if (SIZES_CALC.test(rest) && SIZES_CALC_BODY.test(rest.replace(SIZES_CALC_PREFIX, ""))) continue;
 		return false;
 	}
 	return true;
@@ -153,7 +151,7 @@ export async function withStoredSizes(
 				: constrainedSizes(result.bound, opts.slotMaxWidth, opts.gutterPx ?? 0);
 			// REPLACE, never append: `addAttributes` writes a second attribute of the same name, so a source `sizes` that was
 			// REFUSED stayed on the tag beside ours — measured: the output carried both the hostile value and the capped one.
-			return addAttributes(withoutAttribute(match[0], "sizes"), { srcset: result.srcset, sizes });
+			return addAttributes(withoutSizes(match[0]), { srcset: result.srcset, sizes });
 		}),
 	);
 	const byOffset = new Map<number, string>();
@@ -192,6 +190,24 @@ const CHARACTER_REFERENCE = /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi;
 
 /** The end of a tag: `>` or `/>`, with any whitespace before it. */
 const TAG_END = /(\s*\/?>)$/;
+/** The source tag's own `sizes` attribute, quoted only. Module scope so the pattern is compiled once: it is read for every image. */
+const SIZES_ATTRIBUTE = /\ssizes\s*=\s*(?:"([^"]*)"|'([^']*)')/iu;
+/** Anything attribute-like inside a `sizes` value: the quote was closed by something else, so the value is refused whole. */
+const ATTRIBUTE_INSIDE_VALUE = /\s[a-z-]+\s*=/iu;
+/** Anything that could terminate or re-open the attribute, or start a CSS comment / escape. */
+const FORBIDDEN_IN_SIZES = /["'<>\\]|\/\*|url\s*\(/iu;
+/** A media condition inside `sizes`: `(min-width: 400px)`, `(orientation: landscape)`. */
+const SIZES_MEDIA_CONDITION = /\(\s*[a-z-]+\s*:\s*[a-z0-9.%\s-]+\s*\)/iu;
+/** A CSS length: `400px`, `50vw`, `1.5rem`. */
+const SIZES_LENGTH = /^(?:\d*\.?\d+)(?:px|em|rem|vw|vh|vmin|vmax|%|pt|cm|mm|in|pc)$/iu;
+/** A plain `calc(...)` with no nested parentheses. */
+const SIZES_CALC = /^calc\([^()]*\)$/iu;
+/** The `calc` keyword itself, stripped before the body is checked. */
+const SIZES_CALC_PREFIX = /^calc/iu;
+/** The inside of a `calc(...)`: digits, spaces, arithmetic and letters only. */
+const SIZES_CALC_BODY = /^[\d\s.+\-*/()a-z%]+$/iu;
+/** A `sizes` attribute on an `<img>`, quoted or not — what `withoutSizes` removes. */
+const SIZES_ATTRIBUTE_ANY = /\ssizes\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/iu;
 
 /** Decode the character references a serialiser writes in an attribute value; any other is kept as written. */
 function decodeReferences(value: string): string {
@@ -205,8 +221,8 @@ function decodeReferences(value: string): string {
 
 /** Insert attributes before the tag's closing `>` or `/>`, keeping everything already there. */
 /** The tag with `name` removed, so a rewritten attribute replaces the source's instead of standing beside it. */
-function withoutAttribute(tag: string, name: string): string {
-	return tag.replace(new RegExp(`\\s${name}\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+)`, "iu"), "");
+function withoutSizes(tag: string): string {
+	return tag.replace(SIZES_ATTRIBUTE_ANY, "");
 }
 
 function addAttributes(tag: string, extra: Record<string, string>): string {
