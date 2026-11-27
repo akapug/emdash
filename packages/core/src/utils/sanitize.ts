@@ -225,7 +225,7 @@ const SVG_PROBE = /<svg/i;
 const DIV_CONTEXT: Parameters<typeof carryInlineSvg>[2] = {
 	nodeName: "div",
 	tagName: "div",
-	namespaceURI: "http://www.w3.org/1999/xhtml",
+	namespaceURI: "http://www.w3.org/1999/xhtml" as Parameters<typeof carryInlineSvg>[2]["namespaceURI"],
 	attrs: [],
 	childNodes: [],
 	parentNode: null,

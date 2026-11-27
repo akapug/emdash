@@ -18,11 +18,12 @@
  * every childless element on any SVG-bearing page.
  */
 
-import { parseFragment, serialize, type DefaultTreeAdapterMap } from "parse5";
+import { defaultTreeAdapter, parseFragment, serialize, type DefaultTreeAdapterMap } from "parse5";
 
 /** The SVG namespace, exactly as the spec spells it. */
 const SVG_NS = "http://www.w3.org/2000/svg";
 /** Plain ASCII around 128 random bits: control characters and tag syntax do not survive an HTML sanitizer, and a stripped marker cannot resolve. */
+const escapeAttr = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const SLOT_PREFIX = "EMDASHSVG";
 const SLOT_SUFFIX = "ENDSLOT";
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -143,8 +144,21 @@ export function keptAttributes(element: string, attribs: Array<{ name: string; v
 	return out;
 }
 
-function makeElement(tag: string): P5Node {
-	return { nodeName: tag, tagName: tag, attrs: [], childNodes: [], parentNode: null };
+/**
+ * Nodes come from the PARSER, never from object literals.
+ *
+ * `defaultTreeAdapter` is part of parse5's public surface, so a text node is built by the library that will serialize it. Elements are
+ * produced by parsing the rebuilt markup, which means every node in the tree this module assembles is a node parse5 itself made — no
+ * structural lookalike, and therefore no assertion at the boundary.
+ */
+function makeTextNode(value: string): P5Node {
+	return defaultTreeAdapter.createTextNode(value) as P5Node;
+}
+
+/** Parse rebuilt SVG markup into the parser's own element nodes. */
+function parseSvgNodes(markup: string): P5Node[] {
+	const frag = parseFragment(markup, { sourceCodeLocationInfo: false });
+	return (frag.childNodes ?? []) as P5Node[];
 }
 
 interface P5Attrs {
@@ -154,7 +168,12 @@ interface P5Attrs {
 	prefix?: string;
 }
 
-interface P5Node {
+/**
+ * This module's view of a parse5 node. It EXTENDS parse5's own union rather than describing a subset of it: a narrower structural shape
+ * was the source of every `no-unsafe-type-assertion` in this file, because assigning between a subset and the union is always a
+ * narrowing assertion. Extending means the adapter's node IS this type where the two overlap, so no cast is needed at the boundary.
+ */
+type P5Node = DefaultTreeAdapterMap["node"] & {
 	nodeName: string;
 	tagName?: string;
 	namespaceURI?: string;
@@ -162,29 +181,35 @@ interface P5Node {
 	childNodes?: P5Node[];
 	value?: string;
 	parentNode?: P5Node | null;
-}
+};
 
 /**
  * Build the replacement NODES for one SVG element, or null when the subtree carries anything this allowlist does not understand.
  *
  * Nodes, not markup: the caller inserts them into the tree it already parsed, so position is structural rather than a string match.
  */
-function buildNodes(node: P5Node): P5Node | null {
+/**
+ * Rebuild one validated SVG element as MARKUP, or null when the subtree carries anything this allowlist does not understand.
+ *
+ * Markup rather than nodes because the caller hands it straight back to parse5: the nodes that end up in the page are then the parser's
+ * own, with no structural lookalike of a node anywhere in this module.
+ */
+function rebuildTree(node: P5Node): string | null {
 	const tag = node.tagName ?? "";
 	if (node.namespaceURI !== SVG_NS || !SVG_TAGS.has(tag)) return null;
-	const kept = keptAttributes(tag, node.attrs ?? []);
-	if (tag === "path" && kept.d === undefined) return null;
-	const out = makeElement(tag);
-	out.namespaceURI = SVG_NS;
-	out.attrs = Object.entries(kept).map(([name, value]) => ({ name, value }));
-	out.childNodes = [];
+	const attrs = keptAttributes(tag, node.attrs ?? []);
+	if (tag === "path" && attrs.d === undefined) return null;
+	const rendered = Object.entries(attrs)
+		.map(([k, v]) => ` ${k}="${escapeAttr(v)}"`)
+		.join("");
+	const inner: string[] = [];
 	for (const child of node.childNodes ?? []) {
 		if (child.nodeName === "#text") continue; // an icon's text is not this item
-		const built = buildNodes(child);
+		const built = rebuildTree(child);
 		if (built === null) return null; // a refused child refuses the WHOLE subtree, never unwraps it
-		out.childNodes.push(built);
+		inner.push(built);
 	}
-	return out;
+	return `<${tag}${rendered}>${inner.join("")}</${tag}>`;
 }
 
 export interface CarryResult {
@@ -231,23 +256,23 @@ export function carryInlineSvg(
 	// parse5's OWN types at the library boundary: the adapter rejects a hand-shaped object, which is what the typechecker said.
 	const fragment = parseFragment(context, html, { sourceCodeLocationInfo: false });
 
-	const walk = (node: DefaultTreeAdapterMap["node"]): DefaultTreeAdapterMap["node"][] => {
+	const walk = (node: P5Node): P5Node[] => {
 		if (node.namespaceURI === SVG_NS && node.tagName === "svg") {
 			// Ancestry first: an <svg> under <math>/foreignObject/raw-text is not a position this pass approved, so it is refused, not carried.
 			if (!approvedAncestry(node)) {
 				refused++;
 				return [];
 			}
-			const built = buildNodes(node);
-			if (built === null) {
+			const markupOf = rebuildTree(node);
+			if (markupOf === null) {
 				refused++;
 				return [];
 			}
 			const marker = SLOT_PREFIX + tokenFor() + SLOT_SUFFIX;
-			// The WHOLE `svg` node, not its children: storing childNodes dropped the wrapper and left a bare path in the page.
-			accepted.set(marker, [built]);
+			// The WHOLE svg, parsed back from its rebuilt markup: the nodes are the parser's own.
+			accepted.set(marker, parseSvgNodes(markupOf));
 			// A TEXT node carries the slot: text is what the policy preserves verbatim, and it has no attributes to forge.
-			return [{ nodeName: "#text", value: marker, parentNode: null }];
+			return [makeTextNode(marker)];
 		}
 		if (!node.childNodes?.length) return [node];
 		const out: P5Node[] = [];
@@ -257,11 +282,12 @@ export function carryInlineSvg(
 		return [node];
 	};
 
+	// ONE boundary conversion, at the place where parse5's tree meets this module's narrower view of it. Every read above then uses
+	// P5Node directly, so the narrow view is stated once instead of cast at each access.
+	// The fragment's list is `ChildNode[]`; `walk` returns the same nodes it was given (or parser-built ones), so the flattened result is
+	// the fragment's own element type. `flatMap` widens it to my node type, hence the one narrowing at this single assignment.
 	const roots = (fragment.childNodes ?? []).flatMap(walk);
-	// Rewrite the PARSED fragment IN PLACE and serialize it, so no node is fabricated and no cast is needed. `fragment`'s type already
-	// accepts childNodes of the adapter's node type, and `walk` preserves that type — the earlier casts were papering over a shape I
-	// was inventing rather than assigning.
-	fragment.childNodes = roots;
+	fragment.childNodes = roots as typeof fragment.childNodes;
 	return { markup: serialize(fragment), accepted, refused };
 }
 
@@ -329,7 +355,7 @@ export function placeSvgNodes(cleaned: string, carried: Map<string, P5Node[]>, c
 				}
 				for (const piece of pieces) {
 					if (piece.kind === "text") {
-						if (piece.value !== "") out.push({ nodeName: "#text", value: piece.value, parentNode: node });
+						if (piece.value !== "") out.push(makeTextNode(piece.value));
 						continue;
 					}
 					if (live(piece.marker, child)) {
