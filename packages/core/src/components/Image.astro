@@ -90,6 +90,16 @@ if (!node?.asset) {
 
 const { caption, displayWidth, displayHeight, alignment, link } = node;
 const slotMaxWidth = alignment === "full" || alignment === "wide" ? undefined : maxWidth;
+const cappedDisplayWidth =
+	alignment !== "full" &&
+	alignment !== "wide" &&
+	typeof displayWidth === "number" &&
+	Number.isFinite(displayWidth) &&
+	displayWidth > 0
+		? Math.round(displayWidth)
+		: undefined;
+const figureStyle =
+	cappedDisplayWidth !== undefined ? `--emdash-display-width: ${cappedDisplayWidth}px;` : undefined;
 const { asset, alt = "", width, height } = resolveImageMedia(node);
 
 const imageLink = normalizeImageLink(link);
@@ -255,7 +265,11 @@ if (placeholder && blurhash) {
 
 ---
 
-<figure class:list={["emdash-image", alignment && `emdash-image--align-${alignment}`]}>
+<figure
+	class:list={["emdash-image", alignment && `emdash-image--align-${alignment}`]}
+	data-display-width={cappedDisplayWidth}
+	style={figureStyle}
+>
 	{
 		linkHref ? (
 			<a href={linkHref} target={linkTarget} rel={linkRel}>
@@ -316,6 +330,9 @@ if (placeholder && blurhash) {
 	.emdash-image {
 		margin: 1.5rem 0;
 	}
+	.emdash-image[data-display-width] {
+		max-width: min(100%, var(--emdash-display-width));
+	}
 	.emdash-image img {
 		max-width: 100%;
 		height: auto;
@@ -331,6 +348,10 @@ if (placeholder && blurhash) {
 	.emdash-image--align-right {
 		width: fit-content;
 		max-width: 50%;
+	}
+	.emdash-image--align-left[data-display-width],
+	.emdash-image--align-right[data-display-width] {
+		max-width: min(50%, var(--emdash-display-width));
 	}
 	.emdash-image--align-left {
 		float: left;
@@ -356,6 +377,10 @@ if (placeholder && blurhash) {
 			width: 100%;
 			max-width: 100%;
 			margin-inline: 0;
+		}
+		.emdash-image--align-left[data-display-width],
+		.emdash-image--align-right[data-display-width] {
+			max-width: min(100%, var(--emdash-display-width));
 		}
 	}
 </style>

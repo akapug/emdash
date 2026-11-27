@@ -398,4 +398,35 @@ describe("faithful render of migrated image node", () => {
 			}
 		},
 	);
+
+	test("item 164m: displayWidth caps the figure wrapper via CSS custom property so shell img{width:100%} rules cannot stretch it, while wide/full and unset displayWidth stay uncapped", async () => {
+		const figureTag = (html: string) => html.match(/<figure\b[^>]*>/)?.[0] ?? "";
+
+		const capped = await renderImage(
+			{ ...node, alignment: "center", displayWidth: 350, displayHeight: undefined },
+			locals,
+			false,
+		);
+		expect(attr(figureTag(capped), "data-display-width")).toBe("350");
+		expect(attr(figureTag(capped), "style")).toBe("--emdash-display-width: 350px;");
+		expect(attr(imgTag(capped), "style")).toBeUndefined();
+
+		const uncapped = await renderImage(
+			{ ...node, alignment: "center", displayWidth: undefined, displayHeight: undefined },
+			locals,
+			false,
+		);
+		expect(attr(figureTag(uncapped), "data-display-width")).toBeUndefined();
+		expect(attr(figureTag(uncapped), "style")).toBeUndefined();
+
+		for (const wideAlign of ["wide", "full"] as const) {
+			const wideHtml = await renderImage(
+				{ ...node, alignment: wideAlign, displayWidth: 350, displayHeight: undefined },
+				locals,
+				false,
+			);
+			expect(attr(figureTag(wideHtml), "data-display-width")).toBeUndefined();
+			expect(attr(figureTag(wideHtml), "style")).toBeUndefined();
+		}
+	});
 });
