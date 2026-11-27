@@ -91,7 +91,8 @@ function isSizesGrammar(value: string): boolean {
 		let rest = entry;
 		while (SIZES_MEDIA_CONDITION.test(rest)) rest = rest.replace(SIZES_MEDIA_CONDITION, "").trim();
 		if (rest === "auto" || SIZES_LENGTH.test(rest)) continue;
-		if (SIZES_CALC.test(rest) && SIZES_CALC_BODY.test(rest.replace(SIZES_CALC_PREFIX, ""))) continue;
+		if (SIZES_CALC.test(rest) && SIZES_CALC_BODY.test(rest.replace(SIZES_CALC_PREFIX, "")))
+			continue;
 		return false;
 	}
 	return true;
@@ -146,9 +147,10 @@ export async function withStoredSizes(
 			//    markup.
 			// 2. Otherwise a SLOT capped by the content column, never the file's width alone.
 			const declared = sizesOf(match[0]);
-			const sizes = declared !== null && isSizesGrammar(declared)
-				? declared
-				: constrainedSizes(result.bound, opts.slotMaxWidth, opts.gutterPx ?? 0);
+			const sizes =
+				declared !== null && isSizesGrammar(declared)
+					? declared
+					: constrainedSizes(result.bound, opts.slotMaxWidth, opts.gutterPx ?? 0);
 			// REPLACE, never append: `addAttributes` writes a second attribute of the same name, so a source `sizes` that was
 			// REFUSED stayed on the tag beside ours — measured: the output carried both the hostile value and the capped one.
 			return addAttributes(withoutSizes(match[0]), { srcset: result.srcset, sizes });

@@ -12,8 +12,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { sanitizeContent } from "../../src/utils/sanitize.ts";
 import { withStoredSizes } from "../../src/utils/raw-media-tags.js";
+import { sanitizeContent } from "../../src/utils/sanitize.ts";
 
 const PATH = "/_emdash/api/media/file/2024/05/body-photo.jpg";
 const SIZES = 'srcset="/v?w=300 300w" sizes="(min-width: 300px) 300px, 100vw"';
@@ -174,12 +174,12 @@ describe("164g: sizes come from the source, else from the measured column", () =
 		// here at all: `sanitizeContent` runs first and would have ended the attribute there, so a fixture that embeds one is
 		// testing the fixture. These are the shapes this layer actually decides on.
 		const hostile = [
-			`</style><script>alert(1)</script>`,                      // tag breakout inside a quoted value
-			`400px; background:url(javascript:alert(1))`,             // CSS injection
-			`url(//evil.example/x)`,                                  // url() must never appear
-			`calc(100vw - 2em)); x: url(y`,                           // unbalanced calc
-			`400px; x=y`,                                             // a declaration smuggled into the value
-			`(max-width: 767px) 100vw, expression(alert(1))`,         // legacy expression()
+			`</style><script>alert(1)</script>`, // tag breakout inside a quoted value
+			`400px; background:url(javascript:alert(1))`, // CSS injection
+			`url(//evil.example/x)`, // url() must never appear
+			`calc(100vw - 2em)); x: url(y`, // unbalanced calc
+			`400px; x=y`, // a declaration smuggled into the value
+			`(max-width: 767px) 100vw, expression(alert(1))`, // legacy expression()
 		];
 		for (const value of hostile) {
 			const src = `<img src="${OUR}" width="455" height="683" sizes="${value}">`;
@@ -191,7 +191,9 @@ describe("164g: sizes come from the source, else from the measured column", () =
 			// THIS LAYER'S GUARANTEE: the hostile text is not inside the `sizes` attribute it writes. (The original tag's own
 			// bytes are the source's, and `sanitizeContent` upstream has already rejected them — see the order arm.)
 			const sizes = /\ssizes="([^"]*)"/u.exec(out);
-			expect(sizes?.[1] ?? "", value).not.toMatch(/script|javascript:|evil\.example|expression|url\(/iu);
+			expect(sizes?.[1] ?? "", value).not.toMatch(
+				/script|javascript:|evil\.example|expression|url\(/iu,
+			);
 			expect(out, value).toContain('sizes="(min-width: 632px) 632px, 100vw"');
 		}
 	});
@@ -220,7 +222,10 @@ describe("164g: the input to withStoredSizes is ALREADY sanitized", () => {
 		const clean = sanitizeContent(dirty);
 		expect(clean).not.toContain("onerror");
 		// and what reaches withStoredSizes keeps the source's sizes, because it is now a well-formed tag
-		const out = await withStoredSizes(clean, { lookup: async () => ({ srcset: "/x.png?w=400 400w", bound: 455 }), slotMaxWidth: 632 });
+		const out = await withStoredSizes(clean, {
+			lookup: async () => ({ srcset: "/x.png?w=400 400w", bound: 455 }),
+			slotMaxWidth: 632,
+		});
 		(await import("node:fs")).writeFileSync("/tmp/out1.txt", out);
 		console.log("CLEAN:", clean);
 		expect(out).toContain('sizes="(min-width: 400px) 400px"');
