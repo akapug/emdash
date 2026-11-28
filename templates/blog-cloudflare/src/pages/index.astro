@@ -16,7 +16,7 @@ import PostCard from "../components/PostCard.astro";
 import { getReadingTime } from "../utils/reading-time";
 import { resolveBlogSiteIdentity } from "../utils/site-identity";
 import { datePath, parseDateQuery } from "../utils/wp-archive";
-import { wpShellIndexRoute } from "../utils/wp-shell";
+import { wpShellHomeIndexRoute } from "../utils/wp-shell";
 import { loadWpShell } from "../utils/wp-shell-loader";
 import { readPageFeatured } from "../utils/wp-page-featured.js";
 
@@ -39,14 +39,14 @@ const { siteTitle, siteTagline } = resolveBlogSiteIdentity(settings);
 let page = homepage.entry;
 
 // A site migrated from WordPress keeps its own design (layouts/WpShell.astro)
-// for its homepage. The latest-posts listing keeps this template's.
-if (page && (await loadWpShell()).shell) {
+// for its homepage — both static front pages (/wp-shell/home) and blog-listing
+// homes (/wp-shell/listing, 164q2) wear the captured chrome.
+const shell = (await loadWpShell()).shell;
+if (page && shell) {
 	// The query goes along: a rewrite to a path drops it, and the layout reads it (`?subscribe=`).
 	return Astro.rewrite(`/wp-shell/home${Astro.url.search}`);
 }
-// A site whose record carries a posts index (one that is not WordPress, its front page not cut: Substack's cover
-// page is left out) draws its latest posts there in its own listing's design, as /posts does.
-const shellIndex = page ? null : wpShellIndexRoute((await loadWpShell()).shell, Astro.url.search);
+const shellIndex = page ? null : wpShellHomeIndexRoute(shell, Astro.url.search);
 if (shellIndex) return Astro.rewrite(shellIndex);
 
 let privateContent = false;

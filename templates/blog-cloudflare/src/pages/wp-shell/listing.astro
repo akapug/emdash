@@ -15,6 +15,7 @@
  */
 import { createNoop, getEmDashCollection, getSiteSettings } from "emdash";
 import WpShell from "../../layouts/WpShell.astro";
+import { resolveBlogSiteIdentity } from "../../utils/site-identity";
 import {
 	imageRatio,
 	ownImagePath,
@@ -33,9 +34,13 @@ const [{ shell, cacheHint: shellHint }, settings] = await Promise.all([
 	loadWpShell(),
 	getSiteSettings(),
 ]);
-// The record, or its index, went away between the posts route's read and this one: that route draws the
-// posts index in this template's own design, and does not come back here.
-if (!shell?.index) return Astro.rewrite(`${origin}${Astro.url.search}`);
+// 164q2: on the blog-listing home ("/"), any site with a captured shell wears its captured chrome
+// around the posts listing even without a dedicated `shell.index` layout. On "/posts", keep the
+// existing contract: rewrite back to the template's own posts index when `shell.index` is absent.
+const isBlogHome = origin === "/";
+if (!shell || (!shell.index && !isBlogHome)) {
+	return Astro.rewrite(`${origin}${Astro.url.search}`);
+}
 if (Astro.cache?.enabled) Astro.cache.set(shellHint);
 
 const perPage = Math.min(50, Math.max(1, settings.postsPerPage || 10));
@@ -57,8 +62,12 @@ const posts: WpShellPost[] = result.entries.map((e) => ({
 	imageRatio: imageRatio(e.data.featured_image),
 }));
 const site = wpShellDateSite(shell, settings.timezone);
-const html = renderIndexPosts(shell, posts, site) + renderIndexNav(cursor, result.nextCursor ?? null);
-const title = "All Posts";
+const navBase = isBlogHome ? "/" : "/posts";
+const html =
+	renderIndexPosts(shell, posts, site) + renderIndexNav(cursor, result.nextCursor ?? null, navBase);
+const { siteTitle, siteTagline } = resolveBlogSiteIdentity(settings);
+const title = isBlogHome && !shell.index ? siteTitle : "All Posts";
+const description = isBlogHome ? siteTagline : undefined;
 ---
 
 <WpShell
@@ -67,6 +76,7 @@ const title = "All Posts";
 	path={origin}
 	title={title}
 	pageTitle={title}
+	description={description}
 	canonical={new URL(`${origin}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, Astro.url.origin).href}
 	entry={{ title, edit: createNoop() }}
 	contentHtml={html}

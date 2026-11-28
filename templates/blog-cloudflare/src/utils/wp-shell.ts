@@ -2664,14 +2664,33 @@ export function wpShellIndexRoute(
 	return shell?.index ? `/wp-shell/listing${search}` : null;
 }
 
+/**
+ * 164q2: where pages/index.astro sends a blog-listing home (no static front page):
+ * ANY site with a captured shell wears its captured chrome around the posts listing —
+ * both slot-mapped records with `shell.index` and WordPress blog-home records without
+ * one — instead of falling back to the unskinned default template. Sites without a
+ * shell keep the default template.
+ */
+export function wpShellHomeIndexRoute(
+	shell: Pick<WpShell, "parts"> | null,
+	search = "",
+): string | null {
+	return shell ? `/wp-shell/listing${search}` : null;
+}
+
 /** The links to the posts index's other pages: its newest, from any later page, and the next older one, when there is one. */
-export function renderIndexNav(cursor: string | null, next: string | null): string {
+export function renderIndexNav(
+	cursor: string | null,
+	next: string | null,
+	basePath = "/posts",
+): string {
 	if (!cursor && !next) return "";
+	const base = escapeAttr(basePath);
 	return (
 		`<nav class="wp-shell-index-nav" aria-label="Posts">` +
-		(cursor ? `<a class="wp-shell-index-newest" href="/posts">Newest posts</a>` : "") +
+		(cursor ? `<a class="wp-shell-index-newest" href="${base}">Newest posts</a>` : "") +
 		(next
-			? `<a class="wp-shell-index-older" rel="next" href="/posts?cursor=${escapeAttr(encodeURIComponent(next))}">Older posts</a>`
+			? `<a class="wp-shell-index-older" rel="next" href="${base}?cursor=${escapeAttr(encodeURIComponent(next))}">Older posts</a>`
 			: "") +
 		`</nav>`
 	);

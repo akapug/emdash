@@ -38,6 +38,7 @@ import WpShellRoute from "../../../../templates/blog-cloudflare/src/pages/wp-she
 import WpShellListingRoute from "../../../../templates/blog-cloudflare/src/pages/wp-shell/listing.astro";
 import {
 	WP_SHELL_SUBSCRIBE_MESSAGES,
+	wpShellHomeIndexRoute,
 	wpShellIndexRoute,
 	wpShellProblem,
 } from "../../../../templates/blog-cloudflare/src/utils/wp-shell.js";
@@ -2007,6 +2008,31 @@ describe("a slot map's site: the subtitle and the posts index, drawn as a page i
 		expect(wpShellIndexRoute(slotMapped("plain") as never)).toBe("/wp-shell/listing");
 		for (const shell of [slotMapped("none"), record(), null])
 			expect(wpShellIndexRoute(shell as never, "?cursor=c1")).toBeNull();
+	});
+
+	it("164q2: sends a blog-listing home (/) to /wp-shell/listing for any captured shell, including WordPress without shell.index", () => {
+		expect(wpShellHomeIndexRoute(record() as never, "?cursor=c1")).toBe(
+			"/wp-shell/listing?cursor=c1",
+		);
+		expect(wpShellHomeIndexRoute(slotMapped("listing") as never)).toBe("/wp-shell/listing");
+		expect(wpShellHomeIndexRoute(null, "?cursor=c1")).toBeNull();
+	});
+
+	it("164q2: draws a WordPress blog-listing home (/) inside the captured chrome with /-rooted pagination", async () => {
+		const html = await postsIndex(record(), "https://example.org/?cursor=c1", "c2");
+		expect(reads.getEmDashCollection).toHaveBeenCalledWith("posts", {
+			orderBy: { published_at: "desc" },
+			limit: 10,
+			cursor: "c1",
+		});
+		expect(html).toContain(
+			'<article class="wp-shell-index-post"><h2 class="wp-shell-index-title"><a href="/posts/post-1">Post &lt;1&gt;</a></h2>',
+		);
+		expect(html).toContain(
+			'<a class="wp-shell-index-newest" href="/">Newest posts</a><a class="wp-shell-index-older" rel="next" href="/?cursor=c2">Older posts</a>',
+		);
+		expect(html).toContain('<link rel="canonical" href="https://example.org/?cursor=c1">');
+		expect(html).not.toContain("home-content");
 	});
 
 	it("is the template's own posts index for a record without an index, a WordPress record too: no rewrite, its own query", async () => {
