@@ -95,11 +95,12 @@ dialog.wp-shell-popup::backdrop {
 	margin-left: auto;
 	margin-right: auto;
 	/*
-	 * A full-bleed cover inside the cap is 100vw wide, and 100vw includes the scrollbar — on a page that has one, the bleed is a few pixels
-	 * wider than the viewport and adds a HORIZONTAL SCROLLBAR. A hero that makes the page scroll sideways is not full-bleed. `clip` rather than
-	 * `hidden`: it stops the overflow without making this a scroll container, so a position: sticky descendant keeps working.
+	 * NO `overflow-x: clip` HERE. It looked like the fix for the scrollbar a 100vw bleed can add (100vw includes the scrollbar), and it CLIPPED
+	 * THE HERO ITSELF: a full-bleed cover breaks out of this column by design, and clipping the column cut it back to the column's width —
+	 * x=162, w=1100 where the same page had a full-bleed hero at x=0. A clip on an ancestor narrower than the viewport cancels the very
+	 * breakout it was meant to tidy. The scrollbar width needs a different answer (something at viewport width, or a bleed that does not use
+	 * 100vw); until then the page keeps the exact behaviour a10 proved.
 	 */
-	overflow-x: clip;
 }
 
 /*
