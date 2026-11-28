@@ -145,6 +145,14 @@ if (Astro.cache?.enabled) {
 	for (const m of menuResults) Astro.cache.set(m.cacheHint);
 }
 const settings = settingsResult.data;
+/*
+ * 164p2: THE SOURCE THEME DREW NO PAGE TITLE BAR, SO THIS PAGE DRAWS NO TEMPLATE TITLE EITHER.
+ *
+ * Avada prints a title bar above a page's content unless the site turned it off, and the switch lives inside the theme's own options array —
+ * the import reads it there and the tenant writes `site:hidePageTitle` = true only when the source states "hide". Absent or false is exactly
+ * today's render, so a site that never had the setting is untouched.
+ */
+const hidePageTitle = settings.hidePageTitle === true;
 const menus = new Map<string, readonly WpShellMenuItem[] | null>(
 	locations.map((location, i) => [location, menuResults[i]?.data?.items ?? null]),
 );
@@ -416,6 +424,10 @@ const pageCtx = createPublicPageContext({
 					);
 				}
 				if ("title" in piece) {
+					// The source stated it draws no title bar: the featured image, if any, still draws, and nothing takes the title's place.
+					if (hidePageTitle) {
+						return index === featuredAnchor && featured ? <WpPageFeatured featured={featured} /> : null;
+					}
 					const Title = piece.title.tag as HTMLTag;
 					return (
 						<Fragment>
