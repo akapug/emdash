@@ -427,18 +427,41 @@ const pageCtx = createPublicPageContext({
 					);
 				}
 				const Content = piece.content.tag as HTMLTag;
+				/*
+				 * THE PAGE COLUMN IS CAPPED AT THE SOURCE'S OWN WIDTH (164p1 (c)).
+				 *
+				 * Live Avada centres its content because the theme's `.fusion-row` carries the site width, and our conversion UNWRAPS those
+				 * rows — so the cap has to come back as an element, not as a CSS guess against an unknown wrapper (measured: adamkoren's
+				 * body sits at ~30px margins where live centres it in ~1100px).
+				 *
+				 * The wrapper goes around the PAGE'S CONTENT ONLY — never the captured header, footer or sidebars, which keep the source's
+				 * own full-width treatment. It carries a class and the width as a custom property rather than an inline max-width, so a
+				 * theme rule can still narrow it; and it is absent entirely when the capture measured no width, which keeps every page that
+				 * has none byte-identical to today.
+				 */
+				const capWidth = layoutContentWidth;
+				const capped = (children: unknown) =>
+					capWidth === undefined ? (
+						children
+					) : (
+						<div class="wp-shell-content-column" style={`--wp-shell-content-width: ${capWidth}px;`}>
+							{children}
+						</div>
+					);
 				return (
 					<Fragment>
 						{index === featuredAnchor && featured?.placement === "before-body" && <WpPageFeatured featured={featured} />}
 						<Content class={piece.content.class} id={piece.content.id} {...entry.edit?.content}>
-							{Astro.slots.has("content") ? (
-								<slot name="content" />
-							) : contentHtml !== undefined ? (
-								<Fragment set:html={contentHtml} />
-							) : skeleton ? (
-								<WpShellSkeleton nodes={skeleton} components={components} />
-							) : (
-								<PortableText value={entry.body} components={components} />
+							{capped(
+								Astro.slots.has("content") ? (
+									<slot name="content" />
+								) : contentHtml !== undefined ? (
+									<Fragment set:html={contentHtml} />
+								) : skeleton ? (
+									<WpShellSkeleton nodes={skeleton} components={components} />
+								) : (
+									<PortableText value={entry.body} components={components} />
+								),
 							)}
 							{piece.end && <Fragment set:html={piece.end} />}
 						</Content>

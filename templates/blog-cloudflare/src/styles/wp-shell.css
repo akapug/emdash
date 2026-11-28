@@ -79,3 +79,27 @@ dialog.wp-shell-popup::backdrop {
 .wp-shell-popup .popmake-close {
 	cursor: pointer;
 }
+
+/*
+ * 164p1 (c): THE PAGE COLUMN THE SOURCE USED TO DRAW FOR ITSELF.
+ *
+ * Live Avada centres a page's content because its `.fusion-row` carries the site width, and our conversion unwraps those rows — so the
+ * page came out at whatever margins the captured theme left, ~30px on adamkoren where live centres it in ~1100px.
+ *
+ * The cap is a class plus the measured width as a custom property, NOT an inline max-width, so the site's own stylesheets can still narrow
+ * it further (a theme that capped its content tighter keeps doing so). Nothing here sets a width when the capture measured none: the
+ * wrapper is not rendered at all in that case.
+ */
+.wp-shell-content-column {
+	max-width: var(--wp-shell-content-width);
+	margin-left: auto;
+	margin-right: auto;
+}
+
+/*
+ * A section the source drew edge to edge BREAKS OUT of the cap above. The cover is written to escape any centred column (`100vw` wide, pulled
+ * back by the column's own inset), so this only has to stop the cap from clipping the breakout.
+ */
+.wp-shell-content-column > .emdash-cover--full-bleed {
+	max-width: 100vw;
+}

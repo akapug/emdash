@@ -179,21 +179,6 @@ const overlayStyle = validBlendMode
 </div>
 
 <style>
-	/*
-	 * A FULL-BLEED SECTION ESCAPES A CENTRED COLUMN. The page body may be capped at the shell's measured contentWidth and centred (a
-	 * migrated Avada site's 1100px), and a section the source drew edge to edge must break out of that cap — `100vw` wide and pulled back
-	 * to the viewport's left edge by the same amount the column is inset. `overflow: hidden` goes with it: a breakout that clips would be
-	 * invisible past the column.
-	 */
-	.emdash-cover--full-bleed {
-		width: 100vw;
-		max-width: 100vw;
-		margin-left: calc(50% - 50vw);
-		margin-right: calc(50% - 50vw);
-		padding-left: max(2rem, calc(50vw - 50%));
-		padding-right: max(2rem, calc(50vw - 50%));
-	}
-
 	.emdash-cover {
 		position: relative;
 		display: flex;
@@ -203,6 +188,29 @@ const overlayStyle = validBlendMode
 		overflow: hidden;
 		border-radius: 4px;
 		background-color: var(--emdash-cover-fallback-bg, #333);
+	}
+
+	/*
+	 * A FULL-BLEED SECTION ESCAPES A CENTRED COLUMN (164p1).
+	 *
+	 * THIS RULE MUST COME AFTER `.emdash-cover`. Declared before it, at the same specificity, its `padding-left`/`margin-left` LONGHANDS lose to
+	 * the base rule's `padding`/`margin` SHORTHANDS — which is exactly what happened: the cover carried the full-bleed class and width 100vw but
+	 * computed margin-left 0px, so it started at the column's left edge and ran off the right side of the screen.
+	 *
+	 * `100vw` includes the scrollbar, so a page with one gets a few pixels of horizontal overflow. `overflow-x: clip` on the cover's container is
+	 * the fix that does not create a scroll box (unlike `hidden`): the bleed is intentional and nothing outside it may be reachable by scrolling.
+	 */
+	.emdash-cover--full-bleed {
+		width: 100vw;
+		max-width: 100vw;
+		box-sizing: border-box;
+		margin-left: calc(50% - 50vw);
+		margin-right: calc(50% - 50vw);
+		margin-top: 1.5rem;
+		margin-bottom: 1.5rem;
+		padding-left: max(2rem, calc(50vw - 50%));
+		padding-right: max(2rem, calc(50vw - 50%));
+		border-radius: 0;
 	}
 
 	.emdash-cover__background {
