@@ -27,6 +27,9 @@ export interface Props {
 		/** The section's own vertical padding: px only, 0–600, anything else dropped. */
 		paddingTop?: number;
 		paddingBottom?: number;
+		/** The section's own BLOCK MARGIN, full-bleed only. 0 is a real value: it makes the section sit flush. */
+		marginTop?: number;
+		marginBottom?: number;
 	};
 }
 
@@ -126,6 +129,13 @@ function paddingOf(value: unknown): number | undefined {
 }
 const padTop = paddingOf(node?.paddingTop);
 const padBottom = paddingOf(node?.paddingBottom);
+// 0 is a real value here and is distinguished from "not stated" by `paddingOf`'s undefined.
+const marginOf = (value: unknown): number | undefined => {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < -600 || value > 600) return undefined;
+	return value;
+};
+const marginTop = marginOf(node?.marginTop);
+const marginBottom = marginOf(node?.marginBottom);
 const fullBleed = node?.fullBleed === true;
 
 const hasBackground = backgroundImage || backgroundVideo;
@@ -141,6 +151,8 @@ const overlayStyle = validBlendMode
 	class:list={["emdash-cover", `emdash-cover--align-${alignment}`, fullBleed && "emdash-cover--full-bleed"]}
 	style={[
 		`min-height: ${minHeight};`,
+		marginTop !== undefined ? `--emdash-cover-margin-top: ${marginTop}px;` : "",
+		marginBottom !== undefined ? `--emdash-cover-margin-bottom: ${marginBottom}px;` : "",
 		padTop !== undefined ? `padding-top: ${padTop}px;` : "",
 		padBottom !== undefined ? `padding-bottom: ${padBottom}px;` : "",
 	].filter(Boolean).join(" ")}
@@ -206,8 +218,8 @@ const overlayStyle = validBlendMode
 		box-sizing: border-box;
 		margin-left: calc(50% - 50vw);
 		margin-right: calc(50% - 50vw);
-		margin-top: 1.5rem;
-		margin-bottom: 1.5rem;
+		margin-top: var(--emdash-cover-margin-top, 1.5rem);
+		margin-bottom: var(--emdash-cover-margin-bottom, 1.5rem);
 		padding-left: max(2rem, calc(50vw - 50%));
 		padding-right: max(2rem, calc(50vw - 50%));
 		border-radius: 0;

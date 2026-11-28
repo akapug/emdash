@@ -69,6 +69,12 @@ export const settingsUpdateBody = z
 		social: socialSettings.optional(),
 		seo: seoSettingsInput.optional(),
 		iframeHosts: iframeHostsSetting.optional(),
+		/*
+		 * 164p2: a migrated site whose SOURCE theme drew no page title bar. Named so that the safe answer is the default — absent or false is
+		 * exactly the render every site has today, and only an explicit true removes the template's title. A setting whose default were "show"
+		 * could not be told apart from a site that never had the question asked.
+		 */
+		hidePageTitle: z.boolean().optional(),
 	})
 	.meta({ id: "SettingsUpdateBody" });
 
@@ -130,5 +136,6 @@ export const siteSettingsSchema = z
 		social: socialSettings.optional(),
 		seo: seoSettingsResponse.optional(),
 		iframeHosts: z.array(z.string()).optional(),
+		hidePageTitle: z.boolean().optional(),
 	})
 	.meta({ id: "SiteSettings" });
