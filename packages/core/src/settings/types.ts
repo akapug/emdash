@@ -100,6 +100,8 @@ export interface SiteSettings {
 	 * one never displays the case. The import observes the source listing and writes this; nothing else may.
 	 */
 	cardContentFirst?: boolean;
+	/** Suppress the template's page title when the source theme drew no page title bar. */
+	hidePageTitle?: boolean;
 	dateFormat: string;
 	timezone: string;
 
