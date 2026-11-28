@@ -94,6 +94,12 @@ dialog.wp-shell-popup::backdrop {
 	max-width: var(--wp-shell-content-width);
 	margin-left: auto;
 	margin-right: auto;
+	/*
+	 * A full-bleed cover inside the cap is 100vw wide, and 100vw includes the scrollbar — on a page that has one, the bleed is a few pixels
+	 * wider than the viewport and adds a HORIZONTAL SCROLLBAR. A hero that makes the page scroll sideways is not full-bleed. `clip` rather than
+	 * `hidden`: it stops the overflow without making this a scroll container, so a position: sticky descendant keeps working.
+	 */
+	overflow-x: clip;
 }
 
 /*
